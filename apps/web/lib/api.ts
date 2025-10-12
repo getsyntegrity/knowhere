@@ -1,0 +1,915 @@
+/**
+ * API客户端 - 基于原生fetch
+ * 统一处理后端API请求和响应
+ */
+
+// ============================================
+// 类型定义
+// ============================================
+
+/**
+ * 后端统一响应格式
+ */
+export interface ApiResponse<T = any> {
+  code: number
+  msg: string
+  data: T
+  timestamps: number
+}
+
+/**
+ * API错误类
+ */
+export class ApiError extends Error {
+  code: number
+  status?: number
+  
+  constructor(message: string, code: number, status?: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
+    this.status = status
+  }
+}
+
+// ============================================
+// 请求相关类型
+// ============================================
+
+export interface LoginRequest {
+  email: string
+  password: string
+}
+
+export interface RegisterRequest {
+  email: string
+  password: string
+  username: string
+}
+
+export interface User {
+  id: string
+  email: string
+  username: string
+  user_type: string
+  is_active: boolean
+  is_verified: boolean
+  credits_balance: number
+  avatar_url?: string
+  phone?: string
+  create_time: string
+}
+
+export interface CreateAPIKeyRequest {
+  name: string
+  enabled_modules?: string[]
+  expires_at?: string
+}
+
+export interface APIKey {
+  id: string
+  name: string
+  enabled_modules?: string[]
+  is_active: boolean
+  created_at: string
+  last_used_at?: string
+  expires_at?: string
+}
+
+export interface CreateAPIKeyResponse {
+  api_key: string
+  name: string
+  enabled_modules?: string[]
+  expires_at?: string
+}
+
+export interface CreditsBalance {
+  credits_balance: number
+  credits_limit: number
+  usage_percentage: number
+}
+
+export interface UsageStats {
+  period: string
+  total_credits_used: number
+  api_calls_count: number
+  success_rate: number
+  average_response_time: number
+  top_endpoints: Array<{
+    endpoint: string
+    calls: number
+    credits_used: number
+  }>
+}
+
+export interface Transaction {
+  id: string
+  type: 'credit' | 'debit'
+  amount: number
+  description: string
+  created_at: string
+}
+
+// ============================================
+// 订阅和计费相关类型
+// ============================================
+
+export interface Subscription {
+  id: string
+  plan_type: 'free' | 'plus' | 'pro'
+  status: 'active' | 'canceled' | 'past_due'
+  start_date: string
+  end_date?: string
+  credits_limit: number
+  stripe_subscription_id?: string
+}
+
+export interface CreditPackage {
+  id: string
+  amount: number
+  expires_at: string
+  status: 'active' | 'expired'
+  purchase_date: string
+}
+
+export interface SubscriptionPlan {
+  id: string
+  name: string
+  price: number
+  period: string
+  credits: number
+  features: string[]
+  popular: boolean
+  stripe_price_id?: string
+}
+
+export interface CreditPackagePurchase {
+  credits_amount: number
+  amount_cny: number
+  payment_method_id?: string
+}
+
+export interface CheckoutSessionResponse {
+  checkout_url: string
+  session_id: string
+}
+
+export interface PaymentIntentResponse {
+  client_secret: string
+  payment_intent_id: string
+}
+
+// ============================================
+// 知识库相关类型
+// ============================================
+
+export interface KnowledgeBase {
+  id: string
+  content?: string
+  path?: string
+  type?: string
+  length?: number
+  keywords?: string
+  summary?: string
+  know_id?: string
+  tokens?: string
+  embedding?: string
+}
+
+export interface AddKBPathRequest {
+  path: string
+  label: string[]
+}
+
+// 旧方案同步API接口已删除，请使用新的异步任务API
+
+export interface SearchAskRequest {
+  question: string
+  topk?: number
+  filter_nodes: string[]
+  filter_mode: string
+  filter_type?: number
+  show_image: boolean
+  rerank: boolean
+  ask: boolean
+  ask_multimodal?: boolean
+  ask_agent?: boolean
+}
+
+export interface SearchAskResponse {
+  answer?: string
+  context: string
+  sim_contents: Array<{
+    content: string
+    path: string
+    similarity: number
+  }>
+}
+
+// ============================================
+// 任务相关类型
+// ============================================
+
+export interface KBJobCreateRequest {
+  source_type: 'url'
+  file_url?: string
+  webhook_url?: string
+  metadata?: Record<string, any>
+}
+
+export interface KBJobResponse {
+  job_id: string
+  status: string
+  current_state?: string
+  source_type: string
+  file_path?: string
+  s3_key?: string
+  result_s3_key?: string
+  webhook_url?: string
+  webhook_enabled: boolean
+  error_message?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface KBJobStatus {
+  job_id: string
+  status: string
+  current_state?: string
+  progress?: Record<string, any>
+  error_message?: string
+  result_s3_key?: string
+  download_url?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface KBJobList {
+  jobs: KBJobResponse[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface KBUploadResponse {
+  job_id: string
+  upload_url: string
+  s3_key: string
+  expires_in: number
+}
+
+export interface KBDownloadResponse {
+  download_url: string
+  expires_in: number
+  file_size?: number
+  content_type?: string
+}
+
+// ============================================
+// 表格填充任务相关类型
+// ============================================
+
+export interface TableFillJobCreateRequest {
+  source_type: 'url' | 'file_upload'
+  file_url?: string
+  webhook_url?: string
+  metadata?: Record<string, any>
+}
+
+export interface TableFillJobResponse {
+  job_id: string
+  status: string
+  current_state?: string
+  source_type: string
+  file_path?: string
+  s3_key?: string
+  result_s3_key?: string
+  webhook_url?: string
+  webhook_enabled: boolean
+  error_message?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TableFillJobStatus {
+  job_id: string
+  status: string
+  current_state?: string
+  progress?: Record<string, any>
+  error_message?: string
+  result_s3_key?: string
+  download_url?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TableFillJobList {
+  jobs: TableFillJobResponse[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface TableFillUploadResponse {
+  job_id: string
+  upload_url: string
+  s3_key: string
+  expires_in: number
+}
+
+export interface TableFillDownloadResponse {
+  download_url: string
+  expires_in: number
+  file_size?: number
+  content_type?: string
+}
+
+// ============================================
+// 核心API客户端类
+// ============================================
+
+class KnowhereAPI {
+  private baseUrl: string
+  private token: string | null = null
+
+  constructor() {
+    this.baseUrl = process.env.NEXT_PUBLIC_API_URL || '/api'
+    // 初始化时从localStorage读取token（仅在浏览器环境）
+    if (typeof window !== 'undefined') {
+      this.token = localStorage.getItem('auth_token')
+    }
+  }
+
+  /**
+   * 更新token
+   */
+  updateToken(token: string | null) {
+    this.token = token
+    if (typeof window !== 'undefined') {
+      if (token) {
+        localStorage.setItem('auth_token', token)
+      } else {
+        localStorage.removeItem('auth_token')
+      }
+    }
+  }
+
+  /**
+   * 验证token格式
+   */
+  private isValidToken(token: string): boolean {
+    if (!token || typeof token !== 'string') {
+      return false
+    }
+    
+    // JWT token通常包含三个部分，用.分隔
+    const parts = token.split('.')
+    if (parts.length !== 3) {
+      return false
+    }
+    
+    // 检查每个部分是否都是有效的base64
+    try {
+      parts.forEach(part => {
+        if (part.length === 0) throw new Error('Empty part')
+        // 简单的base64检查
+        atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 统一的fetch请求封装
+   */
+  private async request<T = any>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const url = `${this.baseUrl}${endpoint}`
+    
+    // 构建请求头
+    const headers: Record<string, string> = {
+      ...(options.headers as Record<string, string>),
+    }
+    
+    // 只有在没有设置Content-Type且不是FormData时才设置默认的Content-Type
+    if (!headers['Content-Type'] && !(options.body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json'
+    }
+
+    // 添加Authorization header（如果有token）
+    if (this.token) {
+      // 验证token格式
+      if (!this.isValidToken(this.token)) {
+        console.warn('Invalid token format, clearing token')
+        this.updateToken(null)
+        throw new ApiError('Token格式无效，请重新登录', 401)
+      }
+      headers['Authorization'] = `Bearer ${this.token}`
+    }
+
+    // 发送请求
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        cache: options.cache || 'no-store', // 默认不缓存
+      })
+
+      // 解析响应
+      const result = await response.json()
+
+      // 检查HTTP状态码
+      if (!response.ok) {
+        // 如果是401错误，清除本地token
+        if (response.status === 401) {
+          console.warn('收到401响应，清除本地token')
+          this.updateToken(null)
+        }
+        
+        throw new ApiError(
+          result.detail || result.msg || `HTTP错误: ${response.status}`,
+          result.code || response.status,
+          response.status
+        )
+      }
+
+      // 检查是否是ResponseResult格式（有code字段）
+      if (result.code !== undefined) {
+        // 这是我们的ResponseResult格式
+        if (result.code !== 200) {
+          throw new ApiError(result.msg || '操作失败', result.code)
+        }
+        return result.data
+      } else {
+        // 这是FastAPI Users的标准格式或其他格式
+        return result
+      }
+    } catch (error) {
+      // 网络错误或其他异常
+      if (error instanceof ApiError) {
+        throw error
+      }
+      
+      if (error instanceof Error) {
+        throw new ApiError(error.message, 500)
+      }
+      
+      throw new ApiError('未知错误', 500)
+    }
+  }
+
+  /**
+   * GET请求
+   */
+  private async get<T = any>(
+    endpoint: string,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, { ...options, method: 'GET' })
+  }
+
+  /**
+   * POST请求
+   */
+  private async post<T = any>(
+    endpoint: string,
+    data?: any,
+    options?: RequestInit
+  ): Promise<T> {
+    const isFormData = data instanceof FormData
+    
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'POST',
+      headers: isFormData ? options?.headers : { 'Content-Type': 'application/json', ...options?.headers },
+      body: isFormData ? data : JSON.stringify(data),
+    })
+  }
+
+  /**
+   * PUT请求
+   */
+  private async put<T = any>(
+    endpoint: string,
+    data?: any,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  }
+
+  /**
+   * DELETE请求
+   */
+  private async delete<T = any>(
+    endpoint: string,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, { ...options, method: 'DELETE' })
+  }
+
+  /**
+   * PATCH请求
+   */
+  private async patch<T = any>(
+    endpoint: string,
+    data?: any,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+  }
+
+  // ============================================
+  // 认证相关API
+  // ============================================
+
+  /**
+   * 登录
+   */
+  async login(credentials: LoginRequest) {
+    // 使用URLSearchParams创建application/x-www-form-urlencoded格式
+    const formData = new URLSearchParams()
+    formData.append('username', credentials.email)
+    formData.append('password', credentials.password)
+
+    return this.request<{ access_token: string; token_type: string }>(
+      '/v1/jwt/login',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData.toString(),
+      }
+    )
+  }
+
+  /**
+   * 注册
+   */
+  async register(userData: RegisterRequest) {
+    return this.post<User>('/v1/register', userData)
+  }
+
+  /**
+   * 获取当前用户信息
+   */
+  async getCurrentUser() {
+    return this.get<User>('/v1/me')
+  }
+
+  /**
+   * OAuth登录
+   */
+  async oauthLogin(provider: 'google' | 'apple' | 'github', token: string) {
+    const payload = provider === 'github' 
+      ? { code: token }
+      : { id_token: token }
+    
+    return this.post<{ access_token: string; user_info?: User }>(
+      `/v1/auth/oauth/${provider}`,
+      payload
+    )
+  }
+
+  /**
+   * 续期访问令牌
+   */
+  async renewToken() {
+    return this.post<{ access_token: string; token_type: string }>('/v1/renew-token')
+  }
+
+  /**
+   * 登出
+   */
+  async logout() {
+    return this.post('/v1/jwt/logout')
+  }
+
+  // ============================================
+  // API Key管理API
+  // ============================================
+
+  /**
+   * 获取API Key列表
+   */
+  async listApiKeys() {
+    return this.get<{ api_keys: APIKey[] }>('/v1/auth/list')
+  }
+
+  /**
+   * 创建API Key
+   */
+  async createApiKey(data: CreateAPIKeyRequest) {
+    return this.post<CreateAPIKeyResponse>('/v1/auth/create', data)
+  }
+
+  /**
+   * 重新生成API Key
+   */
+  async regenerateApiKey(apiKeyId: string) {
+    return this.post<{ api_key: string }>('/v1/auth/regenerate', {
+      api_key_id: apiKeyId,
+    })
+  }
+
+  /**
+   * 撤销API Key
+   */
+  async revokeApiKey(apiKeyId: string) {
+    return this.post('/v1/auth/revoke', { api_key_id: apiKeyId })
+  }
+
+  /**
+   * 切换API Key状态
+   */
+  async toggleApiKey(apiKeyId: string) {
+    return this.put(`/v1/auth/${apiKeyId}/toggle`)
+  }
+
+  /**
+   * 获取单个API Key详情
+   */
+  async getApiKey(apiKeyId: string) {
+    return this.get<APIKey>(`/v1/auth/${apiKeyId}`)
+  }
+
+  // ============================================
+  // 用户管理API
+  // ============================================
+
+  /**
+   * 获取用户资料
+   */
+  async getUserProfile() {
+    return this.get<User>('/v1/user/profile')
+  }
+
+  /**
+   * 更新用户资料
+   */
+  async updateUserProfile(data: Partial<User>) {
+    return this.put<User>('/v1/user/profile', data)
+  }
+
+  // ============================================
+  // 计费管理API
+  // ============================================
+
+  /**
+   * 获取Credits余额
+   */
+  async getCreditsBalance() {
+    return this.get<CreditsBalance>('/v1/billing/credits')
+  }
+
+  /**
+   * 购买Credits
+   */
+  async buyCredits(amount: number) {
+    return this.post<PaymentIntentResponse>('/v1/billing/buy-credits', {
+      credits_amount: amount,
+    })
+  }
+
+  /**
+   * 订阅计划
+   */
+  async subscribePlan(planId: string) {
+    return this.post<CheckoutSessionResponse>('/v1/billing/subscribe', {
+      plan_id: planId,
+    })
+  }
+
+  /**
+   * 获取当前订阅信息
+   */
+  async getCurrentSubscription() {
+    return this.get<Subscription>('/v1/billing/subscription')
+  }
+
+  /**
+   * 取消订阅
+   */
+  async cancelSubscription() {
+    return this.post('/v1/billing/cancel-subscription')
+  }
+
+  /**
+   * 获取Credits量包列表
+   */
+  async getCreditPackages() {
+    return this.get<CreditPackage[]>('/v1/billing/credit-packages')
+  }
+
+  /**
+   * 获取使用统计
+   */
+  async getUsageStats(period: string = 'month') {
+    return this.get<UsageStats>(`/v1/billing/usage?period=${period}`)
+  }
+
+  /**
+   * 获取交易历史
+   */
+  async getTransactionHistory(limit: number = 50, offset: number = 0) {
+    return this.get<{ transactions: Transaction[]; total: number }>(
+      `/v1/user/credits/transactions?limit=${limit}&offset=${offset}`
+    )
+  }
+
+
+  // ============================================
+  // 知识库管理API
+  // ============================================
+
+  /**
+   * 添加知识库路径
+   */
+  async addKBPath(data: AddKBPathRequest) {
+    return this.post('/v1/kb/add_kb', data)
+  }
+
+  // ============================================
+  // 新的异步任务API
+  // ============================================
+
+  /**
+   * 创建知识库任务
+   */
+  async createKBJob(data: KBJobCreateRequest) {
+    return this.post<KBJobResponse>('/v1/kb/jobs', data)
+  }
+
+  /**
+   * 上传文件并创建知识库任务
+   */
+  async uploadFileAndCreateKBJob(
+    file: File, 
+    webhook_url?: string, 
+    metadata?: Record<string, any>
+  ) {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (webhook_url) {
+      formData.append('webhook_url', webhook_url)
+    }
+    if (metadata) {
+      formData.append('metadata', JSON.stringify(metadata))
+    }
+
+    return this.post<KBJobResponse>('/v1/kb/jobs', formData)
+  }
+
+  /**
+   * 获取知识库任务状态
+   */
+  async getKBJobStatus(jobId: string) {
+    return this.get<KBJobStatus>(`/v1/kb/jobs/${jobId}`)
+  }
+
+  /**
+   * 获取知识库任务列表
+   */
+  async getKBJobs(params?: { page?: number; limit?: number; status?: string }) {
+    const queryParams = new URLSearchParams()
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('page_size', params.limit.toString())
+    if (params?.status) queryParams.append('status', params.status)
+    
+    const query = queryParams.toString()
+    return this.get<KBJobList>(`/v1/kb/jobs${query ? `?${query}` : ''}`)
+  }
+
+  /**
+   * 取消知识库任务
+   */
+  async cancelKBJob(jobId: string) {
+    return this.post(`/v1/kb/jobs/${jobId}/cancel`)
+  }
+
+  /**
+   * 重试知识库任务
+   */
+  async retryKBJob(jobId: string) {
+    return this.post(`/v1/kb/jobs/${jobId}/retry`)
+  }
+
+  // ============================================
+  // 保留的搜索API（暂时保留，后续可能迁移到异步）
+  // ============================================
+
+  /**
+   * 搜索知识库
+   */
+  async searchKB(data: SearchAskRequest) {
+    return this.post<SearchAskResponse>('/v1/kb/search', data)
+  }
+
+  /**
+   * 获取知识库文件树
+   */
+  async getFileTree(kb_path: string) {
+    return this.post('/v1/kb/get_fileTree', {
+      kb_path
+    })
+  }
+
+  /**
+   * 获取用户目录列表
+   */
+  async getDirectories() {
+    return this.post('/v1/kb/get_directory')
+  }
+
+  /**
+   * 获取目录下的知识库内容
+   */
+  async getDirectoryContents(directoryId: string) {
+    return this.post('/v1/kb/list_directory', {
+      id: directoryId
+    })
+  }
+
+  /**
+   * 删除知识库内容
+   */
+  async deleteKBContent(contentId: string) {
+    return this.delete(`/v1/kb/contents/${contentId}`)
+  }
+
+  // ============================================
+
+  // ============================================
+  // 表格填充任务管理API
+  // ============================================
+
+  /**
+   * 创建表格填充任务
+   */
+  async createTableFillJob(data: TableFillJobCreateRequest) {
+    return this.post<TableFillJobResponse>('/v1/table-fill/jobs', data)
+  }
+
+  /**
+   * 获取表格填充任务状态
+   */
+  async getTableFillJobStatus(job_id: string) {
+    return this.get<TableFillJobStatus>(`/v1/table-fill/jobs/${job_id}`)
+  }
+
+  /**
+   * 获取表格填充任务列表
+   */
+  async listTableFillJobs(page: number = 1, page_size: number = 20, status?: string) {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      page_size: page_size.toString()
+    })
+    if (status) {
+      params.append('status', status)
+    }
+    return this.get<TableFillJobList>(`/v1/table-fill/jobs?${params.toString()}`)
+  }
+
+  /**
+   * 上传文件并创建表格填充任务
+   */
+  async uploadFileAndCreateTableFillJob(
+    file: File, 
+    webhook_url?: string, 
+    metadata?: Record<string, any>
+  ) {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (webhook_url) {
+      formData.append('webhook_url', webhook_url)
+    }
+    if (metadata) {
+      formData.append('metadata', JSON.stringify(metadata))
+    }
+
+    return this.post<TableFillJobResponse>('/v1/table-fill/jobs', formData)
+  }
+
+  /**
+   * 下载表格填充任务结果
+   */
+  async downloadTableFillResult(job_id: string) {
+    return this.get<TableFillDownloadResponse>(`/v1/table-fill/jobs/${job_id}/download`)
+  }
+}
+
+// 导出单例实例
+export const api = new KnowhereAPI()

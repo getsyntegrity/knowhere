@@ -1,0 +1,14 @@
+{
+  "name": "@knowhere/shared-types",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./generated/api-types.ts",
+  "types": "./generated/api-types.ts",
+  "files": [
+    "generated/"
+  ],
+  "scripts": {
+    "build": "echo 'No build step needed for types'",
+    "clean": "rm -rf generated/*"
+  }
+}

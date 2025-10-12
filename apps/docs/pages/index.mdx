@@ -1,0 +1,139 @@
+# Knowhere AI 文档
+
+欢迎使用 Knowhere AI 知识库管理系统！这是一个基于 AI 的智能知识库管理和问答系统，提供强大的文档解析、向量化存储和智能检索功能。
+
+## 🚀 快速开始
+
+### 1. 获取 API Key
+
+首先，您需要在 [控制台](https://knowhere.ai/dashboard) 创建一个账户并获取 API Key。
+
+### 2. 安装 SDK
+
+选择您喜欢的语言：
+
+```bash
+# Python
+pip install knowhere-sdk
+
+# TypeScript/JavaScript
+npm install @knowhere/sdk-typescript
+```
+
+### 3. 创建您的第一个知识库
+
+```python
+from knowhere_sdk import KnowhereClient
+
+client = KnowhereClient(api_key="your-api-key")
+
+# 创建知识库任务
+job = client.kb.create_job(
+    file_url="https://example.com/document.pdf",
+    webhook_url="https://your-app.com/webhook"
+)
+
+print(f"任务已创建: {job.job_id}")
+```
+
+## ✨ 核心功能
+
+### 📊 表格填充
+智能表格数据填充，基于知识库内容自动填充表格字段。
+
+- 支持多种文件格式（PDF、DOCX、XLSX等）
+- 智能表格识别和提取
+- 基于知识库的智能填充
+- 异步处理，支持Webhook通知
+
+### 🧠 知识库管理
+强大的文档解析和向量化存储系统。
+
+- 多格式文档解析（PDF、DOCX、PPTX、MD、TXT等）
+- 智能文档分块和向量化
+- 向量数据库存储
+- 实时状态追踪
+
+### 🔗 Webhook 集成
+实时任务状态通知，支持自定义Webhook URL。
+
+- HMAC-SHA256 签名验证
+- 指数退避重试机制
+- 完整的日志记录
+- 幂等性保证
+
+## 📚 文档导航
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+
+<div className="border rounded-lg p-6">
+<h3>🚀 快速开始</h3>
+<ul>
+<li><a href="/getting-started/quickstart">快速开始指南</a></li>
+<li><a href="/getting-started/authentication">认证和API Keys</a></li>
+<li><a href="/getting-started/first-job">创建第一个任务</a></li>
+</ul>
+</div>
+
+<div className="border rounded-lg p-6">
+<h3>📖 API 参考</h3>
+<ul>
+<li><a href="/api-reference/table-fill">表格填充 API</a></li>
+<li><a href="/api-reference/knowledge-base">知识库管理 API</a></li>
+<li><a href="/api-reference/webhooks">Webhooks API</a></li>
+</div>
+
+<div className="border rounded-lg p-6">
+<h3>📝 使用指南</h3>
+<ul>
+<li><a href="/guides/table-filling-guide">表格填充教程</a></li>
+<li><a href="/guides/kb-management-guide">知识库管理教程</a></li>
+<li><a href="/guides/langchain-integration">LangChain 集成</a></li>
+</ul>
+</div>
+
+<div className="border rounded-lg p-6">
+<h3>🛠️ SDK</h3>
+<ul>
+<li><a href="/sdks/python">Python SDK</a></li>
+<li><a href="/sdks/typescript">TypeScript SDK</a></li>
+<li><a href="/sdks/examples">代码示例</a></li>
+</ul>
+</div>
+
+</div>
+
+## 🎯 使用场景
+
+### 企业文档管理
+- 智能文档分类和标签
+- 快速检索和问答
+- 知识库版本控制
+
+### 数据表格处理
+- 批量表格数据填充
+- 智能数据验证
+- 自动化数据处理流程
+
+### 开发集成
+- RESTful API 接口
+- Webhook 事件通知
+- 多语言 SDK 支持
+
+## 💡 最佳实践
+
+1. **合理设置 Webhook URL**：确保您的 Webhook 端点能够快速响应
+2. **监控任务状态**：定期检查任务状态，处理失败的任务
+3. **优化文档质量**：上传高质量的文档以获得更好的解析效果
+4. **使用适当的文件格式**：PDF 和 DOCX 通常有更好的解析效果
+
+## 🤝 获取帮助
+
+- 📧 邮箱支持：support@knowhere.ai
+- 💬 Discord 社区：[加入我们的 Discord](https://discord.gg/knowhere)
+- 🐛 问题反馈：[GitHub Issues](https://github.com/knowhere-ai/knowhere/issues)
+- 📖 更多文档：[查看完整文档](/getting-started/quickstart)
+
+---
+
+开始您的 AI 知识库之旅吧！🚀

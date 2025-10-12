@@ -1,0 +1,242 @@
+"""
+统一Job管理API
+提供Job系统的统一管理接口
+"""
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Optional, List
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.dependencies import get_db, get_current_user
+from app.core.response.ResponseResult import ResponseResult
+from app.models.database.user import User
+from app.repositories.job_repository import JobRepository
+from app.core.state_machine import JobStateMachine
+
+router = APIRouter(tags=["Job管理"])
+
+
+@router.get("/", summary="获取所有Job")
+async def list_all_jobs(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    job_type: Optional[str] = Query(None, description="任务类型过滤"),
+    status: Optional[str] = Query(None, description="状态过滤"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取所有Job（管理员功能）"""
+    try:
+        # 检查用户权限（这里简化处理，实际应该检查管理员权限）
+        if not current_user.is_superuser():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="需要管理员权限"
+            )
+        
+        job_repo = JobRepository()
+        
+        # 获取所有Jobs
+        jobs = await job_repo.get_jobs_by_user(
+            db=db,
+            user_id="all",  # 获取所有用户的Jobs
+            limit=page_size,
+            offset=(page - 1) * page_size
+        )
+        
+        # 类型过滤
+        if job_type:
+            jobs = [job for job in jobs if job.job_type == job_type]
+        
+        # 状态过滤
+        if status:
+            jobs = [job for job in jobs if job.status == status]
+        
+        return ResponseResult.ok_data(data={
+            "jobs": [
+                {
+                    "job_id": job.job_id,
+                    "job_type": job.job_type,
+                    "status": job.status,
+                    "current_state": job.current_state,
+                    "user_id": job.user_id,
+                    "created_at": job.created_at,
+                    "updated_at": job.updated_at
+                }
+                for job in jobs
+            ],
+            "total": len(jobs),
+            "page": page,
+            "page_size": page_size
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取Jobs失败: {str(e)}"
+        )
+
+
+@router.get("/stats", summary="获取Job统计信息")
+async def get_job_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取Job统计信息"""
+    try:
+        job_repo = JobRepository()
+        
+        # 获取各种状态的Job数量
+        pending_jobs = await job_repo.get_jobs_by_status(db, "pending", limit=1000)
+        processing_jobs = await job_repo.get_jobs_by_status(db, "processing", limit=1000)
+        completed_jobs = await job_repo.get_jobs_by_status(db, "completed", limit=1000)
+        failed_jobs = await job_repo.get_jobs_by_status(db, "failed", limit=1000)
+        
+        # 按类型统计
+        table_fill_jobs = [job for job in pending_jobs + processing_jobs + completed_jobs + failed_jobs 
+                          if job.job_type == "table_fill"]
+        kb_jobs = [job for job in pending_jobs + processing_jobs + completed_jobs + failed_jobs 
+                  if job.job_type == "kb_management"]
+        
+        stats = {
+            "total_jobs": len(pending_jobs) + len(processing_jobs) + len(completed_jobs) + len(failed_jobs),
+            "by_status": {
+                "pending": len(pending_jobs),
+                "processing": len(processing_jobs),
+                "completed": len(completed_jobs),
+                "failed": len(failed_jobs)
+            },
+            "by_type": {
+                "table_fill": len(table_fill_jobs),
+                "kb_management": len(kb_jobs)
+            },
+            "success_rate": len(completed_jobs) / max(1, len(completed_jobs) + len(failed_jobs))
+        }
+        
+        return ResponseResult.ok_data(data=stats)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取统计信息失败: {str(e)}"
+        )
+
+
+@router.post("/{job_id}/retry", summary="重试Job")
+async def retry_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """重试失败的Job"""
+    try:
+        job_repo = JobRepository()
+        
+        # 获取Job
+        job = await job_repo.get_job_by_id(db, job_id)
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job不存在"
+            )
+        
+        # 检查权限
+        if str(job.user_id) != str(current_user.id) and not current_user.is_superuser():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权限操作此Job"
+            )
+        
+        # 检查Job状态
+        if job.status != "failed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="只能重试失败的Job"
+            )
+        
+        # 重置Job状态
+        state_machine = JobStateMachine()
+        await state_machine.transition(db, job_id, "pending")
+        
+        # 重新启动工作流
+        if job.job_type == "table_fill":
+            from app.services.table_fill.orchestrator import TableFillOrchestrator
+            orchestrator = TableFillOrchestrator()
+            await orchestrator.start_workflow(
+                db=db,
+                job_id=job_id,
+                source_type=job.source_type,
+                file_path=job.file_path,
+                file_url=None,  # 需要从metadata获取
+                user_id=str(job.user_id)
+            )
+        elif job.job_type == "kb_management":
+            from app.services.knowledge.kb_orchestrator import KBOrchestrator
+            orchestrator = KBOrchestrator()
+            await orchestrator.start_workflow(
+                db=db,
+                job_id=job_id,
+                source_type=job.source_type,
+                file_path=job.file_path,
+                file_url=None,  # 需要从metadata获取
+                user_id=str(job.user_id)
+            )
+        
+        return ResponseResult.ok_data(data={
+            "job_id": job_id,
+            "status": "retrying",
+            "message": "Job重试已启动"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"重试Job失败: {str(e)}"
+        )
+
+
+@router.delete("/{job_id}", summary="删除Job")
+async def delete_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """删除Job（仅限管理员）"""
+    try:
+        # 检查管理员权限
+        if not current_user.is_superuser():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="需要管理员权限"
+            )
+        
+        job_repo = JobRepository()
+        
+        # 获取Job
+        job = await job_repo.get_job_by_id(db, job_id)
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job不存在"
+            )
+        
+        # 删除Job（级联删除相关记录）
+        await db.delete(job)
+        await db.commit()
+        
+        return ResponseResult.ok_data(data={
+            "job_id": job_id,
+            "status": "deleted",
+            "message": "Job已删除"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除Job失败: {str(e)}"
+        )

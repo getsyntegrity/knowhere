@@ -1,0 +1,328 @@
+"""
+文件上传服务
+"""
+import os
+import uuid
+import asyncio
+import aiohttp
+from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
+from loguru import logger
+
+import boto3
+from botocore.exceptions import ClientError
+from app.core.config import settings
+
+
+class FileUploadService:
+    """文件上传服务"""
+    
+    def __init__(self):
+        self.s3_client = settings.get_s3_client()
+        self.uploads_bucket = settings.S3_BUCKET_NAME
+        self.results_bucket = getattr(settings, 'S3_RESULTS_BUCKET', settings.S3_BUCKET_NAME)
+    
+    async def handle_direct_upload(self, file_path: str, job_id: str) -> str:
+        """
+        处理直传文件
+        
+        Args:
+            file_path: 本地文件路径
+            job_id: 任务ID
+            
+        Returns:
+            str: S3键
+        """
+        try:
+            # 生成S3键
+            file_extension = os.path.splitext(file_path)[1]
+            s3_key = f"uploads/{job_id}{file_extension}"
+            
+            # 上传到S3
+            await self._upload_to_s3(file_path, s3_key, self.uploads_bucket)
+            
+            logger.info(f"文件直传成功: {file_path} -> {s3_key}")
+            return s3_key
+            
+        except Exception as e:
+            logger.error(f"文件直传失败: {e}")
+            raise
+    
+    async def handle_url_upload(self, file_url: str, job_id: str) -> str:
+        """
+        处理URL外链下载
+        
+        Args:
+            file_url: 文件URL
+            job_id: 任务ID
+            
+        Returns:
+            str: S3键
+        """
+        try:
+            # 下载文件到临时目录
+            temp_file_path = await self._download_file_from_url(file_url)
+            
+            try:
+                # 生成S3键
+                file_extension = os.path.splitext(file_url.split('?')[0])[1]
+                s3_key = f"uploads/{job_id}{file_extension}"
+                
+                # 上传到S3
+                await self._upload_to_s3(temp_file_path, s3_key, self.uploads_bucket)
+                
+                logger.info(f"URL文件下载上传成功: {file_url} -> {s3_key}")
+                return s3_key
+                
+            finally:
+                # 清理临时文件
+                if os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+                    
+        except Exception as e:
+            logger.error(f"URL文件处理失败: {e}")
+            raise
+    
+    async def generate_upload_url(self, job_id: str, file_extension: str = "") -> Dict[str, Any]:
+        """
+        生成预签名上传URL
+        
+        Args:
+            job_id: 任务ID
+            file_extension: 文件扩展名
+            
+        Returns:
+            Dict: 包含上传URL和S3键的字典
+        """
+        try:
+            s3_key = f"uploads/{job_id}{file_extension}"
+            
+            # 生成预签名URL（1小时过期）
+            upload_url = self.s3_client.generate_presigned_url(
+                'put_object',
+                Params={
+                    'Bucket': self.uploads_bucket,
+                    'Key': s3_key,
+                    'ContentType': 'application/octet-stream'
+                },
+                ExpiresIn=3600
+            )
+            
+            return {
+                "upload_url": upload_url,
+                "s3_key": s3_key,
+                "expires_in": 3600
+            }
+            
+        except Exception as e:
+            logger.error(f"生成上传URL失败: {e}")
+            raise
+    
+    async def generate_download_url(self, s3_key: str, bucket: Optional[str] = None) -> str:
+        """
+        生成预签名下载URL
+        
+        Args:
+            s3_key: S3键
+            bucket: 存储桶名称（可选）
+            
+        Returns:
+            str: 下载URL
+        """
+        try:
+            bucket_name = bucket or self.results_bucket
+            
+            # 生成预签名URL（1小时过期）
+            download_url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': bucket_name,
+                    'Key': s3_key
+                },
+                ExpiresIn=3600
+            )
+            
+            return download_url
+            
+        except Exception as e:
+            logger.error(f"生成下载URL失败: {e}")
+            raise
+    
+    async def get_file_info(self, s3_key: str, bucket: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        获取文件信息
+        
+        Args:
+            s3_key: S3键
+            bucket: 存储桶名称（可选）
+            
+        Returns:
+            Dict: 文件信息
+        """
+        try:
+            bucket_name = bucket or self.results_bucket
+            
+            response = self.s3_client.head_object(
+                Bucket=bucket_name,
+                Key=s3_key
+            )
+            
+            return {
+                "size": response.get('ContentLength'),
+                "content_type": response.get('ContentType'),
+                "last_modified": response.get('LastModified'),
+                "etag": response.get('ETag')
+            }
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return None
+            logger.error(f"获取文件信息失败: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"获取文件信息失败: {e}")
+            raise
+    
+    async def upload_result_file(self, local_file_path: str, job_id: str, file_extension: str = "") -> str:
+        """
+        上传结果文件
+        
+        Args:
+            local_file_path: 本地文件路径
+            job_id: 任务ID
+            file_extension: 文件扩展名
+            
+        Returns:
+            str: S3键
+        """
+        try:
+            s3_key = f"results/{job_id}{file_extension}"
+            await self._upload_to_s3(local_file_path, s3_key, self.results_bucket)
+            
+            logger.info(f"结果文件上传成功: {local_file_path} -> {s3_key}")
+            return s3_key
+            
+        except Exception as e:
+            logger.error(f"结果文件上传失败: {e}")
+            raise
+    
+    def _ensure_bucket_exists(self, bucket_name: str) -> bool:
+        """
+        确保存储桶存在，如果不存在则创建
+        
+        Args:
+            bucket_name: 存储桶名称
+            
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            # 检查存储桶是否存在
+            self.s3_client.head_bucket(Bucket=bucket_name)
+            logger.debug(f"存储桶 {bucket_name} 已存在")
+            return True
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == '404':
+                # 存储桶不存在，尝试创建
+                try:
+                    self.s3_client.create_bucket(Bucket=bucket_name)
+                    logger.info(f"成功创建存储桶: {bucket_name}")
+                    return True
+                except ClientError as create_error:
+                    logger.error(f"创建存储桶失败: {create_error}")
+                    return False
+            else:
+                logger.error(f"检查存储桶时出错: {e}")
+                return False
+        except Exception as e:
+            logger.error(f"检查存储桶时发生意外错误: {e}")
+            return False
+
+    async def _upload_to_s3(self, local_file_path: str, s3_key: str, bucket: str):
+        """上传文件到S3"""
+        # 确保存储桶存在
+        if not self._ensure_bucket_exists(bucket):
+            raise Exception(f"无法确保存储桶 {bucket} 存在")
+        
+        def _upload():
+            self.s3_client.upload_file(local_file_path, bucket, s3_key)
+        
+        # 在线程池中执行同步上传
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _upload)
+    
+    async def download_from_s3(self, s3_key: str, bucket: Optional[str] = None) -> str:
+        """从S3下载文件到本地临时目录"""
+        import tempfile
+        import uuid
+        
+        if bucket is None:
+            bucket = settings.S3_BUCKET_NAME
+            
+        # 创建临时文件
+        temp_dir = getattr(settings, 'TMP_PATH', '/tmp')
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # 生成临时文件名，保持原文件扩展名
+        file_extension = os.path.splitext(s3_key)[1]
+        temp_filename = f"temp_{uuid.uuid4().hex}{file_extension}"
+        temp_file_path = os.path.join(temp_dir, temp_filename)
+        
+        try:
+            # 使用boto3下载文件
+            def _download():
+                self.s3_client.download_file(bucket, s3_key, temp_file_path)
+            
+            # 在事件循环中执行同步操作
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _download)
+            
+            return temp_file_path
+            
+        except Exception as e:
+            # 清理临时文件
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            raise Exception(f"从S3下载文件失败: {e}")
+    
+    async def _download_file_from_url(self, file_url: str) -> str:
+        """从URL下载文件到临时目录"""
+        temp_dir = getattr(settings, 'TMP_PATH', '/tmp')
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # 生成临时文件名
+        temp_filename = f"temp_{uuid.uuid4().hex}"
+        temp_file_path = os.path.join(temp_dir, temp_filename)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url) as response:
+                    if response.status != 200:
+                        raise Exception(f"下载失败，状态码: {response.status}")
+                    
+                    with open(temp_file_path, 'wb') as f:
+                        async for chunk in response.content.iter_chunked(8192):
+                            f.write(chunk)
+            
+            return temp_file_path
+            
+        except Exception as e:
+            # 清理临时文件
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            raise Exception(f"下载文件失败: {e}")
+    
+    def generate_s3_key(self, job_id: str, file_extension: str = "", prefix: str = "uploads") -> str:
+        """
+        生成S3键
+        
+        Args:
+            job_id: 任务ID
+            file_extension: 文件扩展名
+            prefix: 前缀（uploads 或 results）
+            
+        Returns:
+            str: S3键
+        """
+        return f"{prefix}/{job_id}{file_extension}"

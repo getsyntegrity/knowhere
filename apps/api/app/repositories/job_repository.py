@@ -1,0 +1,284 @@
+"""
+Job仓储层
+"""
+from typing import Optional, List, Dict, Any
+from sqlalchemy import select, and_, desc
+from sqlalchemy.ext.asyncio import AsyncSession
+from loguru import logger
+
+from app.models.database.job import Job
+from app.models.database.job_state_history import JobStateHistory
+from app.core.state_machine import JobStateMachine
+
+
+class JobRepository:
+    """Job仓储类"""
+    
+    def __init__(self):
+        self.state_machine = JobStateMachine()
+    
+    async def create_job(
+        self, 
+        db: AsyncSession, 
+        user_id: str, 
+        job_type: str, 
+        source_type: str,
+        file_path: Optional[str] = None,
+        webhook_url: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Optional[Job]:
+        """创建Job"""
+        try:
+            job = Job(
+                user_id=user_id,
+                job_type=job_type,
+                status="pending",
+                current_state="pending",
+                source_type=source_type,
+                file_path=file_path,
+                webhook_url=webhook_url,
+                webhook_enabled=bool(webhook_url),
+                job_metadata=metadata
+            )
+            
+            db.add(job)
+            await db.commit()
+            await db.refresh(job)
+            
+            logger.info(f"Job {job.job_id} 创建成功")
+            return job
+            
+        except Exception as e:
+            logger.error(f"创建Job失败: {e}")
+            await db.rollback()
+            return None
+    
+    async def get_job_by_id(self, db: AsyncSession, job_id: str) -> Optional[Job]:
+        """根据ID获取Job"""
+        try:
+            result = await db.execute(select(Job).where(Job.job_id == job_id))
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"获取Job {job_id} 失败: {e}")
+            return None
+    
+    async def get_jobs_by_user(
+        self, 
+        db: AsyncSession, 
+        user_id: str, 
+        limit: int = 50, 
+        offset: int = 0
+    ) -> List[Job]:
+        """获取用户的Jobs"""
+        try:
+            result = await db.execute(
+                select(Job)
+                .where(Job.user_id == user_id)
+                .order_by(desc(Job.created_at))
+                .limit(limit)
+                .offset(offset)
+            )
+            return result.scalars().all()
+        except Exception as e:
+            logger.error(f"获取用户 {user_id} Jobs失败: {e}")
+            return []
+    
+    async def update_job_state(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        to_state: str, 
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """更新Job状态（通过状态机）"""
+        return await self.state_machine.transition(db, job_id, to_state, metadata)
+    
+    async def update_job_s3_key(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        s3_key: str
+    ) -> bool:
+        """更新Job的S3键"""
+        try:
+            job = await self.get_job_by_id(db, job_id)
+            if not job:
+                return False
+            
+            job.s3_key = s3_key
+            await db.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"更新Job {job_id} S3键失败: {e}")
+            await db.rollback()
+            return False
+    
+    async def update_job_result_s3_key(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        result_s3_key: str
+    ) -> bool:
+        """更新Job结果S3键"""
+        try:
+            job = await self.get_job_by_id(db, job_id)
+            if not job:
+                return False
+            
+            job.result_s3_key = result_s3_key
+            await db.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"更新Job {job_id} 结果S3键失败: {e}")
+            await db.rollback()
+            return False
+    
+    async def update_job_file_url(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        file_url: str
+    ) -> bool:
+        """更新Job的文件URL"""
+        try:
+            job = await self.get_job_by_id(db, job_id)
+            if not job:
+                return False
+            
+            # 将file_url存储到job_metadata中
+            if not job.job_metadata:
+                job.job_metadata = {}
+            job.job_metadata["file_url"] = file_url
+            await db.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"更新Job {job_id} 文件URL失败: {e}")
+            await db.rollback()
+            return False
+    
+    async def mark_job_failed(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        error_message: str
+    ) -> bool:
+        """标记Job为失败"""
+        return await self.state_machine.mark_failed(db, job_id, error_message)
+    
+    async def mark_job_completed(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        result_metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """标记Job为完成"""
+        return await self.state_machine.mark_completed(db, job_id, result_metadata)
+    
+    async def get_job_state_history(
+        self, 
+        db: AsyncSession, 
+        job_id: str
+    ) -> List[JobStateHistory]:
+        """获取Job状态历史"""
+        try:
+            result = await db.execute(
+                select(JobStateHistory)
+                .where(JobStateHistory.job_id == job_id)
+                .order_by(JobStateHistory.created_at)
+            )
+            return result.scalars().all()
+        except Exception as e:
+            logger.error(f"获取Job {job_id} 状态历史失败: {e}")
+            return []
+    
+    async def get_jobs_by_status(
+        self, 
+        db: AsyncSession, 
+        status: str, 
+        limit: int = 100
+    ) -> List[Job]:
+        """根据状态获取Jobs"""
+        try:
+            result = await db.execute(
+                select(Job)
+                .where(Job.status == status)
+                .order_by(Job.created_at)
+                .limit(limit)
+            )
+            return result.scalars().all()
+        except Exception as e:
+            logger.error(f"获取状态为 {status} 的Jobs失败: {e}")
+            return []
+    
+    async def update_job_status(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        status: str, 
+        error_message: Optional[str] = None
+    ) -> bool:
+        """更新Job状态"""
+        try:
+            result = await db.execute(select(Job).where(Job.job_id == job_id))
+            job = result.scalars().first()
+            
+            if job:
+                job.status = status
+                if error_message:
+                    job.error_message = error_message
+                
+                await db.commit()
+                await db.refresh(job)
+                
+                logger.info(f"Job {job_id} 状态更新为 {status}")
+                return True
+            return False
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"更新Job {job_id} 状态失败: {e}")
+            return False
+    
+    async def get_job_state_metadata(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        state: str, 
+        metadata_key: str
+    ) -> Optional[Any]:
+        """获取Job状态历史中的特定元数据"""
+        try:
+            result = await db.execute(
+                select(JobStateHistory.transition_metadata)
+                .where(
+                    and_(
+                        JobStateHistory.job_id == job_id,
+                        JobStateHistory.to_state == state
+                    )
+                )
+                .order_by(desc(JobStateHistory.created_at))
+                .limit(1)
+            )
+            metadata = result.scalar_one_or_none()
+            
+            if metadata:
+                # 如果metadata是字符串，尝试解析JSON
+                if isinstance(metadata, str):
+                    try:
+                        import json
+                        metadata = json.loads(metadata)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"解析Job {job_id} 状态 {state} 元数据JSON失败: {e}")
+                        return None
+                
+                # 如果metadata是字典，返回指定key的值
+                if isinstance(metadata, dict):
+                    return metadata.get(metadata_key)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"获取Job {job_id} 状态 {state} 元数据 {metadata_key} 失败: {e}")
+            return None

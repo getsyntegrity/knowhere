@@ -1,0 +1,359 @@
+# 知识库管理 API
+
+知识库管理 API 允许您上传文档，进行解析、分块、向量化并存储到知识库中。
+
+## 基础信息
+
+- **基础 URL**: `https://api.knowhere.ai`
+- **API 版本**: v1
+- **认证**: Bearer Token (API Key)
+
+## 创建知识库任务
+
+创建一个新的知识库管理任务。
+
+### 请求
+
+```http
+POST /v1/kb/jobs
+Content-Type: application/json
+Authorization: Bearer <YOUR_API_KEY>
+
+{
+  "file_url": "https://example.com/document.pdf",
+  "webhook_url": "https://your-app.com/webhook",
+  "metadata": {
+    "title": "产品手册",
+    "category": "documentation"
+  }
+}
+```
+
+### 参数
+
+| 参数 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `file_url` | string | 是 | 文档文件的 URL |
+| `webhook_url` | string | 否 | Webhook 通知 URL |
+| `metadata` | object | 否 | 额外的元数据 |
+
+### 响应
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_1234567890",
+    "status": "pending",
+    "current_state": "uploading_file",
+    "created_at": "2024-01-15T10:30:00Z",
+    "file_url": "https://example.com/document.pdf",
+    "webhook_url": "https://your-app.com/webhook"
+  }
+}
+```
+
+## 查询任务状态
+
+获取知识库管理任务的当前状态。
+
+### 请求
+
+```http
+GET /v1/kb/jobs/{job_id}
+Authorization: Bearer <YOUR_API_KEY>
+```
+
+### 路径参数
+
+| 参数 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `job_id` | string | 是 | 任务 ID |
+
+### 响应
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_1234567890",
+    "status": "processing",
+    "current_state": "parsing_document",
+    "progress": 60,
+    "created_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-01-15T10:35:00Z",
+    "file_url": "https://example.com/document.pdf",
+    "webhook_url": "https://your-app.com/webhook",
+    "metadata": {
+      "title": "产品手册",
+      "category": "documentation"
+    },
+    "processing_stats": {
+      "pages_processed": 15,
+      "chunks_created": 45,
+      "vectors_generated": 45
+    }
+  }
+}
+```
+
+### 状态说明
+
+| 状态 | 说明 |
+|------|------|
+| `pending` | 任务已创建，等待处理 |
+| `processing` | 任务正在处理中 |
+| `completed` | 任务已完成 |
+| `failed` | 任务处理失败 |
+
+### 详细状态
+
+| 状态 | 说明 |
+|------|------|
+| `uploading_file` | 正在上传文件 |
+| `parsing_document` | 正在解析文档 |
+| `chunking_document` | 正在分块文档 |
+| `vectorizing_chunks` | 正在向量化分块 |
+| `storing_vectors` | 正在存储向量 |
+| `storing_metadata` | 正在存储元数据 |
+| `sending_webhook` | 正在发送 Webhook |
+
+## 下载处理结果
+
+下载知识库处理的结果文件（包含处理统计信息）。
+
+### 请求
+
+```http
+GET /v1/kb/jobs/{job_id}/download
+Authorization: Bearer <YOUR_API_KEY>
+```
+
+### 路径参数
+
+| 参数 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `job_id` | string | 是 | 任务 ID |
+
+### 响应
+
+成功时返回 JSON 格式的处理结果：
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_1234567890",
+    "processing_stats": {
+      "total_pages": 20,
+      "pages_processed": 20,
+      "chunks_created": 60,
+      "vectors_generated": 60,
+      "processing_time_seconds": 45.2
+    },
+    "document_info": {
+      "title": "产品手册",
+      "file_type": "pdf",
+      "file_size_bytes": 2048576,
+      "language": "zh-CN"
+    },
+    "chunks": [
+      {
+        "chunk_id": "chunk_001",
+        "content": "这是第一个文档分块的内容...",
+        "page_number": 1,
+        "vector_id": "vec_001"
+      }
+    ]
+  }
+}
+```
+
+## 错误处理
+
+### 常见错误
+
+| 错误码 | HTTP 状态码 | 说明 |
+|--------|-------------|------|
+| `invalid_file_url` | 400 | 文件 URL 无效 |
+| `unsupported_file_type` | 400 | 不支持的文件类型 |
+| `job_not_found` | 404 | 任务不存在 |
+| `job_not_completed` | 400 | 任务尚未完成 |
+| `insufficient_credits` | 402 | Credits 不足 |
+| `parsing_failed` | 500 | 文档解析失败 |
+
+### 错误响应格式
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "error_code",
+    "message": "错误描述",
+    "details": "详细错误信息"
+  }
+}
+```
+
+## 使用示例
+
+### Python
+
+```python
+import requests
+import time
+
+# 创建知识库任务
+response = requests.post(
+    "https://api.knowhere.ai/v1/kb/jobs",
+    headers={"Authorization": "Bearer <YOUR_API_KEY>"},
+    json={
+        "file_url": "https://example.com/document.pdf",
+        "webhook_url": "https://your-app.com/webhook",
+        "metadata": {
+            "title": "产品手册",
+            "category": "documentation"
+        }
+    }
+)
+
+job = response.json()["data"]
+print(f"任务已创建: {job['job_id']}")
+
+# 轮询状态
+while True:
+    status_response = requests.get(
+        f"https://api.knowhere.ai/v1/kb/jobs/{job['job_id']}",
+        headers={"Authorization": "Bearer <YOUR_API_KEY>"}
+    )
+    
+    status = status_response.json()["data"]
+    print(f"当前状态: {status['current_state']}")
+    
+    if status["status"] in ["completed", "failed"]:
+        break
+    
+    time.sleep(5)
+
+# 下载结果
+if status["status"] == "completed":
+    result_response = requests.get(
+        f"https://api.knowhere.ai/v1/kb/jobs/{job['job_id']}/download",
+        headers={"Authorization": "Bearer <YOUR_API_KEY>"}
+    )
+    
+    result = result_response.json()["data"]
+    print(f"处理完成: {result['processing_stats']['chunks_created']} 个分块已创建")
+```
+
+### JavaScript
+
+```javascript
+// 创建知识库任务
+const createKBJob = async () => {
+  const response = await fetch('https://api.knowhere.ai/v1/kb/jobs', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer <YOUR_API_KEY>',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      file_url: 'https://example.com/document.pdf',
+      webhook_url: 'https://your-app.com/webhook',
+      metadata: {
+        title: '产品手册',
+        category: 'documentation'
+      }
+    })
+  });
+  
+  const job = await response.json();
+  console.log(`任务已创建: ${job.data.job_id}`);
+  return job.data;
+};
+
+// 轮询状态
+const pollKBStatus = async (jobId) => {
+  while (true) {
+    const response = await fetch(`https://api.knowhere.ai/v1/kb/jobs/${jobId}`, {
+      headers: {
+        'Authorization': 'Bearer <YOUR_API_KEY>'
+      }
+    });
+    
+    const status = await response.json();
+    console.log(`当前状态: ${status.data.current_state}`);
+    
+    if (['completed', 'failed'].includes(status.data.status)) {
+      return status.data;
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+};
+
+// 下载结果
+const downloadKBResult = async (jobId) => {
+  const response = await fetch(`https://api.knowhere.ai/v1/kb/jobs/${jobId}/download`, {
+    headers: {
+      'Authorization': 'Bearer <YOUR_API_KEY>'
+    }
+  });
+  
+  const result = await response.json();
+  console.log(`处理完成: ${result.data.processing_stats.chunks_created} 个分块已创建`);
+  return result.data;
+};
+
+// 完整流程
+const main = async () => {
+  const job = await createKBJob();
+  const status = await pollKBStatus(job.job_id);
+  
+  if (status.status === 'completed') {
+    const result = await downloadKBResult(job.job_id);
+    console.log('知识库处理完成:', result);
+  }
+};
+```
+
+## 支持的文件格式
+
+| 格式 | 扩展名 | 说明 |
+|------|--------|------|
+| PDF | .pdf | 支持文本和图片提取 |
+| Word | .docx, .doc | 支持格式保持 |
+| PowerPoint | .pptx, .ppt | 支持幻灯片内容提取 |
+| 纯文本 | .txt | 直接文本处理 |
+| Markdown | .md | 支持 Markdown 格式 |
+| 图片 | .jpg, .png, .gif | OCR 文字识别 |
+
+## 处理统计信息
+
+每个任务完成后会提供详细的处理统计：
+
+```json
+{
+  "processing_stats": {
+    "total_pages": 20,           // 总页数
+    "pages_processed": 20,       // 已处理页数
+    "chunks_created": 60,        // 创建的分块数
+    "vectors_generated": 60,     // 生成的向量数
+    "processing_time_seconds": 45.2,  // 处理时间（秒）
+    "file_size_bytes": 2048576,  // 文件大小（字节）
+    "language_detected": "zh-CN" // 检测到的语言
+  }
+}
+```
+
+## 限制和配额
+
+- 文件大小限制：50MB
+- 支持格式：PDF, DOCX, PPTX, TXT, MD, JPG, PNG, GIF
+- 处理超时：1小时
+- 最大分块数：1000
+- 并发任务限制：根据订阅计划而定
+
+---
+
+下一步：[Webhooks API](/api-reference/webhooks)
