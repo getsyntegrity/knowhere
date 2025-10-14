@@ -2,9 +2,18 @@
 Celery应用配置
 避免循环导入问题
 """
+import os
+import socket
 from celery import Celery
 from kombu import Queue
 from app.core.config import app_config
+
+# 生成唯一的节点名称
+def get_unique_node_name():
+    """生成唯一的 Celery 节点名称"""
+    hostname = socket.gethostname()
+    pid = os.getpid()
+    return f"celery@{hostname}-{pid}"
 
 # 创建Celery应用实例
 celery_app = Celery(
@@ -69,6 +78,9 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     task_ignore_result=False,
     result_expires=3600,  # 1小时
+    # 节点名称和PID配置
+    worker_hijack_root_logger=False,
+    worker_log_color=False,
     # RabbitMQ特定配置
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,

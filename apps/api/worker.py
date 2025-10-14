@@ -19,6 +19,17 @@ from app.core.celery_app import celery_app
 if __name__ == "__main__":
     # 设置环境变量
     os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
+    
+    # 生成唯一的节点名称
+    import socket
+    hostname = socket.gethostname()
+    pid = os.getpid()
+    node_name = f"celery@{hostname}-{pid}"
 
-    # 启动 worker
-    celery_app.worker_main(["worker", "--loglevel=info", "--concurrency=2"])
+    # 启动 worker，使用唯一的节点名称
+    celery_app.worker_main([
+        "worker", 
+        "--loglevel=info", 
+        "--concurrency=2",
+        f"--hostname={node_name}"
+    ])
