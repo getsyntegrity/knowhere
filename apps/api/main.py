@@ -41,29 +41,16 @@ async def lifespan(app: FastAPI):
     await redis_pool_manager.init_pool()
     logger.info("Redis 连接池已创建。")
 
-    # worker = Worker(
-    #     functions = [process_ai_query],
-    #     redis_settings = settings.get_redis_settings(),
-    #     max_jobs = 20,
-    #     job_timeout = 60000  # 任务超时60000秒，这里的默认值是359.99秒，当然这是个治标不治本的方法，后续再做真实性能优化
-    # )
-    # worker_task  = asyncio.create_task(worker.main())
-    # app.state.worker = worker
-
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     # Redis连接池已通过redis_pool_manager初始化
     # app.state.redis_pool = redis_pool
     yield
+    # 应用关闭时的清理工作
     # Redis连接池关闭已通过redis_pool_manager处理
     # await app.state.redis_pool.close()
     # logger.info("Redis 连接池已关闭。")
     await engine.dispose()
     logger.info("数据库引擎连接池已关闭。")
-    # if hasattr(app.state, 'worker'):
-    #     logger.info("正在关闭后台Worker...")
-    #     await app.state.worker.close()
-    #     await worker_task
-    #     logger.info("后台Worker已关闭。")
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -82,7 +69,7 @@ def create_app() -> FastAPI:
     # 添加Moesif API监控中间件
     app.add_middleware(MoesifMiddleware)
     
-    # 添加API Key认证中间件（可选，根据需要启用）
+    # 添加API Key认证中间件
     # app.add_middleware(api_key_auth_middleware)
 
     # 创建 FastAPI Users 实例

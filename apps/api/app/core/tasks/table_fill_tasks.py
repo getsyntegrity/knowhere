@@ -2,7 +2,7 @@
 表格填充Celery任务
 """
 import asyncio
-import json
+import os
 from typing import Dict, Any, Optional
 from celery import Task
 from loguru import logger
@@ -10,6 +10,7 @@ from loguru import logger
 from app.core.celery_app import get_celery_app
 from app.core.state_machine import JobStateMachine, TableFillState
 from app.repositories.job_repository import JobRepository
+from app.repositories.job_result_repository import JobResultRepository
 from app.services.storage.file_upload_service import FileUploadService
 from app.core.database import get_db_context
 
@@ -135,6 +136,7 @@ async def _upload_file_async(job_id: str, source_type: str, file_path: Optional[
     state_machine = JobStateMachine()
     job_repo = JobRepository()
     upload_service = FileUploadService()
+    job_result_repo = JobResultRepository()
     
     try:
         # 更新状态：开始上传
@@ -142,17 +144,26 @@ async def _upload_file_async(job_id: str, source_type: str, file_path: Optional[
             await state_machine.transition(db, job_id, TableFillState.UPLOADING.value)
             
             # 执行上传
-            if source_type == "file_upload":
-                s3_key = await upload_service.handle_direct_upload(file_path, job_id)
-            elif source_type == "direct_upload":
-                s3_key = await upload_service.handle_direct_upload(file_path, job_id)
+            if source_type == "file":
+                # 文件已通过S3直传，验证存在性
+                job = await job_repo.get_job_by_id(db, job_id)
+                if not job or not job.s3_key:
+                    raise ValueError(f"Job {job_id} 缺少S3键信息")
+                
+                # 验证S3文件存在
+                file_info = await upload_service.verify_s3_file_exists(job.s3_key)
+                if not file_info.get("exists"):
+                    raise ValueError(f"S3文件不存在: {job.s3_key}")
+                
+                s3_key = job.s3_key
+                logger.info(f"文件已通过S3直传: {s3_key}")
+                
             elif source_type == "url":
                 s3_key = await upload_service.handle_url_upload(file_url, job_id)
+                # 更新Job的S3键
+                await job_repo.update_job_s3_key(db, job_id, s3_key)
             else:
                 raise ValueError(f"不支持的文件来源类型: {source_type}")
-            
-            # 更新Job的S3键
-            await job_repo.update_job_s3_key(db, job_id, s3_key)
             
             # 更新状态：上传完成
             await state_machine.transition(db, job_id, TableFillState.UPLOADED.value)
@@ -576,6 +587,7 @@ async def _generate_result_async(job_id: str, filled_table_data: Dict[str, Any],
                         df.to_excel(writer, sheet_name=table["sheet_name"], index=False)
                 
                 # 上传到S3
+                file_size = os.path.getsize(temp_file.name)
                 result_s3_key = await upload_service.upload_result_file(
                     temp_file.name, job_id, ".xlsx"
                 )
@@ -584,21 +596,32 @@ async def _generate_result_async(job_id: str, filled_table_data: Dict[str, Any],
                 import os
                 os.unlink(temp_file.name)
             
-            # 更新Job的结果S3键
-            await job_repo.update_job_result_s3_key(db, job_id, result_s3_key)
-            
+            job_result = await job_result_repo.upsert_job_result(
+                db,
+                job_id=job_id,
+                delivery_mode="url",
+                document_metadata={
+                    "file_type": "xlsx",
+                    "filled_tables": len(filled_table_data.get("filled_tables", []))
+                },
+                result_s3_key=result_s3_key,
+                result_size=file_size
+            )
+            await job_result_repo.replace_chunks(db, job_result.id, [])
+
             # 更新状态：任务完成
             result_metadata = {
                 "result_s3_key": result_s3_key,
                 "file_type": "xlsx",
-                "fill_statistics": filled_table_data.get("fill_statistics", {})
+                "fill_statistics": filled_table_data.get("fill_statistics", {}),
+                "delivery_mode": "url"
             }
             await state_machine.mark_completed(db, job_id, result_metadata)
-            
+
             # 发送任务完成邮件
             await _send_job_completion_email(db, job_id, "table_fill", result_s3_key)
-            
-            return {"status": "success", "result_s3_key": result_s3_key, "job_id": job_id}
+
+            return {"status": "success", "result_s3_key": result_s3_key, "job_id": job_id, "delivery_mode": "url"}
             
     except Exception as e:
         logger.error(f"生成结果失败: {e}")

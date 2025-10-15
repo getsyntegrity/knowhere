@@ -77,11 +77,14 @@ KB_MANAGEMENT_TRANSITIONS: Dict[str, List[str]] = {
     KBManagementState.VECTORIZED.value: [KBManagementState.STORING_DB.value, KBManagementState.FAILED.value],
     KBManagementState.STORING_DB.value: [KBManagementState.DB_STORED.value, KBManagementState.FAILED.value, KBManagementState.STORING_DB.value],  # 支持重试
     KBManagementState.DB_STORED.value: [KBManagementState.COMPLETED.value, KBManagementState.FAILED.value],
+    # 失败状态可以重试回到pending
+    KBManagementState.FAILED.value: [KBManagementState.PENDING.value],
 }
 
 # 终态集合
-TERMINAL_STATES: Set[str] = {TableFillState.COMPLETED.value, TableFillState.FAILED.value, 
-                            KBManagementState.COMPLETED.value, KBManagementState.FAILED.value}
+TERMINAL_STATES: Set[str] = {TableFillState.COMPLETED.value, TableFillState.FAILED.value,
+                            KBManagementState.COMPLETED.value, KBManagementState.FAILED.value,
+                            "completed", "failed"}
 
 # 处理中状态集合
 PROCESSING_STATES: Set[str] = {
@@ -121,10 +124,78 @@ def is_processing_state(state: str) -> bool:
 
 
 def get_job_status_from_state(state: str) -> str:
-    """根据详细状态获取Job顶层状态"""
-    if is_terminal_state(state):
-        return state  # completed 或 failed
-    elif state == "pending":
+    """根据详细状态获取Job顶层状态（内部使用）"""
+    if not state:
         return "pending"
-    else:
-        return "processing"
+    normalized_state = state.lower()
+    if normalized_state in {"failed", KBManagementState.FAILED.value, TableFillState.FAILED.value}:
+        return "failed"
+    if normalized_state in {"completed", KBManagementState.COMPLETED.value, TableFillState.COMPLETED.value}:
+        return "completed"
+    if normalized_state == "pending":
+        return "pending"
+    return "processing"
+
+
+def get_prd_status_from_state(state: str) -> str:
+    """将内部状态映射为PRD定义的状态"""
+    if not state:
+        return "pending"
+
+    normalized_state = state.lower()
+
+    if normalized_state in {"failed", KBManagementState.FAILED.value, TableFillState.FAILED.value}:
+        return "failed"
+    if normalized_state in {"completed", KBManagementState.COMPLETED.value, TableFillState.COMPLETED.value}:
+        return "done"
+
+    waiting_states = {
+        "waiting_for_upload",
+        TableFillState.UPLOADING.value,
+        KBManagementState.UPLOADING.value
+    }
+    if normalized_state in waiting_states:
+        return "waiting_for_upload"
+
+    pending_states = {
+        "pending",
+        TableFillState.PENDING.value,
+        KBManagementState.PENDING.value,
+        TableFillState.UPLOADED.value,
+        KBManagementState.UPLOADED.value
+    }
+    if normalized_state in pending_states:
+        return "pending"
+
+    converting_states = {
+        "converting",
+        KBManagementState.PARSING.value,
+        KBManagementState.PARSED.value,
+        KBManagementState.CHUNKING.value,
+        KBManagementState.CHUNKED.value,
+        TableFillState.EXTRACTING_TABLE.value,
+        TableFillState.TABLE_EXTRACTED.value
+    }
+    if normalized_state in converting_states:
+        return "converting"
+
+    running_states = {
+        "processing",
+        "running",
+        KBManagementState.VECTORIZING.value,
+        KBManagementState.VECTORIZED.value,
+        KBManagementState.STORING_DB.value,
+        KBManagementState.DB_STORED.value,
+        KBManagementState.WEBHOOK_SENDING.value,
+        TableFillState.KB_SEARCHING.value,
+        TableFillState.KB_SEARCHED.value,
+        TableFillState.LLM_PROCESSING.value,
+        TableFillState.LLM_PROCESSED.value,
+        TableFillState.FILLING_TABLE.value,
+        TableFillState.TABLE_FILLED.value,
+        TableFillState.GENERATING_RESULT.value
+    }
+    if normalized_state in running_states:
+        return "running"
+
+    return "running"

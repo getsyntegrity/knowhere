@@ -12,6 +12,8 @@ from .api_key import APIKey
 from .subscription import Subscription
 from .credits_transaction import CreditsTransaction
 from .usage_log import UsageLog
+from .job import Job
+from .job_result import JobResult, JobChunk
 
 # 3. 最后导入其他模型
 # from .oauth_provider import OAuthProvider  # 暂时注释掉，避免循环导入
@@ -24,5 +26,8 @@ __all__ = [
     "Subscription",
     "CreditsTransaction",
     "UsageLog",
+    "Job",
+    "JobResult",
+    "JobChunk",
     # "OAuthProvider"
 ]

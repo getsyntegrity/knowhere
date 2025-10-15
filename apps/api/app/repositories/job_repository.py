@@ -3,12 +3,13 @@ Job仓储层
 """
 from typing import Optional, List, Dict, Any
 from sqlalchemy import select, and_, desc
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.models.database.job import Job
 from app.models.database.job_state_history import JobStateHistory
-from app.core.state_machine import JobStateMachine
+from app.core.state_machine import JobStateMachine, get_job_status_from_state
 
 
 class JobRepository:
@@ -23,23 +24,29 @@ class JobRepository:
         user_id: str, 
         job_type: str, 
         source_type: str,
+        job_id: Optional[str] = None,
         file_path: Optional[str] = None,
         webhook_url: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        initial_state: Optional[str] = "pending"
     ) -> Optional[Job]:
         """创建Job"""
         try:
-            job = Job(
+            job_kwargs = dict(
                 user_id=user_id,
                 job_type=job_type,
-                status="pending",
-                current_state="pending",
+                status=get_job_status_from_state(initial_state) if initial_state else "pending",
+                current_state=initial_state or "pending",
                 source_type=source_type,
                 file_path=file_path,
                 webhook_url=webhook_url,
                 webhook_enabled=bool(webhook_url),
                 job_metadata=metadata
             )
+            if job_id:
+                job_kwargs["job_id"] = job_id
+            
+            job = Job(**job_kwargs)
             
             db.add(job)
             await db.commit()
@@ -56,7 +63,15 @@ class JobRepository:
     async def get_job_by_id(self, db: AsyncSession, job_id: str) -> Optional[Job]:
         """根据ID获取Job"""
         try:
-            result = await db.execute(select(Job).where(Job.job_id == job_id))
+            stmt = (
+                select(Job)
+                .options(
+                    selectinload(Job.job_result),
+                    selectinload(Job.state_history)
+                )
+                .where(Job.job_id == job_id)
+            )
+            result = await db.execute(stmt)
             return result.scalar_one_or_none()
         except Exception as e:
             logger.error(f"获取Job {job_id} 失败: {e}")
@@ -71,13 +86,15 @@ class JobRepository:
     ) -> List[Job]:
         """获取用户的Jobs"""
         try:
-            result = await db.execute(
+            stmt = (
                 select(Job)
+                .options(selectinload(Job.job_result))
                 .where(Job.user_id == user_id)
                 .order_by(desc(Job.created_at))
                 .limit(limit)
                 .offset(offset)
             )
+            result = await db.execute(stmt)
             return result.scalars().all()
         except Exception as e:
             logger.error(f"获取用户 {user_id} Jobs失败: {e}")
@@ -111,27 +128,6 @@ class JobRepository:
             
         except Exception as e:
             logger.error(f"更新Job {job_id} S3键失败: {e}")
-            await db.rollback()
-            return False
-    
-    async def update_job_result_s3_key(
-        self, 
-        db: AsyncSession, 
-        job_id: str, 
-        result_s3_key: str
-    ) -> bool:
-        """更新Job结果S3键"""
-        try:
-            job = await self.get_job_by_id(db, job_id)
-            if not job:
-                return False
-            
-            job.result_s3_key = result_s3_key
-            await db.commit()
-            return True
-            
-        except Exception as e:
-            logger.error(f"更新Job {job_id} 结果S3键失败: {e}")
             await db.rollback()
             return False
     
@@ -204,6 +200,7 @@ class JobRepository:
         try:
             result = await db.execute(
                 select(Job)
+                .options(selectinload(Job.job_result))
                 .where(Job.status == status)
                 .order_by(Job.created_at)
                 .limit(limit)

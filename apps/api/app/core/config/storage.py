@@ -32,6 +32,10 @@ class StorageConfig(BaseModel):
         description="支持的文件扩展名"
     )
     
+    # S3事件通知配置
+    S3_WEBHOOK_AUTH_TOKEN: str = Field(default="", description="MinIO webhook认证token")
+    SNS_SIGNATURE_VERIFICATION: bool = Field(default=True, description="是否验证SNS签名")
+    
     def get_s3_client(self) -> 'boto3.client':
         """获取S3客户端"""
         # 构建配置

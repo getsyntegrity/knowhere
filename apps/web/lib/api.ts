@@ -207,121 +207,90 @@ export interface SearchAskResponse {
 }
 
 // ============================================
-// 任务相关类型
+// 统一任务相关类型（符合PRD规范）
 // ============================================
 
-export interface KBJobCreateRequest {
-  source_type: 'url'
-  file_url?: string
-  webhook_url?: string
-  metadata?: Record<string, any>
+export interface WebhookConfig {
+  url: string
+  secret: string
 }
 
-export interface KBJobResponse {
+export interface ParsingParams {
+  kb_dir: string
+  doc_type?: 'auto' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'txt' | 'md'
+  smart_title_parse?: boolean
+  summary_image?: boolean
+  summary_table?: boolean
+  summary_txt?: boolean
+  add_frag_desc?: string
+}
+
+export interface JobCreate {
+  source_type: 'file' | 'url'
+  source_url?: string
+  file_name?: string
+  data_id?: string
+  parsing_params?: ParsingParams
+  webhook?: WebhookConfig
+  result_mode?: 'auto' | 'inline' | 'url'
+}
+
+export interface JobResponse {
   job_id: string
   status: string
-  current_state?: string
   source_type: string
-  file_path?: string
-  s3_key?: string
-  result_s3_key?: string
-  webhook_url?: string
-  webhook_enabled: boolean
-  error_message?: string
+  data_id?: string
   created_at: string
-  updated_at: string
+  result_mode: 'auto' | 'inline' | 'url'
+  
+  // waiting_for_upload状态特有字段
+  upload_url?: string
+  upload_headers?: Record<string, string>
+  expires_in?: number
+  
+  // running状态特有字段
+  progress?: Record<string, any>
+  
+  // done状态特有字段
+  result?: Record<string, any>
+  result_url?: string
+  result_metadata?: Record<string, any>
+  
+  // failed状态特有字段
+  error?: Record<string, any>
 }
 
-export interface KBJobStatus {
+export interface JobStatus {
   job_id: string
   status: string
+  source_type: string
+  data_id?: string
+  created_at: string
+  updated_at?: string
+  result_mode: 'auto' | 'inline' | 'url'
+  
+  // 状态相关字段
   current_state?: string
   progress?: Record<string, any>
-  error_message?: string
-  result_s3_key?: string
-  download_url?: string
-  created_at: string
-  updated_at: string
+  error?: Record<string, any>
+  
+  // 结果相关字段
+  result?: Record<string, any>
+  result_url?: string
+  result_metadata?: Record<string, any>
+  
+  // 元数据
+  file_path?: string
+  s3_key?: string
+  webhook_url?: string
+  webhook_enabled: boolean
 }
 
-export interface KBJobList {
-  jobs: KBJobResponse[]
+export interface JobList {
+  jobs: JobResponse[]
   total: number
   page: number
   page_size: number
-}
-
-export interface KBUploadResponse {
-  job_id: string
-  upload_url: string
-  s3_key: string
-  expires_in: number
-}
-
-export interface KBDownloadResponse {
-  download_url: string
-  expires_in: number
-  file_size?: number
-  content_type?: string
-}
-
-// ============================================
-// 表格填充任务相关类型
-// ============================================
-
-export interface TableFillJobCreateRequest {
-  source_type: 'url' | 'file_upload'
-  file_url?: string
-  webhook_url?: string
-  metadata?: Record<string, any>
-}
-
-export interface TableFillJobResponse {
-  job_id: string
-  status: string
-  current_state?: string
-  source_type: string
-  file_path?: string
-  s3_key?: string
-  result_s3_key?: string
-  webhook_url?: string
-  webhook_enabled: boolean
-  error_message?: string
-  created_at: string
-  updated_at: string
-}
-
-export interface TableFillJobStatus {
-  job_id: string
-  status: string
-  current_state?: string
-  progress?: Record<string, any>
-  error_message?: string
-  result_s3_key?: string
-  download_url?: string
-  created_at: string
-  updated_at: string
-}
-
-export interface TableFillJobList {
-  jobs: TableFillJobResponse[]
-  total: number
-  page: number
-  page_size: number
-}
-
-export interface TableFillUploadResponse {
-  job_id: string
-  upload_url: string
-  s3_key: string
-  expires_in: number
-}
-
-export interface TableFillDownloadResponse {
-  download_url: string
-  expires_in: number
-  file_size?: number
-  content_type?: string
 }
 
 // ============================================
@@ -742,68 +711,103 @@ class KnowhereAPI {
   }
 
   // ============================================
-  // 新的异步任务API
+  // 统一任务API
   // ============================================
 
   /**
-   * 创建知识库任务
+   * 创建任务
    */
-  async createKBJob(data: KBJobCreateRequest) {
-    return this.post<KBJobResponse>('/v1/kb/jobs', data)
+  async createJob(data: JobCreate) {
+    return this.post<JobResponse>('/v1/jobs', data)
   }
 
   /**
-   * 上传文件并创建知识库任务
+   * 获取任务状态
    */
-  async uploadFileAndCreateKBJob(
-    file: File, 
-    webhook_url?: string, 
-    metadata?: Record<string, any>
-  ) {
-    const formData = new FormData()
-    formData.append('file', file)
-    if (webhook_url) {
-      formData.append('webhook_url', webhook_url)
-    }
-    if (metadata) {
-      formData.append('metadata', JSON.stringify(metadata))
-    }
-
-    return this.post<KBJobResponse>('/v1/kb/jobs', formData)
+  async getJobStatus(jobId: string) {
+    return this.get<JobStatus>(`/v1/jobs/${jobId}`)
   }
 
   /**
-   * 获取知识库任务状态
+   * 获取任务列表
    */
-  async getKBJobStatus(jobId: string) {
-    return this.get<KBJobStatus>(`/v1/kb/jobs/${jobId}`)
-  }
-
-  /**
-   * 获取知识库任务列表
-   */
-  async getKBJobs(params?: { page?: number; limit?: number; status?: string }) {
+  async listJobs(params?: { 
+    page?: number; 
+    page_size?: number; 
+    status?: string;
+    job_type?: string;
+  }) {
     const queryParams = new URLSearchParams()
     if (params?.page) queryParams.append('page', params.page.toString())
-    if (params?.limit) queryParams.append('page_size', params.limit.toString())
+    if (params?.page_size) queryParams.append('page_size', params.page_size.toString())
     if (params?.status) queryParams.append('status', params.status)
+    if (params?.job_type) queryParams.append('job_type', params.job_type)
     
     const query = queryParams.toString()
-    return this.get<KBJobList>(`/v1/kb/jobs${query ? `?${query}` : ''}`)
+    return this.get<JobList>(`/v1/jobs/page${query ? `?${query}` : ''}`)
   }
 
   /**
-   * 取消知识库任务
+   * 确认文件上传完成（备用机制）
    */
-  async cancelKBJob(jobId: string) {
-    return this.post(`/v1/kb/jobs/${jobId}/cancel`)
+  async confirmUpload(jobId: string) {
+    return this.post(`/v1/jobs/${jobId}/confirm-upload`)
   }
 
   /**
-   * 重试知识库任务
+   * 直接上传文件到S3预签名URL
    */
-  async retryKBJob(jobId: string) {
-    return this.post(`/v1/kb/jobs/${jobId}/retry`)
+  async uploadFileToS3(
+    uploadUrl: string, 
+    file: File, 
+    headers: Record<string, string>,
+    onProgress?: (progress: number) => void
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      
+      // 监听上传进度
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const progress = Math.round((event.loaded / event.total) * 100)
+            onProgress(progress)
+          }
+        })
+      }
+      
+      // 监听完成事件
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve()
+        } else {
+          reject(new Error(`Upload failed with status ${xhr.status}`))
+        }
+      })
+      
+      // 监听错误事件
+      xhr.addEventListener('error', () => {
+        reject(new Error('Upload failed due to network error'))
+      })
+      
+      // 监听超时事件
+      xhr.addEventListener('timeout', () => {
+        reject(new Error('Upload timed out'))
+      })
+      
+      // 设置超时时间（5分钟）
+      xhr.timeout = 5 * 60 * 1000
+      
+      // 开始上传
+      xhr.open('PUT', uploadUrl)
+      
+      // 设置请求头
+      Object.entries(headers).forEach(([key, value]) => {
+        xhr.setRequestHeader(key, value)
+      })
+      
+      xhr.send(file)
+    })
   }
 
   // ============================================
@@ -850,65 +854,6 @@ class KnowhereAPI {
   }
 
   // ============================================
-
-  // ============================================
-  // 表格填充任务管理API
-  // ============================================
-
-  /**
-   * 创建表格填充任务
-   */
-  async createTableFillJob(data: TableFillJobCreateRequest) {
-    return this.post<TableFillJobResponse>('/v1/table-fill/jobs', data)
-  }
-
-  /**
-   * 获取表格填充任务状态
-   */
-  async getTableFillJobStatus(job_id: string) {
-    return this.get<TableFillJobStatus>(`/v1/table-fill/jobs/${job_id}`)
-  }
-
-  /**
-   * 获取表格填充任务列表
-   */
-  async listTableFillJobs(page: number = 1, page_size: number = 20, status?: string) {
-    const params = new URLSearchParams({
-      page: page.toString(),
-      page_size: page_size.toString()
-    })
-    if (status) {
-      params.append('status', status)
-    }
-    return this.get<TableFillJobList>(`/v1/table-fill/jobs?${params.toString()}`)
-  }
-
-  /**
-   * 上传文件并创建表格填充任务
-   */
-  async uploadFileAndCreateTableFillJob(
-    file: File, 
-    webhook_url?: string, 
-    metadata?: Record<string, any>
-  ) {
-    const formData = new FormData()
-    formData.append('file', file)
-    if (webhook_url) {
-      formData.append('webhook_url', webhook_url)
-    }
-    if (metadata) {
-      formData.append('metadata', JSON.stringify(metadata))
-    }
-
-    return this.post<TableFillJobResponse>('/v1/table-fill/jobs', formData)
-  }
-
-  /**
-   * 下载表格填充任务结果
-   */
-  async downloadTableFillResult(job_id: string) {
-    return this.get<TableFillDownloadResponse>(`/v1/table-fill/jobs/${job_id}/download`)
-  }
 }
 
 // 导出单例实例

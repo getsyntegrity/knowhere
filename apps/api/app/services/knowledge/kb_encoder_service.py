@@ -106,14 +106,24 @@ def vectorize_contents(added_contents_df, root_len, cut_len=8000, client=None):
     added_contents = clean_contents(added_contents)
     added_contents_vecs = vec_individual_contents(added_contents, cut_len, client=client)
 
+    default_dim = getattr(settings, "DEFAULT_EMBEDDING_DIM", 1024)
+
     if len(added_path_vecs) == 0:
-        added_path_vecs = np.empty((0, 1024), dtype=np.float32)
+        added_path_vecs = np.empty((0, default_dim), dtype=np.float32)
     else:
-        added_path_vecs = np.array(added_path_vecs)
+        added_path_vecs = np.array(added_path_vecs, dtype=np.float32)
+        default_dim = added_path_vecs.shape[1]
     if len(added_contents_vecs) == 0:
-        added_contents_vecs = np.empty((0, 1024), dtype=np.float32)
+        added_contents_vecs = np.empty((0, default_dim), dtype=np.float32)
     else:
-        added_contents_vecs = np.array(added_contents_vecs)
+        added_contents_vecs = np.array(added_contents_vecs, dtype=np.float32)
+        default_dim = added_contents_vecs.shape[1]
+
+    try:
+        settings.DEFAULT_EMBEDDING_DIM = default_dim  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
     return added_contents_vecs, added_path_vecs
 
 def load_new_data(add_root):
@@ -129,8 +139,9 @@ def load_existing_kb(USER_SETTINGS):
     except Exception as e:
         logger.error(f"读取现有知识库失败 原因 {e}")
         all_df_cols = (settings.ALL_DF_COLS or "path,content,summary,type,addtime").split(",")
-        all_vec = np.empty((0, 1024), dtype=np.float32)
-        all_path_vec = np.empty((0, 1024), dtype=np.float32)
+        default_dim = getattr(settings, "DEFAULT_EMBEDDING_DIM", 1024)
+        all_vec = np.empty((0, default_dim), dtype=np.float32)
+        all_path_vec = np.empty((0, default_dim), dtype=np.float32)
         all_contents_df = pd.DataFrame(columns=all_df_cols)
     return all_vec, all_path_vec, all_contents_df
 
@@ -175,6 +186,23 @@ async def encode_kb(user_info, add_dir=None, filtered_added_df=None, remove_node
 
             # 检查向量化结果是否有效
             if added_vectors is not None and added_path_vecs is not None and len(added_vectors) > 0 and len(added_path_vecs) > 0:
+                existing_dim = all_vec.shape[1] if all_vec.size else None
+                new_dim = added_vectors.shape[1]
+                if existing_dim and existing_dim != new_dim:
+                    logger.warning(
+                        f"检测到旧向量维度 {existing_dim} 与新向量维度 {new_dim} 不一致，正在重新向量化现有知识库"
+                    )
+                    if len(all_contents_df) > 0:
+                        reencoded_vecs, reencoded_path_vecs = vectorize_contents(
+                            all_contents_df,
+                            root_len=USER_SETTINGS['ROOT_LEN'],
+                            client=client
+                        )
+                        all_vec = reencoded_vecs
+                        all_path_vec = reencoded_path_vecs
+                    else:
+                        all_vec = np.empty((0, new_dim), dtype=np.float32)
+                        all_path_vec = np.empty((0, new_dim), dtype=np.float32)
                 with g_lock: # 在已有知识库库内concatenate新知识
                     all_vec = np.vstack((all_vec, added_vectors))
                     all_path_vec = np.vstack((all_path_vec, added_path_vecs))
@@ -585,6 +613,3 @@ async def process_tree_dic(node_dict, path_prefix, results):
 #     path_desc = tokenize2stw_remove(path_its, stopwords)
 #     record_path_ref.update({path_item: {'system_path': system_path, 'tokens': '->'.join(path_desc)}})
 #     return added_path_vecs, record_path_ref
-
-
-

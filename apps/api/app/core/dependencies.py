@@ -9,7 +9,8 @@ from app.core.jwt import auth_backend
 from app.core.users import get_user_manager, UserManager
 from app.models.database.user import User
 from app.models.schemas.user import UserResponse
-from app.services.redis import RedisService, RedisServiceFactory
+# 延迟导入以避免循环导入
+# from app.services.redis import RedisService, RedisServiceFactory
 from app.services.auth.api_key_service import APIKeyService
 
 # 保持向后兼容的认证函数
@@ -21,16 +22,18 @@ async def get_current_user(
     """
     return UserResponse.model_validate(user)
 
-async def get_redis_service() -> RedisService:
+async def get_redis_service():
     """
     依赖函数：获取Redis服务实例
     """
+    from app.services.redis import RedisServiceFactory
     return RedisServiceFactory.get_service()
 
-async def get_redis_service_factory() -> RedisServiceFactory:
+async def get_redis_service_factory():
     """
     依赖函数：获取Redis服务工厂实例
     """
+    from app.services.redis import RedisServiceFactory
     return RedisServiceFactory
 
 # 添加get_current_user别名，用于向后兼容

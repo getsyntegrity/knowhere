@@ -246,6 +246,11 @@ def find_docstyle(para_):
         style_name = para_.style.name
     except:
         style_name = "normal"
+    
+    # 处理style_name为None的情况
+    if style_name is None:
+        style_name = "normal"
+    
     if style_name.startswith('Heading') or style_name.startswith('标题'):
         try:
             outline_level = int(style_name.split(' ')[1])

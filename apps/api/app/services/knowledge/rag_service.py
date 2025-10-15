@@ -233,7 +233,8 @@ def vectorize_texts(texts, encoder_=None, use_tensor=False, client=None):
         # 如果API调用失败，返回零向量
         logger.warning(f"向量化失败，使用零向量替代: {e}")
         import numpy as np
-        zero_embeddings = np.zeros((len(texts), 1024), dtype=np.float32)
+        fallback_dim = getattr(settings, "DEFAULT_EMBEDDING_DIM", 1024)
+        zero_embeddings = np.zeros((len(texts), fallback_dim), dtype=np.float32)
         return texts, zero_embeddings
 
 def qwen_embeddings(client, texts, batch_size=None):
@@ -241,10 +242,21 @@ def qwen_embeddings(client, texts, batch_size=None):
     if batch_size is None:
         batch_size = ProcessingConstants.IMG_MAX_TOKENS // 10  # 使用合理的默认值
     all_embeddings = []
+    model_name = settings.EMBEDDING_MODEL or "text-embedding-v1"
+    deprecated_models = {
+        "text-embedding-ada-002": "text-embedding-v1",
+        "text-embedding-3-small": "text-embedding-v1",
+    }
+    if model_name in deprecated_models:
+        fallback_model = deprecated_models[model_name]
+        logger.warning(
+            f"检测到已弃用的嵌入模型 `{model_name}`，自动切换至 `{fallback_model}`"
+        )
+        model_name = fallback_model
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
         completion = client.embeddings.create(
-            model=settings.EMBEDDING_MODEL or "text-embedding-ada-002",
+            model=model_name,
             input=batch,
             encoding_format="float"
         )

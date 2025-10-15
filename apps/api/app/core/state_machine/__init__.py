@@ -9,7 +9,8 @@ from .states import (
     is_valid_transition,
     is_terminal_state,
     is_processing_state,
-    get_job_status_from_state
+    get_job_status_from_state,
+    get_prd_status_from_state
 )
 from .manager import JobStateMachine
 
@@ -22,5 +23,6 @@ __all__ = [
     "is_terminal_state",
     "is_processing_state",
     "get_job_status_from_state",
+    "get_prd_status_from_state",
     "JobStateMachine"
 ]

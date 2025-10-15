@@ -15,18 +15,9 @@ from app.utils.FileDownUpUtils import s3_upload_file
 
 router = APIRouter(tags=["知识库"])
 
-# 文件上传API - 保留
-@router.post('/up_kb_file', status_code=status.HTTP_201_CREATED, summary="增加知识到用户知识库",
-             description="增加知识到用户知识库")
-async def up_kb_file(file: UploadFile = File(..., description="要上传的文件"),
-        prefix: str = Form("", description="可选的文件存储路径前缀 (例如 'images/avatars/')"),
-        current_user: User = Depends(get_current_user)):
-    """
-    上传文件到S3存储
-    """
-    return s3_upload_file(file, prefix)
+# 文件上传API已移除，请使用统一的 /v1/jobs 接口
 
-# 目录管理API - 保留
+# 目录管理API
 @router.post('/create_directory', status_code=status.HTTP_201_CREATED, summary="增加SQL路径",description="用户注入知识路径")
 async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: User = Depends(get_current_user)):
     """
@@ -159,14 +150,7 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
         logger.error(f"添加知识库路径失败: {e}")
         return ResponseResult.fail(msg="添加知识库路径失败")
 
-# 临时文件上传API - 保留
-@router.post('/add_kbfile', status_code=status.HTTP_201_CREATED, summary="知识库临时上传文件",description="有效期24小时，过期会自动删除")
-async def add_kbfile(file: UploadFile = File(..., description="要上传的文件"),
-        current_user: User = Depends(get_current_user)):
-    """
-    上传文件到S3存储
-    """
-    return s3_upload_file(file, "temp/")
+# 临时文件上传API已移除，请使用统一的 /v1/jobs 接口
 
 # 注意：以下旧方案同步API已删除，请使用新的异步API: /v1/kb/jobs
 # - /add_kb_data (增加知识内容)

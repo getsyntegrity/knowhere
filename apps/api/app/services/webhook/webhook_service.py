@@ -214,7 +214,7 @@ class WebhookService:
     
     def build_job_completed_payload(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """构建任务完成Webhook payload"""
-        return {
+        payload: Dict[str, Any] = {
             "event": "job.completed",
             "job_id": job["job_id"],
             "job_type": job["job_type"],
@@ -222,12 +222,17 @@ class WebhookService:
             "user_id": job["user_id"],
             "created_at": job["created_at"].isoformat() if job.get("created_at") else None,
             "completed_at": datetime.utcnow().isoformat(),
-            "result": {
-                "s3_key": job.get("result_s3_key"),
-                "download_url": job.get("download_url")
-            },
+            "delivery_mode": job.get("delivery_mode"),
+            "document_metadata": job.get("document_metadata", {}),
             "metadata": job.get("metadata", {})
         }
+
+        if job.get("delivery_mode") == "inline" and job.get("result") is not None:
+            payload["result"] = job.get("result")
+        elif job.get("delivery_mode") == "url" and job.get("download_url"):
+            payload["result_url"] = job.get("download_url")
+
+        return payload
     
     def build_job_failed_payload(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """构建任务失败Webhook payload"""

@@ -487,11 +487,13 @@ async def checkerboard_inject_parse(
         baseurl = kwargs.get('base_url', '')
     except:
         baseurl = ""
+        
+    logger.debug(f"file_full_path: {file_full_path}")
 
-    if is_remote(file_full_path):
-        file_full_path = get_pub_fileurl(file_full_path)
-    else:
-        file_full_path = ".fragment"
+    # if is_remote(file_full_path):
+    #     file_full_path = get_pub_fileurl(file_full_path)
+    # else:
+    #     file_full_path = ".fragment"
 
     split_char = settings.SPLIT_CHAR or ";"
     kb_dir = kwargs.get('kb_dir', '默认目录')
@@ -505,7 +507,7 @@ async def checkerboard_inject_parse(
     kb_dir = path_handle(os.path.join(*dir_terms), mode="sanitize")
     os.makedirs(kb_dir, exist_ok=True)
 
-    # 根据文件类型解析（保持原有逻辑484-529行）
+    # 根据文件类型解析
     if '.txt' in file_full_path or ".fragment" in file_full_path:
         try:
             fragment_content = kwargs.get('fragment_content')

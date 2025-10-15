@@ -15,12 +15,8 @@ import {
   TrendingUp,
   Plus,
   ExternalLink,
-  BookOpen,
-  Search,
   Clock,
   CheckCircle,
-  FileText,
-  ClipboardEdit,
   RefreshCw,
   AlertCircle
 } from 'lucide-react'
@@ -34,16 +30,10 @@ interface DashboardStats {
   totalApiKeys: number
   activeApiKeys: number
   totalRequests: number
-  totalKnowledgeBases: number
   totalKBJobs: number
   completedKBJobs: number
   runningKBJobs: number
   failedKBJobs: number
-  totalTableDocs: number
-  totalTableFillJobs: number
-  completedTableFillJobs: number
-  runningTableFillJobs: number
-  failedTableFillJobs: number
   recentActivity: Array<{
     id: string
     type: string
@@ -62,8 +52,10 @@ export default function DashboardPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   useEffect(() => {
-    loadDashboardData()
-  }, [])
+    if (user) {
+      loadDashboardData()
+    }
+  }, [user])
 
   const loadDashboardData = async (isRefresh = false) => {
     try {
@@ -78,15 +70,13 @@ export default function DashboardPage() {
         creditsResult,
         apiKeysResult,
         usageResult,
-        kbJobsResult,
-        tableFillJobsResult,
+        jobsResult,
         directoriesResult
       ] = await Promise.allSettled([
         api.getCreditsBalance(),
         api.listApiKeys(),
         api.getUsageStats('month'),
-        api.getKBJobs({ page: 1, limit: 100 }),
-        api.listTableFillJobs(1, 100),
+        api.listJobs({ page: 1, page_size: 100 }), // 使用新的统一Jobs API
         api.getDirectories() // 获取知识库目录数量
       ])
 
@@ -94,18 +84,20 @@ export default function DashboardPage() {
       const creditsData = creditsResult.status === 'fulfilled' ? creditsResult.value : null
       const apiKeysData = apiKeysResult.status === 'fulfilled' ? apiKeysResult.value : null
       const usageData = usageResult.status === 'fulfilled' ? usageResult.value : null
-      const kbJobsData = kbJobsResult.status === 'fulfilled' ? kbJobsResult.value : null
-      const tableFillJobsData = tableFillJobsResult.status === 'fulfilled' ? tableFillJobsResult.value : null
+      const jobsData = jobsResult.status === 'fulfilled' ? jobsResult.value : null
       const directoriesData = directoriesResult.status === 'fulfilled' ? directoriesResult.value : null
 
-      // 计算统计数据
-      const completedJobs = kbJobsData?.jobs?.filter((job: any) => job.status === 'completed').length || 0
-      const runningJobs = kbJobsData?.jobs?.filter((job: any) => job.status === 'running' || job.status === 'pending').length || 0
-      const failedJobs = kbJobsData?.jobs?.filter((job: any) => job.status === 'failed').length || 0
+      // 计算统计数据 - 使用新的统一Jobs API
+      const allJobs = jobsData?.jobs || []
+      const completedJobs = allJobs.filter((job: any) => job.status === 'done').length
+      const runningJobs = allJobs.filter((job: any) => ['pending', 'converting', 'running'].includes(job.status)).length
+      const failedJobs = allJobs.filter((job: any) => job.status === 'failed').length
       
-      const completedTableFillJobs = tableFillJobsData?.jobs?.filter((job: any) => job.status === 'completed').length || 0
-      const runningTableFillJobs = tableFillJobsData?.jobs?.filter((job: any) => job.status === 'running' || job.status === 'pending').length || 0
-      const failedTableFillJobs = tableFillJobsData?.jobs?.filter((job: any) => job.status === 'failed').length || 0
+      // 所有任务都按统一任务处理
+      const completedKBJobs = completedJobs
+      const runningKBJobs = runningJobs
+      const failedKBJobs = failedJobs
+      const totalKBJobs = jobsData?.total || 0
 
       // 构建最近活动数据
       const recentActivity: Array<{
@@ -116,34 +108,29 @@ export default function DashboardPage() {
         status?: string
       }> = []
       
-      // 添加最近的知识库任务
-      if (kbJobsData?.jobs && kbJobsData.jobs.length > 0) {
-        const recentKBJobs = kbJobsData.jobs
+      // 添加最近的任务（使用新的统一Jobs API）
+      if (allJobs && allJobs.length > 0) {
+        const recentJobs = allJobs
           .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          .slice(0, 3)
+          .slice(0, 5) // 显示最近5个任务
         
-        recentKBJobs.forEach((job: any) => {
+        recentJobs.forEach((job: any) => {
+          const getStatusText = (status: string) => {
+            switch (status) {
+              case 'done': return '已完成'
+              case 'failed': return '失败'
+              case 'waiting_for_upload': return '等待上传'
+              case 'pending': return '排队中'
+              case 'converting': return '转换中'
+              case 'running': return '处理中'
+              default: return '进行中'
+            }
+          }
+          
           recentActivity.push({
-            id: `kb_job_${job.job_id}`,
-            type: 'kb_job',
-            description: `知识库任务 ${job.status === 'completed' ? '已完成' : job.status === 'failed' ? '失败' : '进行中'}`,
-            timestamp: job.created_at,
-            status: job.status
-          })
-        })
-      }
-
-      // 添加最近的表格填充任务
-      if (tableFillJobsData?.jobs && tableFillJobsData.jobs.length > 0) {
-        const recentTableFillJobs = tableFillJobsData.jobs
-          .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          .slice(0, 2)
-        
-        recentTableFillJobs.forEach((job: any) => {
-          recentActivity.push({
-            id: `table_fill_${job.job_id}`,
-            type: 'table_fill',
-            description: `表格填充任务 ${job.status === 'completed' ? '已完成' : job.status === 'failed' ? '失败' : '进行中'}`,
+            id: `job_${job.job_id}`,
+            type: 'job',
+            description: `任务 ${getStatusText(job.status)}`,
             timestamp: job.created_at,
             status: job.status
           })
@@ -160,16 +147,10 @@ export default function DashboardPage() {
         totalApiKeys: apiKeysData?.api_keys?.length || 0,
         activeApiKeys: apiKeysData?.api_keys?.filter((key: any) => key.is_active).length || 0,
         totalRequests: usageData?.api_calls_count || 0,
-        totalKnowledgeBases: directoriesData?.length || 0,
-        totalKBJobs: kbJobsData?.total || 0,
-        completedKBJobs: completedJobs,
-        runningKBJobs: runningJobs,
-        failedKBJobs: failedJobs,
-        totalTableDocs: 0, // 这个需要单独的API来获取
-        totalTableFillJobs: tableFillJobsData?.total || 0,
-        completedTableFillJobs: completedTableFillJobs,
-        runningTableFillJobs: runningTableFillJobs,
-        failedTableFillJobs: failedTableFillJobs,
+        totalKBJobs: totalKBJobs,
+        completedKBJobs: completedKBJobs,
+        runningKBJobs: runningKBJobs,
+        failedKBJobs: failedKBJobs,
         recentActivity: recentActivity.slice(0, 6) // 只显示最近6个活动
       })
 
@@ -196,6 +177,14 @@ export default function DashboardPage() {
 
   const handleRefresh = () => {
     loadDashboardData(true)
+  }
+
+  if (!user) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-muted-foreground">请先登录</p>
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -247,7 +236,7 @@ export default function DashboardPage() {
       </div>
 
       {/* 统计卡片 */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {/* Credits余额 */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -315,24 +304,10 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* 知识库数量 */}
+        {/* 任务状态 */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">知识库</CardTitle>
-            <BookOpen className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalKnowledgeBases}</div>
-            <p className="text-xs text-muted-foreground">
-              个知识库
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* 知识库任务状态 */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">知识库任务</CardTitle>
+            <CardTitle className="text-sm font-medium">任务状态</CardTitle>
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -356,76 +331,28 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-
-        {/* 表格文档数量 */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">表格文档</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalTableDocs}</div>
-            <p className="text-xs text-muted-foreground">
-              个文档
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* 表格填充任务状态 */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">表格填充</CardTitle>
-            <ClipboardEdit className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.completedTableFillJobs}</div>
-            <p className="text-xs text-muted-foreground">
-              已完成 / 共 {stats.totalTableFillJobs} 个
-            </p>
-            <div className="mt-2 space-y-1">
-              {stats.runningTableFillJobs > 0 && (
-                <div className="flex items-center text-xs text-blue-600">
-                  <Clock className="h-3 w-3 mr-1" />
-                  进行中: {stats.runningTableFillJobs}
-                </div>
-              )}
-              {stats.failedTableFillJobs > 0 && (
-                <div className="flex items-center text-xs text-red-600">
-                  <div className="h-3 w-3 mr-1 rounded-full bg-red-600" />
-                  失败: {stats.failedTableFillJobs}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* 快速操作 */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>知识库管理</CardTitle>
+            <CardTitle>任务管理</CardTitle>
             <CardDescription>
-              管理您的知识库内容和文档
+              创建和管理您的处理任务
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Button asChild className="w-full justify-start">
-              <Link href="/knowledge-base">
-                <BookOpen className="mr-2 h-4 w-4" />
-                管理知识库
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full justify-start">
-              <Link href="/kb-search">
-                <Search className="mr-2 h-4 w-4" />
-                搜索知识库
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full justify-start">
-              <Link href="/kb-jobs">
+              <Link href="/jobs">
                 <Clock className="mr-2 h-4 w-4" />
                 查看任务
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full justify-start">
+              <Link href="/jobs">
+                <Plus className="mr-2 h-4 w-4" />
+                创建任务
               </Link>
             </Button>
           </CardContent>
@@ -460,35 +387,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>表格填充管理</CardTitle>
-            <CardDescription>
-              管理您的表格文档和填充任务
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Button asChild className="w-full justify-start">
-              <Link href="/table-docs">
-                <FileText className="mr-2 h-4 w-4" />
-                管理表格文档
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full justify-start">
-              <Link href="/table-fill-jobs">
-                <ClipboardEdit className="mr-2 h-4 w-4" />
-                查看填充任务
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full justify-start">
-              <Link href="/table-docs">
-                <Plus className="mr-2 h-4 w-4" />
-                上传新文档
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
-
         {/* 最近活动 */}
         <Card>
           <CardHeader>
@@ -503,16 +401,10 @@ export default function DashboardPage() {
                 stats.recentActivity.map((activity) => {
                 const getActivityIcon = (type: string, status?: string) => {
                   switch (type) {
-                    case 'knowledge_base':
-                      return <BookOpen className="h-4 w-4 text-blue-500" />
-                    case 'kb_job':
-                      if (status === 'completed') return <CheckCircle className="h-4 w-4 text-green-500" />
+                    case 'job':
+                      if (status === 'done') return <CheckCircle className="h-4 w-4 text-green-500" />
                       if (status === 'failed') return <div className="h-4 w-4 rounded-full bg-red-500" />
                       return <Clock className="h-4 w-4 text-blue-500" />
-                    case 'table_fill':
-                      if (status === 'completed') return <CheckCircle className="h-4 w-4 text-green-500" />
-                      if (status === 'failed') return <div className="h-4 w-4 rounded-full bg-red-500" />
-                      return <ClipboardEdit className="h-4 w-4 text-blue-500" />
                     case 'api_key':
                       return <Key className="h-4 w-4 text-purple-500" />
                     case 'billing':

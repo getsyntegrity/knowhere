@@ -6,10 +6,9 @@ from celery import chain
 from loguru import logger
 
 from app.core.tasks.kb_tasks import (
-    upload_file_task,
-    parse_and_vectorize_task,  # 新任务
-    store_to_db_task,          # 新任务
-    send_webhook_task          # 保留
+    parse_and_vectorize_task,  # 解析并向量化任务
+    store_to_db_task,          # 存储到数据库任务
+    send_webhook_task          # 发送Webhook任务
 )
 from app.core.state_machine import KBManagementState
 from app.core.celery_router import task_router
@@ -56,31 +55,22 @@ class KBOrchestrator:
             # 获取队列名称
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
             
-            # 构建任务链
+            # 构建任务链（文件已通过S3直传）
             workflow = chain(
-                # 步骤1: 上传文件
-                upload_file_task.s(
-                    job_id=job_id,
-                    source_type=source_type,
-                    file_path=file_path,
-                    file_url=file_url,
-                    user_id=user_id,
-                    job_type="kb_management"
-                ).set(queue=queue_name),
-                
-                # 步骤2: 解析并向量化（合并原步骤2-4）
+                # 步骤1: 解析并向量化
                 parse_and_vectorize_task.s(
+                    job_id=job_id,
                     user_id=user_id,
                     job_type="kb_management"
                 ).set(queue=queue_name),
                 
-                # 步骤3: 存储到数据库（独立步骤）
+                # 步骤2: 存储到数据库
                 store_to_db_task.s(
                     user_id=user_id,
                     job_type="kb_management"
                 ).set(queue=queue_name),
                 
-                # 步骤4: 发送Webhook（独立步骤，可选）
+                # 步骤3: 发送Webhook（独立步骤，可选）
                 send_webhook_task.s(
                     user_id=user_id,
                     job_type="kb_management"
@@ -114,28 +104,21 @@ class KBOrchestrator:
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
         
         return chain(
-            # 步骤1: 上传文件
-            upload_file_task.s(
-                job_id=job_id,
-                user_id=user_id,
-                job_type="kb_management"
-            ).set(queue=queue_name),
-            
-            # 步骤2: 解析并向量化（合并原步骤2-4）
+            # 步骤1: 解析并向量化（文件已通过S3直传）
             parse_and_vectorize_task.s(
                 job_id=job_id,
                 user_id=user_id,
                 job_type="kb_management"
             ).set(queue=queue_name),
             
-            # 步骤3: 存储到数据库（独立步骤）
+            # 步骤2: 存储到数据库
             store_to_db_task.s(
                 job_id=job_id,
                 user_id=user_id,
                 job_type="kb_management"
             ).set(queue=queue_name),
             
-            # 步骤4: 发送Webhook（独立步骤，可选）
+            # 步骤3: 发送Webhook（独立步骤，可选）
             send_webhook_task.s(
                 job_id=job_id,
                 user_id=user_id,

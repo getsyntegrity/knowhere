@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import uuid
 from typing import Dict, Any, Optional
 from celery import Task
 from loguru import logger
@@ -11,8 +12,11 @@ from loguru import logger
 from app.core.celery_app import get_celery_app
 from app.core.state_machine import JobStateMachine, KBManagementState
 from app.repositories.job_repository import JobRepository
+from app.repositories.job_result_repository import JobResultRepository
 from app.services.storage.file_upload_service import FileUploadService
 from app.core.database import get_db_context
+from app.core.config import settings
+from app.utils.json_utils import make_json_safe
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -51,8 +55,16 @@ class KBBaseTask(Task):
             
             if job_id:
                 # 异步处理重试状态
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                try:
+                    # 尝试获取当前事件循环
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        raise RuntimeError("Event loop is closed")
+                except RuntimeError:
+                    # 如果没有事件循环或循环已关闭，创建新的
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
                 try:
                     async def handle_retry_async():
                         state_machine = JobStateMachine()
@@ -64,83 +76,22 @@ class KBBaseTask(Task):
                     
                     loop.run_until_complete(handle_retry_async())
                 finally:
-                    loop.close()
+                    # 只有在创建了新循环时才关闭
+                    if loop != asyncio.get_event_loop():
+                        loop.close()
         except Exception as e:
             logger.error(f"处理重试状态时出错: {e}")
 
 
-@celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.upload_file_task')
-def upload_file_task(self, job_id: str, source_type: str, file_path: Optional[str] = None, file_url: Optional[str] = None, user_id: str = None, job_type: str = "kb_management"):
-    """上传文件任务"""
-    try:
-        # 使用更安全的方式处理异步操作
-        try:
-            # 尝试获取当前事件循环
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                raise RuntimeError("Event loop is closed")
-        except RuntimeError:
-            # 如果没有事件循环或循环已关闭，创建新的
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        try:
-            result = loop.run_until_complete(_upload_file_async(
-                job_id, source_type, file_path, file_url, user_id
-            ))
-            return result
-        finally:
-            # 只有在创建了新循环时才关闭
-            if loop != asyncio.get_event_loop():
-                loop.close()
-            
-    except Exception as e:
-        logger.error(f"上传文件任务失败: {e}")
-        raise self.retry(exc=e, countdown=60, max_retries=3)
-
-
-async def _upload_file_async(job_id: str, source_type: str, file_path: Optional[str], file_url: Optional[str], user_id: str):
-    """异步上传文件"""
-    state_machine = JobStateMachine()
-    job_repo = JobRepository()
-    upload_service = FileUploadService()
-    
-    try:
-        # 更新状态：开始上传
-        async with get_db_context() as db:
-            await state_machine.transition(db, job_id, KBManagementState.UPLOADING.value)
-            
-            # 执行上传
-            if source_type == "direct_upload":
-                s3_key = await upload_service.handle_direct_upload(file_path, job_id)
-            elif source_type == "url":
-                s3_key = await upload_service.handle_url_upload(file_url, job_id)
-            else:
-                raise ValueError(f"不支持的文件来源类型: {source_type}")
-            
-            # 更新Job的S3键
-            await job_repo.update_job_s3_key(db, job_id, s3_key)
-            
-            # 更新状态：上传完成
-            await state_machine.transition(db, job_id, KBManagementState.UPLOADED.value)
-            
-            return {"status": "success", "s3_key": s3_key, "job_id": job_id}
-            
-    except Exception as e:
-        logger.error(f"上传文件失败: {e}")
-        async with get_db_context() as db:
-            await state_machine.mark_failed(db, job_id, str(e))
-        raise
+# 文件上传任务已移除 - 文件通过S3直传处理
 
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.parse_and_vectorize_task')
-def parse_and_vectorize_task(self, upload_result: Dict[str, Any], user_id: str = None, job_type: str = "kb_management"):
-    """解析并向量化任务（合并原步骤2-4）"""
+def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):
+    """解析并向量化任务（文件已通过S3直传）"""
     try:
-        # 从上传结果中获取job_id
-        job_id = upload_result.get('job_id')
         if not job_id:
-            raise ValueError("上传结果中缺少job_id")
+            raise ValueError("缺少job_id参数")
         
         # 使用更安全的方式处理异步操作
         try:
@@ -155,7 +106,7 @@ def parse_and_vectorize_task(self, upload_result: Dict[str, Any], user_id: str =
         
         try:
             result = loop.run_until_complete(_parse_and_vectorize_async(
-                job_id, upload_result, user_id
+                job_id, user_id
             ))
             return result
         finally:
@@ -168,39 +119,98 @@ def parse_and_vectorize_task(self, upload_result: Dict[str, Any], user_id: str =
         raise self.retry(exc=e, countdown=120, max_retries=2)
 
 
-async def _parse_and_vectorize_async(job_id: str, upload_result: Dict[str, Any], user_id: str):
-    """异步解析并向量化"""
+async def _parse_and_vectorize_async(job_id: str, user_id: str):
+    """异步解析并向量化（文件已通过S3直传）"""
     state_machine = JobStateMachine()
     job_repo = JobRepository()
     
     try:
         async with get_db_context() as db:
-            # 获取Job和用户配置
+            # 获取Job
             job = await job_repo.get_job_by_id(db, job_id)
-            if not job or not job.job_metadata:
-                raise ValueError("Job或用户配置不存在")
+            if not job:
+                raise ValueError("Job不存在")
             
-            user_config = job.job_metadata.get("user_config")
+            # 验证S3文件存在性
+            if not job.s3_key:
+                raise ValueError("Job缺少S3键信息")
+            
+            from app.services.storage.file_upload_service import FileUploadService
+            upload_service = FileUploadService()
+            file_info = await upload_service.verify_s3_file_exists(job.s3_key)
+            if not file_info.get("exists"):
+                raise ValueError(f"S3文件不存在: {job.s3_key}")
+            
+            logger.info(f"S3文件验证成功: {job.s3_key}")
+            
+            # 动态获取用户配置
+            from app.services.redis.user_redis_service import UserRedisService
+            from app.services.user.user_config_service import UserConfigService
+            from app.services.redis import RedisServiceFactory
+            import json
+            
+            redis_service = RedisServiceFactory.get_service()
+            user_redis_service = UserRedisService(redis_service)
+            
+            # 尝试从Redis获取用户配置
+            user_config = await user_redis_service.get_user_config(job.user_id)
+            
+            if not user_config:
+                # 如果Redis中没有，则初始化用户配置
+                logger.info(f"Redis中未找到用户 {job.user_id} 配置，正在初始化...")
+                user_config_str = UserConfigService.init_user(job.user_id)
+                user_config = json.loads(user_config_str) if isinstance(user_config_str, str) else user_config_str
+                
+                # 保存到Redis
+                await user_redis_service.save_user_config(job.user_id, user_config)
+                logger.info(f"用户 {job.user_id} 配置初始化并保存到Redis")
+            
             if not user_config:
                 raise ValueError("用户配置为空")
+            
+            # 将用户配置保存到job的metadata中，供后续任务使用
+            job_metadata = job.job_metadata or {}
+            job_metadata["user_config"] = make_json_safe(user_config)
+            job.job_metadata = job_metadata
+            await db.commit()
+            logger.info(f"用户配置已保存到job metadata: {job_id}")
+            
+            # 检查当前状态，如果是failed，先转换到pending
+            if job.current_state == KBManagementState.FAILED.value:
+                await state_machine.transition(db, job_id, KBManagementState.PENDING.value)
             
             # 更新状态：开始解析
             await state_machine.transition(db, job_id, KBManagementState.PARSING.value)
             
             # 获取S3键和文件信息
-            s3_key = upload_result.get("s3_key") or job.s3_key
-            file_path = upload_result.get("file_path") or job.file_path
+            s3_key = job.s3_key
+            
+            # 验证必要参数
+            if not s3_key:
+                logger.error(f"Job {job_id} 缺少S3键信息")
+                raise ValueError("Job缺少S3键信息")
+            
+            logger.debug(f"开始下载文件: S3键={s3_key}")
             
             # 下载文件到本地临时目录
             from app.services.storage.file_upload_service import FileUploadService
             upload_service = FileUploadService()
             local_file_path = await upload_service.download_from_s3(s3_key)
             
-            # 准备解析参数
-            filename = os.path.basename(file_path)
+            # 验证下载结果
+            if not local_file_path:
+                logger.error(f"文件下载失败，未返回本地文件路径: S3键={s3_key}")
+                raise ValueError("文件下载失败，未返回本地文件路径")
+            
+            logger.debug(f"文件下载成功: {local_file_path}")
+            
+            # 准备解析参数 - 从S3键中提取文件名
+            filename = os.path.basename(s3_key)
             
             # 调用修改后的解析逻辑（传入user_config）
             from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse
+            
+            logger.debug(f"开始解析文件: {filename}, 类型: {job.job_metadata.get('doc_type', 'auto')}")
             
             add_dir = await checkerboard_inject_parse(
                 file_full_path=local_file_path,
@@ -214,6 +224,12 @@ async def _parse_and_vectorize_async(job_id: str, upload_result: Dict[str, Any],
                 summary_txt=job.job_metadata.get("summary_txt", True),
                 add_frag_desc=job.job_metadata.get("add_frag_desc", ""),
             )
+            
+            if not add_dir:
+                logger.error(f"文件解析失败，未返回解析目录: {filename}")
+                raise ValueError("文件解析失败，未返回解析目录")
+            
+            logger.info(f"文件解析成功: {add_dir}")
             
             # 更新状态：解析完成，开始向量化
             await state_machine.transition(db, job_id, KBManagementState.VECTORIZING.value)
@@ -252,13 +268,13 @@ async def _parse_and_vectorize_async(job_id: str, upload_result: Dict[str, Any],
 
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.store_to_db_task')
-def store_to_db_task(self, vectorize_result: Dict[str, Any], user_id: str = None, job_type: str = "kb_management"):
+def store_to_db_task(self, prev_result: dict, user_id: str = None, job_type: str = "kb_management"):
     """存储到数据库任务"""
     try:
-        # 从向量化结果中获取job_id
-        job_id = vectorize_result.get('job_id')
+        # 从上一个任务的结果中获取job_id
+        job_id = prev_result.get("job_id")
         if not job_id:
-            raise ValueError("向量化结果中缺少job_id")
+            raise ValueError("缺少job_id参数")
         
         # 使用更安全的方式处理异步操作
         try:
@@ -273,7 +289,7 @@ def store_to_db_task(self, vectorize_result: Dict[str, Any], user_id: str = None
         
         try:
             result = loop.run_until_complete(_store_to_db_async(
-                job_id, vectorize_result, user_id
+                prev_result, user_id
             ))
             return result
         finally:
@@ -286,19 +302,48 @@ def store_to_db_task(self, vectorize_result: Dict[str, Any], user_id: str = None
         raise self.retry(exc=e, countdown=120, max_retries=2)
 
 
-async def _store_to_db_async(job_id: str, vectorize_result: Dict[str, Any], user_id: str):
+async def _store_to_db_async(prev_result: dict, user_id: str):
     """异步存储到数据库"""
     state_machine = JobStateMachine()
     job_repo = JobRepository()
     
     try:
+        # 从上一个任务的结果中获取job_id
+        job_id = prev_result.get("job_id")
+        if not job_id:
+            raise ValueError("缺少job_id参数")
+            
         async with get_db_context() as db:
             # 获取Job
             job = await job_repo.get_job_by_id(db, job_id)
             if not job:
                 raise ValueError("Job不存在")
             
-            user_config = job.job_metadata.get("user_config")
+            # 从job_metadata获取用户配置，如缺失则回退到Redis
+            user_config = (job.job_metadata or {}).get("user_config") if job.job_metadata else None
+            if not user_config:
+                from app.services.redis import RedisServiceFactory
+                from app.services.redis.user_redis_service import UserRedisService
+                from app.services.user.user_config_service import UserConfigService
+
+                redis_service = RedisServiceFactory.get_service()
+                user_redis_service = UserRedisService(redis_service)
+                user_config = await user_redis_service.get_user_config(job.user_id)
+
+                if not user_config:
+                    logger.warning(f"Job {job_id} metadata缺少用户配置，尝试重新初始化用户配置")
+                    user_config_str = UserConfigService.init_user(job.user_id)
+                    user_config = json.loads(user_config_str)
+                    await user_redis_service.save_user_config(job.user_id, user_config)
+
+                if not user_config:
+                    raise ValueError("Job中缺少用户配置")
+
+                metadata_update = dict(job.job_metadata or {})
+                metadata_update["user_config"] = make_json_safe(user_config)
+                job.job_metadata = metadata_update
+                await db.commit()
+                await db.refresh(job)
             
             # 更新状态：向量化完成，开始存储数据库
             await state_machine.transition(db, job_id, KBManagementState.VECTORIZED.value)
@@ -316,7 +361,7 @@ async def _store_to_db_async(job_id: str, vectorize_result: Dict[str, Any], user
                 from app.models.database.knowledge_base import KBPydantic
                 
                 # 转换DataFrame为数据库记录（只存新增的内容）
-                contents_count = vectorize_result.get("contents_count", 10)
+                contents_count = len(all_contents_df)
                 for _, row in all_contents_df.tail(contents_count).iterrows():
                     kb_record = KBPydantic(
                         content=row.get('content'),
@@ -335,20 +380,151 @@ async def _store_to_db_async(job_id: str, vectorize_result: Dict[str, Any], user
                 if kb_records:
                     await create_update_kb(kb_records)
             
+            job_metadata = job.job_metadata or {}
+
+            source_file_name = job_metadata.get("source_file_name") or job.file_path or job_metadata.get("source_url")
+            if isinstance(source_file_name, str) and "/" in source_file_name:
+                source_file_name = os.path.basename(source_file_name)
+
+            result_payload = {
+                "document_metadata": {
+                    "source_file_name": source_file_name,
+                    "total_chunks": 0
+                },
+                "chunks": []
+            }
+
+            recent_df = None
+            if all_contents_df is not None and len(all_contents_df) > 0:
+                contents_count = len(all_contents_df)
+                recent_df = all_contents_df.tail(contents_count)
+
+            if recent_df is not None and len(recent_df) > 0:
+                chunks = []
+
+                def _sanitize(value):
+                    if value is None:
+                        return None
+                    try:
+                        if value != value:  # NaN
+                            return None
+                    except Exception:
+                        pass
+                    return value
+
+                for index, (_, row) in enumerate(recent_df.iterrows()):
+                    raw_type = str(row.get("type") or "").lower()
+                    if "table" in raw_type:
+                        chunk_type = "table"
+                    elif "image" in raw_type:
+                        chunk_type = "image"
+                    elif "summary" in raw_type:
+                        chunk_type = "summary"
+                    elif "title" in raw_type:
+                        chunk_type = "title"
+                    else:
+                        chunk_type = "paragraph"
+
+                    keywords = row.get("keywords")
+                    if isinstance(keywords, str):
+                        try:
+                            keywords_list = json.loads(keywords)
+                            if not isinstance(keywords_list, list):
+                                keywords_list = [keywords]
+                        except json.JSONDecodeError:
+                            keywords_list = [kw.strip() for kw in keywords.split(",") if kw.strip()]
+                    elif isinstance(keywords, list):
+                        keywords_list = keywords
+                    else:
+                        keywords_list = []
+
+                    chunk_id = row.get("know_id") or str(uuid.uuid4())
+                    chunk_text = row.get("content") or ""
+                    chunk_summary = row.get("summary") or ""
+                    chunk_length = row.get("length")
+                    chunk_path = _sanitize(row.get("path"))
+                    if chunk_length is None and chunk_text:
+                        chunk_length = len(chunk_text)
+
+                    tokens = row.get("tokens")
+                    if isinstance(tokens, str) and tokens.isdigit():
+                        tokens = int(tokens)
+                    elif tokens is None:
+                        tokens = 0
+
+                    chunks.append({
+                        "chunk_id": str(chunk_id),
+                        "text": chunk_text,
+                        "type": chunk_type,
+                        "metadata": {
+                            "path": chunk_path,
+                            "length": int(chunk_length) if chunk_length is not None else len(chunk_text),
+                            "tokens": tokens if isinstance(tokens, int) else 0,
+                            "keywords": keywords_list,
+                            "summary": chunk_summary or "",
+                            "relationships": []
+                        },
+                        "order": index
+                    })
+
+                result_payload["document_metadata"]["total_chunks"] = len(chunks)
+                result_payload["chunks"] = chunks
+
+            # 处理 result_mode 逻辑
+            requested_mode = job_metadata.get("result_mode", "auto")
+            inline_threshold = getattr(settings, "RESULT_INLINE_THRESHOLD", 3 * 1024 * 1024)
+            result_json_bytes = json.dumps(result_payload, ensure_ascii=False).encode("utf-8")
+
+            if requested_mode == "auto":
+                delivery_mode = "inline" if len(result_json_bytes) <= inline_threshold else "url"
+            else:
+                delivery_mode = requested_mode
+
+            upload_service = FileUploadService()
+            job_result_repo = JobResultRepository()
+            result_s3_key = None
+            inline_payload = None
+            if delivery_mode == "inline":
+                inline_payload = result_payload
+                result_size = len(result_json_bytes)
+            else:
+                result_s3_key = await upload_service.upload_json_result(job_id, result_payload)
+                result_size = len(result_json_bytes)
+
+            job_result = await job_result_repo.upsert_job_result(
+                db,
+                job_id=job_id,
+                delivery_mode=delivery_mode,
+                document_metadata=result_payload.get("document_metadata"),
+                inline_payload=inline_payload,
+                result_s3_key=result_s3_key,
+                result_size=result_size
+            )
+
+            await job_result_repo.replace_chunks(db, job_result.id, result_payload.get("chunks", []))
+
+            metadata_update = dict(job_metadata)
+            metadata_update["result_mode"] = delivery_mode
+            metadata_update.pop("result", None)
+            job.job_metadata = metadata_update
+            await db.commit()
+
             # 更新状态：数据库存储完成，标记任务为completed
             await state_machine.transition(db, job_id, KBManagementState.DB_STORED.value)
             await state_machine.mark_completed(db, job_id, {
-                "vectorize_result": vectorize_result,
                 "storage_completed": True,
-                "stored_count": len(kb_records)
+                "stored_count": len(kb_records),
+                "delivery_mode": delivery_mode
             })
-            
+
             logger.info(f"知识库存储完成: job_id={job_id}, stored_count={len(kb_records)}")
-            
+
             return {
                 "status": "success",
                 "job_id": job_id,
-                "stored_count": len(kb_records)
+                "stored_count": len(kb_records),
+                "delivery_mode": delivery_mode,
+                "result_s3_key": result_s3_key
             }
             
     except Exception as e:
@@ -361,13 +537,13 @@ async def _store_to_db_async(job_id: str, vectorize_result: Dict[str, Any], user
 
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.send_webhook_task')
-def send_webhook_task(self, store_result: Dict[str, Any], user_id: str = None, job_type: str = "kb_management"):
+def send_webhook_task(self, prev_result: dict, user_id: str = None, job_type: str = "kb_management"):
     """发送Webhook任务（独立步骤，失败不影响主任务）"""
     try:
-        # 从存储结果中获取job_id
-        job_id = store_result.get('job_id')
+        # 从上一个任务的结果中获取job_id
+        job_id = prev_result.get("job_id")
         if not job_id:
-            raise ValueError("存储结果中缺少job_id")
+            raise ValueError("缺少job_id参数")
         
         # 使用更安全的方式处理异步操作
         try:
@@ -381,7 +557,7 @@ def send_webhook_task(self, store_result: Dict[str, Any], user_id: str = None, j
             asyncio.set_event_loop(loop)
         
         try:
-            result = loop.run_until_complete(_send_webhook_async(job_id, store_result, user_id))
+            result = loop.run_until_complete(_send_webhook_async(prev_result, user_id))
             return result
         finally:
             # 只有在创建了新循环时才关闭
@@ -394,11 +570,16 @@ def send_webhook_task(self, store_result: Dict[str, Any], user_id: str = None, j
         raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries), max_retries=5)
 
 
-async def _send_webhook_async(job_id: str, store_result: Dict[str, Any], user_id: str):
+async def _send_webhook_async(prev_result: dict, user_id: str):
     """异步发送Webhook"""
     job_repo = JobRepository()
     
     try:
+        # 从上一个任务的结果中获取job_id
+        job_id = prev_result.get("job_id")
+        if not job_id:
+            raise ValueError("缺少job_id参数")
+            
         async with get_db_context() as db:
             # 获取Job信息
             job = await job_repo.get_job_by_id(db, job_id)
@@ -411,20 +592,34 @@ async def _send_webhook_async(job_id: str, store_result: Dict[str, Any], user_id
                 logger.info(f"Job {job_id} Webhook未启用，跳过")
                 return {"status": "skipped", "webhook_sent": False}
             
+            # 获取结果数据
+            from app.repositories.job_result_repository import JobResultRepository
+            job_result_repo = JobResultRepository()
+            job_result = await job_result_repo.get_by_job_id(db, job_id)
+            if not job_result:
+                logger.warning(f"Job {job_id} 尚未生成结果，跳过Webhook")
+                return {"status": "skipped", "webhook_sent": False}
+
+            upload_service = FileUploadService()
+
             # 调用Webhook服务
             from app.services.webhook.webhook_service import WebhookService
             from datetime import datetime
             webhook_service = WebhookService()
-            
-            webhook_payload = {
+
+            webhook_payload: Dict[str, Any] = {
                 "job_id": job_id,
                 "status": "completed",
-                "result": {
-                    "stored_count": store_result.get("stored_count", 0),
-                    "completed_at": datetime.utcnow().isoformat()
-                }
+                "delivery_mode": job_result.delivery_mode,
+                "document_metadata": job_result.document_metadata or {},
+                "completed_at": datetime.utcnow().isoformat()
             }
-            
+
+            if job_result.delivery_mode == "inline" and job_result.inline_payload:
+                webhook_payload["result"] = job_result.inline_payload
+            elif job_result.delivery_mode == "url" and job_result.result_s3_key:
+                webhook_payload["result_url"] = await upload_service.generate_download_url(job_result.result_s3_key)
+
             webhook_result = await webhook_service.send_webhook(
                 job_id=job_id,
                 webhook_url=job.webhook_url,
@@ -451,6 +646,7 @@ async def _send_job_completion_email(db, job_id: str, job_type: str, result_s3_k
         from app.services.email import EmailService
         from app.repositories.job_repository import JobRepository
         from app.services.storage.file_upload_service import FileUploadService
+        job_result_repo = JobResultRepository()
         
         # 获取Job信息
         job_repo = JobRepository()
@@ -459,6 +655,10 @@ async def _send_job_completion_email(db, job_id: str, job_type: str, result_s3_k
         if job and job.webhook_enabled:
             # 生成下载链接（如果有结果文件）
             download_url = None
+            if not result_s3_key:
+                job_result = await job_result_repo.get_by_job_id(db, job_id)
+                if job_result and job_result.result_s3_key:
+                    result_s3_key = job_result.result_s3_key
             if result_s3_key:
                 upload_service = FileUploadService()
                 download_url = await upload_service.generate_download_url(result_s3_key)

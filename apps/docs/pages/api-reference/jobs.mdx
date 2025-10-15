@@ -1,0 +1,454 @@
+# Jobs API
+
+Jobs API 是 Knowhere 的核心接口，提供文档解析任务的创建、状态查询和结果获取功能。本API完全符合 [Knowhere API PRD](https://wcn7hsfkngk6.feishu.cn/wiki/HzzEwEe0oiZYs9kwUXqcRZs6nAc) 规范。
+
+## 基础信息
+
+- **基础 URL**: `https://api.knowhere.ai`
+- **API 版本**: v1
+- **认证**: Bearer Token (API Key)
+
+## 创建解析任务
+
+创建一个新的文档解析任务。支持两种模式：文件上传和URL下载。
+
+### 请求
+
+```http
+POST /v1/jobs
+Content-Type: application/json
+Authorization: Bearer <YOUR_API_KEY>
+```
+
+### 请求参数
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `source_type` | string | 是 | 文档来源类型，必须是 `file` 或 `url` |
+| `source_url` | string | 条件 | 文件URL（source_type=url时必填） |
+| `file_name` | string | 条件 | 文件名（source_type=file时必填，需包含扩展名） |
+| `data_id` | string | 否 | 用户自定义ID，长度不超过128字符 |
+| `parsing_params` | object | 否 | 解析参数配置 |
+| `webhook` | object | 否 | Webhook配置 |
+
+#### parsing_params 参数
+
+| 参数 | 类型 | 默认值 | 描述 |
+|------|------|--------|------|
+| `model` | string | "base" | 使用的模型，可选值：`base`、`advanced` |
+| `ocr_enabled` | boolean | false | 是否启用OCR |
+| `kb_dir` | string | - | 知识库目录（知识库任务特有） |
+| `doc_type` | string | "auto" | 文档类型（知识库任务特有） |
+| `smart_title_parse` | boolean | true | 智能标题解析（知识库任务特有） |
+
+#### webhook 参数
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `url` | string | 是 | Webhook回调URL |
+| `secret` | string | 是 | 用于生成签名的密钥 |
+
+### 文件上传模式示例
+
+```json
+{
+  "source_type": "file",
+  "file_name": "annual_report.pdf",
+  "data_id": "report_2025_q3",
+  "parsing_params": {
+    "model": "advanced",
+    "ocr_enabled": true,
+    "kb_dir": "财务报告",
+    "doc_type": "auto",
+    "smart_title_parse": true
+  },
+  "webhook": {
+    "url": "https://your-app.com/webhook",
+    "secret": "your-webhook-secret"
+  }
+}
+```
+
+### URL模式示例
+
+```json
+{
+  "source_type": "url",
+  "source_url": "https://example.com/document.pdf",
+  "data_id": "external_doc_001",
+  "parsing_params": {
+    "model": "base",
+    "ocr_enabled": false
+  }
+}
+```
+
+### 响应
+
+#### 文件上传模式（200 OK）
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_abc123def456",
+    "status": "waiting_for_upload",
+    "source_type": "file",
+    "data_id": "report_2025_q3",
+    "created_at": "2025-01-15T10:30:00Z",
+    "upload_url": "https://knowhere-uploads.s3.amazonaws.com/uploads/job_abc123def456.pdf?AWSAccessKeyId=...",
+    "upload_headers": {
+      "Content-Type": "application/pdf"
+    },
+    "expires_in": 3600
+  }
+}
+```
+
+#### URL模式（202 Accepted）
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_abc123def456",
+    "status": "pending",
+    "source_type": "url",
+    "data_id": "external_doc_001",
+    "created_at": "2025-01-15T10:30:00Z"
+  }
+}
+```
+
+### 文件上传流程
+
+1. **申请萝卜坑**：调用 `POST /v1/jobs` 获取预签名URL
+2. **上传文件**：使用返回的 `upload_url` 和 `upload_headers` 直接上传到S3
+3. **自动触发**：S3事件通知自动触发任务处理（或手动调用确认接口）
+
+#### 上传文件示例
+
+```bash
+curl -X PUT "UPLOAD_URL_FROM_RESPONSE" \
+  -H "Content-Type: application/pdf" \
+  --data-binary @document.pdf
+```
+
+## 获取任务状态
+
+查询解析任务的当前状态和结果。
+
+### 请求
+
+```http
+GET /v1/jobs/{job_id}
+Authorization: Bearer <YOUR_API_KEY>
+```
+
+### 路径参数
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `job_id` | string | 是 | 任务ID |
+
+### 响应头
+
+| 头字段 | 描述 | 示例 |
+|--------|------|------|
+| `RateLimit-Limit` | 当前时间窗口内的总请求限额 | 60 |
+| `RateLimit-Remaining` | 当前时间窗口内剩余的请求次数 | 59 |
+| `RateLimit-Reset` | 当前时间窗口重置的Unix时间戳 | 1672531200 |
+
+### 响应示例
+
+#### 等待上传状态
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_abc123def456",
+    "status": "waiting_for_upload",
+    "source_type": "file",
+    "data_id": "report_2025_q3",
+    "created_at": "2025-01-15T10:30:00Z",
+    "current_state": "waiting_for_upload"
+  }
+}
+```
+
+#### 处理中状态
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_abc123def456",
+    "status": "running",
+    "source_type": "file",
+    "data_id": "report_2025_q3",
+    "created_at": "2025-01-15T10:30:00Z",
+    "updated_at": "2025-01-15T10:32:00Z",
+    "current_state": "parsing_document",
+    "progress": {
+      "total_pages": 100,
+      "processed_pages": 42,
+      "current_step": "extracting_text"
+    }
+  }
+}
+```
+
+#### 完成状态（结果内联）
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_abc123def456",
+    "status": "done",
+    "source_type": "file",
+    "data_id": "report_2025_q3",
+    "created_at": "2025-01-15T10:30:00Z",
+    "updated_at": "2025-01-15T10:35:00Z",
+    "current_state": "completed",
+    "result": {
+      "document_metadata": {
+        "source_file_name": "annual_report.pdf",
+        "total_chunks": 152
+      },
+      "chunks": [
+        {
+          "chunk_id": "d8a2c1b0-1234-5678-abcd-efgh12345678",
+          "text": "第一章 总体目标和建设原则",
+          "type": "title",
+          "metadata": {
+            "path": "第一部分概述/第一章",
+            "length": 12,
+            "tokens": 8,
+            "keywords": ["目标", "原则", "建设"],
+            "summary": "本章阐述了项目的总体目标和基本建设原则。",
+            "relationships": ["e9b3d2c1-..."]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+#### 完成状态（结果URL）
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_large_file_abc",
+    "status": "done",
+    "source_type": "file",
+    "data_id": "very_large_book_p2",
+    "created_at": "2025-01-15T10:30:00Z",
+    "updated_at": "2025-01-15T10:35:00Z",
+    "current_state": "completed",
+    "result_url": "https://knowhere-results.s3.amazonaws.com/job_large_file_abc.json?AWSAccessKeyId=..."
+  }
+}
+```
+
+#### 失败状态
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job_abc123def456",
+    "status": "failed",
+    "source_type": "file",
+    "data_id": "report_2025_q3",
+    "created_at": "2025-01-15T10:30:00Z",
+    "updated_at": "2025-01-15T10:32:00Z",
+    "current_state": "failed",
+    "error": {
+      "code": "E3001",
+      "message": "Document parsing failed",
+      "details": "Unsupported file format"
+    }
+  }
+}
+```
+
+## 确认文件上传
+
+手动确认文件上传完成（备用机制）。
+
+### 请求
+
+```http
+POST /v1/jobs/{job_id}/confirm-upload
+Authorization: Bearer <YOUR_API_KEY>
+```
+
+### 路径参数
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `job_id` | string | 是 | 任务ID |
+
+### 响应
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "文件上传确认成功，任务已开始处理"
+  }
+}
+```
+
+## 获取任务列表
+
+获取用户的任务列表。
+
+### 请求
+
+```http
+GET /v1/jobs?page=1&page_size=20&status=running&job_type=kb_management
+Authorization: Bearer <YOUR_API_KEY>
+```
+
+### 查询参数
+
+| 参数 | 类型 | 默认值 | 描述 |
+|------|------|--------|------|
+| `page` | integer | 1 | 页码 |
+| `page_size` | integer | 20 | 每页数量（最大100） |
+| `status` | string | - | 状态过滤 |
+| `job_type` | string | - | 任务类型过滤（kb_management/table_fill） |
+
+### 响应
+
+```json
+{
+  "success": true,
+  "data": {
+    "jobs": [
+      {
+        "job_id": "job_abc123def456",
+        "status": "done",
+        "source_type": "file",
+        "data_id": "report_2025_q3",
+        "created_at": "2025-01-15T10:30:00Z",
+        "result": { ... }
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 20
+  }
+}
+```
+
+## 任务状态说明
+
+| 状态 | 描述 |
+|------|------|
+| `waiting_for_upload` | 等待文件上传（仅文件上传模式） |
+| `pending` | 任务已创建，等待处理 |
+| `running` | 任务正在处理中 |
+| `converting` | 格式转换中 |
+| `done` | 任务已完成 |
+| `failed` | 任务已失败 |
+
+## 错误代码
+
+| 错误代码 | HTTP状态码 | 描述 |
+|----------|------------|------|
+| E1001 | 400 | 上传超时 |
+| E1002 | 400 | 上传的文件损坏或为空 |
+| E2001 | 400 | 源URL无法访问或超时 |
+| E2002 | 400 | URL返回的文件格式无效 |
+| E3001 | 500 | 文档解析失败 |
+| E3002 | 400 | 文档受密码保护 |
+| E4001 | 500 | 文件转换失败 |
+
+## 速率限制
+
+- **限制策略**: 基于API Key的请求频率限制
+- **限制额度**: 每分钟60次请求（60 RPM）
+- **超出限制**: 返回429 Too Many Requests
+
+## 最佳实践
+
+### 轮询建议
+
+1. **首次查询**: 提交任务后至少等待2秒
+2. **轮询间隔**: 逐渐增加间隔时间（2秒 → 5秒 → 10秒）
+3. **超时设置**: 设置合理的轮询超时上限
+4. **状态判断**: 根据任务状态决定下一步操作
+
+### 示例代码
+
+```python
+import time
+import requests
+
+def poll_job_status(job_id, api_key, max_attempts=60):
+    """轮询任务状态"""
+    base_url = "https://api.knowhere.ai"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    
+    for attempt in range(max_attempts):
+        response = requests.get(f"{base_url}/v1/jobs/{job_id}", headers=headers)
+        response.raise_for_status()
+        
+        data = response.json()["data"]
+        status = data["status"]
+        
+        if status == "done":
+            return data["result"]
+        elif status == "failed":
+            raise Exception(f"任务失败: {data.get('error', {}).get('message', '未知错误')}")
+        
+        # 动态调整轮询间隔
+        wait_time = min(2 ** (attempt // 3), 30)
+        time.sleep(wait_time)
+    
+    raise Exception("任务超时")
+```
+
+## Webhook通知
+
+如果创建任务时提供了webhook配置，系统将在任务完成时发送POST请求到指定URL。
+
+### Webhook请求格式
+
+```http
+POST https://your-app.com/webhook
+Content-Type: application/json
+X-Knowhere-Signature: sha256=...
+X-Knowhere-Attempt-ID: 24b1f3c0-a9f3-4e18-85e4-71c1b872412b
+
+{
+  "job_id": "job_abc123def456",
+  "status": "done",
+  "result": { ... }
+}
+```
+
+### 签名验证
+
+使用提供的secret计算HMAC-SHA256签名：
+
+```python
+import hmac
+import hashlib
+
+def verify_webhook_signature(payload, signature, secret):
+    expected_signature = hmac.new(
+        secret.encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    
+    return hmac.compare_digest(f"sha256={expected_signature}", signature)
+```

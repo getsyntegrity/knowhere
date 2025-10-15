@@ -7,12 +7,13 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.state_machine.states import (
-    is_valid_transition, is_terminal_state, get_job_status_from_state
+    is_valid_transition, is_terminal_state, get_job_status_from_state, get_prd_status_from_state
 )
 from app.models.database.job import Job
 from app.models.database.job_state_history import JobStateHistory
 from app.services.redis import RedisServiceFactory
 from app.utils.redis_key_builder import redis_key_builder, RedisKeyType
+from app.utils.json_utils import make_json_safe
 
 
 class JobStateMachine:
@@ -59,9 +60,10 @@ class JobStateMachine:
             old_state = job.current_state
             job.current_state = to_state
             job.status = get_job_status_from_state(to_state)
+            status_for_cache = get_prd_status_from_state(to_state)
             
             # 5. 更新Redis缓存
-            await self._update_redis_cache(job_id, to_state, job.status)
+            await self._update_redis_cache(job_id, to_state, status_for_cache)
             
             # 6. 提交数据库事务
             await db.commit()
@@ -127,19 +129,14 @@ class JobStateMachine:
         serialized_metadata = None
         if metadata:
             try:
-                # 创建一个可序列化的副本
-                safe_metadata = {}
-                for key, value in metadata.items():
-                    if hasattr(value, 'to_dict'):  # DataFrame对象
-                        safe_metadata[key] = f"<DataFrame: {len(value)} rows>"
-                    elif hasattr(value, '__dict__'):  # 复杂对象
-                        safe_metadata[key] = str(value)
-                    else:
-                        safe_metadata[key] = value
-                serialized_metadata = json.dumps(safe_metadata)
+                safe_metadata = make_json_safe(metadata)
+                serialized_metadata = json.dumps(safe_metadata, ensure_ascii=False)
             except Exception as e:
                 logger.warning(f"序列化metadata失败: {e}")
-                serialized_metadata = json.dumps({"error": "metadata_serialization_failed"})
+                serialized_metadata = json.dumps(
+                    {"error": "metadata_serialization_failed"},
+                    ensure_ascii=False
+                )
         
         history = JobStateHistory(
             job_id=job_id,
@@ -255,7 +252,7 @@ class JobStateMachine:
             "kb_management": {
                 "uploading": "pending",  # 上传失败，回到待处理
                 "parsing": "uploaded",  # 解析失败，回到已上传
-                "vectorizing": "parsed",  # 向量化失败，回到已解析
+                "vectorizing": "parsing",  # 向量化失败，回到解析状态
                 "storing_db": "vectorized",  # 存储失败，回到已向量化
                 "failed": "pending",  # 失败后重试，回到待处理
             }

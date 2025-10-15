@@ -3,6 +3,7 @@
 """
 import os
 import uuid
+import json
 import asyncio
 import aiohttp
 from typing import Optional, Dict, Any
@@ -97,13 +98,16 @@ class FileUploadService:
         try:
             s3_key = f"uploads/{job_id}{file_extension}"
             
+            # 智能识别Content-Type
+            content_type = self.get_content_type(file_extension)
+            
             # 生成预签名URL（1小时过期）
             upload_url = self.s3_client.generate_presigned_url(
                 'put_object',
                 Params={
                     'Bucket': self.uploads_bucket,
                     'Key': s3_key,
-                    'ContentType': 'application/octet-stream'
+                    'ContentType': content_type
                 },
                 ExpiresIn=3600
             )
@@ -111,7 +115,10 @@ class FileUploadService:
             return {
                 "upload_url": upload_url,
                 "s3_key": s3_key,
-                "expires_in": 3600
+                "expires_in": 3600,
+                "upload_headers": {
+                    "Content-Type": content_type
+                }
             }
             
         except Exception as e:
@@ -186,7 +193,7 @@ class FileUploadService:
     async def upload_result_file(self, local_file_path: str, job_id: str, file_extension: str = "") -> str:
         """
         上传结果文件
-        
+
         Args:
             local_file_path: 本地文件路径
             job_id: 任务ID
@@ -204,6 +211,23 @@ class FileUploadService:
             
         except Exception as e:
             logger.error(f"结果文件上传失败: {e}")
+            raise
+
+    async def upload_json_result(self, job_id: str, result_data: Dict[str, Any], *, content_type: str = "application/json") -> str:
+        """上传JSON结果文件"""
+        try:
+            s3_key = f"results/{job_id}.json"
+            body = json.dumps(result_data, ensure_ascii=False).encode("utf-8")
+            self.s3_client.put_object(
+                Bucket=self.results_bucket,
+                Key=s3_key,
+                Body=body,
+                ContentType=content_type
+            )
+            logger.info(f"结果JSON上传成功: job_id={job_id}, key={s3_key}")
+            return s3_key
+        except Exception as e:
+            logger.error(f"上传结果JSON失败: {e}")
             raise
     
     def _ensure_bucket_exists(self, bucket_name: str) -> bool:
@@ -313,6 +337,82 @@ class FileUploadService:
                 os.remove(temp_file_path)
             raise Exception(f"下载文件失败: {e}")
     
+    async def verify_s3_file_exists(self, s3_key: str, bucket: Optional[str] = None) -> Dict[str, Any]:
+        """
+        验证S3文件是否存在
+        
+        Args:
+            s3_key: S3键
+            bucket: 存储桶名称（可选）
+            
+        Returns:
+            Dict: 文件信息或 {"exists": False}
+        """
+        try:
+            bucket_name = bucket or self.uploads_bucket
+            
+            response = self.s3_client.head_object(
+                Bucket=bucket_name,
+                Key=s3_key
+            )
+            
+            return {
+                "exists": True,
+                "size": response.get('ContentLength'),
+                "content_type": response.get('ContentType'),
+                "last_modified": response.get('LastModified'),
+                "etag": response.get('ETag')
+            }
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return {"exists": False}
+            logger.error(f"验证S3文件存在性失败: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"验证S3文件存在性失败: {e}")
+            raise
+    
+    def get_content_type(self, file_extension: str) -> str:
+        """
+        根据文件扩展名返回Content-Type
+        
+        Args:
+            file_extension: 文件扩展名（如 .pdf, .docx）
+            
+        Returns:
+            str: Content-Type
+        """
+        content_types = {
+            '.pdf': 'application/pdf',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.doc': 'application/msword',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls': 'application/vnd.ms-excel',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.csv': 'text/csv',
+            '.txt': 'text/plain',
+            '.md': 'text/markdown',
+            '.json': 'application/json',
+            '.xml': 'application/xml',
+            '.html': 'text/html',
+            '.htm': 'text/html',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.bmp': 'image/bmp',
+            '.tiff': 'image/tiff',
+            '.svg': 'image/svg+xml',
+            '.zip': 'application/zip',
+            '.rar': 'application/x-rar-compressed',
+            '.7z': 'application/x-7z-compressed',
+            '.tar': 'application/x-tar',
+            '.gz': 'application/gzip'
+        }
+        return content_types.get(file_extension.lower(), 'application/octet-stream')
+
     def generate_s3_key(self, job_id: str, file_extension: str = "", prefix: str = "uploads") -> str:
         """
         生成S3键

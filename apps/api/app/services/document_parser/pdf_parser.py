@@ -2,14 +2,15 @@ import os
 import requests
 from app.services.document_parser.md_parser import parse_md
 from app.utils.FileDownUpUtils import s3_download_extract_zip
+from app.core.config import settings
 
 
 async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api"):
     if mode == "api":
-        url = os.environ.get("MINERU_URL")
+        url = settings.MINERU_URL
         header = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.environ.get('MINERU_API_KEY')}",
+            "Authorization": f"Bearer {settings.MINERU_API_KEY}",
         }
         data = {
             "url": pdf_path,
@@ -23,7 +24,7 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
             status_url = f"https://mineru.net/api/v4/extract/task/{sent_info['task_id']}"
             status_header = {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {os.environ.get('MINERU_API_KEY')}"
+                "Authorization": f"Bearer {settings.MINERU_API_KEY}"
             }
 
             while True:

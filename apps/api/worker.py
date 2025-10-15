@@ -5,6 +5,7 @@ Celery Worker 启动脚本
 """
 import os
 import sys
+import asyncio
 from pathlib import Path
 
 # 添加项目根目录到 Python 路径
@@ -15,10 +16,28 @@ sys.path.insert(0, str(project_root))
 os.environ['PYTHONPATH'] = str(project_root)
 
 from app.core.celery_app import celery_app
+from app.core.config import redis_pool_manager
+from loguru import logger
+
+async def init_redis():
+    """初始化Redis连接池"""
+    try:
+        await redis_pool_manager.init_pool()
+        logger.info("Celery Worker Redis 连接池初始化成功")
+    except Exception as e:
+        logger.error(f"Celery Worker Redis 初始化失败: {e}")
+        raise
 
 if __name__ == "__main__":
     # 设置环境变量
     os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
+    
+    # 初始化Redis连接池
+    try:
+        asyncio.run(init_redis())
+    except Exception as e:
+        logger.error(f"Worker启动失败: {e}")
+        sys.exit(1)
     
     # 生成唯一的节点名称
     import socket

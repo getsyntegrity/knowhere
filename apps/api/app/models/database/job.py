@@ -4,7 +4,7 @@ Job数据模型 - 用户API业务任务
 from __future__ import annotations
 from datetime import datetime
 from typing import Optional, Dict, Any
-from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey, Index, JSON
+from sqlalchemy import String, Text, DateTime, Boolean, ForeignKey, Index, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid import UUID, uuid4
 
@@ -30,7 +30,6 @@ class Job(Base):
     source_type: Mapped[str] = mapped_column(String(20), nullable=False)  # direct_upload, url
     file_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # 原始文件路径
     s3_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # S3存储键
-    result_s3_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # 结果文件S3键
     
     # Webhook配置
     webhook_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
@@ -49,6 +48,7 @@ class Job(Base):
     user: Mapped[User] = relationship("User", back_populates="jobs", lazy="select")
     state_history: Mapped[list["JobStateHistory"]] = relationship("JobStateHistory", back_populates="job", cascade="all, delete-orphan")
     webhook_logs: Mapped[list["WebhookLog"]] = relationship("WebhookLog", back_populates="job", cascade="all, delete-orphan")
+    job_result: Mapped[Optional["JobResult"]] = relationship("JobResult", back_populates="job", uselist=False, lazy="selectin")
     
     # 索引
     __table_args__ = (

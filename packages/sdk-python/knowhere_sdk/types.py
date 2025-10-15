@@ -141,8 +141,10 @@ class JobResultResponse(BaseModel):
     job_id: str
     job_type: str
     status: str
-    result_s3_key: Optional[str] = None
+    delivery_mode: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
     download_url: Optional[str] = None
+    document_metadata: Optional[Dict[str, Any]] = None
     processing_stats: Optional[Dict[str, Any]] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
