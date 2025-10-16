@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import math
 import torch
+import uuid
 from typing import Dict, Any, Optional
 from loguru import logger
 
@@ -222,6 +223,9 @@ class UserConfigService:
         Returns:
             完整的用户信息字典
         """
+        # 确保 user 字段是字符串，处理可能的 UUID 对象
+        user_info['user'] = str(user_info['user'])
+        
         logger.info(f"初始化用户设置: {user_info['user']}")
         
         user_info['KB'] = f"{user_info['kb_term']}_{user_info['user']}"
@@ -329,7 +333,7 @@ class UserConfigService:
             用户配置字典或None
         """
         try:
-            config_json = UserConfigService.init_user(user_id)
+            config_json = UserConfigService.init_user(str(user_id))
             return json.loads(config_json)
         except Exception as e:
             logger.error(f"获取用户配置失败: {user_id}, 错误: {str(e)}")

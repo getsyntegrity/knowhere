@@ -158,7 +158,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             if not user_config:
                 # 如果Redis中没有，则初始化用户配置
                 logger.info(f"Redis中未找到用户 {job.user_id} 配置，正在初始化...")
-                user_config_str = UserConfigService.init_user(job.user_id)
+                user_config_str = UserConfigService.init_user(str(job.user_id))
                 user_config = json.loads(user_config_str) if isinstance(user_config_str, str) else user_config_str
                 
                 # 保存到Redis
@@ -332,7 +332,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
 
                 if not user_config:
                     logger.warning(f"Job {job_id} metadata缺少用户配置，尝试重新初始化用户配置")
-                    user_config_str = UserConfigService.init_user(job.user_id)
+                    user_config_str = UserConfigService.init_user(str(job.user_id))
                     user_config = json.loads(user_config_str)
                     await user_redis_service.save_user_config(job.user_id, user_config)
 
