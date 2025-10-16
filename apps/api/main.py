@@ -33,24 +33,34 @@ async def lifespan(app: FastAPI):
     应用的生命周期管理
     """
     logger.info("知识库API服务开始启动...")
+    
+    # 创建数据库表
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
     # 导入所有模型以确保它们被注册
     from app.models.database import user
+    
+    # 预热数据库连接池
+    from app.core.database import prewarm_connection_pool
+    await prewarm_connection_pool()
+    logger.info("数据库连接池预热完成。")
+    
+    # 初始化Redis连接池
     await redis_pool_manager.init_pool()
     logger.info("Redis 连接池已创建。")
 
+    # 初始化HTTP客户端
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-    # Redis连接池已通过redis_pool_manager初始化
-    # app.state.redis_pool = redis_pool
+    
+    logger.info("知识库API服务启动完成！")
     yield
+    
     # 应用关闭时的清理工作
-    # Redis连接池关闭已通过redis_pool_manager处理
-    # await app.state.redis_pool.close()
-    # logger.info("Redis 连接池已关闭。")
+    logger.info("开始关闭服务...")
     await engine.dispose()
     logger.info("数据库引擎连接池已关闭。")
+    logger.info("服务关闭完成。")
 
 def create_app() -> FastAPI:
     app = FastAPI(

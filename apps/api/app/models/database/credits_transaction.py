@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from sqlalchemy import Column, String, Integer, DateTime, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from uuid import UUID, uuid4
+from sqlalchemy.dialects.postgresql import UUID
+from uuid import uuid4
 
 from app.core.database import Base
 
@@ -16,7 +17,7 @@ class CreditsTransaction(Base):
     __tablename__ = "credits_transactions"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     credits_amount: Mapped[int] = mapped_column(Integer, nullable=False)  # 正数为增加，负数为扣除
     transaction_type: Mapped[str] = mapped_column(String(50), nullable=False)  # purchase, usage, bonus, refund
     stripe_payment_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)

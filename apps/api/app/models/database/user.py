@@ -1,6 +1,5 @@
 from __future__ import annotations
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from enum import Enum
 from typing import Optional, List
 from uuid import UUID
@@ -16,7 +15,7 @@ from app.core.database import Base
 这是基础类
 """
 def utc_now():
-    return datetime.now(ZoneInfo("Asia/Shanghai"))
+    return datetime.utcnow()
 
 class UserType(str, Enum):
     """用户类型枚举"""

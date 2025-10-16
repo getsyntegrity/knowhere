@@ -6,9 +6,14 @@ starlette==0.46.2
 # 数据库相关
 sqlalchemy==2.0.42
 sqlalchemy[asyncio]
-aiomysql==0.2.0
-PyMySQL==1.1.1
-pymysql
+# PostgreSQL 异步驱动
+asyncpg==0.29.0
+# PostgreSQL 同步驱动（用于同步操作和迁移）
+psycopg2-binary==2.9.9
+# 数据库迁移工具
+alembic==1.13.1
+# 数据库连接字符串解析和工具
+sqlalchemy-utils==0.41.1
 
 # Redis缓存相关
 redis==5.3.1
@@ -40,6 +45,8 @@ stripe==13.0.1
 pydantic==2.11.7
 pydantic-settings==2.10.1
 python-dotenv==1.1.1
+# 数据库模型验证
+pydantic[email]==2.11.7
 
 # HTTP客户端
 httpx==0.28.1
@@ -48,6 +55,8 @@ aiohttp==3.12.15
 
 # 日志
 loguru==0.7.3
+# 数据库连接监控
+psutil==5.9.8
 
 # 机器学习和AI
 numpy==2.2.6
@@ -145,3 +154,21 @@ opencv-python-headless==4.8.1.78
 
 # 数据分析
 moesifapi==1.5.5
+
+# 开发环境工具
+# 数据库调试和查询分析
+sqlalchemy-query==0.1.0
+# 数据库连接测试
+pytest-asyncio==0.23.2
+# 数据库性能分析
+sqlalchemy-profiler==1.0.0
+# 连接池监控
+psutil==5.9.8
+
+# PostgreSQL 特定工具
+# 向量数据库支持（用于AI嵌入）
+pgvector==0.2.4
+# 数据库连接健康检查
+psutil==5.9.8
+# PostgreSQL 全文搜索优化
+# 注意：pg_trgm 扩展需要在数据库中手动安装

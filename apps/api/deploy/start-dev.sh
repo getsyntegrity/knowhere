@@ -26,7 +26,7 @@ docker exec knowhere_minio /docker-entrypoint-initdb.d/setup-webhook.sh
 
 # 检查服务状态
 echo "🔍 检查服务状态..."
-echo "MySQL: $(docker exec knowhere_mysql mysqladmin ping -h localhost -u root -proot123 2>/dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
+echo "PostgreSQL: $(docker exec knowhere_postgres pg_isready -U root -d Knowhere 2>/dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
 echo "Redis: $(docker exec knowhere_redis redis-cli ping 2>/dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
 echo "MinIO: $(curl -s http://localhost:9000/minio/health/live > /dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
 
@@ -35,7 +35,7 @@ echo "🎉 开发环境启动完成！"
 echo ""
 echo "📋 服务访问地址："
 echo "  - MinIO控制台: http://localhost:9001 (minioadmin/minioadmin123)"
-echo "  - MySQL: localhost:3306 (aismart_user/aismart123)"
+echo "  - PostgreSQL: localhost:5432 (root/root123)"
 echo "  - Redis: localhost:6379"
 echo "  - RabbitMQ管理: http://localhost:15672 (admin/admin123)"
 echo ""

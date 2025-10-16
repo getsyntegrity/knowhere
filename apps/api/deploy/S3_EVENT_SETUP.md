@@ -179,7 +179,7 @@ S3_WEBHOOK_AUTH_TOKEN=dev-webhook-token
 SNS_SIGNATURE_VERIFICATION=false
 
 # 数据库配置
-DATABASE_URL=mysql+aiomysql://aismart_user:aismart123@localhost:3306/aismart_bid
+DATABASE_URL=postgresql+asyncpg://root:root123@localhost:5432/Knowhere
 REDIS_URL=redis://localhost:6379/0
 ```
 

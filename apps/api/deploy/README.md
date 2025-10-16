@@ -14,11 +14,10 @@
   - 端口: 6379
   - 无密码
 
-- **MySQL**: 数据库服务
-  - 端口: 3306
-  - 根用户: root/root123
-  - 应用用户: aismart_user/aismart123
-  - 数据库: aismart_bid
+- **PostgreSQL**: 数据库服务
+  - 端口: 5432
+  - 用户: root/root123
+  - 数据库: Knowhere
 
 - **MinIO**: 对象存储服务
   - 端口: 9000 (API), 9001 (控制台)
@@ -64,7 +63,7 @@ docker-compose -f docker-compose.queue.yml down
 |------|------|-------------|
 | RabbitMQ 管理界面 | http://localhost:15672 | admin/admin123 |
 | MinIO 控制台 | http://localhost:9001 | minioadmin/minioadmin123 |
-| MySQL | localhost:3306 | root/root123 或 aismart_user/aismart123 |
+| PostgreSQL | localhost:5432 | root/root123 |
 | Redis | localhost:6379 | 无密码 |
 
 ## 数据持久化
@@ -73,7 +72,7 @@ docker-compose -f docker-compose.queue.yml down
 
 - `rabbitmq_data`: RabbitMQ 数据
 - `redis_data`: Redis 数据
-- `mysql_data`: MySQL 数据
+- `postgres_data`: PostgreSQL 数据
 - `minio_data`: MinIO 数据
 
 ## 清理数据

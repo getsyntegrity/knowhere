@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Optional
 from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from uuid import UUID, uuid4
+from sqlalchemy.dialects.postgresql import UUID
+from uuid import uuid4
 
 from app.core.database import Base
 
@@ -16,7 +17,7 @@ class UsageLog(Base):
     __tablename__ = "usage_logs"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     api_key_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     method: Mapped[str] = mapped_column(String(10), nullable=False)

@@ -39,28 +39,27 @@ services:
       timeout: 10s
       retries: 5
 
-  # MySQL 数据库
-  mysql:
-    image: mysql:8.0
-    container_name: knowhere_mysql
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: knowhere_postgres
     ports:
-      - "3306:3306"
+      - "5432:5432"
     environment:
-      MYSQL_ROOT_PASSWORD: root123
-      MYSQL_DATABASE: aismart_bid
-      MYSQL_USER: aismart_user
-      MYSQL_PASSWORD: aismart123
+      POSTGRES_DB: Knowhere
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./mysql/init:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
     networks:
       - knowhere_network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      test: ["CMD-SHELL", "pg_isready -U root -d Knowhere"]
       interval: 30s
       timeout: 10s
       retries: 5
-    command: --default-authentication-plugin=mysql_native_password
 
   # MinIO 对象存储 - 使用宿主机网络模式
   minio:
@@ -88,7 +87,7 @@ services:
 volumes:
   rabbitmq_data:
   redis_data:
-  mysql_data:
+  postgres_data:
   minio_data:
 
 networks:
