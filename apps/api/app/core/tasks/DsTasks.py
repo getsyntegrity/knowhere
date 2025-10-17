@@ -60,10 +60,6 @@ async def process_ai_query(ctx: dict, prompt: str, temperature: float=0.1):
     async def update_status(status_text: str):
         await task_service.set_task_status(job_id, status_text)
     
-    async def stream_callback(chunk: str, chunk_size: int, total_size: int):
-        if chunk:
-            await task_service.push_stream_data(job_id, chunk)
-
     try:
         # 创建任务记录
         await task_service.create_task(job_id, {
@@ -79,7 +75,6 @@ async def process_ai_query(ctx: dict, prompt: str, temperature: float=0.1):
             messages=prompt,
             temperature=temperature,
             conversation_id=conversation_id,
-            stream_key=f"task:{job_id}:stream"  # 保持兼容性
         )
         await update_status("started！")
         await task_service.save_task_result(job_id, full_result)

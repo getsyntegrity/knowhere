@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pylab import mpl
 from loguru import logger
-from app.core.config import redis_pool_manager
 from app.core.dependencies import get_redis_service
 from app.services.redis import RedisService
 from app.core.database import get_db_context
@@ -196,7 +195,6 @@ async def rerank_(rerank_txt, msg, paths4rank, keep_one=False):
         {"role": "user", "content": prompt}
     ]
 
-    redis_pool = await redis_pool_manager.get_pool()
     ctx_task_id = str(uuid.uuid4())
     
     # 使用Redis直接追踪任务状态，无需数据库持久化

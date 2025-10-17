@@ -17,7 +17,7 @@ class ContentBase(Base):
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="内容顺序标识符")
     content = Column(Text, nullable=True, comment="内容的具体文本")
     path = Column(Text, nullable=True, comment="文件路径或来源")
-    type = Column(String(50), nullable=True, comment="内容类型（如PTXT, SUMMARY等）")
+    type = Column(String(200), nullable=True, comment="内容类型（如PTXT, SUMMARY等）")
     length = Column(Integer, nullable=True, comment="内容的长度或大小")
     keywords = Column(String(511), nullable=True, comment="内容的关键词")
     summary = Column(Text, nullable=True, comment="内容的摘要")

@@ -77,10 +77,6 @@ class RedisKeyBuilder:
         """任务结果键"""
         return self.build_key(RedisKeyType.TASK, task_id, "result")
     
-    def task_stream(self, task_id: str) -> str:
-        """任务流式数据键"""
-        return self.build_key(RedisKeyType.TASK, task_id, "stream")
-    
     def task_metadata(self, task_id: str) -> str:
         """任务元数据键"""
         return self.build_key(RedisKeyType.TASK, task_id, "metadata")

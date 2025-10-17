@@ -5,7 +5,6 @@ import uuid
 import pandas as pd
 from bs4 import BeautifulSoup
 from loguru import logger
-from app.core.config import redis_pool_manager
 from app.core.database import get_db_context
 from app.core.config import settings
 # TaskRedis依赖已移除，使用Redis直接追踪
@@ -89,7 +88,6 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
             {"role": "user", "content": prompt}
         ]
 
-        redis_pool = await redis_pool_manager.get_pool()
         ctx_task_id = str(uuid.uuid4())
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
@@ -178,4 +176,3 @@ async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', conte
                                                    'local_summary': summary
                                                    }
     return df_with_labels
-

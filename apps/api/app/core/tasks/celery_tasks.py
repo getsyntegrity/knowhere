@@ -89,12 +89,15 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
     
     # 执行AI查询
     try:
+        logger.debug(f'process_ai_query_async prompt: {prompt}')
+        logger.debug(f'process_ai_query_async temperature: {temperature}')
+        logger.debug(f'process_ai_query_async conversation_id: {conversation_id}')
         result = await ai_client.chat_completion(
             messages=prompt,
             temperature=temperature,
             conversation_id=conversation_id,
-            stream_key=f"task:{context.user_id}:stream"
         )
+        logger.debug(f'process_ai_query_async result: {result}')
         
         # 保存结果
         await task_service.save_task_result(context.user_id, {

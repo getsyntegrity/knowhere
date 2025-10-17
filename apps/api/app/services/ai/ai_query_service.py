@@ -9,9 +9,6 @@ from typing import Any, Optional
 from celery import current_task
 from loguru import logger
 
-from app.core.config import redis_pool_manager
-
-
 class AIQueryService:
     """AI查询服务"""
 
@@ -23,13 +20,6 @@ class AIQueryService:
             use_celery: 是否使用Celery，False则使用ARQ
         """
         self.use_celery = use_celery
-        self.redis_pool = None
-
-    async def _get_redis_pool(self):
-        """获取Redis连接池"""
-        if not self.redis_pool:
-            self.redis_pool = await redis_pool_manager.get_pool()
-        return self.redis_pool
 
     async def query_ai(
         self,
@@ -117,59 +107,11 @@ class AIQueryService:
     ) -> Any:
         """使用ARQ执行AI查询（向后兼容）"""
         try:
-            # 获取Redis连接池
-            await self._get_redis_pool()
-
             # 提交ARQ任务（已弃用，仅用于向后兼容）
             raise NotImplementedError("ARQ模式已弃用，请使用Celery模式")
 
         except Exception as e:
             logger.error(f"ARQ AI查询失败: {e}")
-            raise
-
-    async def query_ai_stream(
-        self,
-        messages: Any,
-        user_id: str = "system",
-        temperature: float = 0.1,
-        conversation_id: Optional[str] = None,
-        **kwargs
-    ) -> Any:
-        """
-        执行流式AI查询（仅支持Celery）
-
-        Args:
-            messages: 查询消息
-            user_id: 用户ID
-            temperature: 温度参数
-            conversation_id: 对话ID
-            **kwargs: 其他参数
-
-        Returns:
-            流式查询结果
-        """
-        if not self.use_celery:
-            raise NotImplementedError("流式查询仅支持Celery模式")
-
-        try:
-            from app.core.tasks.celery_tasks import process_ai_query as celery_process_ai_query
-
-            task = celery_process_ai_query.delay(
-                prompt=messages,
-                user_id=user_id,
-                temperature=temperature,
-                conversation_id=conversation_id,
-                **kwargs
-            )
-
-            return {
-                "task_id": task.id,
-                "status": "started",
-                "stream_key": f"task:{user_id}:stream",
-            }
-
-        except Exception as e:
-            logger.error(f"流式AI查询失败: {e}")
             raise
 
     @staticmethod
@@ -195,7 +137,6 @@ class AIQueryService:
         redis_service = RedisServiceFactory.get_service()
         task_service = TaskRedisService(redis_service)
 
-        stream_key = kwargs.pop("stream_key", None) or f"task:{user_id}:stream"
         conversation = conversation_id or f"ai_query_{user_id}_{int(time.time())}"
 
         await task_service.set_task_status(user_id, "正在连接AI大模型...")
@@ -206,7 +147,6 @@ class AIQueryService:
                 messages=messages,
                 temperature=temperature,
                 conversation_id=conversation,
-                stream_key=stream_key,
             )
 
             await task_service.save_task_result(

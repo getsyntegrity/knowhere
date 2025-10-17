@@ -12,7 +12,6 @@ from pandasql import sqldf
 from bs4 import BeautifulSoup
 from docx.table import Table as DocxTable
 from collections import OrderedDict
-from app.core.config import redis_pool_manager
 from app.core.database import get_db_context
 from app.core.config import settings
 # TaskRedis依赖已移除，使用Redis直接追踪
@@ -187,7 +186,6 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
                 {"role": "user", "content": prompt}
             ]
 
-            redis_pool = await redis_pool_manager.get_pool()
             ctx_task_id = gen_str_codes((str(uuid.uuid4()) + tb_small_str))
             
             # 使用Redis直接追踪任务状态，无需数据库持久化
@@ -390,7 +388,6 @@ async def table_scope_analyze(query, tb_path, paras, num_row=7):
         {"role": "user", "content": prompt}
     ]
 
-    redis_pool = await redis_pool_manager.get_pool()
     ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
     
     # 使用Redis直接追踪任务状态，无需数据库持久化
@@ -517,6 +514,5 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
 #     df = df.where(pd.notnull(df), None)
 #     tb_json = df.to_dict(orient="records")
 #     return tb_json
-
 
 

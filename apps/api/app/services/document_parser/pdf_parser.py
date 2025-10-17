@@ -3,6 +3,7 @@ import requests
 from app.services.document_parser.md_parser import parse_md
 from app.utils.FileDownUpUtils import s3_download_extract_zip
 from app.core.config import settings
+from loguru import logger
 
 
 async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api"):
@@ -18,7 +19,12 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
             "enable_formula": True,
             "language": "auto"
         }
+        logger.debug(f"parse_pdfs data: {data}")
+        logger.debug(f"parse_pdfs url: {url}")
+        logger.debug(f"parse_pdfs header: {header}")
         res = requests.post(url, headers=header, json=data)
+        logger.debug(f"parse_pdfs res: {res.json()}")
+        
         if res.status_code == 200:
             sent_info = (res.json())["data"]
             status_url = f"https://mineru.net/api/v4/extract/task/{sent_info['task_id']}"
@@ -28,7 +34,11 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
             }
 
             while True:
+                logger.debug(f"parse_pdfs status_url: {status_url}")
+                logger.debug(f"parse_pdfs status_header: {status_header}")
                 res = requests.get(status_url, headers=status_header)
+                logger.debug(f"parse_pdfs status_res: {res.json()}")
+                
                 if res.status_code == 200:
                     status = res.json()["data"]
                     if status['state']=="done":

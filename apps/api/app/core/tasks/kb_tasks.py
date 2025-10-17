@@ -353,6 +353,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             from app.services.common.global_manager_service import global_df_manager
             user_key = f"{user_config['user']}_all_contents_df"
             all_contents_df = global_df_manager.get_dataframe(user_key)
+            logger.debug(f"user_key: {user_key}, all_contents_df length: {len(all_contents_df)}")
             
             kb_records = []
             if all_contents_df is not None and len(all_contents_df) > 0:
@@ -363,6 +364,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 # 转换DataFrame为数据库记录（只存新增的内容）
                 contents_count = len(all_contents_df)
                 for _, row in all_contents_df.tail(contents_count).iterrows():
+                    logger.debug(f"row: {row}")
                     kb_record = KBPydantic(
                         content=row.get('content'),
                         path=row.get('path'),

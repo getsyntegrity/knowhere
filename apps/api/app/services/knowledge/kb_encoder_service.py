@@ -13,7 +13,6 @@ from loguru import logger
 from openai import OpenAI
 from app.core.dependencies import get_redis_service
 from app.services.redis import RedisService
-from app.core.config import redis_pool_manager
 from app.services.ai import ai_query_service
 from app.core.database import get_db_context
 from app.core.config import settings
@@ -354,7 +353,6 @@ async def build_forest(source_node=None, k=5, cut_len=2000, threshold=0.8):
                 {"role": "user", "content": prompt}
             ]
 
-            redis_pool = await redis_pool_manager.get_pool()
             ctx_task_id = gen_str_codes((str(uuid.uuid4()) + target_txt))
             
             # 使用Redis直接追踪任务状态，无需数据库持久化

@@ -1,5 +1,6 @@
 import re
 import json
+from loguru import logger
 
 
 def process_llm_history(paras, his_k=10): # under development, if we need to parse the history
@@ -21,21 +22,23 @@ def process_llm_history(paras, his_k=10): # under development, if we need to par
     return his_record
 
 def eval_response(resp, answer_key=None):
+    logger.debug(f'eval_response resp: {resp}')
     if isinstance(resp, str):
         cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', resp)
     else:
-        print(f'❌模型返不是字符串 直接返回\n{resp}')
+        logger.error(f'❌模型返不是字符串 直接返回\n{resp}')
         raise
 
     try:
         # 直接尝试解析 JSON
+        logger.debug(f'eval_response cleaned: {cleaned}')
         answer = json.loads(cleaned)
-        print('✅ 直接解析 JSON 成功')
+        logger.debug(f'✅ 直接解析 JSON 成功')
         if answer_key is not None:
             answer = answer.get(answer_key, answer)
         return answer
     except Exception as e:
-        print(f'⚠️ 直接解析失败，尝试提取JSON标识再解析 {e}')
+        logger.error(f'⚠️ 直接解析失败，尝试提取JSON标识再解析 {e}')
     # 尝试提取 ```json ... ``` 中的内容
     match = re.search(r'```json\s*([\s\S]*?)\s*```', cleaned, re.DOTALL)
     if match:
@@ -45,13 +48,14 @@ def eval_response(resp, answer_key=None):
         json_block = re.sub(r'^```json', '', cleaned)
         json_block = re.sub(r'```$', '', json_block).strip()
     try:
+        logger.debug(f'eval_response json_block: {json_block}')
         answer = json.loads(json_block)
-        print('✅ 通过 markdown 包裹内容解析 JSON 成功')
+        logger.debug(f'✅ 通过 markdown 包裹内容解析 JSON 成功')
         if answer_key is not None:
             answer = answer.get(answer_key, answer)
         return answer
     except json.JSONDecodeError as e:
-        print(f'❌ 所有解析方式均失败，返回原始字符串\n{resp}')
+        logger.error(f'❌ 所有解析方式均失败，返回原始字符串\n{resp}')
         return cleaned
     
             

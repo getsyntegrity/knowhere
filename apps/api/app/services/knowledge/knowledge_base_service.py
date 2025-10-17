@@ -8,7 +8,6 @@ from openai import OpenAI
 from loguru import logger
 from app.core.dependencies import get_redis_service
 from app.services.redis import RedisService
-from app.core.config import redis_pool_manager
 from app.services.ai import ai_query_service
 from app.core.database import get_db_context
 from app.core.config import settings
@@ -292,7 +291,6 @@ async def talk2kb(query, context, paras):
         {"role": "user", "content": prompt}
     ]
 
-    redis_pool = await redis_pool_manager.get_pool()
     ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
     
     # 使用Redis直接追踪任务状态，无需数据库持久化
@@ -369,7 +367,6 @@ async def talk2kb_mm(query, context, paras):
             {"role": "user", "content": prompt}
         ]
 
-        redis_pool = await redis_pool_manager.get_pool()
         ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
@@ -509,6 +506,7 @@ async def checkerboard_inject_parse(
 
     # 根据文件类型解析
     if '.txt' in file_full_path or ".fragment" in file_full_path:
+        logger.debug(f"file type is txt or fragment")
         try:
             fragment_content = kwargs.get('fragment_content')
         except:
@@ -517,14 +515,17 @@ async def checkerboard_inject_parse(
         await parse_md(kb_dir, source_type='md', md_lines=txt_lines, base_llm_paras=base_llm_paras)
 
     elif ('.png' in file_full_path or '.jpg' in file_full_path or '.jpeg' in file_full_path) or ".fragment" in file_full_path:
+        logger.debug(f"file type is image")
         await parse_image(file_full_path, filename=filename, kb_dir=kb_dir, baseurl=baseurl, base_llm_paras=base_llm_paras)
 
     elif '.pdf' in file_full_path:
+        logger.debug(f"file type is pdf")
         if filename is not None and file_full_path is not None:
             from app.services.document_parser.pdf_parser import parse_pdfs
             await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
 
     elif '.docx' in file_full_path:
+        logger.debug(f"file type is docx")
         if filename is not None and file_full_path is not None:
             try:
                 start_line = kwargs.get('start_symbol', '').strip()
@@ -536,20 +537,25 @@ async def checkerboard_inject_parse(
             await convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras=base_llm_paras)
 
     elif '.xlsx' in file_full_path:
+        logger.debug(f"file type is xlsx")
         if filename is not None and file_full_path is not None:
             await parse_xlsx(file_full_path, filename, kb_dir, baseurl, base_llm_paras=base_llm_paras)
 
     elif '.pptx' in file_full_path:
+        logger.debug(f"file type is pptx")
         if filename is not None and file_full_path is not None:
             from app.services.document_parser.pdf_parser import parse_pdfs
             await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
 
     elif '.md' in file_full_path:
+        logger.debug(f"file type is md")
         if filename is not None and file_full_path is not None:
             await parse_md(kb_dir, source_type="md", file_path=file_full_path, base_llm_paras=base_llm_paras)
 
     elif '.json' in file_full_path:
+        logger.debug(f"file type is json")
         pass
+    logger.debug(f"kb_dir: {kb_dir}")
     return kb_dir
 
 def checkerboard_learn(user, reply, user_intention, sim_contents, user_selected_ids, current_markers):

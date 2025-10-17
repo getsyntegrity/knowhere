@@ -95,27 +95,6 @@ class TaskRedisService:
             logger.error(f"获取任务 {task_id} 结果失败: {e}")
             return None
     
-    async def push_stream_data(self, task_id: str, data: str) -> bool:
-        """推送流式数据"""
-        try:
-            stream_key = redis_key_builder.task_stream(task_id)
-            await self.redis.rpush(stream_key, data)
-            await self.redis.expire(stream_key, redis_key_builder.get_key_ttl(RedisKeyType.TASK))
-            return True
-        except Exception as e:
-            logger.error(f"推送任务 {task_id} 流式数据失败: {e}")
-            return False
-    
-    async def get_stream_data(self, task_id: str) -> List[str]:
-        """获取流式数据"""
-        try:
-            stream_key = redis_key_builder.task_stream(task_id)
-            data = await self.redis.lrange(stream_key, 0, -1)
-            return data
-        except Exception as e:
-            logger.error(f"获取任务 {task_id} 流式数据失败: {e}")
-            return []
-    
     async def update_task_progress(self, task_id: str, progress: int, message: str = "") -> bool:
         """更新任务进度"""
         try:
@@ -185,7 +164,6 @@ class TaskRedisService:
             keys_to_delete = [
                 redis_key_builder.task_status(task_id),
                 redis_key_builder.task_result(task_id),
-                redis_key_builder.task_stream(task_id),
                 redis_key_builder.task_metadata(task_id),
                 redis_key_builder.task_progress(task_id)
             ]

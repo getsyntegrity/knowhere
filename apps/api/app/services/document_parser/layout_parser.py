@@ -13,7 +13,6 @@ except ImportError:
     class MarkItDown:
         def convert(self, content):
             return content
-from app.core.config import redis_pool_manager
 from app.core.database import get_db_context
 from app.core.config import settings
 # TaskRedis依赖已移除，使用Redis直接追踪
@@ -21,6 +20,7 @@ from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
 from app.services.ai import ai_query_service
+from loguru import logger
 
 
 def cal_heading_len_threshold(lines_, pct=50, pre_min=30):
@@ -285,7 +285,7 @@ def filter_doc_headings(titles_material, consider_len=False):
     text_lens = [tm[3] for tm in titles_material]
     if consider_len:
         threshold = cal_heading_len_threshold(text_lens)
-        print(f"[INFO] 长度超过 {threshold} 的标题会被降格")
+        logger.debug(f"[INFO] 长度超过 {threshold} 的标题会被降格")
     else:
         threshold = None
 
@@ -317,7 +317,7 @@ def filter_doc_headings(titles_material, consider_len=False):
     return raw_candidates
 
 async def pred_titles(infos, doc_type, len_threshold=3000):
-    print("🔥 正在解析文档层级结构")
+    logger.debug("🔥 正在解析文档层级结构")
     if doc_type == "pptx":
         raw_preds = filter_md_headings(infos, consider_len=False)
     elif doc_type == "md":
@@ -345,23 +345,6 @@ async def pred_titles(infos, doc_type, len_threshold=3000):
             {"role": "user", "content": prompt}
         ]
 
-        # client = OpenAI(
-        #     api_key=settings.DS_KEY,
-        #     base_url="https://api.deepseek.com",
-        #     timeout=240.0
-        # )
-        # resp = client.chat.completions.create(
-        #     model="deepseek-reasoner",
-        #     messages=messages,
-        #     temperature=temperature,
-        #     max_tokens=max_tokens,
-        #     top_p=top_p
-        # )
-        # resp = resp.choices[0].message.content
-        # print(resp)
-        # heading_preds = eval_response(resp)
-
-        redis_pool = await redis_pool_manager.get_pool()
         ctx_task_id = str(uuid.uuid4())
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
@@ -374,7 +357,10 @@ async def pred_titles(infos, doc_type, len_threshold=3000):
             messages=messages,
             user_id=ctx_task_id,
             conversation_id=ctx_task_id,
-            timeout=300
+            timeout=300,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens
         )
 
         heading_preds = eval_response(layout_res)
@@ -386,7 +372,7 @@ async def pred_titles(infos, doc_type, len_threshold=3000):
         heading_preds = pd.concat(full_preds, ignore_index=True)
 
     except Exception as e:
-            print(f"[INFO] 大模型解析标题层级失败 原因是{e}\n所有待定标题均被降格为-1")
+            logger.debug(f"[INFO] 大模型解析标题层级失败 原因是{e}\n所有待定标题均被降格为-1")
             level_df.rename(columns={"level": 'level'}, inplace=True)
             level_df['final_level'] = level_df['level'].replace('待定', -1)
             heading_preds = level_df.iloc[:, :3]
@@ -416,20 +402,20 @@ def mark_level_boundary(idx, df_):
 
 def collapse_recursive(df, indices, depth=0):
     indent = "  " * depth
-    print(f"{indent}进入递归，indices={indices}")
+    logger.debug(f"{indent}进入递归，indices={indices}")
 
     for k in range(len(indices) - 1):
         i, j = indices[k], indices[k + 1]
-        print(f"{indent}检查标题对 i={i} ({df.at[i, 'heading']}) -> j={j} ({df.at[j, 'heading']})")
+        logger.debug(f"{indent}检查标题对 i={i} ({df.at[i, 'heading']}) -> j={j} ({df.at[j, 'heading']})")
 
         between = df.loc[i+1:j-1]
 
         if between.empty:
-            print(f"{indent}  between 为空, 行 {i} ({df.at[i,'heading']}) 坍缩")
+            logger.debug(f"{indent}  between 为空, 行 {i} ({df.at[i,'heading']}) 坍缩")
             df.loc[i, "level"] = -1
             df.loc[i, "reason"] = "触发坍缩规则"
         else:
-            print(f"{indent}  between 行范围 {between.index[0]}~{between.index[-1]} (共 {len(between)} 行)")
+            logger.debug(f"{indent}  between 行范围 {between.index[0]}~{between.index[-1]} (共 {len(between)} 行)")
             # 在 between 内部 reason 一致的标题递归划为一组
             code2sub = defaultdict(list)
             for idx, row in between.iterrows():
@@ -437,9 +423,9 @@ def collapse_recursive(df, indices, depth=0):
                     code2sub[row["reason"]].append(idx)
 
             for sub_code, sub_indices in code2sub.items():
-                print(f"{indent}  递归处理子组 reason={sub_code}, indices={sub_indices}")
+                logger.debug(f"{indent}  递归处理子组 reason={sub_code}, indices={sub_indices}")
                 collapse_recursive(df, sub_indices, depth+1)
-    print(f"{indent}退出递归，indices={indices}")
+    logger.debug(f"{indent}退出递归，indices={indices}")
 
 def clean_redundant_headings(data):
     df_cleaned = pd.DataFrame(data, columns=["id", "heading", "level", "reason"], index=None)
@@ -551,6 +537,4 @@ def heading_dic_trans(df, col1, col2, col3):
 #             return False, 0
         
         
-
-
 

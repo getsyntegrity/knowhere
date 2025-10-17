@@ -34,7 +34,29 @@ async def lifespan(app: FastAPI):
     """
     logger.info("知识库API服务开始启动...")
     
-    # 创建数据库表
+    # 运行数据库迁移
+    from alembic.config import Config
+    from alembic import command
+    import subprocess
+    import sys
+    
+    try:
+        logger.info("开始运行数据库迁移...")
+        # 使用subprocess运行alembic upgrade head
+        result = subprocess.run([
+            sys.executable, "-m", "alembic", "upgrade", "head"
+        ], cwd=str(Path(__file__).parent), capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logger.info("数据库迁移完成")
+        else:
+            logger.error(f"数据库迁移失败: {result.stderr}")
+            raise Exception(f"数据库迁移失败: {result.stderr}")
+    except Exception as e:
+        logger.error(f"运行数据库迁移时发生错误: {e}")
+        raise
+    
+    # 创建数据库表（如果不存在）
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
