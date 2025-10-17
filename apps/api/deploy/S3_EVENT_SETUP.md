@@ -88,7 +88,7 @@ aws sns list-subscriptions-by-topic \
 ```bash
 # 设置webhook配置
 mc admin config set local notify_webhook:1 \
-  endpoint="http://api:8000/v1/internal/s3-events" \
+  endpoint="http://api:5005/v1/internal/s3-events" \
   auth_token="your-secret-token" \
   queue_limit="100" \
   comment="Knowhere S3 upload events"
@@ -137,8 +137,8 @@ docker exec knowhere_minio /docker-entrypoint-initdb.d/setup-webhook.sh
 ```
 
 **关键配置**：
-- MinIO使用 `network_mode: host`，可以直接访问 `localhost:8000`
-- Webhook endpoint: `http://localhost:8000/v1/internal/s3-events`
+- MinIO使用 `network_mode: host`，可以直接访问 `localhost:5005`
+- Webhook endpoint: `http://localhost:5005/v1/internal/s3-events`
 - 认证token: `dev-webhook-token`
 
 ### 2. 手动配置MinIO
@@ -158,7 +158,7 @@ mc mb local/knowhere-uploads
 
 # 配置webhook（指向本地API）
 mc admin config set local notify_webhook:1 \
-  endpoint="http://localhost:8000/v1/internal/s3-events" \
+  endpoint="http://localhost:5005/v1/internal/s3-events" \
   auth_token="dev-webhook-token"
 
 # 启用事件
@@ -215,7 +215,7 @@ curl -X GET "http://localhost:8000/v1/jobs/JOB_ID" \
 
 ```bash
 # 直接测试webhook endpoint
-curl -X POST "http://localhost:8000/v1/internal/s3-events" \
+curl -X POST "http://localhost:5005/v1/internal/s3-events" \
   -H "Content-Type: application/json" \
   -H "x-minio-auth-token: dev-token" \
   -d '{

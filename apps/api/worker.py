@@ -17,6 +17,7 @@ os.environ['PYTHONPATH'] = str(project_root)
 
 from app.core.celery_app import celery_app
 from app.core.config import redis_pool_manager
+from app.core.logging import setup_logging
 from loguru import logger
 
 async def init_redis():
@@ -31,6 +32,10 @@ async def init_redis():
 if __name__ == "__main__":
     # 设置环境变量
     os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
+    
+    # 初始化日志配置
+    setup_logging()
+    logger.info("Celery Worker 日志配置初始化完成")
     
     # 初始化Redis连接池
     try:
@@ -48,7 +53,7 @@ if __name__ == "__main__":
     # 启动 worker，使用唯一的节点名称
     celery_app.worker_main([
         "worker", 
-        "--loglevel=info", 
+        "--loglevel=debug", 
         "--concurrency=2",
         f"--hostname={node_name}"
     ])

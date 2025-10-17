@@ -59,7 +59,7 @@ class RedisService:
     
     # ==================== 基础操作 ====================
     
-    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None, ex: Optional[int] = None) -> bool:
         """设置键值"""
         try:
             client = await self._get_client()
@@ -68,10 +68,11 @@ class RedisService:
             if isinstance(value, (dict, list)):
                 value = json.dumps(value, ensure_ascii=False)
             
-            ttl = ttl or self.config_manager.config.REDIS_DEFAULT_TTL
+            # 优先使用ex参数，其次使用ttl参数
+            expire_time = ex or ttl or self.config_manager.config.REDIS_DEFAULT_TTL
             
             async def _operation():
-                return await client.set(full_key, value, ex=ttl)
+                return await client.set(full_key, value, ex=expire_time)
             
             result = await self._execute_with_retry(_operation)
             return result

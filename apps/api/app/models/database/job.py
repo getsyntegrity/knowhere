@@ -4,12 +4,21 @@ Job数据模型 - 用户API业务任务
 from __future__ import annotations
 from datetime import datetime
 from typing import Optional, Dict, Any
-from sqlalchemy import String, Text, DateTime, Boolean, ForeignKey, Index, JSON
+from sqlalchemy import String, Text, DateTime, Boolean, ForeignKey, Index, JSON, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from uuid import uuid4
 
 from app.core.database import Base
+
+# 前向引用，避免循环导入
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.models.database.user import User
+    from app.models.database.job_state_history import JobStateHistory
+    from app.models.database.job_state_audit_log import JobStateAuditLog
+    from app.models.database.webhook_log import WebhookLog
+    from app.models.database.job_result import JobResult
 
 
 class Job(Base):
@@ -40,14 +49,18 @@ class Job(Base):
     job_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # JSON存储
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
+    # 版本控制（乐观锁）
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # 关系
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    user: Mapped[User] = relationship("User", back_populates="jobs", lazy="select")
+    user: Mapped["User"] = relationship("User", back_populates="jobs", lazy="select")
     state_history: Mapped[list["JobStateHistory"]] = relationship("JobStateHistory", back_populates="job", cascade="all, delete-orphan")
+    state_audit_logs: Mapped[list["JobStateAuditLog"]] = relationship("JobStateAuditLog", back_populates="job", cascade="all, delete-orphan")
     webhook_logs: Mapped[list["WebhookLog"]] = relationship("WebhookLog", back_populates="job", cascade="all, delete-orphan")
     job_result: Mapped[Optional["JobResult"]] = relationship("JobResult", back_populates="job", uselist=False, lazy="selectin")
     

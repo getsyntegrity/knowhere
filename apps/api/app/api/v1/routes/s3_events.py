@@ -80,7 +80,29 @@ def extract_job_id_from_s3_key(s3_key: str) -> str:
     return job_id
 
 
-@router.post("/s3-events", response_model=ResponseResult[dict], summary="S3事件Webhook")
+@router.get("/s3-events", response_model=ResponseResult[dict], summary="S3事件Webhook GET")
+async def handle_s3_events_get(
+    request: Request,
+    x_amz_sns_message_type: str = Header(None, alias="x-amz-sns-message-type"),
+    x_minio_auth_token: str = Header(None, alias="x-minio-auth-token"),
+    authorization: str = Header(None)
+):
+    """
+    处理S3事件通知GET请求 - 主要用于SNS订阅确认
+    """
+    logger.info(f"======== S3事件GET请求 =========")
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Client IP: {request.client.host}")
+    
+    # 检查是否是SNS订阅确认请求
+    if x_amz_sns_message_type == "SubscriptionConfirmation":
+        logger.info("收到SNS订阅确认请求")
+        return ResponseResult.ok_data(data={"message": "SNS订阅确认成功"})
+    
+    return ResponseResult.ok_data(data={"message": "GET请求处理完成"})
+
+
+@router.post("/s3-events", response_model=ResponseResult[dict], summary="S3事件Webhook POST")
 async def handle_s3_events(
     request: Request,
     x_amz_sns_message_type: str = Header(None, alias="x-amz-sns-message-type"),
@@ -88,8 +110,11 @@ async def handle_s3_events(
     authorization: str = Header(None)
 ):
     """
-    处理S3事件通知 - 支持AWS SNS和MinIO
+    处理S3事件通知POST请求 - 支持AWS SNS和MinIO
     """
+    logger.info(f"======== S3事件请求 =========")
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Client IP: {request.client.host}")
     try:
         # 获取请求体
         body = await request.body()

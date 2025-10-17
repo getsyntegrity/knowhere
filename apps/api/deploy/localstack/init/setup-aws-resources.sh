@@ -32,7 +32,7 @@ aws --endpoint-url=http://localhost:4566 s3api put-bucket-cors \
       {
         "AllowedHeaders": ["*"],
         "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
-        "AllowedOrigins": ["http://localhost:3000", "http://localhost:8000"],
+        "AllowedOrigins": ["http://localhost:3000", "http://localhost:5005"],
         "ExposeHeaders": ["ETag", "x-amz-meta-*"],
         "MaxAgeSeconds": 3000
       }
@@ -46,7 +46,7 @@ aws --endpoint-url=http://localhost:4566 s3api put-bucket-cors \
       {
         "AllowedHeaders": ["*"],
         "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
-        "AllowedOrigins": ["http://localhost:3000", "http://localhost:8000"],
+        "AllowedOrigins": ["http://localhost:3000", "http://localhost:5005"],
         "ExposeHeaders": ["ETag", "x-amz-meta-*"],
         "MaxAgeSeconds": 3000
       }
@@ -66,7 +66,7 @@ echo "🔗 订阅SNS到webhook..."
 aws --endpoint-url=http://localhost:4566 sns subscribe \
   --topic-arn "$TOPIC_ARN" \
   --protocol http \
-  --notification-endpoint http://localhost:8000/v1/internal/s3-events
+  --notification-endpoint http://host.docker.internal:5005/v1/internal/s3-events
 
 # 配置S3事件通知
 echo "⚡ 配置S3事件通知..."

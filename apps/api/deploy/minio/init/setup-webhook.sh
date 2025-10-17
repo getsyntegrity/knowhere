@@ -19,6 +19,6 @@ mc event add local/knowhere-uploads \
 
 echo "MinIO setup completed:"
 echo "- Bucket: knowhere-uploads"
-echo "- Webhook: http://localhost:8000/v1/internal/s3-events"
+echo "- Webhook: http://localhost:5005/v1/internal/s3-events"
 echo "- Auth Token: dev-webhook-token"
 

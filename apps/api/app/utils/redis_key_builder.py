@@ -13,7 +13,6 @@ class RedisKeyType(Enum):
     KNOWLEDGE_BASE = "kb"
     SESSION = "session"
     CACHE = "cache"
-    LOCK = "lock"
     QUEUE = "queue"
     COUNTER = "counter"
     SET = "set"
@@ -141,19 +140,6 @@ class RedisKeyBuilder:
         """缓存元数据键"""
         return self.build_key(RedisKeyType.CACHE, cache_key, "metadata")
     
-    # ==================== 锁相关键 ====================
-    
-    def lock_resource(self, resource_type: str, resource_id: str) -> str:
-        """资源锁键"""
-        return self.build_key(RedisKeyType.LOCK, resource_type, resource_id)
-    
-    def lock_user(self, username: str) -> str:
-        """用户锁键"""
-        return self.build_key(RedisKeyType.LOCK, "user", username)
-    
-    def lock_task(self, task_id: str) -> str:
-        """任务锁键"""
-        return self.build_key(RedisKeyType.LOCK, "task", task_id)
     
     # ==================== 计数器相关键 ====================
     
@@ -274,7 +260,6 @@ class RedisKeyBuilder:
             RedisKeyType.KNOWLEDGE_BASE: 86400 * 30,  # 30天
             RedisKeyType.SESSION: 3600,    # 1小时
             RedisKeyType.CACHE: 3600,      # 1小时
-            RedisKeyType.LOCK: 300,        # 5分钟
             RedisKeyType.QUEUE: 86400,     # 1天
             RedisKeyType.COUNTER: 86400,   # 1天
             RedisKeyType.SET: 86400,       # 1天
