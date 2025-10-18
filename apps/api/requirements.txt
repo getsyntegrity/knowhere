@@ -156,8 +156,6 @@ opencv-python-headless==4.8.1.78
 moesifapi==1.5.5
 
 # 开发环境工具
-# 数据库调试和查询分析
-sqlalchemy-query==0.1.0
 # 数据库连接测试
 pytest-asyncio==0.23.2
 # 数据库性能分析
@@ -168,7 +166,5 @@ psutil==5.9.8
 # PostgreSQL 特定工具
 # 向量数据库支持（用于AI嵌入）
 pgvector==0.2.4
-# 数据库连接健康检查
-psutil==5.9.8
 # PostgreSQL 全文搜索优化
 # 注意：pg_trgm 扩展需要在数据库中手动安装

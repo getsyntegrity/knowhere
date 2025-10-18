@@ -413,6 +413,38 @@ class FileUploadService:
         }
         return content_types.get(file_extension.lower(), 'application/octet-stream')
 
+    async def get_file_url(self, s3_key: str, bucket: Optional[str] = None, expires_in: int = 3600) -> str:
+        """
+        通过S3键获取文件URL
+        
+        Args:
+            s3_key: S3键
+            bucket: 存储桶名称（可选）
+            expires_in: URL过期时间（秒），默认1小时
+            
+        Returns:
+            str: 文件URL
+        """
+        try:
+            bucket_name = bucket or self.uploads_bucket
+            
+            # 生成预签名URL
+            file_url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': bucket_name,
+                    'Key': s3_key
+                },
+                ExpiresIn=expires_in
+            )
+            
+            logger.info(f"生成文件URL成功: {s3_key} -> {file_url}")
+            return file_url
+            
+        except Exception as e:
+            logger.error(f"获取文件URL失败: {e}")
+            raise
+
     def generate_s3_key(self, job_id: str, file_extension: str = "", prefix: str = "uploads") -> str:
         """
         生成S3键

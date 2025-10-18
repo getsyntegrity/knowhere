@@ -487,10 +487,10 @@ async def checkerboard_inject_parse(
         
     logger.debug(f"file_full_path: {file_full_path}")
 
-    # if is_remote(file_full_path):
-    #     file_full_path = get_pub_fileurl(file_full_path)
-    # else:
-    #     file_full_path = ".fragment"
+    if is_remote(file_full_path):
+        file_full_path = get_pub_fileurl(file_full_path)
+    else:
+        file_full_path = ".fragment"
 
     split_char = settings.SPLIT_CHAR or ";"
     kb_dir = kwargs.get('kb_dir', '默认目录')

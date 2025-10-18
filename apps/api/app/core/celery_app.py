@@ -48,18 +48,6 @@ celery_app.conf.task_queues = (
     # 其他任务队列
     Queue('ai_high_priority', routing_key='ai.high',
           queue_arguments={'x-max-priority': 10}),
-    Queue('document_processing', routing_key='document.processing',
-          queue_arguments={'x-max-priority': 5}),
-    Queue('kb_encoding', routing_key='kb.encoding',
-          queue_arguments={'x-max-priority': 5}),
-    Queue('batch_processing', routing_key='batch.processing',
-          queue_arguments={'x-max-priority': 3}),
-    Queue('analytics_queue', routing_key='analytics',
-          queue_arguments={'x-max-priority': 2}),
-    Queue('backup_queue', routing_key='backup',
-          queue_arguments={'x-max-priority': 1}),
-    Queue('log_processing', routing_key='log.processing',
-          queue_arguments={'x-max-priority': 1}),
 )
 
 # 配置Celery
@@ -91,12 +79,6 @@ celery_app.conf.update(
     task_routes={
         # 现有任务路由
         'app.tasks.celery_tasks.process_ai_query': {'queue': 'ai_high_priority'},
-        'app.tasks.celery_tasks.process_document': {'queue': 'document_processing'},
-        'app.tasks.celery_tasks.encode_knowledge_base': {'queue': 'kb_encoding'},
-        'app.tasks.celery_tasks.batch_file_processing': {'queue': 'batch_processing'},
-        'app.tasks.celery_tasks.user_analytics': {'queue': 'analytics_queue'},
-        'app.tasks.celery_tasks.data_backup': {'queue': 'backup_queue'},
-        'app.tasks.celery_tasks.log_processing': {'queue': 'log_processing'},
         
         # 表格填充任务路由（动态路由）
         'app.core.tasks.table_fill_tasks.*': {'queue': 'table_fill_medium'},  # 默认中等优先级

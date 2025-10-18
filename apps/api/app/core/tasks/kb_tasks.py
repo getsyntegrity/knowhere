@@ -195,17 +195,11 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             # 下载文件到本地临时目录
             from app.services.storage.file_upload_service import FileUploadService
             upload_service = FileUploadService()
-            local_file_path = await upload_service.download_from_s3(s3_key)
-            
-            # 验证下载结果
-            if not local_file_path:
-                logger.error(f"文件下载失败，未返回本地文件路径: S3键={s3_key}")
-                raise ValueError("文件下载失败，未返回本地文件路径")
-            
-            logger.debug(f"文件下载成功: {local_file_path}")
+            file_url = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)
             
             # 准备解析参数 - 从S3键中提取文件名
-            filename = os.path.basename(s3_key)
+            filename = job.job_metadata.get("source_file_name")
+            logger.debug(f"filename: {filename}")
             
             # 调用修改后的解析逻辑（传入user_config）
             from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse
@@ -213,7 +207,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             logger.debug(f"开始解析文件: {filename}, 类型: {job.job_metadata.get('doc_type', 'auto')}")
             
             add_dir = await checkerboard_inject_parse(
-                file_full_path=local_file_path,
+                file_full_path=file_url,
                 filename=filename,
                 user_config=user_config,  # 传入用户配置
                 kb_dir=job.job_metadata.get("kb_dir", "默认目录"),
@@ -244,13 +238,6 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 db, job_id, KBManagementState.VECTORIZED.value,
                 {"add_dir": add_dir, "user_info": user_info}
             )
-            
-            # 清理临时文件
-            try:
-                if os.path.exists(local_file_path):
-                    os.remove(local_file_path)
-            except Exception as e:
-                logger.warning(f"清理临时文件失败: {e}")
             
             return {
                 "status": "success",
