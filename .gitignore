@@ -51,3 +51,6 @@ apps/api/users/
 deploy/aws/terraform/terraform.tfstate
 deploy/aws/terraform/terraform.tfstate.backup
 deploy/aws/terraform/terraform.tfvars
+.terraform.lock.hcl
+LICENSE.txt
+.terraform
