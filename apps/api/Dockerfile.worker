@@ -1,3 +1,4 @@
+# Worker专用Dockerfile
 FROM python:3.12-slim
 
 # 设置工作目录
@@ -30,10 +31,7 @@ USER appuser
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5005/health || exit 1
+    CMD python -c "from app.core.celery_app import celery_app; celery_app.control.inspect().stats()" || exit 1
 
-# 暴露端口
-EXPOSE 5005
-
-# 默认命令
-CMD ["python", "main.py"]
+# 默认命令 - 启动Worker
+CMD ["python", "worker.py"]

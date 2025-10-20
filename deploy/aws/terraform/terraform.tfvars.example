@@ -1,0 +1,15 @@
+# Terraform变量示例文件
+# 复制此文件为 terraform.tfvars 并填入实际值
+
+# AWS配置
+aws_region = "us-east-1"
+
+# 项目配置
+project_name = "knowhere"
+environment  = "production"
+
+# 域名配置
+domain_name = "knowhereto.ai"
+
+# 数据库配置
+db_password = "YourSecurePassword123!"

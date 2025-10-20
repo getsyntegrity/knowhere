@@ -1,0 +1,154 @@
+name: Deploy to AWS ECS Fargate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: knowhere
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install Python dependencies
+      run: |
+        cd apps/api
+        pip install -r requirements.txt
+    
+    - name: Run Python tests
+      run: |
+        cd apps/api
+        python -m pytest tests/ -v
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'pnpm'
+    
+    - name: Install pnpm
+      run: npm install -g pnpm
+    
+    - name: Install frontend dependencies
+      run: |
+        cd apps/web
+        pnpm install
+    
+    - name: Run frontend tests
+      run: |
+        cd apps/web
+        pnpm run type-check
+        pnpm run lint
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Build and push backend image
+      run: |
+        cd apps/api
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY_BACKEND: knowhere-backend
+        IMAGE_TAG: ${{ github.sha }}
+    
+    - name: Build and push frontend image
+      run: |
+        cd apps/web
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY_FRONTEND: knowhere-frontend
+        IMAGE_TAG: ${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.5.0
+    
+    - name: Terraform Init
+      run: |
+        cd deploy/aws/terraform
+        terraform init
+    
+    - name: Terraform Plan
+      run: |
+        cd deploy/aws/terraform
+        terraform plan -out=tfplan
+    
+    - name: Terraform Apply
+      run: |
+        cd deploy/aws/terraform
+        terraform apply -auto-approve tfplan
+    
+    - name: Update ECS Services
+      run: |
+        # 更新后端服务
+        aws ecs update-service \
+          --cluster ${{ env.PROJECT_NAME }}-cluster \
+          --service ${{ env.PROJECT_NAME }}-backend-service \
+          --force-new-deployment \
+          --region ${{ env.AWS_REGION }}
+        
+        # 更新前端服务
+        aws ecs update-service \
+          --cluster ${{ env.PROJECT_NAME }}-cluster \
+          --service ${{ env.PROJECT_NAME }}-frontend-service \
+          --force-new-deployment \
+          --region ${{ env.AWS_REGION }}
+    
+    - name: Wait for deployment
+      run: |
+        aws ecs wait services-stable \
+          --cluster ${{ env.PROJECT_NAME }}-cluster \
+          --services ${{ env.PROJECT_NAME }}-backend-service \
+          --region ${{ env.AWS_REGION }}
+        
+        aws ecs wait services-stable \
+          --cluster ${{ env.PROJECT_NAME }}-cluster \
+          --services ${{ env.PROJECT_NAME }}-frontend-service \
+          --region ${{ env.AWS_REGION }}
