@@ -9,8 +9,21 @@ const nextConfig = {
         fs: false,
         path: false,
         child_process: false,
+        os: false,
+        crypto: false,
+        stream: false,
+        util: false,
+        buffer: false,
+        process: false,
       }
     }
+    
+    // 排除PostHog在服务端渲染
+    if (isServer) {
+      config.externals = config.externals || []
+      config.externals.push('posthog-js')
+    }
+    
     return config
   },
   async rewrites() {

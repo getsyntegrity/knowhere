@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { usePathname } from 'next/navigation'
-import { initPostHog, trackPageView } from '@/lib/posthog'
+import { initPostHogClient, trackPageView } from '@/lib/posthog'
 
 interface PostHogProviderProps {
   children: React.ReactNode
@@ -13,7 +13,7 @@ export default function PostHogProvider({ children }: PostHogProviderProps) {
 
   useEffect(() => {
     // 初始化 PostHog
-    initPostHog()
+    initPostHogClient()
   }, [])
 
   useEffect(() => {

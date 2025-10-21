@@ -15,20 +15,12 @@ import {
   FileText,
   RefreshCw
 } from 'lucide-react'
-import { api, JobCreate, JobResponse } from '@/lib/api'
+import { api, JobCreate, JobResponse, ParsingParams } from '@/lib/api'
 import { useToast } from '@/hooks/useToast'
 
 interface FileUploadFlowProps {
   file: File
-  parsingParams: {
-    kb_dir: string
-    doc_type?: string
-    smart_title_parse?: boolean
-    summary_image?: boolean
-    summary_table?: boolean
-    summary_txt?: boolean
-    add_frag_desc?: string
-  }
+  parsingParams: ParsingParams
   dataId?: string
   webhook?: {
     url: string

@@ -66,12 +66,12 @@ export function useToast(): ToastMethods {
         success: string | ((data: T) => string)
         error: string | ((error: any) => string)
       }
-    ) => {
+    ): Promise<T> => {
       return toast.promise(promise, {
         loading,
         success,
         error,
-      })
+      }) as unknown as Promise<T>
     },
   }
 }

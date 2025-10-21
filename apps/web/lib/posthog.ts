@@ -1,28 +1,43 @@
 /**
- * PostHog 用户行为追踪
+ * PostHog 用户行为追踪 - 官方推荐实现
  */
-import posthog from 'posthog-js'
 
 // PostHog 配置
 const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY
 const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://app.posthog.com'
 
-// 初始化 PostHog
-export const initPostHog = () => {
-  if (typeof window !== 'undefined' && POSTHOG_KEY) {
-    posthog.init(POSTHOG_KEY, {
-      api_host: POSTHOG_HOST,
-      person_profiles: 'identified_only',
-      capture_pageview: false, // 手动控制页面浏览事件
-      capture_pageleave: true,
-      loaded: (posthog) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('PostHog loaded')
+// 只在客户端初始化PostHog
+let posthog: any = null
+
+const initPostHog = () => {
+  if (typeof window !== 'undefined' && POSTHOG_KEY && !posthog) {
+    // 动态导入PostHog，避免服务端渲染问题
+    import('posthog-js').then((module) => {
+      posthog = module.default
+      posthog.init(POSTHOG_KEY, {
+        api_host: POSTHOG_HOST,
+        person_profiles: 'identified_only',
+        capture_pageview: false, // 手动控制页面浏览事件
+        capture_pageleave: true,
+        loaded: (posthog: any) => {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('PostHog loaded')
+          }
         }
-      }
+      })
+    }).catch((error) => {
+      console.error('Failed to load PostHog:', error)
     })
   }
 }
+
+// 获取PostHog实例
+const getPostHog = () => {
+  return posthog
+}
+
+// 初始化 PostHog
+export const initPostHogClient = initPostHog
 
 // 识别用户
 export const identifyUser = (userId: string, userProperties?: Record<string, any>) => {
@@ -172,4 +187,4 @@ export const trackFeatureUsage = (featureName: string, properties?: Record<strin
   })
 }
 
-export default posthog
+export default getPostHog

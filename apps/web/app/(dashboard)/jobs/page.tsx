@@ -376,12 +376,10 @@ export default function JobsPage() {
           icon={<Upload className="h-12 w-12" />}
           title="暂无任务"
           description="您还没有创建任何知识库处理任务"
-          action={
-            <Button onClick={() => setShowCreateDialog(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              创建第一个任务
-            </Button>
-          }
+          action={{
+            label: "创建第一个任务",
+            onClick: () => setShowCreateDialog(true)
+          }}
         />
       ) : (
         <div className="space-y-4">
@@ -406,7 +404,7 @@ export default function JobsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-muted-foreground">
                       <div>
                         <p><strong>源类型:</strong> {job.source_type}</p>
-                        <p><strong>知识库目录:</strong> {job.parsing_params?.kb_dir || 'N/A'}</p>
+                        <p><strong>知识库目录:</strong> N/A</p>
                         <p><strong>结果模式:</strong> {job.result_mode}</p>
                       </div>
                       <div>
