@@ -56,6 +56,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # 添加SSL配置
+        connect_args={"sslmode": "require"}
     )
 
     with context.begin_transaction():
@@ -69,14 +71,13 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    # 使用我们的数据库配置（同步版本）
-    configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = sync_database_url
+    # 直接使用create_engine来确保SSL参数被正确传递
+    from sqlalchemy import create_engine
     
-    connectable = engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
+    connectable = create_engine(
+        sync_database_url,
         poolclass=pool.NullPool,
+        connect_args={"sslmode": "require"}
     )
 
     with connectable.connect() as connection:
