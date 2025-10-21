@@ -24,7 +24,9 @@ class DatabaseConfig(BaseModel):
     def validate_database_config(self) -> bool:
         """验证数据库配置"""
         try:
-            engine = create_engine(self.DATABASE_URL)
+            # 使用同步数据库URL进行验证
+            sync_url = self.DATABASE_URL.replace("asyncpg", "psycopg2")
+            engine = create_engine(sync_url)
             engine.connect()
             logger.info("数据库连接验证成功")
             return True
