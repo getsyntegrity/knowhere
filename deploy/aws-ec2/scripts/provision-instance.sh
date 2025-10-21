@@ -79,13 +79,13 @@ if [ -d "$WEB_DIR" ]; then
     
     # 使用pnpm安装依赖
     cd "$APP_DIR"
-    pnpm install
+    CI=true pnpm install
     log "Node.js依赖安装完成"
     
     # 构建Web应用
     if [ -d "$WEB_DIR" ]; then
         cd "$WEB_DIR"
-        pnpm run build
+        CI=true pnpm run build
         log "Web应用构建完成"
     fi
 else
