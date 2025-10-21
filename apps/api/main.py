@@ -113,6 +113,11 @@ def create_app() -> FastAPI:
     async def read_root():
         return {"message": f"Welcome to {app.title} - 知识库API服务!"}
     
+    @app.get("/health", tags=["Health"])
+    async def health_check():
+        """简单的健康检查端点"""
+        return {"status": "healthy", "service": "knowhere-api"}
+    
     # 注册其他 API 路由
     app.include_router(api_router)
     

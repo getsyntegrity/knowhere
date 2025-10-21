@@ -43,7 +43,7 @@ log "开始部署Knowhere应用..."
 
 # 1. 停止服务
 log "停止服务..."
-systemctl stop knowhere-api knowhere-web knowhere-worker knowhere-scheduler || true
+systemctl stop knowhere-api knowhere-web knowhere-worker || true
 
 # 2. 跳过备份（直接部署）
 log "跳过备份，直接部署新版本..."
@@ -93,21 +93,51 @@ if [ -d "$API_DIR" ]; then
     log "数据库迁移完成"
 fi
 
-# 7. 设置权限
+# 7. 安装systemd服务
+log "安装systemd服务..."
+if [ -d "$APP_DIR/deploy/aws-ec2/systemd" ]; then
+    # 复制服务文件到systemd目录
+    cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-api.service" /etc/systemd/system/
+    cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-web.service" /etc/systemd/system/
+    cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-worker.service" /etc/systemd/system/
+    
+    # 重新加载systemd配置
+    systemctl daemon-reload
+    
+    # 启用服务（开机自启）
+    systemctl enable knowhere-api
+    systemctl enable knowhere-web
+    systemctl enable knowhere-worker
+    
+    log "systemd服务已安装并启用"
+else
+    error "systemd服务文件目录不存在: $APP_DIR/deploy/aws-ec2/systemd"
+fi
+
+# 安装管理脚本
+log "安装管理脚本..."
+if [ -f "$APP_DIR/deploy/aws-ec2/scripts/knowhere-health-check.sh" ]; then
+    cp "$APP_DIR/deploy/aws-ec2/scripts/knowhere-health-check.sh" /usr/local/bin/
+    chmod +x /usr/local/bin/knowhere-health-check.sh
+    log "健康检查脚本已安装"
+fi
+
+if [ -f "$APP_DIR/deploy/aws-ec2/scripts/knowhere-logs.sh" ]; then
+    cp "$APP_DIR/deploy/aws-ec2/scripts/knowhere-logs.sh" /usr/local/bin/
+    chmod +x /usr/local/bin/knowhere-logs.sh
+    log "日志查看脚本已安装"
+fi
+
+# 8. 设置权限
 log "设置权限..."
 chown -R appuser:appuser "$APP_DIR"
 chmod -R 755 "$APP_DIR"
-
-# 8. 重新加载systemd配置
-log "重新加载systemd配置..."
-systemctl daemon-reload
 
 # 9. 启动服务
 log "启动服务..."
 systemctl start knowhere-api
 systemctl start knowhere-web
 systemctl start knowhere-worker
-systemctl start knowhere-scheduler
 
 # 10. 重启Nginx
 log "重启Nginx..."
