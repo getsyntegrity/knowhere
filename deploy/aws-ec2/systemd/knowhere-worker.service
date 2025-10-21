@@ -13,7 +13,7 @@ Environment="PATH=/opt/knowhere/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONPATH=/opt/knowhere/apps/api"
 Environment="PYTHONUNBUFFERED=1"
 Environment="FORKED_BY_MULTIPROCESSING=1"
-EnvironmentFile=/opt/knowhere/.env
+EnvironmentFile=/opt/knowhere/apps/api/.env
 
 # 启动命令
 ExecStart=/opt/knowhere/venv/bin/python worker.py
