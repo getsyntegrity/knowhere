@@ -45,25 +45,46 @@ class DatabaseConfig(BaseModel):
         ssl_args = {}
         
         if self.DB_SSL_MODE and self.DB_SSL_MODE != "disable":
-            # asyncpg使用不同的SSL参数格式
-            if self.DB_SSL_MODE == "require":
-                ssl_args["ssl"] = "require"
-            elif self.DB_SSL_MODE == "prefer":
-                ssl_args["ssl"] = "prefer"
-            elif self.DB_SSL_MODE == "verify-ca":
-                ssl_args["ssl"] = "verify-ca"
-            elif self.DB_SSL_MODE == "verify-full":
-                ssl_args["ssl"] = "verify-full"
-            else:
-                ssl_args["ssl"] = self.DB_SSL_MODE
+            # asyncpg支持两种SSL配置方式：
+            # 1. 简单模式：ssl=True/False
+            # 2. 高级模式：ssl=ssl_context对象
             
-            # asyncpg的SSL证书参数
-            if self.DB_SSL_ROOT_CERT:
-                ssl_args["ssl_ca"] = self.DB_SSL_ROOT_CERT
-            if self.DB_SSL_CERT:
-                ssl_args["ssl_cert"] = self.DB_SSL_CERT
-            if self.DB_SSL_KEY:
-                ssl_args["ssl_key"] = self.DB_SSL_KEY
+            if self.DB_SSL_MODE in ["prefer", "require"] and not self.DB_SSL_ROOT_CERT:
+                # 简单模式：不需要证书验证
+                ssl_args["ssl"] = True
+            else:
+                # 高级模式：需要证书验证
+                import ssl
+                
+                # 创建SSL上下文
+                ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                
+                if self.DB_SSL_MODE == "require":
+                    # require模式：不验证证书，但强制使用SSL
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                elif self.DB_SSL_MODE == "verify-ca":
+                    # verify-ca模式：验证CA证书
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_REQUIRED
+                    if self.DB_SSL_ROOT_CERT:
+                        ssl_context.load_verify_locations(self.DB_SSL_ROOT_CERT)
+                elif self.DB_SSL_MODE == "verify-full":
+                    # verify-full模式：验证CA证书和主机名
+                    ssl_context.check_hostname = True
+                    ssl_context.verify_mode = ssl.CERT_REQUIRED
+                    if self.DB_SSL_ROOT_CERT:
+                        ssl_context.load_verify_locations(self.DB_SSL_ROOT_CERT)
+                else:  # prefer
+                    # prefer模式：优先使用SSL，但不强制
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                
+                # 客户端证书（如果需要）
+                if self.DB_SSL_CERT and self.DB_SSL_KEY:
+                    ssl_context.load_cert_chain(self.DB_SSL_CERT, self.DB_SSL_KEY)
+                
+                ssl_args["ssl"] = ssl_context
             
         return ssl_args
     
