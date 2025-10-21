@@ -45,20 +45,16 @@ log "开始部署Knowhere应用..."
 log "停止服务..."
 systemctl stop knowhere-api knowhere-web knowhere-worker knowhere-scheduler || true
 
-# 2. 备份当前版本
-log "备份当前版本..."
-if [ -d "$APP_DIR/apps" ]; then
-    BACKUP_DIR="$APP_DIR/backups/$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
-    cp -r "$APP_DIR/apps" "$BACKUP_DIR/"
-    log "当前版本已备份到: $BACKUP_DIR"
-fi
+# 2. 跳过备份（直接部署）
+log "跳过备份，直接部署新版本..."
 
 # 3. 拉取最新代码
 log "拉取最新代码..."
 cd "$APP_DIR"
 if [ -d ".git" ]; then
-    git pull origin main
+    # 修复Git权限问题
+    sudo -u appuser git config --global --add safe.directory /opt/knowhere
+    sudo -u appuser git pull origin main
     log "代码已更新"
 else
     warn "不是Git仓库，跳过代码更新"
@@ -76,10 +72,16 @@ fi
 # 5. 更新Node.js依赖
 log "更新Node.js依赖..."
 if [ -d "$WEB_DIR" ]; then
-    cd "$WEB_DIR"
-    npm install
-    npm run build
+    cd "$APP_DIR"
+    pnpm install
     log "Node.js依赖已更新"
+    
+    # 构建Web应用
+    if [ -d "$WEB_DIR" ]; then
+        cd "$WEB_DIR"
+        pnpm run build
+        log "Web应用构建完成"
+    fi
 fi
 
 # 6. 运行数据库迁移

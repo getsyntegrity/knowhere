@@ -73,10 +73,21 @@ log "Python依赖安装完成"
 # 4. 安装Node.js依赖
 log "安装Node.js依赖..."
 if [ -d "$WEB_DIR" ]; then
-    cd "$WEB_DIR"
-    npm install
-    npm run build
-    log "Node.js依赖安装和构建完成"
+    # 安装pnpm
+    log "安装pnpm..."
+    npm install -g pnpm
+    
+    # 使用pnpm安装依赖
+    cd "$APP_DIR"
+    pnpm install
+    log "Node.js依赖安装完成"
+    
+    # 构建Web应用
+    if [ -d "$WEB_DIR" ]; then
+        cd "$WEB_DIR"
+        pnpm run build
+        log "Web应用构建完成"
+    fi
 else
     warn "Web目录不存在，跳过Node.js依赖安装"
 fi
