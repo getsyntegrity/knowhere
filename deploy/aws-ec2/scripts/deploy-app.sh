@@ -84,7 +84,18 @@ if [ -d "$WEB_DIR" ]; then
     fi
 fi
 
-# 6. 运行数据库迁移
+# 6. 配置环境变量
+log "配置环境变量..."
+SCRIPT_DIR="$APP_DIR/deploy/aws-ec2/scripts"
+if [ -f "$SCRIPT_DIR/setup-env.sh" ]; then
+    chmod +x "$SCRIPT_DIR/setup-env.sh"
+    sudo "$SCRIPT_DIR/setup-env.sh"
+    log "环境变量配置完成"
+else
+    warn "环境变量配置脚本不存在，跳过此步骤"
+fi
+
+# 7. 运行数据库迁移
 log "运行数据库迁移..."
 if [ -d "$API_DIR" ]; then
     cd "$API_DIR"
@@ -93,16 +104,16 @@ if [ -d "$API_DIR" ]; then
     log "数据库迁移完成"
 fi
 
-# 7. 设置权限
+# 8. 设置权限
 log "设置权限..."
 chown -R appuser:appuser "$APP_DIR"
 chmod -R 755 "$APP_DIR"
 
-# 8. 重新加载systemd配置
+# 9. 重新加载systemd配置
 log "重新加载systemd配置..."
 systemctl daemon-reload
 
-# 9. 启动服务
+# 10. 启动服务
 log "启动服务..."
 systemctl start knowhere-api
 systemctl start knowhere-web
