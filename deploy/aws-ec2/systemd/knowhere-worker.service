@@ -32,10 +32,11 @@ LimitNPROC=4096
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 ReadWritePaths=/opt/knowhere
 ReadWritePaths=/tmp
 ReadWritePaths=/var/log
+ReadOnlyPaths=/home/appuser/.postgresql
 
 # 日志配置
 StandardOutput=journal
