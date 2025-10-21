@@ -18,6 +18,9 @@ from app.models.database import user, api_key, subscription, credits_transaction
 # 创建同步数据库URL（将asyncpg替换为psycopg2）
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
 
+# 获取SSL连接参数
+ssl_connect_args = settings.get_ssl_connect_args()
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -56,8 +59,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        # 添加SSL配置
-        connect_args={"sslmode": "require"}
+        # 使用配置的SSL参数
+        connect_args=ssl_connect_args
     )
 
     with context.begin_transaction():
@@ -77,7 +80,7 @@ def run_migrations_online() -> None:
     connectable = create_engine(
         sync_database_url,
         poolclass=pool.NullPool,
-        connect_args={"sslmode": "require"}
+        connect_args=ssl_connect_args
     )
 
     with connectable.connect() as connection:

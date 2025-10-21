@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 # 创建 SQLAlchemy 异步引擎
 from app.core.constants import ProcessingConstants
 
+# 获取SSL连接参数
+ssl_connect_args = settings.get_ssl_connect_args()
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=True, # 取消注释以在控制台打印 SQL 语句，用于调试
@@ -33,6 +36,8 @@ engine = create_async_engine(
             "idle_in_transaction_session_timeout": "60000",  # 60秒空闲事务超时
         },
         "command_timeout": 30,
+        # 合并SSL配置
+        **ssl_connect_args,
     },
     # 连接池事件监听
     pool_events=[],
