@@ -2,7 +2,8 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { api, type User } from '@/lib/api'
-import { trackLogin, trackSignUp, identifyUser, resetUser } from '@/lib/posthog'
+// 暂时禁用PostHog追踪
+// import { trackLogin, trackSignUp, identifyUser, resetUser } from '@/lib/posthog'
 
 
 interface AuthContextType {
@@ -143,7 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await login(email, password)
         
         // 追踪注册事件
-        trackSignUp('email', user?.id || '')
+        // trackSignUp('email', user?.id || '')
       }
     } catch (error) {
       console.error('Register error:', error)
@@ -178,7 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     // 追踪登出事件
-    resetUser()
+    // resetUser()
     
     setUser(null)
     setToken(null)
