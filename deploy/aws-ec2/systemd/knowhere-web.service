@@ -15,7 +15,7 @@ Environment="NEXT_TELEMETRY_DISABLED=1"
 EnvironmentFile=/opt/knowhere/.env
 
 # 启动命令
-ExecStart=/usr/bin/pnpm --filter @knowhere/web start
+ExecStart=/usr/bin/node /opt/knowhere/apps/web/.next/standalone/apps/web/server.js
 
 # 重启策略
 Restart=always
