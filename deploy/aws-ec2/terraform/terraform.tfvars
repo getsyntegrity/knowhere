@@ -27,9 +27,9 @@ existing_vpc_id               = "vpc-09f6daf4d60f2eb0b"
 use_existing_security_group   = true
 existing_security_group_id    = "sg-00db88058f5db1270"
 
-# 数据库配置（使用现有资源）
-use_existing_rds              = true
-existing_rds_identifier       = "database-test"
+# 数据库配置（创建新RDS实例）
+use_existing_rds              = false
+existing_rds_identifier       = ""
 use_existing_redis            = true
 existing_redis_identifier     = "knowhere-test-redis"
 

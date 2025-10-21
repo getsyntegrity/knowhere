@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 from app.core.constants import ProcessingConstants
 
 # 获取SSL连接参数
-ssl_connect_args = settings.get_ssl_connect_args()
+ssl_connect_args = settings.get_async_ssl_connect_args()
 
 engine = create_async_engine(
     settings.DATABASE_URL,

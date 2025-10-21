@@ -8,7 +8,7 @@ resource "aws_db_instance" "main" {
 
   # 引擎配置
   engine         = "postgres"
-  engine_version = "15.4"
+  engine_version = "15.7"
   instance_class = "db.t3.micro" # 测试环境使用最小实例
 
   # 存储配置
@@ -163,7 +163,7 @@ resource "random_string" "bucket_suffix" {
 resource "aws_secretsmanager_secret" "db_password" {
   count = var.use_existing_rds ? 0 : 1
 
-  name                    = "${var.project_name}/${var.environment}/database-password"
+  name                    = "${var.project_name}/${var.environment}/database-password-new"
   description             = "Database password for Knowhere"
   recovery_window_in_days = 7
 

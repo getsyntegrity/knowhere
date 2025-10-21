@@ -28,7 +28,7 @@ class DatabaseConfig(BaseModel):
     DB_POOL_TIMEOUT: int = Field(default=30, description="连接超时时间（秒）")
     
     def get_ssl_connect_args(self) -> dict:
-        """获取SSL连接参数"""
+        """获取SSL连接参数（用于psycopg2）"""
         ssl_args = {"sslmode": self.DB_SSL_MODE}
         
         if self.DB_SSL_CERT:
@@ -37,6 +37,33 @@ class DatabaseConfig(BaseModel):
             ssl_args["sslkey"] = self.DB_SSL_KEY
         if self.DB_SSL_ROOT_CERT:
             ssl_args["sslrootcert"] = self.DB_SSL_ROOT_CERT
+            
+        return ssl_args
+    
+    def get_async_ssl_connect_args(self) -> dict:
+        """获取异步SSL连接参数（用于asyncpg）"""
+        ssl_args = {}
+        
+        if self.DB_SSL_MODE and self.DB_SSL_MODE != "disable":
+            # asyncpg使用不同的SSL参数格式
+            if self.DB_SSL_MODE == "require":
+                ssl_args["ssl"] = "require"
+            elif self.DB_SSL_MODE == "prefer":
+                ssl_args["ssl"] = "prefer"
+            elif self.DB_SSL_MODE == "verify-ca":
+                ssl_args["ssl"] = "verify-ca"
+            elif self.DB_SSL_MODE == "verify-full":
+                ssl_args["ssl"] = "verify-full"
+            else:
+                ssl_args["ssl"] = self.DB_SSL_MODE
+            
+            # asyncpg的SSL证书参数
+            if self.DB_SSL_ROOT_CERT:
+                ssl_args["ssl_ca"] = self.DB_SSL_ROOT_CERT
+            if self.DB_SSL_CERT:
+                ssl_args["ssl_cert"] = self.DB_SSL_CERT
+            if self.DB_SSL_KEY:
+                ssl_args["ssl_key"] = self.DB_SSL_KEY
             
         return ssl_args
     
