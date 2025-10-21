@@ -44,7 +44,7 @@ key_pair_name   = "Knowhere-Test"
 # Git仓库配置
 git_repository_url = "https://gitee.com/ono_road_i/knowhereapi.git"  # 请替换为实际的仓库URL
 git_branch         = "main"
-git_ssh_key_path   = "/opt/knowhere/deploy/aws-ec2/scripts/repo-git"  # SSH私钥路径
+git_ssh_key_path   = "/tmp/repo-git"  # SSH私钥路径
 
 # 监控配置
 enable_detailed_monitoring     = false

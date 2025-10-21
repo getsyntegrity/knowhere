@@ -308,7 +308,7 @@ if [ -n "${GIT_REPOSITORY_URL}" ]; then
         sudo -u appuser mkdir -p /home/appuser/.ssh
         sudo -u appuser cp "${GIT_SSH_KEY_PATH}" /home/appuser/.ssh/id_rsa
         sudo -u appuser chmod 600 /home/appuser/.ssh/id_rsa
-        sudo -u appuser ssh-keyscan github.com >> /home/appuser/.ssh/known_hosts
+        sudo -u appuser ssh-keyscan gitee.com >> /home/appuser/.ssh/known_hosts
         sudo -u appuser chown -R appuser:appuser /home/appuser/.ssh
         
         # 使用SSH克隆
