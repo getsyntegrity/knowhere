@@ -73,7 +73,7 @@ fi
 log "更新Node.js依赖..."
 if [ -d "$WEB_DIR" ]; then
     cd "$APP_DIR"
-    CI=true pnpm install
+    CI=true pnpm install --no-frozen-lockfile
     log "Node.js依赖已更新"
     
     # 构建Web应用

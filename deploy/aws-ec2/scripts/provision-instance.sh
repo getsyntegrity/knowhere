@@ -79,7 +79,7 @@ if [ -d "$WEB_DIR" ]; then
     
     # 使用pnpm安装依赖
     cd "$APP_DIR"
-    CI=true pnpm install
+    CI=true pnpm install --no-frozen-lockfile
     log "Node.js依赖安装完成"
     
     # 构建Web应用
