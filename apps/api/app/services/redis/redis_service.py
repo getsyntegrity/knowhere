@@ -39,7 +39,7 @@ class RedisService:
                             **self.config_manager.get_connection_params()
                         )
                         self._health_checker = RedisHealthChecker(self._client)
-                        logger.info("Redis客户端初始化成功")
+                        logger.debug("Redis客户端初始化成功")
                     except Exception as e:
                         raise RedisConnectionError(f"Redis客户端初始化失败: {e}")
         return self._client

@@ -375,7 +375,12 @@ class StateMachineService:
                 "timestamp": str(int(time.time()))
             }
             if metadata:
-                progress_data.update(metadata)
+                # 安全地序列化metadata，避免DataFrame等不可序列化对象
+                try:
+                    safe_metadata = make_json_safe(metadata)
+                    progress_data.update(safe_metadata)
+                except Exception as e:
+                    logger.warning(f"序列化metadata失败，跳过metadata更新: {e}")
             
             await self.redis.hset(progress_key, mapping=progress_data)
             await self.redis.expire(progress_key, redis_key_builder.get_key_ttl(RedisKeyType.TASK))

@@ -244,12 +244,14 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             user_info = await encode_kb(user_config, add_dir=add_dir, mode="add")
             
             # 更新状态：向量化完成
+            # 安全地序列化user_info，避免DataFrame等不可序列化对象
+            safe_user_info = make_json_safe(user_info)
             await state_machine.transition(
                 db, job_id, KBManagementState.VECTORIZED.value,
                 "vectorization_completed",  # transition_reason
                 None,  # operator_id
                 "system",  # operator_type
-                {"add_dir": add_dir, "user_info": user_info}  # metadata
+                {"add_dir": add_dir, "user_info": safe_user_info}  # metadata
             )
             
             return {

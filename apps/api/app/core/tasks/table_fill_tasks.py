@@ -13,6 +13,7 @@ from app.repositories.job_repository import JobRepository
 from app.repositories.job_result_repository import JobResultRepository
 from app.services.storage.file_upload_service import FileUploadService
 from app.core.database import get_db_context
+from app.utils.json_utils import make_json_safe
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -247,10 +248,11 @@ async def _extract_table_async(job_id: str, s3_key: str, user_id: str):
             }
             
             # 更新状态：表格提取完成
+            safe_table_data = make_json_safe(table_data)
             await state_machine.transition(
                 db, job_id, TableFillState.TABLE_EXTRACTED.value,
                 "table_extraction_completed", None, "system",
-                {"table_data": table_data}
+                {"table_data": safe_table_data}
             )
             
             return {"status": "success", "table_data": table_data, "job_id": job_id}
@@ -330,10 +332,11 @@ async def _kb_search_async(job_id: str, table_data: Dict[str, Any], user_id: str
             }
             
             # 更新状态：知识库检索完成
+            safe_search_results = make_json_safe(search_results)
             await state_machine.transition(
                 db, job_id, TableFillState.KB_SEARCHED.value,
                 "kb_search_completed", None, "system",
-                {"search_results": search_results}
+                {"search_results": safe_search_results}
             )
             
             return {"status": "success", "search_results": search_results, "job_id": job_id}
@@ -422,10 +425,11 @@ async def _llm_process_async(job_id: str, search_results: Dict[str, Any], user_i
             }
             
             # 更新状态：LLM处理完成
+            safe_llm_results = make_json_safe(llm_results)
             await state_machine.transition(
                 db, job_id, TableFillState.LLM_PROCESSED.value,
                 "llm_processing_completed", None, "system",
-                {"llm_results": llm_results}
+                {"llm_results": safe_llm_results}
             )
             
             return {"status": "success", "llm_results": llm_results, "job_id": job_id}
@@ -520,10 +524,11 @@ async def _fill_table_async(job_id: str, llm_results: Dict[str, Any], user_id: s
             }
             
             # 更新状态：表格填充完成
+            safe_filled_table_data = make_json_safe(filled_table_data)
             await state_machine.transition(
                 db, job_id, TableFillState.TABLE_FILLED.value,
                 "table_filling_completed", None, "system",
-                {"filled_table_data": filled_table_data}
+                {"filled_table_data": safe_filled_table_data}
             )
             
             return {"status": "success", "filled_table_data": filled_table_data, "job_id": job_id}
