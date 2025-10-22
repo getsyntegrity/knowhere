@@ -33,24 +33,85 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
                 "Authorization": f"Bearer {settings.MINERU_API_KEY}"
             }
 
-            while True:
-                logger.debug(f"parse_pdfs status_url: {status_url}")
-                logger.debug(f"parse_pdfs status_header: {status_header}")
-                res = requests.get(status_url, headers=status_header)
-                logger.debug(f"parse_pdfs status_res: {res.json()}")
-                
-                if res.status_code == 200:
-                    status = res.json()["data"]
-                    if status['state']=="done":
-                        res_zip_url = status['full_zip_url']
-                        s3_download_extract_zip(res_zip_url, dest_dir=output_dir, keep_exts=['.md', '.jpg', '.jpeg', '.png', '.gif']) #'.json',
-                        break
-
-                    elif status['state']=="running":
-                        progress = (status['extract_progress']['extracted_pages'])/(status['extract_progress']['total_pages'])
-                        print(f"当前pdf_parse api 进度{progress}")
+            # 优化轮询策略：添加延迟、超时和错误处理
+            import time
+            import asyncio
+            
+            max_polling_attempts = 120   # 最大轮询次数 (10分钟)
+            polling_interval = 5.0      # 轮询间隔(秒)
+            max_wait_time = 600         # 最大等待时间(10分钟)
+            
+            # 动态轮询间隔：根据任务状态调整
+            def get_polling_interval(state: str, attempt: int) -> float:
+                if state == "pending":
+                    return min(10.0, 2.0 + attempt * 0.5)  # 等待中逐渐增加间隔
+                elif state == "running":
+                    return 5.0  # 运行中保持5秒间隔
                 else:
-                    raise()
+                    return 2.0  # 其他状态快速检查
+            
+            start_time = time.time()
+            attempt = 0
+            
+            while attempt < max_polling_attempts:
+                # 检查是否超时
+                if time.time() - start_time > max_wait_time:
+                    raise TimeoutError(f"PDF解析超时，等待时间超过{max_wait_time}秒")
+                
+                try:
+                    logger.debug(f"parse_pdfs status_url: {status_url} (尝试 {attempt + 1}/{max_polling_attempts})")
+                    res = requests.get(status_url, headers=status_header, timeout=30)
+                    
+                    if res.status_code == 200:
+                        status = res.json()["data"]
+                        logger.debug(f"parse_pdfs status_res: {status}")
+                        
+                        if status['state'] == "done":
+                            # 解析完成
+                            res_zip_url = status['full_zip_url']
+                            s3_download_extract_zip(res_zip_url, dest_dir=output_dir, 
+                                                  keep_exts=['.md', '.jpg', '.jpeg', '.png', '.gif'])
+                            logger.info(f"PDF解析完成，任务ID: {sent_info['task_id']}")
+                            break
+                            
+                        elif status['state'] == "running":
+                            # 显示进度
+                            if 'extract_progress' in status:
+                                progress = (status['extract_progress']['extracted_pages'] / 
+                                          status['extract_progress']['total_pages'])
+                                logger.info(f"PDF解析进度: {progress:.2%} (任务ID: {sent_info['task_id']})")
+                            else:
+                                logger.info(f"PDF解析进行中... (任务ID: {sent_info['task_id']})")
+                            
+                        elif status['state'] == "failed":
+                            # 解析失败
+                            error_msg = status.get('err_msg', '未知错误')
+                            raise Exception(f"PDF解析失败: {error_msg}")
+                        
+                        elif status['state'] == "pending":
+                            # 等待中
+                            logger.info(f"PDF解析等待中... (任务ID: {sent_info['task_id']})")
+                        
+                        # 动态调整轮询间隔
+                        current_interval = get_polling_interval(status['state'], attempt)
+                        await asyncio.sleep(current_interval)
+                        attempt += 1
+                        
+                    else:
+                        logger.warning(f"状态查询失败，状态码: {res.status_code}")
+                        await asyncio.sleep(polling_interval * 2)  # 失败时延长等待
+                        attempt += 1
+                        
+                except requests.RequestException as e:
+                    logger.warning(f"网络请求失败: {e}")
+                    await asyncio.sleep(polling_interval * 2)
+                    attempt += 1
+                except Exception as e:
+                    logger.error(f"PDF解析过程中出错: {e}")
+                    raise
+            
+            if attempt >= max_polling_attempts:
+                raise TimeoutError(f"PDF解析超时，已轮询{max_polling_attempts}次，任务ID: {sent_info['task_id']}")
         else:
             raise Exception(res.status_code)
 

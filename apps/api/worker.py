@@ -50,10 +50,13 @@ if __name__ == "__main__":
     pid = os.getpid()
     node_name = f"celery@{hostname}-{pid}"
 
+    # 获取日志级别设置
+    log_level = os.getenv("LOG_LEVEL", "INFO").lower()
+    
     # 启动 worker，使用唯一的节点名称
     celery_app.worker_main([
         "worker", 
-        "--loglevel=debug", 
+        f"--loglevel={log_level}", 
         "--concurrency=2",
         f"--hostname={node_name}"
     ])
