@@ -38,7 +38,7 @@ def eval_response(resp, answer_key=None):
             answer = answer.get(answer_key, answer)
         return answer
     except Exception as e:
-        logger.error(f'⚠️ 直接解析失败，尝试提取JSON标识再解析 {e}')
+        logger.warning(f'⚠️ 直接解析失败，尝试提取JSON标识再解析 {e}')
     # 尝试提取 ```json ... ``` 中的内容
     match = re.search(r'```json\s*([\s\S]*?)\s*```', cleaned, re.DOTALL)
     if match:
@@ -55,7 +55,7 @@ def eval_response(resp, answer_key=None):
             answer = answer.get(answer_key, answer)
         return answer
     except json.JSONDecodeError as e:
-        logger.error(f'❌ 所有解析方式均失败，返回原始字符串\n{resp}')
+        logger.warning(f'❌ 所有解析方式均失败，返回原始字符串\n{resp}')
         return cleaned
     
             

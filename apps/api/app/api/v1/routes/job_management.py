@@ -157,7 +157,10 @@ async def retry_job(
         
         # 重置Job状态
         state_machine = JobStateMachine()
-        await state_machine.transition(db, job_id, "pending")
+        await state_machine.transition(
+            db, job_id, "pending",
+            "manual_retry", None, "user"
+        )
         
         # 重新启动工作流
         if job.job_type == "table_fill":

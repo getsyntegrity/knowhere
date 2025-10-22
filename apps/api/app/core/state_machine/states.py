@@ -78,7 +78,7 @@ KB_MANAGEMENT_TRANSITIONS: Dict[str, List[str]] = {
     JobState.VECTORIZING.value: [JobState.VECTORIZED.value, JobState.FAILED.value],
     JobState.VECTORIZED.value: [JobState.STORING_DB.value, JobState.FAILED.value],
     JobState.STORING_DB.value: [JobState.DB_STORED.value, JobState.FAILED.value],
-    JobState.DB_STORED.value: [JobState.WEBHOOK_SENDING.value, JobState.FAILED.value],
+    JobState.DB_STORED.value: [JobState.COMPLETED.value, JobState.FAILED.value],
     JobState.WEBHOOK_SENDING.value: [JobState.COMPLETED.value, JobState.FAILED.value],
     JobState.COMPLETED.value: [],
     JobState.FAILED.value: [JobState.PENDING.value],

@@ -153,17 +153,18 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             user_redis_service = UserRedisService(redis_service)
             
             # 尝试从Redis获取用户配置
-            user_config = await user_redis_service.get_user_config(job.user_id)
+            user_id_str = str(job.user_id)  # 确保user_id是字符串
+            user_config = await user_redis_service.get_user_config(user_id_str)
             
             if not user_config:
                 # 如果Redis中没有，则初始化用户配置
-                logger.info(f"Redis中未找到用户 {job.user_id} 配置，正在初始化...")
-                user_config_str = UserConfigService.init_user(str(job.user_id))
+                logger.info(f"Redis中未找到用户 {user_id_str} 配置，正在初始化...")
+                user_config_str = UserConfigService.init_user(user_id_str)
                 user_config = json.loads(user_config_str) if isinstance(user_config_str, str) else user_config_str
                 
                 # 保存到Redis
-                await user_redis_service.save_user_config(job.user_id, user_config)
-                logger.info(f"用户 {job.user_id} 配置初始化并保存到Redis")
+                await user_redis_service.save_user_config(user_id_str, user_config)
+                logger.info(f"用户 {user_id_str} 配置初始化并保存到Redis")
             
             if not user_config:
                 raise ValueError("用户配置为空")
@@ -177,10 +178,16 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             
             # 检查当前状态，如果是failed，先转换到pending
             if job.current_state == KBManagementState.FAILED.value:
-                await state_machine.transition(db, job_id, KBManagementState.PENDING.value)
+                await state_machine.transition(
+                    db, job_id, KBManagementState.PENDING.value,
+                    "retry_from_failed", None, "system"
+                )
             
             # 更新状态：开始解析
-            await state_machine.transition(db, job_id, KBManagementState.PARSING.value)
+            await state_machine.transition(
+                db, job_id, KBManagementState.PARSING.value,
+                "start_parsing", None, "system"
+            )
             
             # 获取S3键和文件信息
             s3_key = job.s3_key
@@ -226,7 +233,10 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             logger.info(f"文件解析成功: {add_dir}")
             
             # 更新状态：解析完成，开始向量化
-            await state_machine.transition(db, job_id, KBManagementState.VECTORIZING.value)
+            await state_machine.transition(
+                db, job_id, KBManagementState.VECTORIZING.value,
+                "parsing_completed", None, "system"
+            )
             
             # 调用旧方案的向量化逻辑
             from app.services.knowledge.kb_encoder_service import encode_kb
@@ -236,7 +246,10 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             # 更新状态：向量化完成
             await state_machine.transition(
                 db, job_id, KBManagementState.VECTORIZED.value,
-                {"add_dir": add_dir, "user_info": user_info}
+                "vectorization_completed",  # transition_reason
+                None,  # operator_id
+                "system",  # operator_type
+                {"add_dir": add_dir, "user_info": user_info}  # metadata
             )
             
             return {
@@ -315,13 +328,14 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
 
                 redis_service = RedisServiceFactory.get_service()
                 user_redis_service = UserRedisService(redis_service)
-                user_config = await user_redis_service.get_user_config(job.user_id)
+                user_id_str = str(job.user_id)  # 确保user_id是字符串
+                user_config = await user_redis_service.get_user_config(user_id_str)
 
                 if not user_config:
                     logger.warning(f"Job {job_id} metadata缺少用户配置，尝试重新初始化用户配置")
-                    user_config_str = UserConfigService.init_user(str(job.user_id))
+                    user_config_str = UserConfigService.init_user(user_id_str)
                     user_config = json.loads(user_config_str)
-                    await user_redis_service.save_user_config(job.user_id, user_config)
+                    await user_redis_service.save_user_config(user_id_str, user_config)
 
                 if not user_config:
                     raise ValueError("Job中缺少用户配置")
@@ -334,7 +348,10 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             
             # 更新状态：开始存储数据库
             # 注意：此时状态应该已经是VECTORIZED（由上一个任务设置）
-            await state_machine.transition(db, job_id, KBManagementState.STORING_DB.value)
+            await state_machine.transition(
+                db, job_id, KBManagementState.STORING_DB.value,
+                "start_storing_db", None, "system"
+            )
             
             # 从全局管理器获取向量化结果
             from app.services.common.global_manager_service import global_df_manager
@@ -498,12 +515,16 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             job.job_metadata = metadata_update
             await db.commit()
 
-            # 更新状态：数据库存储完成，标记任务为completed
-            await state_machine.transition(db, job_id, KBManagementState.DB_STORED.value)
+            # 更新状态：数据库存储完成
+            await state_machine.transition(
+                db, job_id, KBManagementState.DB_STORED.value,
+                "db_storage_completed", None, "system"
+            )
             
             # 安全地获取kb_records的长度
             stored_count = len(kb_records) if kb_records is not None else 0
             
+            # 直接标记任务为完成（Webhook发送与任务完成状态无关）
             await state_machine.mark_completed(db, job_id, {
                 "storage_completed": True,
                 "stored_count": stored_count,

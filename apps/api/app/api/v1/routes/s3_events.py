@@ -253,9 +253,15 @@ async def process_upload_events(s3_event: S3Event):
                 state_machine = JobStateMachine()
                 
                 if job.job_type == "kb_management":
-                    await state_machine.transition(db, job_id, KBManagementState.UPLOADED.value)
+                    await state_machine.transition(
+                        db, job_id, KBManagementState.UPLOADED.value,
+                        "s3_upload_completed", None, "system"
+                    )
                 else:
-                    await state_machine.transition(db, job_id, TableFillState.UPLOADED.value)
+                    await state_machine.transition(
+                        db, job_id, TableFillState.UPLOADED.value,
+                        "s3_upload_completed", None, "system"
+                    )
                 
                 # 触发任务处理
                 if job.job_type == "kb_management":

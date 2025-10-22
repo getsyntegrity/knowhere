@@ -249,6 +249,7 @@ async def _extract_table_async(job_id: str, s3_key: str, user_id: str):
             # 更新状态：表格提取完成
             await state_machine.transition(
                 db, job_id, TableFillState.TABLE_EXTRACTED.value,
+                "table_extraction_completed", None, "system",
                 {"table_data": table_data}
             )
             
@@ -331,6 +332,7 @@ async def _kb_search_async(job_id: str, table_data: Dict[str, Any], user_id: str
             # 更新状态：知识库检索完成
             await state_machine.transition(
                 db, job_id, TableFillState.KB_SEARCHED.value,
+                "kb_search_completed", None, "system",
                 {"search_results": search_results}
             )
             
@@ -422,6 +424,7 @@ async def _llm_process_async(job_id: str, search_results: Dict[str, Any], user_i
             # 更新状态：LLM处理完成
             await state_machine.transition(
                 db, job_id, TableFillState.LLM_PROCESSED.value,
+                "llm_processing_completed", None, "system",
                 {"llm_results": llm_results}
             )
             
@@ -519,6 +522,7 @@ async def _fill_table_async(job_id: str, llm_results: Dict[str, Any], user_id: s
             # 更新状态：表格填充完成
             await state_machine.transition(
                 db, job_id, TableFillState.TABLE_FILLED.value,
+                "table_filling_completed", None, "system",
                 {"filled_table_data": filled_table_data}
             )
             

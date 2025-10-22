@@ -108,7 +108,10 @@ class JobRepository:
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """更新Job状态（通过状态机）"""
-        return await self.state_machine.transition(db, job_id, to_state, metadata)
+        return await self.state_machine.transition(
+            db, job_id, to_state, 
+            "repository_update", None, "system", metadata
+        )
     
     async def update_job_s3_key(
         self, 
