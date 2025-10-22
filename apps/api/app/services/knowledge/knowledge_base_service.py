@@ -489,8 +489,8 @@ async def checkerboard_inject_parse(
 
     if is_remote(file_full_path):
         file_full_path = get_pub_fileurl(file_full_path)
-    else:
-        file_full_path = ".fragment"
+    # 对于本地文件，保持原始路径，不要替换为.fragment
+    # file_full_path 保持原值
 
     split_char = settings.SPLIT_CHAR or ";"
     kb_dir = kwargs.get('kb_dir', '默认目录')

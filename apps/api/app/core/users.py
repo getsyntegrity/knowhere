@@ -27,6 +27,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
         from sqlalchemy import select, or_
         from app.models.database.user import User
         from loguru import logger
+        from sqlalchemy import select, or_
         
         try:
             # 获取用户名和密码 - credentials是OAuth2PasswordRequestForm对象
@@ -109,12 +110,14 @@ class UserManager(UUIDIDMixin, BaseUserManager):
             async with get_db_context() as db:
                 # 创建Free订阅
                 subscription_repo = SubscriptionRepository()
-                subscription = await subscription_repo.create_subscription(
-                    db=db,
-                    user_id=str(user.id),
-                    plan_type="free",
-                    status="active"
-                )
+                from datetime import datetime
+                subscription_data = {
+                    "user_id": str(user.id),
+                    "plan_type": "free",
+                    "status": "active",
+                    "start_date": datetime.utcnow()
+                }
+                subscription = await subscription_repo.create(db, subscription_data)
                 
                 if subscription:
                     logger.info(f"为用户 {user.id} 创建Free订阅成功")

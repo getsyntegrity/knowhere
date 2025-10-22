@@ -66,7 +66,11 @@ class RedisService:
             full_key = self._build_key(key)
             
             if isinstance(value, (dict, list)):
-                value = json.dumps(value, ensure_ascii=False)
+                # 使用make_json_safe确保所有复杂类型都能正确序列化
+                from app.utils.json_utils import make_json_safe
+                safe_value = make_json_safe(value)
+                value = json.dumps(safe_value, ensure_ascii=False)
+                logger.debug(f"Redis序列化完成: key={full_key}, 类型={type(value)}")
             
             # 优先使用ex参数，其次使用ttl参数
             expire_time = ex or ttl or self.config_manager.config.REDIS_DEFAULT_TTL

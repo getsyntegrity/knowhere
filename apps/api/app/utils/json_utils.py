@@ -32,6 +32,10 @@ def make_json_safe(value: Any, *, max_preview_rows: int = 5, _visited: MutableSe
 
     if isinstance(value, Path):
         return str(value)
+    
+    # 处理UUID类型 - 包括标准UUID和asyncpg UUID
+    if hasattr(value, '__class__') and 'UUID' in value.__class__.__name__:
+        return str(value)
 
     obj_id = id(value)
     if obj_id in _visited:

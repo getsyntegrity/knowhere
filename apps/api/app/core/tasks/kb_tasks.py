@@ -340,7 +340,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             from app.services.common.global_manager_service import global_df_manager
             user_key = f"{user_config['user']}_all_contents_df"
             all_contents_df = global_df_manager.get_dataframe(user_key)
-            logger.debug(f"user_key: {user_key}, all_contents_df length: {len(all_contents_df)}")
+            logger.debug(f"user_key: {user_key}, all_contents_df length: {len(all_contents_df) if all_contents_df is not None else 'None'}")
             
             kb_records = []
             if all_contents_df is not None and len(all_contents_df) > 0:
@@ -500,18 +500,22 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
 
             # 更新状态：数据库存储完成，标记任务为completed
             await state_machine.transition(db, job_id, KBManagementState.DB_STORED.value)
+            
+            # 安全地获取kb_records的长度
+            stored_count = len(kb_records) if kb_records is not None else 0
+            
             await state_machine.mark_completed(db, job_id, {
                 "storage_completed": True,
-                "stored_count": len(kb_records),
+                "stored_count": stored_count,
                 "delivery_mode": delivery_mode
             })
 
-            logger.info(f"知识库存储完成: job_id={job_id}, stored_count={len(kb_records)}")
+            logger.info(f"知识库存储完成: job_id={job_id}, stored_count={stored_count}")
 
             return {
                 "status": "success",
                 "job_id": job_id,
-                "stored_count": len(kb_records),
+                "stored_count": stored_count,
                 "delivery_mode": delivery_mode,
                 "result_s3_key": result_s3_key
             }

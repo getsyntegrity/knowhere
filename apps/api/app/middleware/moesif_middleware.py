@@ -177,7 +177,13 @@ class MoesifMiddleware(BaseHTTPMiddleware):
             
             def send_sync():
                 try:
-                    self.moesif_client.create_event(event)
+                    # 使用正确的Moesif API方法
+                    if hasattr(self.moesif_client, 'create_event'):
+                        self.moesif_client.create_event(event)
+                    elif hasattr(self.moesif_client, 'create_events'):
+                        self.moesif_client.create_events([event])
+                    else:
+                        logger.warning("Moesif客户端不支持create_event或create_events方法")
                 except Exception as e:
                     logger.error(f"Moesif同步发送失败: {e}")
             
