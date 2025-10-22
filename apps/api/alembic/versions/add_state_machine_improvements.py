@@ -17,8 +17,13 @@ depends_on = None
 
 
 def upgrade():
-    # 添加版本控制字段到jobs表
-    op.add_column('jobs', sa.Column('version', sa.Integer(), nullable=False, server_default='0'))
+    # 添加版本控制字段到jobs表（如果不存在）
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    columns = [col['name'] for col in inspector.get_columns('jobs')]
+    
+    if 'version' not in columns:
+        op.add_column('jobs', sa.Column('version', sa.Integer(), nullable=False, server_default='0'))
     
     # 创建状态审计日志表
     op.create_table('job_state_audit_logs',
@@ -50,5 +55,10 @@ def downgrade():
     # 删除表
     op.drop_table('job_state_audit_logs')
     
-    # 删除版本控制字段
-    op.drop_column('jobs', 'version')
+    # 删除版本控制字段（如果存在）
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    columns = [col['name'] for col in inspector.get_columns('jobs')]
+    
+    if 'version' in columns:
+        op.drop_column('jobs', 'version')
