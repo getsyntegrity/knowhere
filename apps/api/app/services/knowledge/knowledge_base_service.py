@@ -485,10 +485,13 @@ async def checkerboard_inject_parse(
     except:
         baseurl = ""
         
+    logger.debug(f"baseurl: {baseurl}")
     logger.debug(f"file_full_path: {file_full_path}")
 
     if is_remote(file_full_path):
-        file_full_path = get_pub_fileurl(file_full_path)
+        # 如果已经是完整的URL（预签名URL），直接使用
+        # 不需要调用 get_pub_fileurl()
+        pass # TODO: 后续需要处理
     # 对于本地文件，保持原始路径，不要替换为.fragment
     # file_full_path 保持原值
 

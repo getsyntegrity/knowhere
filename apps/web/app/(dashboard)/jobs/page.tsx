@@ -33,6 +33,7 @@ import {
   Loader2
 } from 'lucide-react'
 import { formatDate } from '@/lib/format'
+import { getAllSupportedExtensions, getFileTypeDisplayName } from '@/lib/constants'
 
 export default function JobsPage() {
   const { user } = useAuth()
@@ -237,14 +238,15 @@ export default function JobsPage() {
     const files = e.dataTransfer.files
     if (files.length > 0) {
       const file = files[0]
-      const allowedTypes = ['.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls', '.csv']
+      const allowedTypes = getAllSupportedExtensions()
       const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase()
       
       if (allowedTypes.includes(fileExtension)) {
         setSelectedFile(file)
         setCreateForm(prev => ({ ...prev, source_type: 'file' }))
       } else {
-        toast.error('不支持的文件格式，请选择 PDF, DOC, DOCX, TXT, MD, XLSX, XLS, CSV 格式的文件')
+        const supportedFormats = allowedTypes.join(', ')
+        toast.error(`不支持的文件格式，请选择以下格式的文件：${supportedFormats}`)
       }
     }
   }
@@ -538,17 +540,18 @@ export default function JobsPage() {
                     <input
                       id="file_upload"
                       type="file"
-                      accept=".pdf,.doc,.docx,.txt,.md,.xlsx,.xls,.csv"
+                      accept={getAllSupportedExtensions().join(',')}
                       onChange={(e) => {
                         const file = e.target.files?.[0] || null
                         if (file) {
-                          const allowedTypes = ['.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls', '.csv']
+                          const allowedTypes = getAllSupportedExtensions()
                           const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase()
                           
                           if (allowedTypes.includes(fileExtension)) {
                             setSelectedFile(file)
                           } else {
-                            toast.error('不支持的文件格式，请选择 PDF, DOC, DOCX, TXT, MD, XLSX, XLS, CSV 格式的文件')
+                            const supportedFormats = allowedTypes.join(', ')
+                            toast.error(`不支持的文件格式，请选择以下格式的文件：${supportedFormats}`)
                           }
                         }
                       }}
@@ -585,7 +588,7 @@ export default function JobsPage() {
                           点击选择文件或拖拽文件到此处
                         </div>
                         <div className="text-xs text-gray-500">
-                          支持 PDF, DOC, DOCX, TXT, MD, XLSX, XLS, CSV 格式
+                          支持 {getAllSupportedExtensions().join(', ')} 格式
                         </div>
                       </div>
                     )}

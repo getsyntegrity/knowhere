@@ -11,6 +11,7 @@ from loguru import logger
 
 from app.core.dependencies import get_db, get_current_user
 from app.core.response.ResponseResult import ResponseResult
+from app.core.constants.system import SystemConstants
 from app.models.database.user import User
 from app.models.schemas.job import (
     JobCreate,
@@ -43,6 +44,29 @@ def infer_job_type(parsing_params: Optional[dict]) -> str:
     return "table_fill"
 
 
+def validate_file_type(file_name: str) -> bool:
+    """
+    验证文件类型是否支持所有SUPPORTED_EXTENSIONS格式
+    
+    Args:
+        file_name: 文件名
+        
+    Returns:
+        bool: 是否支持的文件类型
+    """
+    if not file_name:
+        return False
+    
+    file_extension = os.path.splitext(file_name)[1].lower()
+    
+    # 支持所有文件类型
+    all_supported_extensions = []
+    for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
+        all_supported_extensions.extend(category)
+    
+    return file_extension in all_supported_extensions
+
+
 @router.post("", response_model=ResponseResult[JobResponse], summary="创建解析任务")
 @router.post("/", include_in_schema=False)
 async def create_job(
@@ -64,6 +88,18 @@ async def create_job(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="source_type为url时，source_url为必填参数"
+            )
+        
+        # 验证文件类型（仅对file类型进行验证）
+        if request.source_type == "file" and not validate_file_type(request.file_name):
+            # 获取所有支持的文件格式
+            all_supported_extensions = []
+            for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
+                all_supported_extensions.extend(category)
+            supported_formats = ", ".join(sorted(all_supported_extensions))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"不支持的文件类型。仅支持以下格式：{supported_formats}"
             )
         
         # 生成job_id

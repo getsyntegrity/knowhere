@@ -15,7 +15,7 @@ class SystemConstants:
     SUPPORTED_EXTENSIONS = {
         'documents': ['.doc', '.docx', '.pdf', '.txt'],
         'spreadsheets': ['.xls', '.xlsx', '.csv'],
-        'images': ['.jpg', '.jpeg', '.png', '.gif'],
+        'images': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.svg'],
         'presentations': ['.ppt', '.pptx']
     }
     
