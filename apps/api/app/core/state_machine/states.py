@@ -69,7 +69,9 @@ KB_MANAGEMENT_TRANSITIONS: Dict[str, List[str]] = {
     JobState.PENDING.value: [JobState.UPLOADING.value, JobState.FAILED.value],
     JobState.UPLOADING.value: [JobState.UPLOADED.value, JobState.FAILED.value, JobState.UPLOADING.value],
     JobState.UPLOADED.value: [JobState.PARSING.value, JobState.FAILED.value],
-    JobState.PARSING.value: [JobState.PARSED.value, JobState.FAILED.value],
+    # 修复：PARSING可以直接转换到VECTORIZING，跳过PARSED/CHUNKING/CHUNKED状态
+    JobState.PARSING.value: [JobState.VECTORIZING.value, JobState.FAILED.value],
+    # 保留这些状态以支持未来的细化流程，但当前实现中不使用
     JobState.PARSED.value: [JobState.CHUNKING.value, JobState.FAILED.value],
     JobState.CHUNKING.value: [JobState.CHUNKED.value, JobState.FAILED.value],
     JobState.CHUNKED.value: [JobState.VECTORIZING.value, JobState.FAILED.value],

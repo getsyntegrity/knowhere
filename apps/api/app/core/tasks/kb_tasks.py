@@ -332,8 +332,8 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 await db.commit()
                 await db.refresh(job)
             
-            # 更新状态：向量化完成，开始存储数据库
-            await state_machine.transition(db, job_id, KBManagementState.VECTORIZED.value)
+            # 更新状态：开始存储数据库
+            # 注意：此时状态应该已经是VECTORIZED（由上一个任务设置）
             await state_machine.transition(db, job_id, KBManagementState.STORING_DB.value)
             
             # 从全局管理器获取向量化结果
