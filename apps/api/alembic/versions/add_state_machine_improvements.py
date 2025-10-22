@@ -25,8 +25,13 @@ def upgrade():
     if 'version' not in columns:
         op.add_column('jobs', sa.Column('version', sa.Integer(), nullable=False, server_default='0'))
     
-    # 创建状态审计日志表
-    op.create_table('job_state_audit_logs',
+    # 创建状态审计日志表（如果不存在）
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    tables = inspector.get_table_names()
+    
+    if 'job_state_audit_logs' not in tables:
+        op.create_table('job_state_audit_logs',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('job_id', sa.String(length=36), nullable=False),
         sa.Column('from_state', sa.String(length=50), nullable=True),
@@ -36,24 +41,30 @@ def upgrade():
         sa.Column('operator_type', sa.String(length=20), nullable=False, server_default='system'),
         sa.Column('transition_metadata', postgresql.JSON(astext_type=sa.Text()), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['job_id'], ['jobs.job_id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id')
-    )
-    
-    # 创建索引
-    op.create_index('idx_audit_log_job_id', 'job_state_audit_logs', ['job_id'])
-    op.create_index('idx_audit_log_created_at', 'job_state_audit_logs', ['created_at'])
-    op.create_index('idx_audit_log_job_created', 'job_state_audit_logs', ['job_id', 'created_at'])
+            sa.ForeignKeyConstraint(['job_id'], ['jobs.job_id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id')
+        )
+        
+        # 创建索引
+        op.create_index('idx_audit_log_job_id', 'job_state_audit_logs', ['job_id'])
+        op.create_index('idx_audit_log_created_at', 'job_state_audit_logs', ['created_at'])
+        op.create_index('idx_audit_log_job_created', 'job_state_audit_logs', ['job_id', 'created_at'])
 
 
 def downgrade():
-    # 删除索引
-    op.drop_index('idx_audit_log_job_created', table_name='job_state_audit_logs')
-    op.drop_index('idx_audit_log_created_at', table_name='job_state_audit_logs')
-    op.drop_index('idx_audit_log_job_id', table_name='job_state_audit_logs')
+    # 检查表是否存在
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    tables = inspector.get_table_names()
     
-    # 删除表
-    op.drop_table('job_state_audit_logs')
+    if 'job_state_audit_logs' in tables:
+        # 删除索引
+        op.drop_index('idx_audit_log_job_created', table_name='job_state_audit_logs')
+        op.drop_index('idx_audit_log_created_at', table_name='job_state_audit_logs')
+        op.drop_index('idx_audit_log_job_id', table_name='job_state_audit_logs')
+        
+        # 删除表
+        op.drop_table('job_state_audit_logs')
     
     # 删除版本控制字段（如果存在）
     connection = op.get_bind()
