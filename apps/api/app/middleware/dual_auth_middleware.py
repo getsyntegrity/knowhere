@@ -1,10 +1,12 @@
 """
 双重认证中间件：JWT + API Key
+优化版本：统一使用Authorization头部，支持Bearer格式
 """
 from fastapi import Request, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
+from loguru import logger
 
 from app.core.database import get_db
 from app.core.jwt import jwt_strategy
@@ -13,54 +15,76 @@ from app.models.database.user import User
 
 
 class DualAuthMiddleware:
-    """双重认证中间件：JWT + API Key"""
+    """双重认证中间件：JWT + API Key
+    
+    优化特性：
+    - 统一使用Authorization头部
+    - 支持Bearer sk_xxxx格式的API Key
+    - 支持Bearer JWT格式的JWT token
+    - 改进错误处理和日志记录
+    """
     
     def __init__(self):
         self.api_key_service = APIKeyService()
         self.jwt_scheme = HTTPBearer(auto_error=False)
     
     async def __call__(self, request: Request, call_next):
-        # 1. 优先检查API Key
-        if "X-API-Key" in request.headers:
-            try:
-                user = await self._authenticate_api_key(request)
-                if user:
-                    request.state.user = user
-                    request.state.auth_type = "api_key"
-                    return await call_next(request)
-            except Exception:
-                pass
+        """中间件主入口"""
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            self._raise_auth_error("Missing Authorization header")
         
-        # 2. 检查JWT Token
-        if "Authorization" in request.headers:
-            try:
-                user = await self._authenticate_jwt(request)
-                if user:
-                    request.state.user = user
-                    request.state.auth_type = "jwt"
-                    return await call_next(request)
-            except Exception:
-                pass
-        
-        # 3. 认证失败
+        try:
+            # 1. 优先尝试API Key认证 (Bearer sk_格式)
+            user = await self._authenticate_api_key(request)
+            if user:
+                request.state.user = user
+                request.state.auth_type = "api_key"
+                logger.debug(f"API Key认证成功：用户 {user.email}")
+                return await call_next(request)
+            
+            # 2. 尝试JWT认证 (Bearer JWT格式)
+            user = await self._authenticate_jwt(request)
+            if user:
+                request.state.user = user
+                request.state.auth_type = "jwt"
+                logger.debug(f"JWT认证成功：用户 {user.email}")
+                return await call_next(request)
+            
+            # 3. 两种认证都失败
+            self._raise_auth_error("Invalid or expired token")
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"认证过程中发生错误: {e}")
+            self._raise_auth_error("Authentication failed")
+    
+    def _raise_auth_error(self, detail: str) -> None:
+        """抛出认证错误"""
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
+            detail=detail
         )
     
     async def _authenticate_jwt(self, request: Request) -> Optional[User]:
-        """JWT认证"""
+        """JWT认证 - 只接受标准JWT token，不接受API Key"""
         try:
             credentials: HTTPAuthorizationCredentials = await self.jwt_scheme(request)
             if not credentials:
                 return None
             
-            # 验证JWT令牌 - 使用FastAPI Users的JWT策略
+            # 检查是否是API Key格式
+            if credentials.credentials.startswith("sk_"):
+                return None
+            
+            # 验证JWT令牌
             try:
                 payload = jwt_strategy.read_token(credentials.credentials)
                 if not payload:
                     return None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"JWT token验证失败: {e}")
                 return None
             
             # 获取用户信息
@@ -75,24 +99,34 @@ class DualAuthMiddleware:
                     select(User).where(User.id == user_id)
                 )
                 user = result.scalar_one_or_none()
+                if user and not user.is_active:
+                    logger.debug(f"JWT认证失败：用户未激活 {user_id}")
+                    return None
                 return user
                 
         except Exception as e:
-            print(f"JWT认证失败: {e}")
+            logger.debug(f"JWT认证失败: {e}")
             return None
     
     async def _authenticate_api_key(self, request: Request) -> Optional[User]:
-        """API Key认证"""
-        api_key = request.headers.get("X-API-Key")
+        """API Key认证 - 支持 Authorization: Bearer sk_xxxx 格式"""
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer sk_"):
+            return None
+        
+        api_key = auth_header.split(" ", 1)[1] if len(auth_header.split(" ", 1)) > 1 else None
         if not api_key:
             return None
         
         try:
             async with get_db() as db:
                 user = await self.api_key_service.validate_api_key(db, api_key)
+                if user and not user.is_active:
+                    logger.debug(f"API Key认证失败：用户未激活 {user.id}")
+                    return None
                 return user
         except Exception as e:
-            print(f"API Key认证失败: {e}")
+            logger.debug(f"API Key认证失败: {e}")
             return None
 
 

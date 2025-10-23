@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Union
+from typing import Optional, Union, Tuple, Dict, Any
 from loguru import logger
 
 from app.core.database import get_db
@@ -9,11 +9,38 @@ from app.core.jwt import auth_backend
 from app.core.users import get_user_manager, UserManager
 from app.models.database.user import User
 from app.models.schemas.user import UserResponse
-# 延迟导入以避免循环导入
-# from app.services.redis import RedisService, RedisServiceFactory
 from app.services.auth.api_key_service import APIKeyService
 
-# 保持向后兼容的认证函数
+# ============================================================================
+# 工具函数和常量
+# ============================================================================
+
+class AuthError(Exception):
+    """认证错误基类"""
+    pass
+
+class APIKeyAuthError(AuthError):
+    """API Key认证错误"""
+    pass
+
+class JWTAuthError(AuthError):
+    """JWT认证错误"""
+    pass
+
+def _extract_bearer_token(auth_header: str) -> Optional[str]:
+    """从Authorization头部提取Bearer token"""
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    return auth_header.split(" ", 1)[1] if len(auth_header.split(" ", 1)) > 1 else None
+
+def _is_api_key_format(token: str) -> bool:
+    """检查token是否为API Key格式"""
+    return token.startswith("sk_")
+
+# ============================================================================
+# 基础依赖函数
+# ============================================================================
+
 async def get_current_user(
         user: User = Depends(current_user)
 ) -> UserResponse:
@@ -36,27 +63,89 @@ async def get_redis_service_factory():
     from app.services.redis import RedisServiceFactory
     return RedisServiceFactory
 
-# 添加get_current_user别名，用于向后兼容
-# get_current_user 已经在上面定义了
+# ============================================================================
+# 认证核心函数
+# ============================================================================
 
-# API Key认证相关依赖
+async def _authenticate_api_key(request: Request, db: AsyncSession) -> Optional[User]:
+    """
+    通过API Key认证用户
+    支持 Authorization: Bearer sk_xxxx 格式
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return None
+    
+    token = _extract_bearer_token(auth_header)
+    if not token or not _is_api_key_format(token):
+        return None
+    
+    try:
+        api_key_service = APIKeyService()
+        user = await api_key_service.validate_api_key(db, token)
+        logger.debug(f"API Key认证成功：用户 {user.email if user else 'None'}")
+        return user
+    except Exception as e:
+        logger.debug(f"API Key认证失败: {e}")
+        return None
+
+async def _authenticate_jwt(request: Request, db: AsyncSession) -> Optional[User]:
+    """
+    通过JWT认证用户
+    只接受标准JWT token，不接受API Key
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return None
+    
+    token = _extract_bearer_token(auth_header)
+    if not token or _is_api_key_format(token):
+        return None
+    
+    try:
+        # 使用FastAPI Users的JWT策略验证token
+        strategy = auth_backend.get_strategy()
+        from app.core.users import get_user_db
+        user_db = await anext(get_user_db(db))
+        user_manager = UserManager(user_db)
+        
+        payload = await strategy.read_token(token, user_manager)
+        if not payload:
+            return None
+        
+        # 处理payload
+        if isinstance(payload, dict):
+            user_id = payload.get("sub")
+            if not user_id:
+                return None
+            user = await user_manager.get(user_id)
+        else:
+            # 如果payload是User对象，直接返回
+            user = payload if hasattr(payload, 'id') else None
+        
+        if not user or not user.is_active:
+            return None
+        
+        logger.debug(f"JWT认证成功：用户 {user.email}")
+        return user
+        
+    except Exception as e:
+        logger.debug(f"JWT认证失败: {e}")
+        return None
+
+# ============================================================================
+# 公共认证依赖函数
+# ============================================================================
+
 async def get_current_user_by_api_key(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ) -> Optional[User]:
     """
     通过API Key获取当前用户
+    支持 Authorization: Bearer sk_xxxx 格式
     """
-    api_key = request.headers.get("X-API-Key")
-    if not api_key:
-        return None
-    
-    api_key_service = APIKeyService()
-    try:
-        user = await api_key_service.validate_api_key(db, api_key)
-        return user
-    except Exception:
-        return None
+    return await _authenticate_api_key(request, db)
 
 async def get_current_user_by_jwt(
     request: Request,
@@ -65,68 +154,9 @@ async def get_current_user_by_jwt(
     """
     通过JWT获取当前用户
     使用FastAPI Users标准实现
+    只接受标准JWT token，不接受API Key
     """
-    try:
-        # 检查Authorization头部
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return None
-        
-        token = auth_header.split(" ")[1]
-        if not token:
-            return None
-        
-        # 使用FastAPI Users的JWT策略验证token
-        strategy = auth_backend.get_strategy()
-        
-        # 创建用户管理器实例
-        from app.core.users import get_user_db
-        user_db = await anext(get_user_db(db))
-        user_manager = UserManager(user_db)
-        
-        payload = await strategy.read_token(token, user_manager)
-        
-        if not payload:
-            logger.debug("JWT token验证失败：无效的token")
-            return None
-        
-        # payload应该是字典，包含JWT的claims
-        if isinstance(payload, dict):
-            user_id = payload.get("sub")
-        else:
-            # 如果payload是User对象，直接返回
-            if hasattr(payload, 'id'):
-                user = payload
-                if not user.is_active:
-                    logger.debug(f"JWT token验证失败：用户未激活 {user.id}")
-                    return None
-                logger.debug(f"JWT认证成功：用户 {user.email}")
-                return user
-            else:
-                logger.debug("JWT token验证失败：无效的payload格式")
-                return None
-        
-        if not user_id:
-            logger.debug("JWT token验证失败：缺少用户ID")
-            return None
-        
-        # 获取用户
-        user = await user_manager.get(user_id)
-        if not user:
-            logger.debug(f"JWT token验证失败：用户不存在 {user_id}")
-            return None
-        
-        # 检查用户是否激活
-        if not user.is_active:
-            logger.debug(f"JWT token验证失败：用户未激活 {user_id}")
-            return None
-        
-        logger.debug(f"JWT认证成功：用户 {user.email}")
-        return user
-        
-    except Exception as e:
-        logger.debug(f"JWT认证过程中发生错误: {e}")
-        return None
+    return await _authenticate_jwt(request, db)
 
 async def get_current_user_dual_auth(
     request: Request,
@@ -135,21 +165,20 @@ async def get_current_user_dual_auth(
     """
     双重认证：API Key + JWT
     优先使用API Key，如果API Key失败则尝试JWT
-    使用FastAPI Users标准实现
     """
     # 1. 优先尝试API Key认证
-    user = await get_current_user_by_api_key(request, db)
+    user = await _authenticate_api_key(request, db)
     if user:
-        logger.debug(f"API Key认证成功：用户 {user.email}")
         return user
     
     # 2. 尝试JWT认证
-    user = await get_current_user_by_jwt(request, db)
+    user = await _authenticate_jwt(request, db)
     if user:
         return user
     
     # 3. 认证失败
-    logger.warning(f"双重认证失败：请求来源 {request.client.host if request.client else 'unknown'}")
+    client_ip = request.client.host if request.client else 'unknown'
+    logger.warning(f"双重认证失败：请求来源 {client_ip}")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required. Please provide valid JWT token or API Key."
@@ -162,7 +191,7 @@ async def require_api_key_auth(
     """
     要求API Key认证
     """
-    user = await get_current_user_by_api_key(request, db)
+    user = await _authenticate_api_key(request, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -173,30 +202,33 @@ async def require_api_key_auth(
 async def get_current_user_with_auth_type(
     request: Request,
     db: AsyncSession = Depends(get_db)
-) -> tuple[User, str]:
+) -> Tuple[User, str]:
     """
     获取当前用户和认证类型
     返回: (user, auth_type) 其中 auth_type 为 "jwt" 或 "api_key"
-    使用FastAPI Users标准实现
     """
-    # 1. 尝试JWT认证
-    user = await get_current_user_by_jwt(request, db)
-    if user:
-        return user, "jwt"
-    
-    # 2. 尝试API Key认证
-    user = await get_current_user_by_api_key(request, db)
+    # 1. 尝试API Key认证
+    user = await _authenticate_api_key(request, db)
     if user:
         return user, "api_key"
     
+    # 2. 尝试JWT认证
+    user = await _authenticate_jwt(request, db)
+    if user:
+        return user, "jwt"
+    
     # 3. 认证失败
-    logger.warning(f"认证失败：无法确定认证类型，请求来源 {request.client.host if request.client else 'unknown'}")
+    client_ip = request.client.host if request.client else 'unknown'
+    logger.warning(f"认证失败：无法确定认证类型，请求来源 {client_ip}")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required. Please provide valid JWT token or API Key."
     )
 
-# 新增：仅JWT认证的依赖
+# ============================================================================
+# 专用认证依赖函数
+# ============================================================================
+
 async def require_jwt_auth(
     request: Request,
     db: AsyncSession = Depends(get_db)
@@ -205,16 +237,20 @@ async def require_jwt_auth(
     要求JWT认证
     如果JWT认证失败，抛出异常
     """
-    user = await get_current_user_by_jwt(request, db)
+    user = await _authenticate_jwt(request, db)
     if not user:
-        logger.warning(f"JWT认证失败：请求来源 {request.client.host if request.client else 'unknown'}")
+        client_ip = request.client.host if request.client else 'unknown'
+        logger.warning(f"JWT认证失败：请求来源 {client_ip}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="JWT authentication required. Please provide valid JWT token."
         )
     return user
 
-# 新增：认证类型检查装饰器
+# ============================================================================
+# 认证工具函数
+# ============================================================================
+
 def require_auth_type(auth_type: str):
     """
     认证类型检查装饰器
@@ -235,11 +271,10 @@ def require_auth_type(auth_type: str):
     
     return auth_checker
 
-# 新增：获取认证信息的工具函数
 async def get_auth_info(
     request: Request,
     db: AsyncSession = Depends(get_db)
-) -> dict:
+) -> Dict[str, Any]:
     """
     获取认证信息
     返回包含用户信息和认证类型的字典
