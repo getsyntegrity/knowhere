@@ -52,6 +52,9 @@ log "跳过备份，直接部署新版本..."
 log "拉取最新代码..."
 cd "$APP_DIR"
 if [ -d ".git" ]; then
+    # 确保目录权限正确
+    chown -R appuser:appuser "$APP_DIR"
+    
     # 修复Git权限问题
     git config --global --add safe.directory /opt/knowhere
     git pull origin main
