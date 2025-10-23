@@ -243,6 +243,28 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             
             user_info = await encode_kb(user_config, add_dir=add_dir, mode="add")
             
+            # 保存DataFrame为chunks到Redis
+            from app.services.redis.chunks_redis_service import ChunksRedisService
+            from app.services.redis import RedisServiceFactory
+            
+            redis_service = RedisServiceFactory.get_service()
+            chunks_redis_service = ChunksRedisService(redis_service)
+            
+            if user_info.get("all_contents_df") is not None:
+                all_contents_df = user_info["all_contents_df"]
+                logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(all_contents_df)}")
+                
+                # 使用服务方法直接保存DataFrame为chunks
+                success = await chunks_redis_service.save_dataframe_as_chunks(job_id, all_contents_df)
+                
+                if success:
+                    logger.info(f"DataFrame已保存为chunks到Redis: job_id={job_id}")
+                else:
+                    logger.error(f"保存DataFrame为chunks失败: job_id={job_id}")
+            else:
+                logger.warning("user_info中没有all_contents_df数据，保存空chunks")
+                await chunks_redis_service.save_chunks(job_id, [])
+            
             # 更新状态：向量化完成
             # 安全地序列化user_info，避免DataFrame等不可序列化对象
             safe_user_info = make_json_safe(user_info)
@@ -355,7 +377,21 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 "start_storing_db", None, "system"
             )
             
-            # 从全局管理器获取向量化结果
+            # 从Redis获取chunks数据
+            from app.services.redis.chunks_redis_service import ChunksRedisService
+            from app.services.redis import RedisServiceFactory
+            
+            redis_service = RedisServiceFactory.get_service()
+            chunks_redis_service = ChunksRedisService(redis_service)
+            chunks = await chunks_redis_service.get_chunks(job_id)
+            
+            if chunks:
+                logger.info(f"从Redis获取chunks数据成功: job_id={job_id}, count={len(chunks)}")
+            else:
+                logger.warning(f"从Redis获取chunks数据失败: job_id={job_id}")
+                chunks = []
+            
+            # 从全局管理器获取向量化结果（用于存储到knowledge_base表）
             from app.services.common.global_manager_service import global_df_manager
             user_key = f"{user_config['user']}_all_contents_df"
             all_contents_df = global_df_manager.get_dataframe(user_key)
@@ -394,89 +430,14 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             if isinstance(source_file_name, str) and "/" in source_file_name:
                 source_file_name = os.path.basename(source_file_name)
 
+            # 构建result_payload
             result_payload = {
                 "document_metadata": {
                     "source_file_name": source_file_name,
-                    "total_chunks": 0
+                    "total_chunks": len(chunks)
                 },
-                "chunks": []
+                "chunks": chunks
             }
-
-            recent_df = None
-            if all_contents_df is not None and len(all_contents_df) > 0:
-                contents_count = len(all_contents_df)
-                recent_df = all_contents_df.tail(contents_count)
-
-            if recent_df is not None and len(recent_df) > 0:
-                chunks = []
-
-                def _sanitize(value):
-                    if value is None:
-                        return None
-                    try:
-                        if value != value:  # NaN
-                            return None
-                    except Exception:
-                        pass
-                    return value
-
-                for index, (_, row) in enumerate(recent_df.iterrows()):
-                    raw_type = str(row.get("type") or "").lower()
-                    if "table" in raw_type:
-                        chunk_type = "table"
-                    elif "image" in raw_type:
-                        chunk_type = "image"
-                    elif "summary" in raw_type:
-                        chunk_type = "summary"
-                    elif "title" in raw_type:
-                        chunk_type = "title"
-                    else:
-                        chunk_type = "paragraph"
-
-                    keywords = row.get("keywords")
-                    if isinstance(keywords, str):
-                        try:
-                            keywords_list = json.loads(keywords)
-                            if not isinstance(keywords_list, list):
-                                keywords_list = [keywords]
-                        except json.JSONDecodeError:
-                            keywords_list = [kw.strip() for kw in keywords.split(",") if kw.strip()]
-                    elif isinstance(keywords, list):
-                        keywords_list = keywords
-                    else:
-                        keywords_list = []
-
-                    chunk_id = row.get("know_id") or str(uuid.uuid4())
-                    chunk_text = row.get("content") or ""
-                    chunk_summary = row.get("summary") or ""
-                    chunk_length = row.get("length")
-                    chunk_path = _sanitize(row.get("path"))
-                    if chunk_length is None and chunk_text:
-                        chunk_length = len(chunk_text)
-
-                    tokens = row.get("tokens")
-                    if isinstance(tokens, str) and tokens.isdigit():
-                        tokens = int(tokens)
-                    elif tokens is None:
-                        tokens = 0
-
-                    chunks.append({
-                        "chunk_id": str(chunk_id),
-                        "text": chunk_text,
-                        "type": chunk_type,
-                        "metadata": {
-                            "path": chunk_path,
-                            "length": int(chunk_length) if chunk_length is not None else len(chunk_text),
-                            "tokens": tokens if isinstance(tokens, int) else 0,
-                            "keywords": keywords_list,
-                            "summary": chunk_summary or "",
-                            "relationships": []
-                        },
-                        "order": index
-                    })
-
-                result_payload["document_metadata"]["total_chunks"] = len(chunks)
-                result_payload["chunks"] = chunks
 
             # 处理 result_mode 逻辑
             requested_mode = job_metadata.get("result_mode", "auto")
@@ -534,6 +495,10 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             })
 
             logger.info(f"知识库存储完成: job_id={job_id}, stored_count={stored_count}")
+            
+            # 清理Redis中的chunks数据
+            await chunks_redis_service.delete_chunks(job_id)
+            logger.debug(f"Redis chunks数据已清理: job_id={job_id}")
 
             return {
                 "status": "success",
