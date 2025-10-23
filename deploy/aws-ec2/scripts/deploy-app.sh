@@ -53,8 +53,8 @@ log "拉取最新代码..."
 cd "$APP_DIR"
 if [ -d ".git" ]; then
     # 修复Git权限问题
-    sudo -u appuser git config --global --add safe.directory /opt/knowhere
-    sudo -u appuser git pull origin main
+    git config --global --add safe.directory /opt/knowhere
+    git pull origin main
     log "代码已更新"
 else
     warn "不是Git仓库，跳过代码更新"
