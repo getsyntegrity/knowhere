@@ -58,19 +58,33 @@ class UserConfigService:
         """
         subfolders = settings.DEFAULT_FOLDERS.split(",")
         
-        # 检查主目录是否存在，不存在就创建
+        # 分别检查并创建两个目录
+        data_folder_created = False
+        
+        # 检查并创建数据目录
         if not os.path.exists(kb_data_folder):
             os.makedirs(kb_data_folder, exist_ok=True)
+            data_folder_created = True
+            logger.debug(f"创建数据目录: {kb_data_folder}")
+        else:
+            logger.debug(f"数据目录已存在: {kb_data_folder}")
+        
+        # 检查并创建向量目录
+        if not os.path.exists(kb_vecs_folder):
             os.makedirs(kb_vecs_folder, exist_ok=True)
-            logger.info(f"创建主目录: {kb_data_folder} 以及 {kb_vecs_folder}")
-            
+            logger.debug(f"创建向量目录: {kb_vecs_folder}")
+        else:
+            logger.debug(f"向量目录已存在: {kb_vecs_folder}")
+        
+        # 如果数据目录是新创建的，创建子目录和复制配置文件
+        if data_folder_created:
             for sub in subfolders:
                 sub_path = os.path.join(kb_data_folder, sub)
                 if not os.path.exists(sub_path):
                     os.makedirs(sub_path)
-                    logger.info(f"创建子目录: {sub_path}")
+                    logger.debug(f"创建子目录: {sub_path}")
                 else:
-                    logger.info(f"子目录已存在: {sub_path}")
+                    logger.debug(f"子目录已存在: {sub_path}")
             
             try:
                 # 处理相对路径，确保从项目根目录开始
@@ -91,26 +105,32 @@ class UserConfigService:
                     if os.path.exists(meta_path):
                         dest_path = os.path.join(kb_data_folder, os.path.basename(meta_path))
                         shutil.copy(meta_path, dest_path)
-                        logger.info(f"复制元数据配置文件到: {dest_path}")
+                        logger.debug(f"复制元数据配置文件到: {dest_path}")
                     else:
                         logger.warning(f"元数据配置文件不存在: {meta_path}")
                 else:
-                    logger.info("跳过元数据配置文件复制（路径为空）")
+                    logger.debug("跳过元数据配置文件复制（路径为空）")
                 
                 # 复制配置文件
                 if settings.CONFIG_PATH:
                     config_path = get_absolute_path(settings.CONFIG_PATH)
                     if os.path.exists(config_path):
                         shutil.copy(config_path, os.path.join(kb_data_folder, 'config.txt'))
-                        logger.info("复制配置文件到: config.txt")
-                    else:
+                        logger.debug("复制配置文件到: config.txt")
+                    else:   
                         logger.warning(f"配置文件不存在: {config_path}")
                 else:
-                    logger.info("跳过配置文件复制（路径为空）")
+                    logger.debug("跳过配置文件复制（路径为空）")
             except Exception as e:
                 logger.warning(f"复制配置文件失败: {str(e)}")
-        else:
-            logger.info(f"主目录已存在: {kb_data_folder}")
+        
+        # 确保两个目录都存在
+        if not os.path.exists(kb_data_folder):
+            raise Exception(f"无法创建数据目录: {kb_data_folder}")
+        if not os.path.exists(kb_vecs_folder):
+            raise Exception(f"无法创建向量目录: {kb_vecs_folder}")
+        
+        logger.info(f"用户目录结构检查完成 - 数据目录: {kb_data_folder}, 向量目录: {kb_vecs_folder}")
     
     @staticmethod
     def load_meta_settings(user_info: Dict[str, Any], split_char: str = ';') -> Dict[str, Any]:

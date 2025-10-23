@@ -131,17 +131,74 @@ def load_new_data(add_root):
     return add_contents_df
 
 def load_existing_kb(USER_SETTINGS):
+    """
+    加载现有知识库数据
+    
+    Args:
+        USER_SETTINGS: 用户设置字典，包含文件路径
+        
+    Returns:
+        tuple: (all_vec, all_path_vec, all_contents_df)
+    """
+    kb_vec_path = USER_SETTINGS['KB_VEC_PATH']
+    kb_path_vec_path = USER_SETTINGS['KB_PATH_VEC_PATH']
+    kb_content_path = USER_SETTINGS['KB_CONTENT_PATH']
+    
+    logger.debug(f"开始加载知识库文件:")
+    logger.debug(f"  - 向量文件: {kb_vec_path}")
+    logger.debug(f"  - 路径向量文件: {kb_path_vec_path}")
+    logger.debug(f"  - 内容文件: {kb_content_path}")
+    
     try:
-        all_vec = np.load(USER_SETTINGS['KB_VEC_PATH'])
-        all_path_vec = np.load(USER_SETTINGS['KB_PATH_VEC_PATH'])
-        all_contents_df = pd.read_csv(USER_SETTINGS['KB_CONTENT_PATH'], encoding='utf-8', keep_default_na=False)
-    except Exception as e:
-        logger.error(f"读取现有知识库失败 原因 {e}")
+        # 检查文件是否存在
+        missing_files = []
+        if not os.path.exists(kb_vec_path):
+            missing_files.append(f"向量文件: {kb_vec_path}")
+        if not os.path.exists(kb_path_vec_path):
+            missing_files.append(f"路径向量文件: {kb_path_vec_path}")
+        if not os.path.exists(kb_content_path):
+            missing_files.append(f"内容文件: {kb_content_path}")
+        
+        if missing_files:
+            logger.warning(f"知识库文件缺失: {', '.join(missing_files)}")
+            logger.info("将创建空的默认数据结构")
+            raise FileNotFoundError(f"知识库文件缺失: {', '.join(missing_files)}")
+        
+        # 加载文件
+        all_vec = np.load(kb_vec_path)
+        all_path_vec = np.load(kb_path_vec_path)
+        all_contents_df = pd.read_csv(kb_content_path, encoding='utf-8', keep_default_na=False)
+        
+        logger.debug(f"成功加载知识库文件:")
+        logger.debug(f"  - 向量维度: {all_vec.shape}")
+        logger.debug(f"  - 路径向量维度: {all_path_vec.shape}")
+        logger.debug(f"  - 内容数量: {len(all_contents_df)}")
+        
+    except FileNotFoundError as e:
+        logger.warning(f"知识库文件不存在，创建默认结构: {e}")
         all_df_cols = (settings.ALL_DF_COLS or "path,content,summary,type,addtime").split(",")
         default_dim = getattr(settings, "DEFAULT_EMBEDDING_DIM", 1024)
         all_vec = np.empty((0, default_dim), dtype=np.float32)
         all_path_vec = np.empty((0, default_dim), dtype=np.float32)
         all_contents_df = pd.DataFrame(columns=all_df_cols)
+        logger.info(f"创建默认数据结构 - 向量维度: {default_dim}, 列: {all_df_cols}")
+        
+    except Exception as e:
+        logger.error(f"读取现有知识库失败: {e}")
+        logger.error(f"错误类型: {type(e).__name__}")
+        logger.error(f"尝试加载的文件路径:")
+        logger.error(f"  - KB_VEC_PATH: {kb_vec_path}")
+        logger.error(f"  - KB_PATH_VEC_PATH: {kb_path_vec_path}")
+        logger.error(f"  - KB_CONTENT_PATH: {kb_content_path}")
+        
+        # 创建默认结构
+        all_df_cols = (settings.ALL_DF_COLS or "path,content,summary,type,addtime").split(",")
+        default_dim = getattr(settings, "DEFAULT_EMBEDDING_DIM", 1024)
+        all_vec = np.empty((0, default_dim), dtype=np.float32)
+        all_path_vec = np.empty((0, default_dim), dtype=np.float32)
+        all_contents_df = pd.DataFrame(columns=all_df_cols)
+        logger.info(f"创建默认数据结构作为后备方案")
+    
     return all_vec, all_path_vec, all_contents_df
 
 def gen_img_tb_records(all_contents_df, resource_pth, kb_pth):
