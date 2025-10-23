@@ -128,26 +128,21 @@ if [ -f "$APP_DIR/deploy/aws-ec2/scripts/knowhere-logs.sh" ]; then
     log "日志查看脚本已安装"
 fi
 
-# 8. 设置权限
-log "设置权限..."
-chown -R appuser:appuser "$APP_DIR"
-chmod -R 755 "$APP_DIR"
-
-# 9. 启动服务
+# 8. 启动服务
 log "启动服务..."
 sudo systemctl start knowhere-api
 sudo systemctl start knowhere-web
 sudo systemctl start knowhere-worker
 
-# 10. 重启Nginx
+# 9. 重启Nginx
 log "重启Nginx..."
 sudo systemctl reload nginx
 
-# 11. 等待服务启动
+# 10. 等待服务启动
 log "等待服务启动..."
 sleep 10
 
-# 12. 健康检查
+# 11. 健康检查
 log "执行健康检查..."
 if /usr/local/bin/knowhere-health-check.sh; then
     log "健康检查通过"
@@ -155,7 +150,7 @@ else
     warn "健康检查失败，请检查服务状态"
 fi
 
-# 13. 显示服务状态
+# 12. 显示服务状态
 log "服务状态："
 sudo systemctl status knowhere-api --no-pager -l
 sudo systemctl status knowhere-web --no-pager -l
