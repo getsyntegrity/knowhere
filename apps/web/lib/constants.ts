@@ -21,7 +21,7 @@ export const getAllSupportedExtensions = (): string[] => {
 
 // 获取文件类型的显示名称
 export const getFileTypeDisplayName = (extension: string): string => {
-  const ext = extension.toLowerCase()
+  const ext = extension.toLowerCase() as any
   
   if (SUPPORTED_EXTENSIONS.documents.includes(ext)) {
     return '文档'
