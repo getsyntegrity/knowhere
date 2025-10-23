@@ -34,16 +34,16 @@ info() {
     echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] INFO: $1${NC}"
 }
 
-# 检查是否为root用户
-if [ "$EUID" -ne 0 ]; then
-    error "请使用sudo运行此脚本"
+# 检查是否为appuser用户
+if [ "$(whoami)" != "appuser" ]; then
+    error "请以appuser用户身份运行此脚本: sudo -u appuser $0"
 fi
 
 log "开始部署Knowhere应用..."
 
 # 1. 停止服务
 log "停止服务..."
-systemctl stop knowhere-api knowhere-web knowhere-worker || true
+sudo systemctl stop knowhere-api knowhere-web knowhere-worker || true
 
 # 2. 跳过备份（直接部署）
 log "跳过备份，直接部署新版本..."
@@ -52,9 +52,6 @@ log "跳过备份，直接部署新版本..."
 log "拉取最新代码..."
 cd "$APP_DIR"
 if [ -d ".git" ]; then
-    # 确保目录权限正确
-    chown -R appuser:appuser "$APP_DIR"
-    
     # 修复Git权限问题
     git config --global --add safe.directory /opt/knowhere
     git pull origin main
@@ -100,17 +97,17 @@ fi
 log "安装systemd服务..."
 if [ -d "$APP_DIR/deploy/aws-ec2/systemd" ]; then
     # 复制服务文件到systemd目录
-    cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-api.service" /etc/systemd/system/
-    cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-web.service" /etc/systemd/system/
-    cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-worker.service" /etc/systemd/system/
+    sudo cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-api.service" /etc/systemd/system/
+    sudo cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-web.service" /etc/systemd/system/
+    sudo cp "$APP_DIR/deploy/aws-ec2/systemd/knowhere-worker.service" /etc/systemd/system/
     
     # 重新加载systemd配置
-    systemctl daemon-reload
+    sudo systemctl daemon-reload
     
     # 启用服务（开机自启）
-    systemctl enable knowhere-api
-    systemctl enable knowhere-web
-    systemctl enable knowhere-worker
+    sudo systemctl enable knowhere-api
+    sudo systemctl enable knowhere-web
+    sudo systemctl enable knowhere-worker
     
     log "systemd服务已安装并启用"
 else
@@ -120,14 +117,14 @@ fi
 # 安装管理脚本
 log "安装管理脚本..."
 if [ -f "$APP_DIR/deploy/aws-ec2/scripts/knowhere-health-check.sh" ]; then
-    cp "$APP_DIR/deploy/aws-ec2/scripts/knowhere-health-check.sh" /usr/local/bin/
-    chmod +x /usr/local/bin/knowhere-health-check.sh
+    sudo cp "$APP_DIR/deploy/aws-ec2/scripts/knowhere-health-check.sh" /usr/local/bin/
+    sudo chmod +x /usr/local/bin/knowhere-health-check.sh
     log "健康检查脚本已安装"
 fi
 
 if [ -f "$APP_DIR/deploy/aws-ec2/scripts/knowhere-logs.sh" ]; then
-    cp "$APP_DIR/deploy/aws-ec2/scripts/knowhere-logs.sh" /usr/local/bin/
-    chmod +x /usr/local/bin/knowhere-logs.sh
+    sudo cp "$APP_DIR/deploy/aws-ec2/scripts/knowhere-logs.sh" /usr/local/bin/
+    sudo chmod +x /usr/local/bin/knowhere-logs.sh
     log "日志查看脚本已安装"
 fi
 
@@ -138,13 +135,13 @@ chmod -R 755 "$APP_DIR"
 
 # 9. 启动服务
 log "启动服务..."
-systemctl start knowhere-api
-systemctl start knowhere-web
-systemctl start knowhere-worker
+sudo systemctl start knowhere-api
+sudo systemctl start knowhere-web
+sudo systemctl start knowhere-worker
 
 # 10. 重启Nginx
 log "重启Nginx..."
-systemctl reload nginx
+sudo systemctl reload nginx
 
 # 11. 等待服务启动
 log "等待服务启动..."
@@ -160,9 +157,9 @@ fi
 
 # 13. 显示服务状态
 log "服务状态："
-systemctl status knowhere-api --no-pager -l
-systemctl status knowhere-web --no-pager -l
-systemctl status knowhere-worker --no-pager -l
+sudo systemctl status knowhere-api --no-pager -l
+sudo systemctl status knowhere-web --no-pager -l
+sudo systemctl status knowhere-worker --no-pager -l
 
 log "应用部署完成！"
 log ""
