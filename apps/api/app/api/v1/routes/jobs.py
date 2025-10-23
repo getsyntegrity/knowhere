@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from app.core.dependencies import get_db, get_current_user
+from app.core.dependencies import get_db, get_current_user_dual_auth
 from app.core.response.ResponseResult import ResponseResult
 from app.core.constants.system import SystemConstants
 from app.models.database.user import User
@@ -71,7 +71,7 @@ def validate_file_type(file_name: str) -> bool:
 @router.post("/", include_in_schema=False)
 async def create_job(
     request: JobCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_dual_auth),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -247,7 +247,7 @@ async def list_jobs(
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     job_status: Optional[str] = Query(None, description="状态过滤"),
     job_type: Optional[str] = Query(None, description="任务类型过滤"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_dual_auth),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -320,7 +320,7 @@ async def list_jobs(
 @router.get("/{job_id}", response_model=ResponseResult[JobStatus], summary="获取任务状态")
 async def get_job_status(
     job_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_dual_auth),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -407,7 +407,7 @@ async def get_job_status(
 async def confirm_upload(
     job_id: str,
     request: Optional[ConfirmUploadRequest] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_dual_auth),
     db: AsyncSession = Depends(get_db)
 ):
     """

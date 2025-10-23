@@ -74,6 +74,7 @@ export interface APIKey {
   created_at: string
   last_used_at?: string
   expires_at?: string
+  api_key?: string  // 仅在创建时返回，列表时不返回
 }
 
 export interface CreateAPIKeyResponse {

@@ -19,6 +19,7 @@ class APIKey(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # 加密存储
+    key_mask: Mapped[str] = mapped_column(String(50), nullable=False)  # 掩码后的API Key（用于显示）
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # API Key 名称
     enabled_modules: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # 启用的功能模块
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 过期时间

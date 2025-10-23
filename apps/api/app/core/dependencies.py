@@ -133,19 +133,19 @@ async def get_current_user_dual_auth(
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
-    双重认证：JWT + API Key
-    优先使用JWT，如果JWT失败则尝试API Key
+    双重认证：API Key + JWT
+    优先使用API Key，如果API Key失败则尝试JWT
     使用FastAPI Users标准实现
     """
-    # 1. 尝试JWT认证
-    user = await get_current_user_by_jwt(request, db)
-    if user:
-        return user
-    
-    # 2. 尝试API Key认证
+    # 1. 优先尝试API Key认证
     user = await get_current_user_by_api_key(request, db)
     if user:
         logger.debug(f"API Key认证成功：用户 {user.email}")
+        return user
+    
+    # 2. 尝试JWT认证
+    user = await get_current_user_by_jwt(request, db)
+    if user:
         return user
     
     # 3. 认证失败

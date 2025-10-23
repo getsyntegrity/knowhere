@@ -19,7 +19,6 @@ import {
   Plus, 
   Search, 
   Copy, 
-  RotateCcw, 
   Trash2, 
   Eye, 
   EyeOff,
@@ -92,16 +91,6 @@ export default function ApiKeysPage() {
     }
   }
 
-  const handleRegenerateKey = async (keyId: string) => {
-    try {
-      await api.regenerateApiKey(keyId)
-      toast.success('API Key已重新生成')
-      await loadApiKeys()
-    } catch (error) {
-      console.error('Failed to regenerate API key:', error)
-      toast.error('重新生成API Key失败')
-    }
-  }
 
   const handleRevokeKey = async (keyId: string) => {
     try {
@@ -251,18 +240,9 @@ export default function ApiKeysPage() {
                   <TableRow key={key.id}>
                     <TableCell className="font-medium">{key.name}</TableCell>
                     <TableCell>
-                      <div className="flex items-center space-x-2">
-                        <code className="text-sm bg-muted px-2 py-1 rounded">
-                          {maskApiKey(`sk-${key.id}`)}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleCopyKey(`sk-${key.id}`)}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      <code className="text-sm bg-muted px-2 py-1 rounded">
+                        {key.api_key}
+                      </code>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center space-x-2">
@@ -283,22 +263,13 @@ export default function ApiKeysPage() {
                       {key.expires_at ? formatDate(key.expires_at, 'short') : '永不过期'}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRegenerateKey(key.id)}
-                        >
-                          <RotateCcw className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRevokeKey(key.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRevokeKey(key.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

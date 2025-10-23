@@ -3,6 +3,7 @@ API Key 管理服务
 """
 import secrets
 import hashlib
+import uuid
 from typing import Optional, List
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,12 @@ class APIKeyService:
     
     def __init__(self):
         self.repository = APIKeyRepository()
+    
+    def _mask_api_key(self, api_key: str) -> str:
+        """掩码API密钥，只显示前8位和后4位"""
+        if not api_key or len(api_key) < 12:
+            return api_key
+        return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
     
     async def create_api_key(
         self, 
@@ -38,14 +45,16 @@ class APIKeyService:
         if existing_key:
             raise ValueError("API Key名称已存在")
         
-        # 3. 生成安全的API Key
-        api_key = f"ak_{secrets.token_urlsafe(32)}"
+        # 3. 生成安全的API Key (sk_ + UUID的32位字符串，不包含连字符)
+        api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_mask = self._mask_api_key(api_key)
         
         # 4. 存储到数据库
         api_key_record = APIKey(
             user_id=user_id,
             key_hash=key_hash,
+            key_mask=key_mask,
             name=name,
             enabled_modules=enabled_modules or ["all"],  # 默认启用所有模块
             expires_at=expires_at
@@ -82,16 +91,29 @@ class APIKeyService:
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
         """撤销API Key"""
+        print(f"撤销API密钥: api_key_id={api_key_id}, user_id={user_id}")
+        
         # 1. 验证API Key属于该用户
         api_key = await self.repository.get_by_id(session, api_key_id)
-        if not api_key or api_key.user_id != user_id:
+        print(f"找到API密钥: {api_key}")
+        
+        if not api_key:
+            print("API密钥不存在")
+            return False
+            
+        if str(api_key.user_id) != user_id:
+            print(f"用户ID不匹配: api_key.user_id={api_key.user_id}, user_id={user_id}")
             return False
         
         # 2. 标记为已撤销
         success = await self.repository.deactivate(session, api_key_id)
+        print(f"停用结果: {success}")
         
-        # 3. 清理缓存
+        # 3. 提交事务
         if success:
+            await session.commit()
+            print("事务已提交")
+            # 4. 清理缓存
             await self._remove_cached_api_key(api_key_id)
         
         return success
@@ -103,6 +125,7 @@ class APIKeyService:
             {
                 "id": str(api_key.id),
                 "name": api_key.name,
+                "api_key": api_key.key_mask or f"sk_{api_key.id[:8]}••••••••••••••••••••••••••••••••••••••••",  # 返回掩码后的API密钥
                 "enabled_modules": api_key.enabled_modules,
                 "is_active": api_key.is_active,
                 "created_at": api_key.created_at,
@@ -119,16 +142,17 @@ class APIKeyService:
         if not api_key or api_key.user_id != user_id:
             raise ValueError("API Key不存在或不属于该用户")
         
-        # 2. 生成新的API Key
-        new_api_key = f"ak_{secrets.token_urlsafe(32)}"
+        # 2. 生成新的API Key (sk_ + UUID的32位字符串，不包含连字符)
+        new_api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
         new_key_hash = hashlib.sha256(new_api_key.encode()).hexdigest()
+        new_key_mask = self._mask_api_key(new_api_key)
         
         # 3. 更新数据库
         from sqlalchemy import update
         await session.execute(
             update(APIKey)
             .where(APIKey.id == api_key_id)
-            .values(key_hash=new_key_hash, updated_at=datetime.utcnow())
+            .values(key_hash=new_key_hash, key_mask=new_key_mask, updated_at=datetime.utcnow())
         )
         await session.commit()
         

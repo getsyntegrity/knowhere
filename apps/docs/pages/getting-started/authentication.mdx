@@ -28,14 +28,14 @@ Knowhere AI 支持多种认证方式：
 
 ### API Key 格式
 
-API Key 格式为：`kwh_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
+API Key 格式为：`sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
 
 ### 使用 API Key
 
 在 HTTP 请求头中包含 API Key：
 
 ```bash
-curl -H "Authorization: Bearer kwh_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+curl -H "Authorization: Bearer sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
      https://api.knowhere.ai/v1/table-fill/jobs
 ```
 
@@ -44,14 +44,14 @@ curl -H "Authorization: Bearer kwh_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 ```python
 from knowhere_sdk import KnowhereClient
 
-client = KnowhereClient(api_key="kwh_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+client = KnowhereClient(api_key="sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 ```
 
 ```typescript
 import { KnowhereClient } from '@knowhere/sdk-typescript';
 
 const client = new KnowhereClient({
-  apiKey: 'kwh_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+  apiKey: 'sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
 });
 ```
 
@@ -81,7 +81,7 @@ const client = new KnowhereClient({
 
 ```bash
 # 设置环境变量
-export KNOWHERE_API_KEY="kwh_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+export KNOWHERE_API_KEY="sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
 ```python

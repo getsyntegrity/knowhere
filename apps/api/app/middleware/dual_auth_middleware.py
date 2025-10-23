@@ -20,24 +20,24 @@ class DualAuthMiddleware:
         self.jwt_scheme = HTTPBearer(auto_error=False)
     
     async def __call__(self, request: Request, call_next):
-        # 1. 检查JWT Token
-        if "Authorization" in request.headers:
-            try:
-                user = await self._authenticate_jwt(request)
-                if user:
-                    request.state.user = user
-                    request.state.auth_type = "jwt"
-                    return await call_next(request)
-            except Exception:
-                pass
-        
-        # 2. 检查API Key
+        # 1. 优先检查API Key
         if "X-API-Key" in request.headers:
             try:
                 user = await self._authenticate_api_key(request)
                 if user:
                     request.state.user = user
                     request.state.auth_type = "api_key"
+                    return await call_next(request)
+            except Exception:
+                pass
+        
+        # 2. 检查JWT Token
+        if "Authorization" in request.headers:
+            try:
+                user = await self._authenticate_jwt(request)
+                if user:
+                    request.state.user = user
+                    request.state.auth_type = "jwt"
                     return await call_next(request)
             except Exception:
                 pass

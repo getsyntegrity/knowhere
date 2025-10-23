@@ -74,6 +74,7 @@ async def list_api_keys(
             APIKeyResponse(
                 id=key["id"],
                 name=key["name"],
+                api_key=key["api_key"],
                 enabled_modules=key["enabled_modules"],
                 is_active=key["is_active"],
                 created_at=key["created_at"],

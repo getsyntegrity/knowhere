@@ -18,6 +18,7 @@ class APIKeyResponse(BaseModel):
     """API Key响应"""
     id: str
     name: str
+    api_key: str  # 掩码后的API密钥
     enabled_modules: Optional[List[str]]
     is_active: bool
     created_at: datetime

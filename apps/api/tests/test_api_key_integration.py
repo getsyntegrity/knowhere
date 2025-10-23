@@ -96,9 +96,9 @@ class APIKeyIntegrationTester:
         
         return self.access_token is not None and self.api_key is not None
     
-    def test_02_api_key_with_knowledge_base(self):
-        """测试API Key与知识库功能集成"""
-        print("\n=== 测试API Key与知识库功能集成 ===")
+    def test_02_api_key_with_jobs(self):
+        """测试API Key与Job功能集成"""
+        print("\n=== 测试API Key与Job功能集成 ===")
         
         if not self.api_key:
             print("没有API Key，跳过测试")
@@ -106,54 +106,56 @@ class APIKeyIntegrationTester:
         
         headers = {"X-API-Key": self.api_key}
         
-        # 1. 创建目录
-        directory_data = {
-            "id": "test_dir_api_key",
-            "title": "API Key测试目录",
-            "parent_id": None,
-            "user_id": "1"
+        # 1. 创建Job
+        job_data = {
+            "source_type": "url",
+            "source_url": "https://example.com/test.pdf",
+            "parsing_params": {
+                "kb_dir": "API Key测试目录"
+            },
+            "data_id": "test_data_api_key",
+            "result_mode": "auto"
         }
         
         response = self.session.post(
-            f"{self.base_url}/kb/create_directory",
-            json=directory_data,
+            f"{self.base_url}/jobs",
+            json=job_data,
             headers=headers
         )
-        print(f"创建目录响应状态码: {response.status_code}")
+        print(f"创建Job响应状态码: {response.status_code}")
         
-        # 2. 添加知识碎片
-        fragment_data = {
-            "kb_path": "API Key测试目录",
-            "fragment_content": "这是一个通过API Key认证添加的知识碎片，用于测试集成功能。",
-            "fragment_title": "API Key集成测试知识碎片",
-            "smart_title_parse": True,
-            "summary_image": False,
-            "summary_txt": True,
-            "summary_table": False,
-            "add_frag_desc": "API Key集成测试描述",
-            "label": "API Key集成测试标签"
-        }
+        if response.status_code != 200:
+            print(f"创建Job失败: {response.text}")
+            return False
         
-        response = self.session.post(
-            f"{self.base_url}/kb/add_kb_fragment",
-            json=fragment_data,
+        job_response = response.json()
+        job_id = job_response.get("data", {}).get("job_id")
+        print(f"创建Job成功，Job ID: {job_id}")
+        
+        # 2. 获取Job列表
+        response = self.session.get(
+            f"{self.base_url}/jobs/page",
             headers=headers
         )
-        print(f"添加知识碎片响应状态码: {response.status_code}")
+        print(f"获取Job列表响应状态码: {response.status_code}")
         
-        # 3. 搜索知识
-        search_data = {
-            "question": "API Key集成测试"
-        }
+        if response.status_code != 200:
+            print(f"获取Job列表失败: {response.text}")
+            return False
         
-        response = self.session.post(
-            f"{self.base_url}/kb/search_kb",
-            json=search_data,
-            headers=headers
-        )
-        print(f"搜索知识响应状态码: {response.status_code}")
+        # 3. 获取Job状态
+        if job_id:
+            response = self.session.get(
+                f"{self.base_url}/jobs/{job_id}",
+                headers=headers
+            )
+            print(f"获取Job状态响应状态码: {response.status_code}")
+            
+            if response.status_code != 200:
+                print(f"获取Job状态失败: {response.text}")
+                return False
         
-        return response.status_code == 200
+        return True
     
     def test_03_api_key_with_file_upload(self):
         """测试API Key与文件上传功能集成"""
@@ -342,6 +344,42 @@ class APIKeyIntegrationTester:
         
         return success_count == len(error_cases)
     
+    def test_09_api_key_non_job_access_denied(self):
+        """测试API Key访问非Job接口被拒绝"""
+        print("\n=== 测试API Key访问非Job接口被拒绝 ===")
+        
+        if not self.api_key:
+            print("没有API Key，跳过测试")
+            return False
+        
+        headers = {"X-API-Key": self.api_key}
+        
+        # 测试访问非Job接口
+        non_job_endpoints = [
+            ("知识库接口", "/kb/search_kb", "POST"),
+            ("用户管理接口", "/user/profile", "GET"),
+            ("计费接口", "/billing/credits", "GET"),
+        ]
+        
+        success_count = 0
+        
+        for endpoint_name, endpoint_path, method in non_job_endpoints:
+            if method == "GET":
+                response = self.session.get(f"{self.base_url}{endpoint_path}", headers=headers)
+            elif method == "POST":
+                response = self.session.post(f"{self.base_url}{endpoint_path}", json={}, headers=headers)
+            
+            print(f"{endpoint_name}响应状态码: {response.status_code}")
+            
+            # 期望返回401未授权（因为API Key只能访问Job接口）
+            if response.status_code == 401:
+                success_count += 1
+                print(f"✅ {endpoint_name}正确返回401")
+            else:
+                print(f"❌ {endpoint_name}返回了错误的状态码: {response.status_code}")
+        
+        return success_count == len(non_job_endpoints)
+    
     def run_all_tests(self):
         """运行所有集成测试"""
         print("开始运行API Key认证集成测试...")
@@ -352,13 +390,14 @@ class APIKeyIntegrationTester:
         # 运行各个测试
         tests = [
             ("设置用户和API Key", self.test_01_setup_user_and_api_key),
-            ("API Key与知识库功能集成", self.test_02_api_key_with_knowledge_base),
+            ("API Key与Job功能集成", self.test_02_api_key_with_jobs),
             ("API Key与文件上传功能集成", self.test_03_api_key_with_file_upload),
             ("API Key与队列管理功能集成", self.test_04_api_key_with_queue_management),
             ("API Key与Redis演示功能集成", self.test_05_api_key_with_redis_demo),
             ("API Key认证性能测试", self.test_06_api_key_performance_test),
             ("API Key并发认证测试", self.test_07_api_key_concurrent_test),
             ("API Key错误处理测试", self.test_08_api_key_error_handling),
+            ("API Key访问非Job接口被拒绝", self.test_09_api_key_non_job_access_denied),
         ]
         
         for test_name, test_func in tests:

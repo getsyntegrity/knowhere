@@ -16,6 +16,13 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
     def __init__(self):
         super().__init__(APIKey)
     
+    async def get_by_id(self, session: AsyncSession, api_key_id: str) -> Optional[APIKey]:
+        """根据ID获取API Key"""
+        result = await session.execute(
+            select(APIKey).where(APIKey.id == api_key_id)
+        )
+        return result.scalar_one_or_none()
+    
     async def get_by_key_hash(self, session: AsyncSession, key_hash: str) -> Optional[APIKey]:
         """根据key_hash获取API Key"""
         result = await session.execute(
@@ -60,7 +67,6 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
             .where(APIKey.id == api_key_id)
             .values(is_active=False)
         )
-        await session.commit()
         return result.rowcount > 0
     
     async def get_by_user_and_name(self, session: AsyncSession, user_id: str, name: str) -> Optional[APIKey]:
