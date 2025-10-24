@@ -208,7 +208,10 @@ export interface WebhookConfig {
 }
 
 export interface ParsingParams {
-  doc_type?: 'auto' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'txt' | 'md'
+  model?: 'base' | 'advanced'
+  ocr_enabled?: boolean
+  kb_dir?: string
+  doc_type?: 'auto' | 'pdf' | 'docx' | 'txt' | 'md'
   smart_title_parse?: boolean
   summary_image?: boolean
   summary_table?: boolean
@@ -221,6 +224,7 @@ export interface JobCreate {
   source_url?: string
   file_name?: string
   data_id?: string
+  parsing_params?: ParsingParams
   webhook?: WebhookConfig
   result_mode?: 'auto' | 'inline' | 'url'
 }

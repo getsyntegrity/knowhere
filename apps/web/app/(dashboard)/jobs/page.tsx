@@ -30,7 +30,9 @@ import {
   AlertCircle,
   Download,
   Eye,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react'
 import { formatDate } from '@/lib/format'
 import { getAllSupportedExtensions, getFileTypeDisplayName } from '@/lib/constants'
@@ -56,6 +58,17 @@ export default function JobsPage() {
       secret: string
     }
     result_mode: 'auto' | 'inline' | 'url'
+    parsing_params: {
+      model: 'base' | 'advanced'
+      ocr_enabled: boolean
+      kb_dir: string
+      doc_type: 'auto' | 'pdf' | 'docx' | 'txt' | 'md'
+      smart_title_parse: boolean
+      summary_image: boolean
+      summary_table: boolean
+      summary_txt: boolean
+      add_frag_desc: string
+    }
   }>({
     source_type: 'file',
     source_url: '',
@@ -64,13 +77,29 @@ export default function JobsPage() {
       url: '',
       secret: ''
     },
-    result_mode: 'auto'
+    result_mode: 'auto',
+    parsing_params: {
+      model: 'base',
+      ocr_enabled: false,
+      kb_dir: '默认目录',
+      doc_type: 'auto',
+      smart_title_parse: true,
+      summary_image: false,
+      summary_table: true,
+      summary_txt: true,
+      add_frag_desc: ''
+    }
   })
 
   // 文件上传状态
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [showUploadFlow, setShowUploadFlow] = useState(false)
+  
+  // 解析参数区域展开状态
+  const [showParsingParams, setShowParsingParams] = useState(false)
+  // 可选配置区域展开状态
+  const [showOptionalConfig, setShowOptionalConfig] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -153,6 +182,7 @@ export default function JobsPage() {
           source_type: 'url',
           source_url: createForm.source_url,
           data_id: createForm.data_id || undefined,
+          parsing_params: createForm.parsing_params,
           webhook: createForm.webhook.url ? createForm.webhook : undefined,
           result_mode: createForm.result_mode
         }
@@ -191,7 +221,18 @@ export default function JobsPage() {
         url: '',
         secret: ''
       },
-      result_mode: 'auto'
+      result_mode: 'auto',
+      parsing_params: {
+        model: 'base',
+        ocr_enabled: false,
+        kb_dir: '默认目录',
+        doc_type: 'auto',
+        smart_title_parse: true,
+        summary_image: false,
+        summary_table: true,
+        summary_txt: true,
+        add_frag_desc: ''
+      }
     })
     setSelectedFile(null)
   }
@@ -481,6 +522,7 @@ export default function JobsPage() {
             <FileUploadFlow
               file={selectedFile}
               dataId={createForm.data_id || undefined}
+              parsingParams={createForm.parsing_params}
               webhook={createForm.webhook.url ? createForm.webhook : undefined}
               resultMode={createForm.result_mode}
               onSuccess={handleUploadSuccess}
@@ -591,65 +633,234 @@ export default function JobsPage() {
                 </div>
               )}
 
+              {/* 解析参数配置 */}
+              <div className="space-y-4 border-t pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowParsingParams(!showParsingParams)}
+                  className="flex items-center justify-between w-full text-left hover:bg-gray-50 p-2 rounded-md transition-colors"
+                >
+                  <h4 className="font-medium">解析参数配置</h4>
+                  {showParsingParams ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </button>
+                
+                {showParsingParams && (
+                  <div className="space-y-4 pl-4 border-l-2 border-gray-200">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="model">解析模型</Label>
+                        <Select
+                          value={createForm.parsing_params.model}
+                          onValueChange={(value: 'base' | 'advanced') => 
+                            setCreateForm({
+                              ...createForm,
+                              parsing_params: { ...createForm.parsing_params, model: value }
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="base">基础模型</SelectItem>
+                            <SelectItem value="advanced">高级模型</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="kb_dir">知识库目录</Label>
+                        <Input
+                          id="kb_dir"
+                          placeholder="默认目录"
+                          value={createForm.parsing_params.kb_dir}
+                          onChange={(e) => setCreateForm({
+                            ...createForm,
+                            parsing_params: { ...createForm.parsing_params, kb_dir: e.target.value }
+                          })}
+                        />
+                      </div>
+
+                      <div>
+                        <Label htmlFor="doc_type">文档类型</Label>
+                        <Select
+                          value={createForm.parsing_params.doc_type}
+                          onValueChange={(value: 'auto' | 'pdf' | 'docx' | 'txt' | 'md') => 
+                            setCreateForm({
+                              ...createForm,
+                              parsing_params: { ...createForm.parsing_params, doc_type: value }
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">自动检测</SelectItem>
+                            <SelectItem value="pdf">PDF</SelectItem>
+                            <SelectItem value="docx">Word文档</SelectItem>
+                            <SelectItem value="txt">文本文件</SelectItem>
+                            <SelectItem value="md">Markdown</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="add_frag_desc">片段描述</Label>
+                        <Input
+                          id="add_frag_desc"
+                          placeholder="可选，添加片段描述"
+                          value={createForm.parsing_params.add_frag_desc}
+                          onChange={(e) => setCreateForm({
+                            ...createForm,
+                            parsing_params: { ...createForm.parsing_params, add_frag_desc: e.target.value }
+                          })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="ocr_enabled"
+                          checked={createForm.parsing_params.ocr_enabled}
+                          onCheckedChange={(checked) => setCreateForm({
+                            ...createForm,
+                            parsing_params: { ...createForm.parsing_params, ocr_enabled: checked }
+                          })}
+                        />
+                        <Label htmlFor="ocr_enabled">启用OCR识别</Label>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="smart_title_parse"
+                          checked={createForm.parsing_params.smart_title_parse}
+                          onCheckedChange={(checked) => setCreateForm({
+                            ...createForm,
+                            parsing_params: { ...createForm.parsing_params, smart_title_parse: checked }
+                          })}
+                        />
+                        <Label htmlFor="smart_title_parse">智能标题解析</Label>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="summary_image"
+                          checked={createForm.parsing_params.summary_image}
+                          onCheckedChange={(checked) => setCreateForm({
+                            ...createForm,
+                            parsing_params: { ...createForm.parsing_params, summary_image: checked }
+                          })}
+                        />
+                        <Label htmlFor="summary_image">生成图片摘要</Label>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="summary_table"
+                          checked={createForm.parsing_params.summary_table}
+                          onCheckedChange={(checked) => setCreateForm({
+                            ...createForm,
+                            parsing_params: { ...createForm.parsing_params, summary_table: checked }
+                          })}
+                        />
+                        <Label htmlFor="summary_table">生成表格摘要</Label>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="summary_txt"
+                          checked={createForm.parsing_params.summary_txt}
+                          onCheckedChange={(checked) => setCreateForm({
+                            ...createForm,
+                            parsing_params: { ...createForm.parsing_params, summary_txt: checked }
+                          })}
+                        />
+                        <Label htmlFor="summary_txt">生成文本摘要</Label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* 可选配置 */}
               <div className="space-y-4 border-t pt-4">
-                <h4 className="font-medium">可选配置</h4>
+                <button
+                  type="button"
+                  onClick={() => setShowOptionalConfig(!showOptionalConfig)}
+                  className="flex items-center justify-between w-full text-left hover:bg-gray-50 p-2 rounded-md transition-colors"
+                >
+                  <h4 className="font-medium">可选配置</h4>
+                  {showOptionalConfig ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </button>
                 
-                <div>
-                  <Label htmlFor="data_id">自定义ID</Label>
-                  <Input
-                    id="data_id"
-                    placeholder="可选，用于标识您的业务数据"
-                    value={createForm.data_id}
-                    onChange={(e) => setCreateForm({ ...createForm, data_id: e.target.value })}
-                  />
-                </div>
+                {showOptionalConfig && (
+                  <div className="space-y-4 pl-4 border-l-2 border-gray-200">
+                    <div>
+                      <Label htmlFor="data_id">自定义ID</Label>
+                      <Input
+                        id="data_id"
+                        placeholder="可选，用于标识您的业务数据"
+                        value={createForm.data_id}
+                        onChange={(e) => setCreateForm({ ...createForm, data_id: e.target.value })}
+                      />
+                    </div>
 
-                <div>
-                  <Label htmlFor="webhook_url">Webhook URL</Label>
-                  <Input
-                    id="webhook_url"
-                    placeholder="https://your-webhook.com/callback"
-                    value={createForm.webhook.url}
-                    onChange={(e) => setCreateForm({
-                      ...createForm,
-                      webhook: { ...createForm.webhook, url: e.target.value }
-                    })}
-                  />
-                </div>
+                    <div>
+                      <Label htmlFor="webhook_url">Webhook URL</Label>
+                      <Input
+                        id="webhook_url"
+                        placeholder="https://your-webhook.com/callback"
+                        value={createForm.webhook.url}
+                        onChange={(e) => setCreateForm({
+                          ...createForm,
+                          webhook: { ...createForm.webhook, url: e.target.value }
+                        })}
+                      />
+                    </div>
 
-                <div>
-                  <Label htmlFor="webhook_secret">Webhook Secret</Label>
-                  <Input
-                    id="webhook_secret"
-                    placeholder="用于验证Webhook的密钥"
-                    value={createForm.webhook.secret}
-                    onChange={(e) => setCreateForm({
-                      ...createForm,
-                      webhook: { ...createForm.webhook, secret: e.target.value }
-                    })}
-                  />
-                </div>
+                    <div>
+                      <Label htmlFor="webhook_secret">Webhook Secret</Label>
+                      <Input
+                        id="webhook_secret"
+                        placeholder="用于验证Webhook的密钥"
+                        value={createForm.webhook.secret}
+                        onChange={(e) => setCreateForm({
+                          ...createForm,
+                          webhook: { ...createForm.webhook, secret: e.target.value }
+                        })}
+                      />
+                    </div>
 
-                <div>
-                  <Label htmlFor="result_mode">结果返回模式</Label>
-                  <Select
-                    value={createForm.result_mode}
-                    onValueChange={(value: 'auto' | 'inline' | 'url') => 
-                      setCreateForm({ ...createForm, result_mode: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">自动（推荐）</SelectItem>
-                      <SelectItem value="inline">内联返回</SelectItem>
-                      <SelectItem value="url">URL下载</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                    <div>
+                      <Label htmlFor="result_mode">结果返回模式</Label>
+                      <Select
+                        value={createForm.result_mode}
+                        onValueChange={(value: 'auto' | 'inline' | 'url') => 
+                          setCreateForm({ ...createForm, result_mode: value })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">自动（推荐）</SelectItem>
+                          <SelectItem value="inline">内联返回</SelectItem>
+                          <SelectItem value="url">URL下载</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end space-x-2">

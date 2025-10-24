@@ -15,12 +15,13 @@ import {
   FileText,
   RefreshCw
 } from 'lucide-react'
-import { api, JobCreate, JobResponse } from '@/lib/api'
+import { api, JobCreate, JobResponse, ParsingParams } from '@/lib/api'
 import { useToast } from '@/hooks/useToast'
 
 interface FileUploadFlowProps {
   file: File
   dataId?: string
+  parsingParams?: ParsingParams
   webhook?: {
     url: string
     secret: string
@@ -36,6 +37,7 @@ type UploadStep = 'idle' | 'creating' | 'uploading' | 'confirming' | 'success' |
 export default function FileUploadFlow({
   file,
   dataId,
+  parsingParams,
   webhook,
   resultMode = 'auto',
   onSuccess,
@@ -60,6 +62,7 @@ export default function FileUploadFlow({
         source_type: 'file',
         file_name: file.name,
         data_id: dataId,
+        parsing_params: parsingParams,
         webhook: webhook,
         result_mode: resultMode
       }
@@ -123,7 +126,7 @@ export default function FileUploadFlow({
       setStep('error')
       onError(errorMessage)
     }
-  }, [file, dataId, webhook, resultMode, onSuccess, onError])
+  }, [file, dataId, parsingParams, webhook, resultMode, onSuccess, onError])
 
   const handleRetry = useCallback(() => {
     if (retryCount < 3) {
