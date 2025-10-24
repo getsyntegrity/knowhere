@@ -10,9 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from app.core.state_machine.states import (
-    JobState, JobStatus, is_valid_transition, is_terminal_state, 
-    get_job_status_from_state, get_prd_status_from_state, 
-    get_state_timeout, can_retry_from_state, get_retry_target_state
+    JobStatus, is_terminal_state, get_state_timeout
 )
 from app.models.database.job import Job
 from app.models.database.job_state_audit_log import JobStateAuditLog
@@ -63,19 +61,14 @@ class StateMachineService:
                     logger.error(f"Job {job_id} 不存在")
                     return False
                 
-                # 2. 验证转换合法性
-                if not self._validate_transition(job, to_state):
-                    logger.error(f"Job {job_id} 状态转换无效: {job.current_state} -> {to_state}")
-                    return False
-                
-                # 3. 记录状态历史
+                # 2. 记录状态历史
                 await self._record_state_audit_log(
-                    db, job_id, job.current_state, to_state, 
+                    db, job_id, job.status, to_state, 
                     transition_reason, operator_id, operator_type, metadata
                 )
                 
-                # 4. 更新Job状态（使用乐观锁）
-                old_state = job.current_state
+                # 3. 更新Job状态（使用乐观锁）
+                old_state = job.status
                 old_version = job.version
                 success = await self._update_job_state(
                     db, job_id, to_state, old_version, metadata
@@ -121,7 +114,7 @@ class StateMachineService:
             
             # 从数据库获取
             job = await self._get_job(db, job_id)
-            return job.current_state if job else None
+            return job.status if job else None
             
         except Exception as e:
             logger.error(f"获取Job {job_id} 状态失败: {e}")
@@ -149,7 +142,7 @@ class StateMachineService:
             transition_metadata = (metadata or {}).copy()
             transition_metadata["error_message"] = error_message
             return await self.transition(
-                db, job_id, JobState.FAILED.value, 
+                db, job_id, JobStatus.FAILED.value, 
                 "mark_failed", operator_id, "system",
                 transition_metadata
             )
@@ -168,7 +161,7 @@ class StateMachineService:
         """标记Job为完成状态"""
         try:
             return await self.transition(
-                db, job_id, JobState.COMPLETED.value, 
+                db, job_id, JobStatus.DONE.value, 
                 "mark_completed", operator_id, "system", result_metadata
             )
         except Exception as e:
@@ -189,18 +182,16 @@ class StateMachineService:
                 logger.error(f"Job {job_id} 不存在")
                 return False
             
-            current_state = job.current_state
+            current_state = job.status
             if not current_state:
                 logger.error(f"Job {job_id} 没有当前状态")
                 return False
             
-            # 检查是否支持重试
-            if not can_retry_from_state(current_state):
-                logger.warning(f"Job {job_id} 当前状态 {current_state} 不支持重试")
-                return False
-            
-            # 确定重试目标状态
-            retry_target_state = get_retry_target_state(current_state)
+            # 确定重试目标状态（简化：失败状态重试到pending，其他状态保持原状态）
+            if current_state == JobStatus.FAILED.value:
+                retry_target_state = JobStatus.PENDING.value
+            else:
+                retry_target_state = current_state
             
             retry_metadata = retry_metadata or {}
             retry_metadata["retry_reason"] = "task_retry"
@@ -275,18 +266,6 @@ class StateMachineService:
         result = await db.execute(select(Job).where(Job.job_id == job_id))
         return result.scalar_one_or_none()
     
-    def _validate_transition(self, job: Job, to_state: str) -> bool:
-        """验证状态转换是否有效"""
-        if not job.current_state:
-            # 初始状态，只能转换到第一个状态
-            return to_state in [JobState.UPLOADING.value, JobState.FAILED.value]
-        
-        # 检查completed状态不能转换
-        if job.current_state == JobState.COMPLETED.value:
-            logger.warning(f"Job {job.job_id} 已完成，不允许状态转换")
-            return False
-        
-        return is_valid_transition(job.job_type, job.current_state, to_state)
     
     async def _record_state_audit_log(
         self, 
@@ -336,8 +315,7 @@ class StateMachineService:
                 update(Job)
                 .where(Job.job_id == job_id, Job.version == old_version)
                 .values(
-                    current_state=to_state,
-                    status=get_job_status_from_state(to_state),
+                    status=to_state,
                     version=old_version + 1,
                     updated_at=datetime.utcnow()
                 )
@@ -360,18 +338,17 @@ class StateMachineService:
         except Exception as e:
             logger.error(f"更新Job错误信息失败: {e}")
     
-    async def _update_redis_cache(self, job_id: str, current_state: str, metadata: Optional[Dict[str, Any]]):
+    async def _update_redis_cache(self, job_id: str, status: str, metadata: Optional[Dict[str, Any]]):
         """更新Redis缓存"""
         try:
             # 更新状态缓存
             status_key = redis_key_builder.task_status(job_id)
-            await self.redis.set(status_key, current_state, ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK))
+            await self.redis.set(status_key, status, ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK))
             
             # 更新进度信息
             progress_key = redis_key_builder.task_progress(job_id)
             progress_data = {
-                "status": get_prd_status_from_state(current_state),
-                "current_state": current_state,
+                "status": status,
                 "timestamp": str(int(time.time()))
             }
             if metadata:

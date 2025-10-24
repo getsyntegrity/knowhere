@@ -33,8 +33,7 @@ class Job(Base):
     
     # 任务基本信息
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)  # table_fill, kb_management
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # pending, processing, completed, failed
-    current_state: Mapped[str] = mapped_column(String(50), nullable=True)  # 详细状态
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # PRD状态: pending, waiting-file, running, converting, done, failed
     
     # 文件信息
     source_type: Mapped[str] = mapped_column(String(20), nullable=False)  # direct_upload, url
@@ -78,62 +77,8 @@ class Job(Base):
     
     def is_terminal_state(self) -> bool:
         """检查是否为终态"""
-        return self.status in ['completed', 'failed']
+        return self.status in ['done', 'failed']
     
     def is_processing(self) -> bool:
         """检查是否正在处理中"""
-        return self.status == 'processing'
-    
-    def can_transition_to(self, new_state: str) -> bool:
-        """检查是否可以转换到新状态"""
-        # 终态不能转换
-        if self.is_terminal_state():
-            return False
-        
-        # 根据任务类型和当前状态判断
-        if self.job_type == 'table_fill':
-            return self._can_transition_table_fill(new_state)
-        elif self.job_type == 'kb_management':
-            return self._can_transition_kb_management(new_state)
-        
-        return False
-    
-    def _can_transition_table_fill(self, new_state: str) -> bool:
-        """表格填充状态转换规则"""
-        transitions = {
-            'pending': ['uploading', 'failed'],
-            'uploading': ['uploaded', 'failed'],
-            'uploaded': ['extracting_table', 'failed'],
-            'extracting_table': ['table_extracted', 'failed'],
-            'table_extracted': ['kb_searching', 'failed'],
-            'kb_searching': ['kb_searched', 'failed'],
-            'kb_searched': ['llm_processing', 'failed'],
-            'llm_processing': ['llm_processed', 'failed'],
-            'llm_processed': ['filling_table', 'failed'],
-            'filling_table': ['table_filled', 'failed'],
-            'table_filled': ['generating_result', 'failed'],
-            'generating_result': ['completed', 'failed'],
-        }
-        
-        current_state = self.current_state or 'pending'
-        return new_state in transitions.get(current_state, [])
-    
-    def _can_transition_kb_management(self, new_state: str) -> bool:
-        """知识库管理状态转换规则"""
-        transitions = {
-            'pending': ['uploading', 'failed'],
-            'uploading': ['uploaded', 'failed'],
-            'uploaded': ['parsing', 'failed'],
-            'parsing': ['parsed', 'failed'],
-            'parsed': ['chunking', 'failed'],
-            'chunking': ['chunked', 'failed'],
-            'chunked': ['vectorizing', 'failed'],
-            'vectorizing': ['vectorized', 'failed'],
-            'vectorized': ['storing_db', 'failed'],
-            'storing_db': ['db_stored', 'failed'],
-            'db_stored': ['webhook_sending', 'failed'],
-            'webhook_sending': ['completed', 'failed'],
-        }
-        
-        current_state = self.current_state or 'pending'
-        return new_state in transitions.get(current_state, [])
+        return self.status == 'running'

@@ -11,7 +11,6 @@ from app.core.permissions import current_user, require_admin
 from app.core.dependencies import get_current_user_dual_auth
 from app.models.database.user import User
 from app.models.schemas.user import UserCreate, UserUpdate, UserRead
-from app.core.response.ResponseResult import ResponseResult
 
 router = APIRouter(tags=["Authentication"])
 
@@ -53,7 +52,7 @@ router.include_router(
 @router.get("/me", summary="获取当前用户信息")
 async def get_current_user_info(request: Request, user: User = Depends(get_current_user_dual_auth)):
     """获取当前用户信息 - 支持JWT和API Key双重认证"""
-    return ResponseResult.ok_data(data={
+    return {
         "id": str(user.id),
         "email": user.email,
         "username": user.username,
@@ -64,7 +63,7 @@ async def get_current_user_info(request: Request, user: User = Depends(get_curre
         "avatar_url": user.avatar_url,
         "phone": user.phone,
         "create_time": user.create_time
-    })
+    }
 
 @router.post("/renew-token", summary="续期访问令牌")
 async def renew_token(user: User = Depends(get_current_user_dual_auth)):
@@ -74,12 +73,12 @@ async def renew_token(user: User = Depends(get_current_user_dual_auth)):
     # 使用JWT策略创建新的token，传入User对象
     new_access_token = await jwt_strategy.write_token(user)
     
-    return ResponseResult.ok_data(data={
+    return {
         "access_token": new_access_token,
         "token_type": "bearer"
-    })
+    }
 
 @router.post("/admin-only", summary="管理员专用接口")
 async def admin_only_endpoint(user: User = Depends(require_admin)):
     """管理员专用接口示例"""
-    return ResponseResult.ok_data(data={"message": "管理员访问成功"})
+    return {"message": "管理员访问成功"}

@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.state_machine.states import get_state_timeout, JobState
+from app.core.state_machine.states import get_state_timeout, JobStatus
 from app.core.state_machine.redis_keyspace_notifications import RedisKeyspaceNotificationHandler
 from app.services.redis import RedisServiceFactory
 

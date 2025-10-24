@@ -253,6 +253,10 @@ class CeleryTaskRouter:
             job_type = kwargs.get('job_type')
             user_id = kwargs.get('user_id')
             
+            # 如果kwargs中没有user_id，尝试从args中提取（针对upload_url_file_task）
+            if not user_id and len(args) >= 3:
+                user_id = args[2]  # upload_url_file_task的第三个参数是user_id
+            
             if job_type and user_id:
                 # 创建任务上下文并计算优先级
                 context = self.create_task_context(

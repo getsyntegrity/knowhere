@@ -10,7 +10,7 @@ from app.core.tasks.kb_tasks import (
     store_to_db_task,          # 存储到数据库任务
     send_webhook_task          # 发送Webhook任务
 )
-from app.core.state_machine import KBManagementState
+from app.core.state_machine import JobStatus
 from app.core.celery_router import task_router
 
 
@@ -47,10 +47,13 @@ class KBOrchestrator:
             # 如果source_type是url但没有提供file_url，尝试从job_metadata中获取
             if source_type == "url" and not file_url:
                 from app.repositories.job_repository import JobRepository
+                from app.services.redis import RedisServiceFactory
+                from app.models.schemas.job_metadata import JobMetadataHelper
+                
                 job_repo = JobRepository()
-                job = await job_repo.get_job_by_id(db, job_id)
-                if job and job.job_metadata and "file_url" in job.job_metadata:
-                    file_url = job.job_metadata["file_url"]
+                redis_service = RedisServiceFactory.get_service()
+                job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
+                file_url = JobMetadataHelper.get_field(job_metadata, "file_url")
             
             # 获取队列名称
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)

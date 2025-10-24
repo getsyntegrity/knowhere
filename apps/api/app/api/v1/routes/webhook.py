@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, get_current_user
-from app.core.response.ResponseResult import ResponseResult
 from app.models.database.user import User
 from app.models.schemas.webhook import (
     WebhookConfigCreate,
@@ -23,7 +22,7 @@ from app.services.webhook.webhook_service import WebhookService
 router = APIRouter(tags=["Webhook管理"])
 
 
-@router.post("/config", response_model=ResponseResult[WebhookConfigResponse], summary="创建Webhook配置")
+@router.post("/config", response_model=WebhookConfigResponse, summary="创建Webhook配置")
 async def create_webhook_config(
     request: WebhookConfigCreate,
     current_user: User = Depends(get_current_user),
@@ -45,7 +44,7 @@ async def create_webhook_config(
         }
         
         response = WebhookConfigResponse(**config)
-        return ResponseResult.ok_data(data=response)
+        return response
         
     except Exception as e:
         raise HTTPException(
@@ -54,7 +53,7 @@ async def create_webhook_config(
         )
 
 
-@router.get("/config", response_model=ResponseResult[WebhookConfigResponse], summary="获取Webhook配置")
+@router.get("/config", response_model=WebhookConfigResponse, summary="获取Webhook配置")
 async def get_webhook_config(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -75,7 +74,7 @@ async def get_webhook_config(
         }
         
         response = WebhookConfigResponse(**config)
-        return ResponseResult.ok_data(data=response)
+        return response
         
     except Exception as e:
         raise HTTPException(
@@ -84,7 +83,7 @@ async def get_webhook_config(
         )
 
 
-@router.get("/logs", response_model=ResponseResult[WebhookLogList], summary="获取Webhook日志")
+@router.get("/logs", response_model=WebhookLogList, summary="获取Webhook日志")
 async def get_webhook_logs(
     job_id: Optional[str] = Query(None, description="任务ID过滤"),
     page: int = Query(1, ge=1, description="页码"),
@@ -134,7 +133,7 @@ async def get_webhook_logs(
             page_size=page_size
         )
         
-        return ResponseResult.ok_data(data=response)
+        return response
         
     except Exception as e:
         raise HTTPException(
@@ -143,7 +142,7 @@ async def get_webhook_logs(
         )
 
 
-@router.get("/stats", response_model=ResponseResult[WebhookStatsResponse], summary="获取Webhook统计")
+@router.get("/stats", response_model=WebhookStatsResponse, summary="获取Webhook统计")
 async def get_webhook_stats(
     job_id: Optional[str] = Query(None, description="任务ID过滤"),
     webhook_url: Optional[str] = Query(None, description="Webhook URL过滤"),
@@ -161,7 +160,7 @@ async def get_webhook_stats(
         )
         
         response = WebhookStatsResponse(**stats)
-        return ResponseResult.ok_data(data=response)
+        return response
         
     except Exception as e:
         raise HTTPException(
@@ -170,7 +169,7 @@ async def get_webhook_stats(
         )
 
 
-@router.post("/test", response_model=ResponseResult[WebhookTestResponse], summary="测试Webhook")
+@router.post("/test", response_model=WebhookTestResponse, summary="测试Webhook")
 async def test_webhook(
     request: WebhookTestRequest,
     current_user: User = Depends(get_current_user),
@@ -204,7 +203,7 @@ async def test_webhook(
             test_time=datetime.utcnow()
         )
         
-        return ResponseResult.ok_data(data=response)
+        return response
         
     except Exception as e:
         raise HTTPException(

@@ -9,7 +9,7 @@ from loguru import logger
 
 from app.models.database.job import Job
 from app.models.database.job_state_history import JobStateHistory
-from app.core.state_machine import JobStateMachine, get_job_status_from_state
+from app.core.state_machine import JobStateMachine
 
 
 class JobRepository:
@@ -28,20 +28,21 @@ class JobRepository:
         file_path: Optional[str] = None,
         webhook_url: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        initial_state: Optional[str] = "pending"
+        initial_state: Optional[str] = "pending",
+        s3_key: Optional[str] = None
     ) -> Optional[Job]:
         """创建Job"""
         try:
             job_kwargs = dict(
                 user_id=user_id,
                 job_type=job_type,
-                status=get_job_status_from_state(initial_state) if initial_state else "pending",
-                current_state=initial_state or "pending",
+                status=initial_state or "pending",
                 source_type=source_type,
                 file_path=file_path,
                 webhook_url=webhook_url,
                 webhook_enabled=bool(webhook_url),
-                job_metadata=metadata
+                job_metadata=metadata,
+                s3_key=s3_key
             )
             if job_id:
                 job_kwargs["job_id"] = job_id
@@ -147,9 +148,21 @@ class JobRepository:
                 return False
             
             # 将file_url存储到job_metadata中
+            # 更新job_metadata中的file_url（同时更新Redis）
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.job_metadata_service import JobMetadataService
+            
+            redis_service = RedisServiceFactory.get_service()
+            metadata_service = JobMetadataService(redis_service)
+            
+            # 更新数据库
             if not job.job_metadata:
                 job.job_metadata = {}
             job.job_metadata["file_url"] = file_url
+            await db.commit()
+            
+            # 更新Redis
+            await metadata_service.update_metadata(job_id, {"file_url": file_url})
             await db.commit()
             return True
             
@@ -282,3 +295,40 @@ class JobRepository:
         except Exception as e:
             logger.error(f"获取Job {job_id} 状态 {state} 元数据 {metadata_key} 失败: {e}")
             return None
+    
+    async def get_job_metadata(
+        self, 
+        db: AsyncSession, 
+        job_id: str,
+        redis_service: Optional[Any] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        获取job_metadata（优先从Redis读取，2小时缓存）
+        
+        Args:
+            db: 数据库会话
+            job_id: 任务ID
+            redis_service: Redis服务
+            
+        Returns:
+            job_metadata字典或None
+        """
+        # 1. 尝试从Redis获取
+        if redis_service:
+            from app.services.redis.job_metadata_service import JobMetadataService
+            metadata_service = JobMetadataService(redis_service)
+            metadata = await metadata_service.get_metadata(job_id)
+            if metadata:
+                return metadata
+        
+        # 2. 从数据库获取
+        job = await self.get_job_by_id(db, job_id)
+        if job and job.job_metadata:
+            # 回写到Redis（2小时缓存）
+            if redis_service:
+                from app.services.redis.job_metadata_service import JobMetadataService
+                metadata_service = JobMetadataService(redis_service)
+                await metadata_service.save_metadata(job_id, job.job_metadata)
+            return job.job_metadata
+        
+        return None

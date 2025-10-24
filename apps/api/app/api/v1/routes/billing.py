@@ -20,7 +20,6 @@ from app.models.schemas.billing import (
     PaymentIntentResponse,
     CheckoutSessionResponse
 )
-from app.core.response.ResponseResult import ResponseResult
 
 router = APIRouter(tags=["Billing"])
 
@@ -47,10 +46,10 @@ async def subscribe_plan(
             cancel_url=cancel_url
         )
         
-        return ResponseResult.ok_data(data=CheckoutSessionResponse(
+        return CheckoutSessionResponse(
             checkout_url=checkout_url,
             session_id=""
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -79,10 +78,10 @@ async def buy_credits(
             currency='cny'
         )
         
-        return ResponseResult.ok_data(data=PaymentIntentResponse(
+        return PaymentIntentResponse(
             client_secret=payment_intent["client_secret"],
             payment_intent_id=payment_intent["payment_intent_id"]
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -105,7 +104,7 @@ async def get_current_subscription(
         
         if not subscription:
             # 返回默认的免费订阅
-            return ResponseResult.ok_data(data={
+            return {
                 "id": "free",
                 "plan_type": "free",
                 "status": "active",
@@ -113,9 +112,9 @@ async def get_current_subscription(
                 "end_date": None,
                 "credits_limit": 100,
                 "stripe_subscription_id": None
-            })
+            }
         
-        return ResponseResult.ok_data(data={
+        return {
             "id": subscription.id,
             "plan_type": subscription.plan_type,
             "status": subscription.status,
@@ -123,7 +122,7 @@ async def get_current_subscription(
             "end_date": subscription.end_date.isoformat() if subscription.end_date else None,
             "credits_limit": subscription.get_credits_limit(),
             "stripe_subscription_id": subscription.stripe_subscription_id
-        })
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -152,11 +151,11 @@ async def get_credits_balance(
         
         usage_percentage = (balance / credits_limit * 100) if credits_limit > 0 else 0
         
-        return ResponseResult.ok_data(data=CreditsBalanceResponse(
+        return CreditsBalanceResponse(
             credits_balance=balance,
             credits_limit=credits_limit,
             usage_percentage=round(usage_percentage, 2)
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -177,14 +176,14 @@ async def get_usage_stats(
     try:
         stats = await credits_service.get_usage_stats(db, str(current_user.id), period)
         
-        return ResponseResult.ok_data(data=UsageStatsResponse(
+        return UsageStatsResponse(
             period=stats["period"],
             total_credits_used=stats["total_used"],
             api_calls_count=stats["transaction_count"],
             success_rate=95.0,  # TODO: 从使用日志计算实际成功率
             average_response_time=stats.get("avg_response_time", 0),
             top_endpoints=[]  # TODO: 从使用日志获取热门端点
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -216,7 +215,7 @@ async def get_transaction_history(
             for tx in transactions
         ]
         
-        return ResponseResult.ok_data(data=transaction_list)
+        return transaction_list
         
     except Exception as e:
         raise HTTPException(
@@ -248,7 +247,7 @@ async def stripe_webhook(
                 db=db
             )
         
-        return ResponseResult.ok_data(data=result)
+        return result
         
     except Exception as e:
         raise HTTPException(

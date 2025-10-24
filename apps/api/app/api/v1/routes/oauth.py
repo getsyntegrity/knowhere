@@ -19,7 +19,6 @@ from app.models.schemas.oauth import (
     GitHubLoginRequest,
     OAuthLoginResponse
 )
-from app.core.response.ResponseResult import ResponseResult
 
 router = APIRouter(tags=["OAuth Authentication"])
 
@@ -47,7 +46,7 @@ async def google_login(
         from app.core.jwt import jwt_strategy
         access_token = jwt_strategy.create_access_token({"sub": str(user.id)})
         
-        return ResponseResult.ok_data(data=OAuthLoginResponse(
+        return OAuthLoginResponse(
             access_token=access_token,
             token_type="bearer",
             user_info={
@@ -58,7 +57,7 @@ async def google_login(
                 "user_type": user.user_type,
                 "credits_balance": user.credits_balance
             }
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -87,7 +86,7 @@ async def apple_login(
         from app.core.jwt import jwt_strategy
         access_token = jwt_strategy.create_access_token({"sub": str(user.id)})
         
-        return ResponseResult.ok_data(data=OAuthLoginResponse(
+        return OAuthLoginResponse(
             access_token=access_token,
             token_type="bearer",
             user_info={
@@ -98,7 +97,7 @@ async def apple_login(
                 "user_type": user.user_type,
                 "credits_balance": user.credits_balance
             }
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -127,7 +126,7 @@ async def github_login(
         from app.core.jwt import jwt_strategy
         access_token = jwt_strategy.create_access_token({"sub": str(user.id)})
         
-        return ResponseResult.ok_data(data=OAuthLoginResponse(
+        return OAuthLoginResponse(
             access_token=access_token,
             token_type="bearer",
             user_info={
@@ -138,7 +137,7 @@ async def github_login(
                 "user_type": user.user_type,
                 "credits_balance": user.credits_balance
             }
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(

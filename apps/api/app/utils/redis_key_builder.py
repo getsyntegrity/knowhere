@@ -155,6 +155,10 @@ class RedisKeyBuilder:
         """任务完成计数器键"""
         return self.build_key(RedisKeyType.COUNTER, "task_completed", task_type)
     
+    def rate_limit_api(self, user_id: str, api_name: str) -> str:
+        """API速率限制键"""
+        return self.build_key(RedisKeyType.COUNTER, "rate_limit", api_name, user_id)
+    
     # ==================== 集合相关键 ====================
     
     def set_active_users(self) -> str:
@@ -254,7 +258,7 @@ class RedisKeyBuilder:
             TTL（秒）
         """
         ttl_mapping = {
-            RedisKeyType.USER: 86400 * 7,  # 7天
+            RedisKeyType.USER: 86400,      # 1天（user_config缓存）
             RedisKeyType.TASK: 86400,      # 1天
             RedisKeyType.CONVERSATION: 3600 * 2,  # 2小时
             RedisKeyType.KNOWLEDGE_BASE: 86400 * 30,  # 30天

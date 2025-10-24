@@ -6,17 +6,17 @@ import os
 import hmac
 import hashlib
 import base64
+import aiohttp
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status, Request, Header
 from loguru import logger
 
-from app.core.response.ResponseResult import ResponseResult
 from app.models.schemas.s3_event import S3Event
 from app.repositories.job_repository import JobRepository
 from app.services.storage.file_upload_service import FileUploadService
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.table_fill.orchestrator import TableFillOrchestrator
-from app.core.state_machine import KBManagementState, TableFillState, get_prd_status_from_state
+from app.core.state_machine import JobStatus
 from app.core.database import get_db_context
 
 router = APIRouter(tags=["Internal"])
@@ -80,7 +80,7 @@ def extract_job_id_from_s3_key(s3_key: str) -> str:
     return job_id
 
 
-@router.get("/s3-events", response_model=ResponseResult[dict], summary="S3事件Webhook GET")
+@router.get("/s3-events", response_model=dict, summary="S3事件Webhook GET")
 async def handle_s3_events_get(
     request: Request,
     x_amz_sns_message_type: str = Header(None, alias="x-amz-sns-message-type"),
@@ -97,12 +97,12 @@ async def handle_s3_events_get(
     # 检查是否是SNS订阅确认请求
     if x_amz_sns_message_type == "SubscriptionConfirmation":
         logger.info("收到SNS订阅确认请求")
-        return ResponseResult.ok_data(data={"message": "SNS订阅确认成功"})
+        return {"message": "SNS订阅确认成功"}
     
-    return ResponseResult.ok_data(data={"message": "GET请求处理完成"})
+    return {"message": "GET请求处理完成"}
 
 
-@router.post("/s3-events", response_model=ResponseResult[dict], summary="S3事件Webhook POST")
+@router.post("/s3-events", response_model=dict, summary="S3事件Webhook POST")
 async def handle_s3_events(
     request: Request,
     x_amz_sns_message_type: str = Header(None, alias="x-amz-sns-message-type"),
@@ -122,7 +122,9 @@ async def handle_s3_events(
         # 判断事件来源
         if x_amz_sns_message_type:
             # AWS SNS事件
-            await handle_sns_event(body)
+            result = await handle_sns_event(body)
+            if result:
+                return result
         elif x_minio_auth_token or authorization:
             # MinIO事件
             await handle_minio_event(body, x_minio_auth_token)
@@ -130,12 +132,12 @@ async def handle_s3_events(
             # 直接S3事件（用于测试）
             await handle_direct_s3_event(body)
         
-        return ResponseResult.ok_data(data={"message": "事件处理成功"})
+        return {"message": "事件处理成功"}
         
     except Exception as e:
         logger.error(f"处理S3事件失败: {e}")
         # 即使处理失败也返回200，避免S3重试
-        return ResponseResult.ok_data(data={"message": "事件处理完成"})
+        return {"message": "事件处理完成"}
 
 
 async def handle_sns_event(body: bytes):
@@ -146,20 +148,49 @@ async def handle_sns_event(body: bytes):
         # 解析SNS消息
         sns_message = json.loads(body.decode('utf-8'))
         
-        # 验证消息类型
-        if sns_message.get('Type') != 'Notification':
-            logger.warning(f"非通知类型的SNS消息: {sns_message.get('Type')}")
-            return
+        # 检查消息类型
+        message_type = sns_message.get('Type')
+        logger.info(f"SNS消息类型: {message_type}")
         
-        # 解析S3事件
-        s3_event_data = json.loads(sns_message['Message'])
-        s3_event = S3Event(**s3_event_data)
+        if message_type == 'SubscriptionConfirmation':
+            # 处理订阅确认
+            logger.info("收到SNS订阅确认请求")
+            subscribe_url = sns_message.get('SubscribeURL')
+            if subscribe_url:
+                logger.info(f"SNS订阅确认URL: {subscribe_url}")
+                # 访问确认URL来确认订阅
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(subscribe_url) as response:
+                            if response.status == 200:
+                                logger.info("SNS订阅确认成功")
+                                return {"message": "SNS订阅确认成功"}
+                            else:
+                                logger.error(f"SNS订阅确认失败，状态码: {response.status}")
+                                return {"message": "SNS订阅确认失败"}
+                except Exception as e:
+                    logger.error(f"访问SNS订阅确认URL失败: {e}")
+                    return {"message": "SNS订阅确认失败"}
+            else:
+                logger.warning("SNS订阅确认消息中没有SubscribeURL")
+                return {"message": "SNS订阅确认失败"}
         
-        # 处理上传事件
-        await process_upload_events(s3_event)
+        elif message_type == 'Notification':
+            # 处理通知消息
+            logger.info("收到SNS通知消息")
+            # 解析S3事件
+            s3_event_data = json.loads(sns_message['Message'])
+            s3_event = S3Event(**s3_event_data)
+            
+            # 处理上传事件
+            await process_upload_events(s3_event)
+        else:
+            logger.warning(f"未知的SNS消息类型: {message_type}")
+            return {"message": f"未知的SNS消息类型: {message_type}"}
         
     except Exception as e:
         logger.error(f"处理SNS事件失败: {e}")
+        raise
 
 
 async def handle_minio_event(body: bytes, auth_token: str):
@@ -236,8 +267,8 @@ async def process_upload_events(s3_event: S3Event):
                     continue
                 
                 # 检查job状态
-                if get_prd_status_from_state(job.current_state) != "waiting_for_upload":
-                    logger.info(f"Job {job_id} 状态不是waiting_for_upload: {job.current_state}")
+                if job.status != "waiting-file":
+                    logger.info(f"Job {job_id} 状态不是waiting-file: {job.status}")
                     continue
                 
                 # 验证S3文件存在
@@ -252,16 +283,11 @@ async def process_upload_events(s3_event: S3Event):
                 from app.core.state_machine import JobStateMachine
                 state_machine = JobStateMachine()
                 
-                if job.job_type == "kb_management":
-                    await state_machine.transition(
-                        db, job_id, KBManagementState.UPLOADED.value,
-                        "s3_upload_completed", None, "system"
-                    )
-                else:
-                    await state_machine.transition(
-                        db, job_id, TableFillState.UPLOADED.value,
-                        "s3_upload_completed", None, "system"
-                    )
+                # 文件上传完成后，转换到pending状态
+                await state_machine.transition(
+                    db, job_id, JobStatus.PENDING.value,
+                    "s3_upload_completed", None, "system"
+                )
                 
                 # 触发任务处理
                 if job.job_type == "kb_management":

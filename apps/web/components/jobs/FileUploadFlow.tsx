@@ -15,12 +15,11 @@ import {
   FileText,
   RefreshCw
 } from 'lucide-react'
-import { api, JobCreate, JobResponse, ParsingParams } from '@/lib/api'
+import { api, JobCreate, JobResponse } from '@/lib/api'
 import { useToast } from '@/hooks/useToast'
 
 interface FileUploadFlowProps {
   file: File
-  parsingParams: ParsingParams
   dataId?: string
   webhook?: {
     url: string
@@ -36,7 +35,6 @@ type UploadStep = 'idle' | 'creating' | 'uploading' | 'confirming' | 'success' |
 
 export default function FileUploadFlow({
   file,
-  parsingParams,
   dataId,
   webhook,
   resultMode = 'auto',
@@ -62,7 +60,6 @@ export default function FileUploadFlow({
         source_type: 'file',
         file_name: file.name,
         data_id: dataId,
-        parsing_params: parsingParams,
         webhook: webhook,
         result_mode: resultMode
       }
@@ -70,7 +67,7 @@ export default function FileUploadFlow({
       const jobResponse = await api.createJob(jobCreate)
       setJob(jobResponse)
 
-      if (jobResponse.status === 'waiting_for_upload' && jobResponse.upload_url) {
+      if (jobResponse.status === 'waiting-file' && jobResponse.upload_url) {
         // 开始上传到S3
         setStep('uploading')
         setProgress(0)
@@ -84,38 +81,35 @@ export default function FileUploadFlow({
           }
         )
 
-        // 上传完成，等待S3事件触发或使用备用确认机制
+        // 上传完成，等待5秒后进行确认
         setStep('confirming')
         
-        // 等待一段时间让S3事件触发
-        await new Promise(resolve => setTimeout(resolve, 2000))
+        // 等待5秒让S3事件有机会触发
+        await new Promise(resolve => setTimeout(resolve, 5000))
         
-        // 检查任务状态
-        const updatedJob = await api.getJobStatus(jobResponse.job_id)
-        setJob(updatedJob)
-
-        if (updatedJob.status === 'pending' || updatedJob.status === 'running') {
-          // S3事件已触发，任务开始处理
-          setStep('success')
-          onSuccess(updatedJob)
-        } else if (updatedJob.status === 'waiting_for_upload') {
-          // S3事件未触发，使用备用确认机制
-          try {
-            await api.confirmUpload(jobResponse.job_id)
-            const confirmedJob = await api.getJobStatus(jobResponse.job_id)
-            setJob(confirmedJob)
+        try {
+          // 调用确认上传API
+          console.log('开始调用confirm-upload API，job_id:', jobResponse.job_id)
+          await api.confirmUpload(jobResponse.job_id)
+          console.log('confirm-upload API调用成功')
+          
+          // 获取更新后的任务状态
+          const confirmedJob = await api.getJobStatus(jobResponse.job_id)
+          setJob(confirmedJob)
+          
+          if (confirmedJob.status === 'pending' || confirmedJob.status === 'running') {
             setStep('success')
             onSuccess(confirmedJob)
-          } catch (confirmError) {
-            console.error('Confirm upload failed:', confirmError)
-            setError('上传确认失败，请稍后检查任务状态')
+          } else {
+            setError(`任务状态异常: ${confirmedJob.status}`)
             setStep('error')
-            onError('上传确认失败')
+            onError(`任务状态异常: ${confirmedJob.status}`)
           }
-        } else {
-          setError(`任务状态异常: ${updatedJob.status}`)
+        } catch (confirmError) {
+          console.error('Confirm upload failed:', confirmError)
+          setError('上传确认失败，请稍后检查任务状态')
           setStep('error')
-          onError(`任务状态异常: ${updatedJob.status}`)
+          onError('上传确认失败')
         }
       } else {
         // 直接处理（URL模式）
@@ -129,7 +123,7 @@ export default function FileUploadFlow({
       setStep('error')
       onError(errorMessage)
     }
-  }, [file, parsingParams, dataId, webhook, resultMode, onSuccess, onError])
+  }, [file, dataId, webhook, resultMode, onSuccess, onError])
 
   const handleRetry = useCallback(() => {
     if (retryCount < 3) {

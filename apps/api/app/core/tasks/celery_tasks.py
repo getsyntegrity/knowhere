@@ -11,7 +11,7 @@ from loguru import logger
 
 from app.core.celery_app import get_celery_app, get_task_priority, get_queue_name
 from app.core.celery_router import CeleryTaskRouter, TaskContext, TaskType, UserLevel, DocumentImportance
-from app.core.state_machine import JobStateMachine, JobState
+from app.core.state_machine import JobStateMachine, JobStatus
 from app.services.redis import RedisServiceFactory, TaskRedisService, UserRedisService
 
 # 获取Celery应用
@@ -98,7 +98,7 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
         logger.debug(f'process_ai_query_async conversation_id: {conversation_id}')
         
         # 更新状态为处理中
-        await state_machine.set_task_timeout(context.user_id, JobState.PROCESSING.value)
+        await state_machine.set_task_timeout(context.user_id, JobStatus.RUNNING.value)
         
         result = await ai_client.chat_completion(
             messages=prompt,

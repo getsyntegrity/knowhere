@@ -119,7 +119,7 @@ export default function DashboardPage() {
             switch (status) {
               case 'done': return '已完成'
               case 'failed': return '失败'
-              case 'waiting_for_upload': return '等待上传'
+              case 'waiting-file': return '等待上传'
               case 'pending': return '排队中'
               case 'converting': return '转换中'
               case 'running': return '处理中'

@@ -17,7 +17,6 @@ from app.models.schemas.api_key import (
     RevokeAPIKeyRequest,
     APIKeyListResponse
 )
-from app.core.response.ResponseResult import ResponseResult
 
 router = APIRouter(tags=["API Key Management"])
 
@@ -40,12 +39,12 @@ async def create_api_key(
             expires_at=request.expires_at
         )
         
-        return ResponseResult.ok_data(data=CreateAPIKeyResponse(
+        return CreateAPIKeyResponse(
             api_key=api_key,
             name=request.name,
             enabled_modules=request.enabled_modules,
             expires_at=request.expires_at
-        ).dict())
+        )
         
     except ValueError as e:
         raise HTTPException(
@@ -84,10 +83,10 @@ async def list_api_keys(
             for key in api_keys_data
         ]
         
-        return ResponseResult.ok_data(data=APIKeyListResponse(
+        return APIKeyListResponse(
             api_keys=api_keys,
             total=len(api_keys)
-        ).dict())
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -112,10 +111,10 @@ async def regenerate_api_key(
             user_id=str(current_user.id)
         )
         
-        return ResponseResult.ok_data(data={
+        return {
             "api_key": new_api_key,
             "message": "API Key已重新生成"
-        })
+        }
         
     except ValueError as e:
         raise HTTPException(
@@ -146,7 +145,7 @@ async def revoke_api_key(
         )
         
         if success:
-            return ResponseResult.ok_data(data={"message": "API Key已撤销"})
+            return {"message": "API Key已撤销"}
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -182,7 +181,7 @@ async def get_api_key(
                 detail="API Key不存在"
             )
         
-        return ResponseResult.ok_data(data={
+        return {
             "id": str(api_key.id),
             "name": api_key.name,
             "enabled_modules": api_key.enabled_modules,
@@ -190,7 +189,7 @@ async def get_api_key(
             "created_at": api_key.created_at,
             "last_used_at": api_key.last_used_at,
             "expires_at": api_key.expires_at
-        })
+        }
         
     except HTTPException:
         raise
@@ -213,7 +212,7 @@ async def toggle_api_key(
     try:
         success = await api_key_service.toggle_api_key(db, str(current_user.id), api_key_id)
         if success:
-            return ResponseResult.ok_data(data={"message": "API Key状态更新成功"})
+            return {"message": "API Key状态更新成功"}
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

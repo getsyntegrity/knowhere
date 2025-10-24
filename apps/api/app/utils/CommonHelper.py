@@ -7,11 +7,13 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from app.utils.FileDownUpUtils import s3_upload_file
 
 
-def is_remote(path: str):
+def is_remote(path):
+    """检查路径是否为远程URL"""
     if path is None:
         return False
-    else:
-        return path.startswith("http://") or path.startswith("https://")
+    if not isinstance(path, str):
+        return False
+    return path.startswith("http://") or path.startswith("https://")
 
 async def load_file_bytes(file_path, *, file_url="", timeout=None):
     if isinstance(file_path, str) and is_remote(file_path):

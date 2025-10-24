@@ -10,7 +10,7 @@ from celery import Task
 from loguru import logger
 
 from app.core.celery_app import get_celery_app
-from app.core.state_machine import JobStateMachine, KBManagementState
+from app.core.state_machine import JobStateMachine, JobStatus
 from app.repositories.job_repository import JobRepository
 from app.repositories.job_result_repository import JobResultRepository
 from app.services.storage.file_upload_service import FileUploadService
@@ -84,6 +84,147 @@ class KBBaseTask(Task):
 
 
 # 文件上传任务已移除 - 文件通过S3直传处理
+
+
+@celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.upload_url_file_task')
+def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None, job_type: str = None):
+    """URL文件下载并上传到S3任务"""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    try:
+        result = loop.run_until_complete(_upload_url_file_async(
+            job_id, source_url, user_id, job_type
+        ))
+        return result
+    except Exception as e:
+        logger.error(f"URL文件上传任务失败: {e}")
+        raise self.retry(exc=e, countdown=60, max_retries=3)
+    finally:
+        if loop != asyncio.get_event_loop():
+            loop.close()
+
+
+async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job_type: str = None):
+    """异步URL文件下载并上传到S3"""
+    state_machine = JobStateMachine()
+    job_repo = JobRepository()
+    
+    # 初始化Redis服务
+    from app.services.redis import RedisServiceFactory
+    from app.services.redis.task_redis_service import TaskRedisService
+    redis_service = RedisServiceFactory.get_service()
+    task_service = TaskRedisService(redis_service)
+    
+    try:
+        # 第一次数据库连接：获取Job信息
+        async with get_db_context() as db:
+            job = await job_repo.get_job_by_id(db, job_id)
+            if not job:
+                raise ValueError("Job不存在")
+            s3_key = job.s3_key  # 提前获取s3_key，避免后续数据库连接问题
+        
+        # 更新进度：验证文件类型
+        await task_service.update_task_progress(
+            job_id, 3, "正在验证URL文件类型..."
+        )
+        
+        # 步骤1：验证URL文件类型（在下载前，防止下载不安全的文件）
+        from urllib.parse import urlparse
+        import os
+        parsed_url = urlparse(source_url)
+        url_path = parsed_url.path
+        file_extension = os.path.splitext(url_path)[1].lower()
+        
+        # 获取支持的文件扩展名
+        from app.core.constants.system import SystemConstants
+        all_supported_extensions = []
+        for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
+            all_supported_extensions.extend(category)
+        
+        if not file_extension or file_extension not in all_supported_extensions:
+            supported_formats = ", ".join(sorted(all_supported_extensions))
+            raise ValueError(f"不支持的文件类型 {file_extension}。仅支持以下格式：{supported_formats}")
+        
+        logger.info(f"URL文件类型验证通过: {file_extension}")
+        
+        # 更新进度：开始下载
+        await task_service.update_task_progress(
+            job_id, 10, "正在从URL下载文件..."
+        )
+        
+        # 步骤2：下载文件到临时目录
+        upload_service = FileUploadService()
+        temp_file_path = await upload_service._download_file_from_url(source_url)
+        
+        try:
+            # 更新进度：验证文件大小
+            await task_service.update_task_progress(
+                job_id, 30, "正在验证文件大小..."
+            )
+            
+            # 步骤3：验证文件大小（在上传S3前）
+            file_size = os.path.getsize(temp_file_path)
+            MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB限制
+            if file_size > MAX_FILE_SIZE:
+                raise ValueError(f"文件大小超过限制：{file_size / 1024 / 1024:.2f}MB > {MAX_FILE_SIZE / 1024 / 1024}MB")
+            
+            logger.info(f"文件大小验证通过: {file_size / 1024 / 1024:.2f}MB")
+            
+            # 更新进度：上传到S3
+            await task_service.update_task_progress(
+                job_id, 50, "正在上传文件到S3..."
+            )
+            
+            # 步骤4：上传到S3（使用job中预设的s3_key）
+            await upload_service._upload_to_s3(temp_file_path, s3_key, upload_service.uploads_bucket)
+            
+            logger.info(f"文件上传S3成功: {s3_key}")
+            
+        finally:
+            # 清理临时文件
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+                logger.debug(f"临时文件已清理: {temp_file_path}")
+        
+        # 更新进度：验证上传结果
+        await task_service.update_task_progress(
+            job_id, 80, "正在验证上传结果..."
+        )
+        
+        # 步骤5：验证S3文件存在
+        file_info = await upload_service.verify_s3_file_exists(s3_key)
+        if not file_info.get("exists"):
+            raise ValueError("S3文件验证失败")
+        
+        # 更新进度：完成
+        await task_service.update_task_progress(
+            job_id, 100, "URL文件上传完成，等待处理..."
+        )
+        
+        logger.info(f"URL文件上传完成，等待S3 webhook触发: {job_id} -> {s3_key}")
+        
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "s3_key": s3_key,
+            "file_size": file_info.get("size")
+        }
+        
+    except Exception as e:
+        logger.error(f"URL文件上传失败: {e}")
+        # 使用新的数据库连接标记失败
+        try:
+            async with get_db_context() as db:
+                await state_machine.mark_failed(db, job_id, str(e))
+        except Exception as db_error:
+            logger.error(f"标记任务失败时数据库错误: {db_error}")
+        raise
 
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.parse_and_vectorize_task')
@@ -169,24 +310,37 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             if not user_config:
                 raise ValueError("用户配置为空")
             
-            # 将用户配置保存到job的metadata中，供后续任务使用
-            job_metadata = job.job_metadata or {}
-            job_metadata["user_config"] = make_json_safe(user_config)
-            job.job_metadata = job_metadata
-            await db.commit()
-            logger.info(f"用户配置已保存到job metadata: {job_id}")
+            # 从job_metadata直接获取user_config（创建时已初始化）
+            from app.services.redis import RedisServiceFactory
+            from app.models.schemas.job_metadata import JobMetadataHelper
+            
+            redis_service = RedisServiceFactory.get_service()
+            job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
+            user_config = JobMetadataHelper.get_user_config(job_metadata)
+            
+            if not user_config:
+                raise ValueError("Job metadata中缺少用户配置")
             
             # 检查当前状态，如果是failed，先转换到pending
-            if job.current_state == KBManagementState.FAILED.value:
+            if job.status == JobStatus.FAILED.value:
                 await state_machine.transition(
-                    db, job_id, KBManagementState.PENDING.value,
+                    db, job_id, JobStatus.PENDING.value,
                     "retry_from_failed", None, "system"
                 )
             
-            # 更新状态：开始解析
+            # 更新状态：开始处理
             await state_machine.transition(
-                db, job_id, KBManagementState.PARSING.value,
-                "start_parsing", None, "system"
+                db, job_id, JobStatus.RUNNING.value,
+                "start_processing", None, "system"
+            )
+            
+            # 更新进度信息：开始解析
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 10, "正在解析文档..."
             )
             
             # 获取S3键和文件信息
@@ -202,28 +356,29 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             # 下载文件到本地临时目录
             from app.services.storage.file_upload_service import FileUploadService
             upload_service = FileUploadService()
-            file_url = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)
+            file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)
+            file_url = file_url_response["download_url"]  # 提取实际的URL字符串
             
-            # 准备解析参数 - 从S3键中提取文件名
-            filename = job.job_metadata.get("source_file_name")
+            # 准备解析参数 - 从job_metadata获取
+            filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
             logger.debug(f"filename: {filename}")
             
             # 调用修改后的解析逻辑（传入user_config）
             from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse
             
-            logger.debug(f"开始解析文件: {filename}, 类型: {job.job_metadata.get('doc_type', 'auto')}")
+            logger.debug(f"开始解析文件: {filename}, 类型: {JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')}")
             
             add_dir = await checkerboard_inject_parse(
                 file_full_path=file_url,
                 filename=filename,
                 user_config=user_config,  # 传入用户配置
-                kb_dir=job.job_metadata.get("kb_dir", "默认目录"),
-                doc_type=job.job_metadata.get("doc_type", "auto"),
-                smart_title_parse=job.job_metadata.get("smart_title_parse", True),
-                summary_image=job.job_metadata.get("summary_image", True),
-                summary_table=job.job_metadata.get("summary_table", True),
-                summary_txt=job.job_metadata.get("summary_txt", True),
-                add_frag_desc=job.job_metadata.get("add_frag_desc", ""),
+                kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),
+                doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),
+                smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
+                summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
+                summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
+                summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),
+                add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
             )
             
             if not add_dir:
@@ -232,10 +387,9 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             
             logger.info(f"文件解析成功: {add_dir}")
             
-            # 更新状态：解析完成，开始向量化
-            await state_machine.transition(
-                db, job_id, KBManagementState.VECTORIZING.value,
-                "parsing_completed", None, "system"
+            # 更新进度信息：解析完成，开始向量化
+            await task_service.update_task_progress(
+                job_id, 30, "解析完成，正在向量化..."
             )
             
             # 调用旧方案的向量化逻辑
@@ -265,15 +419,9 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 logger.warning("user_info中没有all_contents_df数据，保存空chunks")
                 await chunks_redis_service.save_chunks(job_id, [])
             
-            # 更新状态：向量化完成
-            # 安全地序列化user_info，避免DataFrame等不可序列化对象
-            safe_user_info = make_json_safe(user_info)
-            await state_machine.transition(
-                db, job_id, KBManagementState.VECTORIZED.value,
-                "vectorization_completed",  # transition_reason
-                None,  # operator_id
-                "system",  # operator_type
-                {"add_dir": add_dir, "user_info": safe_user_info}  # metadata
+            # 更新进度信息：向量化完成
+            await task_service.update_task_progress(
+                job_id, 70, "向量化完成，正在存储到数据库..."
             )
             
             return {
@@ -343,38 +491,24 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             if not job:
                 raise ValueError("Job不存在")
             
-            # 从job_metadata获取用户配置，如缺失则回退到Redis
-            user_config = (job.job_metadata or {}).get("user_config") if job.job_metadata else None
-            if not user_config:
-                from app.services.redis import RedisServiceFactory
-                from app.services.redis.user_redis_service import UserRedisService
-                from app.services.user.user_config_service import UserConfigService
-
-                redis_service = RedisServiceFactory.get_service()
-                user_redis_service = UserRedisService(redis_service)
-                user_id_str = str(job.user_id)  # 确保user_id是字符串
-                user_config = await user_redis_service.get_user_config(user_id_str)
-
-                if not user_config:
-                    logger.warning(f"Job {job_id} metadata缺少用户配置，尝试重新初始化用户配置")
-                    user_config_str = UserConfigService.init_user(user_id_str)
-                    user_config = json.loads(user_config_str)
-                    await user_redis_service.save_user_config(user_id_str, user_config)
-
-                if not user_config:
-                    raise ValueError("Job中缺少用户配置")
-
-                metadata_update = dict(job.job_metadata or {})
-                metadata_update["user_config"] = make_json_safe(user_config)
-                job.job_metadata = metadata_update
-                await db.commit()
-                await db.refresh(job)
+            # 从job_metadata获取用户配置（创建时已初始化）
+            from app.services.redis import RedisServiceFactory
+            from app.models.schemas.job_metadata import JobMetadataHelper
             
-            # 更新状态：开始存储数据库
-            # 注意：此时状态应该已经是VECTORIZED（由上一个任务设置）
-            await state_machine.transition(
-                db, job_id, KBManagementState.STORING_DB.value,
-                "start_storing_db", None, "system"
+            redis_service = RedisServiceFactory.get_service()
+            job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
+            user_config = JobMetadataHelper.get_user_config(job_metadata)
+            
+            if not user_config:
+                raise ValueError("Job metadata中缺少用户配置")
+            
+            # 更新进度信息：开始存储数据库
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 80, "正在存储到数据库..."
             )
             
             # 从Redis获取chunks数据
@@ -424,9 +558,8 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 if kb_records:
                     await create_update_kb(kb_records)
             
-            job_metadata = job.job_metadata or {}
-
-            source_file_name = job_metadata.get("source_file_name") or job.file_path or job_metadata.get("source_url")
+            # 从job_metadata获取信息
+            source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or job.file_path or JobMetadataHelper.get_field(job_metadata, "source_url")
             if isinstance(source_file_name, str) and "/" in source_file_name:
                 source_file_name = os.path.basename(source_file_name)
 
@@ -440,7 +573,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             }
 
             # 处理 result_mode 逻辑
-            requested_mode = job_metadata.get("result_mode", "auto")
+            requested_mode = JobMetadataHelper.get_field(job_metadata, "result_mode", "auto")
             inline_threshold = getattr(settings, "RESULT_INLINE_THRESHOLD", 3 * 1024 * 1024)
             result_json_bytes = json.dumps(result_payload, ensure_ascii=False).encode("utf-8")
 
@@ -471,21 +604,19 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             )
 
             await job_result_repo.replace_chunks(db, job_result.id, result_payload.get("chunks", []))
-
-            metadata_update = dict(job_metadata)
-            metadata_update["result_mode"] = delivery_mode
-            metadata_update.pop("result", None)
-            job.job_metadata = metadata_update
-            await db.commit()
-
-            # 更新状态：数据库存储完成
-            await state_machine.transition(
-                db, job_id, KBManagementState.DB_STORED.value,
-                "db_storage_completed", None, "system"
+            
+            # 更新进度信息：数据库存储完成
+            await task_service.update_task_progress(
+                job_id, 95, "数据库存储完成，正在生成结果..."
             )
             
             # 安全地获取kb_records的长度
             stored_count = len(kb_records) if kb_records is not None else 0
+            
+            # 更新进度信息：任务完成
+            await task_service.update_task_progress(
+                job_id, 100, "任务完成！"
+            )
             
             # 直接标记任务为完成（Webhook发送与任务完成状态无关）
             await state_machine.mark_completed(db, job_id, {
@@ -568,8 +699,16 @@ async def _send_webhook_async(prev_result: dict, user_id: str):
                 logger.warning(f"Job {job_id} 不存在，跳过Webhook")
                 return {"status": "skipped", "webhook_sent": False}
             
+            # 从job_metadata获取webhook配置
+            from app.services.redis import RedisServiceFactory
+            from app.models.schemas.job_metadata import JobMetadataHelper
+            
+            redis_service = RedisServiceFactory.get_service()
+            job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
+            webhook_config = JobMetadataHelper.get_webhook(job_metadata)
+            
             # 检查是否需要发送Webhook
-            if not job.webhook_enabled or not job.webhook_url:
+            if not job.webhook_enabled or not webhook_config or not webhook_config.get("url"):
                 logger.info(f"Job {job_id} Webhook未启用，跳过")
                 return {"status": "skipped", "webhook_sent": False}
             
@@ -603,7 +742,7 @@ async def _send_webhook_async(prev_result: dict, user_id: str):
 
             webhook_result = await webhook_service.send_webhook(
                 job_id=job_id,
-                webhook_url=job.webhook_url,
+                webhook_url=webhook_config["url"],
                 payload=webhook_payload
             )
             

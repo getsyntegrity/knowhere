@@ -103,27 +103,42 @@ async def _authenticate_jwt(request: Request, db: AsyncSession) -> Optional[User
         return None
     
     try:
+        logger.debug("开始JWT认证流程")
         # 使用FastAPI Users的JWT策略验证token
         strategy = auth_backend.get_strategy()
-        from app.core.users import get_user_db
-        user_db = await anext(get_user_db(db))
-        user_manager = UserManager(user_db)
+        logger.debug("获取JWT策略成功")
         
+        from app.core.users import get_user_db
+        logger.debug("开始获取用户数据库会话")
+        user_db = await anext(get_user_db(db))
+        logger.debug("获取用户数据库会话成功")
+        
+        user_manager = UserManager(user_db)
+        logger.debug("创建用户管理器成功")
+        
+        logger.debug("开始验证JWT token")
         payload = await strategy.read_token(token, user_manager)
+        logger.debug(f"JWT token验证结果: {payload is not None}")
+        
         if not payload:
             return None
         
         # 处理payload
         if isinstance(payload, dict):
             user_id = payload.get("sub")
+            logger.debug(f"从payload获取用户ID: {user_id}")
             if not user_id:
                 return None
+            logger.debug("开始获取用户信息")
             user = await user_manager.get(user_id)
+            logger.debug(f"获取用户信息结果: {user is not None}")
         else:
             # 如果payload是User对象，直接返回
             user = payload if hasattr(payload, 'id') else None
+            logger.debug(f"payload是User对象: {user is not None}")
         
         if not user or not user.is_active:
+            logger.debug(f"用户无效或未激活: user={user is not None}, active={user.is_active if user else False}")
             return None
         
         logger.debug(f"JWT认证成功：用户 {user.email}")

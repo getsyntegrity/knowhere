@@ -31,7 +31,7 @@ class StateSyncService:
             # 更新Redis缓存
             await self._update_redis_from_job(job)
             
-            logger.info(f"Job {job_id} 状态已同步到Redis: {job.current_state}")
+            logger.info(f"Job {job_id} 状态已同步到Redis: {job.status}")
             return True
             
         except Exception as e:
@@ -54,13 +54,12 @@ class StateSyncService:
                 return False
             
             # 检查状态是否一致
-            if job.current_state == redis_state:
+            if job.status == redis_state:
                 logger.debug(f"Job {job_id} 状态已一致，无需同步")
                 return True
             
             # 更新数据库状态
-            job.current_state = redis_state
-            job.status = self._get_job_status_from_state(redis_state)
+            job.status = redis_state
             job.updated_at = datetime.utcnow()
             
             await db.commit()
@@ -78,7 +77,7 @@ class StateSyncService:
         try:
             # 获取数据库状态
             job = await self._get_job(db, job_id)
-            db_state = job.current_state if job else None
+            db_state = job.status if job else None
             
             # 获取Redis状态
             redis_state = await self._get_redis_state(job_id)
@@ -123,7 +122,7 @@ class StateSyncService:
                 
                 # 以数据库状态为准进行修复
                 job = await self._get_job(db, job_id)
-                if job and job.current_state:
+                if job and job.status:
                     # 同步到Redis
                     await self._update_redis_from_job(job)
                     results[job_id] = True
@@ -202,7 +201,7 @@ class StateSyncService:
     async def _get_processing_jobs_from_db(self, db: AsyncSession) -> List[Job]:
         """从数据库获取处理中的任务"""
         result = await db.execute(
-            select(Job).where(Job.status.in_(["pending", "processing"]))
+            select(Job).where(Job.status.in_(["pending", "running"]))
         )
         return result.scalars().all()
     
@@ -222,22 +221,21 @@ class StateSyncService:
             status_key = redis_key_builder.task_status(job.job_id)
             await self.redis.set(
                 status_key, 
-                job.current_state or "pending", 
+                job.status or "pending", 
                 ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK)
             )
             
             # 更新进度信息
             progress_key = redis_key_builder.task_progress(job.job_id)
             progress_data = {
-                "status": job.status,
-                "current_state": job.current_state or "pending",
+                "status": job.status or "pending",
                 "timestamp": str(int(time.time()))
             }
             await self.redis.hset(progress_key, mapping=progress_data)
             await self.redis.expire(progress_key, redis_key_builder.get_key_ttl(RedisKeyType.TASK))
             
             # 添加到处理中任务集合
-            if job.status in ["pending", "processing"]:
+            if job.status in ["pending", "running"]:
                 processing_tasks_key = redis_key_builder.set_processing_tasks()
                 await self.redis.sadd(processing_tasks_key, job.job_id)
                 await self.redis.expire(processing_tasks_key, redis_key_builder.get_key_ttl(RedisKeyType.SET))
@@ -266,16 +264,3 @@ class StateSyncService:
         except Exception as e:
             logger.error(f"清理Redis任务 {task_id} 数据失败: {e}")
     
-    def _get_job_status_from_state(self, state: str) -> str:
-        """根据状态获取Job状态"""
-        if not state:
-            return "pending"
-        
-        if state == "failed":
-            return "failed"
-        if state == "completed":
-            return "completed"
-        if state == "pending":
-            return "pending"
-        
-        return "processing"

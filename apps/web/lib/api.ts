@@ -7,15 +7,6 @@
 // 类型定义
 // ============================================
 
-/**
- * 后端统一响应格式
- */
-export interface ApiResponse<T = any> {
-  code: number
-  msg: string
-  data: T
-  timestamps: number
-}
 
 /**
  * API错误类
@@ -217,7 +208,6 @@ export interface WebhookConfig {
 }
 
 export interface ParsingParams {
-  kb_dir: string
   doc_type?: 'auto' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'txt' | 'md'
   smart_title_parse?: boolean
   summary_image?: boolean
@@ -231,7 +221,6 @@ export interface JobCreate {
   source_url?: string
   file_name?: string
   data_id?: string
-  parsing_params?: ParsingParams
   webhook?: WebhookConfig
   result_mode?: 'auto' | 'inline' | 'url'
 }
@@ -244,7 +233,7 @@ export interface JobResponse {
   created_at: string
   result_mode: 'auto' | 'inline' | 'url'
   
-  // waiting_for_upload状态特有字段
+  // waiting-file状态特有字段
   upload_url?: string
   upload_headers?: Record<string, string>
   expires_in?: number
@@ -407,17 +396,8 @@ class KnowhereAPI {
         )
       }
 
-      // 检查是否是ResponseResult格式（有code字段）
-      if (result.code !== undefined) {
-        // 这是我们的ResponseResult格式
-        if (result.code !== 200) {
-          throw new ApiError(result.msg || '操作失败', result.code)
-        }
-        return result.data
-      } else {
-        // 这是FastAPI Users的标准格式或其他格式
-        return result
-      }
+      // 直接返回结果，不再检查ResponseResult格式
+      return result
     } catch (error) {
       // 网络错误或其他异常
       if (error instanceof ApiError) {

@@ -7,7 +7,6 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, get_current_user
-from app.core.response.ResponseResult import ResponseResult
 from app.models.database.user import User
 from app.repositories.job_repository import JobRepository
 from app.core.state_machine import JobStateMachine
@@ -51,13 +50,12 @@ async def list_all_jobs(
         if status:
             jobs = [job for job in jobs if job.status == status]
         
-        return ResponseResult.ok_data(data={
+        return {
             "jobs": [
                 {
                     "job_id": job.job_id,
                     "job_type": job.job_type,
                     "status": job.status,
-                    "current_state": job.current_state,
                     "user_id": job.user_id,
                     "created_at": job.created_at,
                     "updated_at": job.updated_at
@@ -67,7 +65,7 @@ async def list_all_jobs(
             "total": len(jobs),
             "page": page,
             "page_size": page_size
-        })
+        }
         
     except HTTPException:
         raise
@@ -114,7 +112,7 @@ async def get_job_stats(
             "success_rate": len(completed_jobs) / max(1, len(completed_jobs) + len(failed_jobs))
         }
         
-        return ResponseResult.ok_data(data=stats)
+        return stats
         
     except Exception as e:
         raise HTTPException(
@@ -186,11 +184,11 @@ async def retry_job(
                 user_id=str(job.user_id)
             )
         
-        return ResponseResult.ok_data(data={
+        return {
             "job_id": job_id,
             "status": "retrying",
             "message": "Job重试已启动"
-        })
+        }
         
     except HTTPException:
         raise
@@ -230,11 +228,11 @@ async def delete_job(
         await db.delete(job)
         await db.commit()
         
-        return ResponseResult.ok_data(data={
+        return {
             "job_id": job_id,
             "status": "deleted",
             "message": "Job已删除"
-        })
+        }
         
     except HTTPException:
         raise

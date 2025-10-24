@@ -8,7 +8,7 @@ from celery import Task
 from loguru import logger
 
 from app.core.celery_app import get_celery_app
-from app.core.state_machine import JobStateMachine, TableFillState
+from app.core.state_machine import JobStateMachine, JobStatus
 from app.repositories.job_repository import JobRepository
 from app.repositories.job_result_repository import JobResultRepository
 from app.services.storage.file_upload_service import FileUploadService
@@ -68,7 +68,7 @@ class TableFillBaseTask(Task):
                         async with get_db_context() as db:
                             # 检查当前状态，决定使用哪种重试方式
                             job = await state_machine._get_job(db, job_id)
-                            if job and job.current_state == "failed":
+                            if job and job.status == "failed":
                                 # 失败后重试 - 重新启动整个工作流
                                 await state_machine.handle_failed_retry(db, job_id, {
                                     "retry_count": self.request.retries,
@@ -140,9 +140,18 @@ async def _upload_file_async(job_id: str, source_type: str, file_path: Optional[
     job_result_repo = JobResultRepository()
     
     try:
-        # 更新状态：开始上传
+        # 更新状态：开始处理
         async with get_db_context() as db:
-            await state_machine.transition(db, job_id, TableFillState.UPLOADING.value)
+            await state_machine.transition(db, job_id, JobStatus.RUNNING.value)
+            
+            # 更新进度信息：开始处理
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 5, "开始处理表格填充任务..."
+            )
             
             # 执行上传
             if source_type == "file":
@@ -160,14 +169,26 @@ async def _upload_file_async(job_id: str, source_type: str, file_path: Optional[
                 logger.info(f"文件已通过S3直传: {s3_key}")
                 
             elif source_type == "url":
-                s3_key = await upload_service.handle_url_upload(file_url, job_id)
-                # 更新Job的S3键
-                await job_repo.update_job_s3_key(db, job_id, s3_key)
+                # URL文件已在create_job阶段上传到S3，直接验证存在性
+                job = await job_repo.get_job_by_id(db, job_id)
+                if not job or not job.s3_key:
+                    raise ValueError(f"Job {job_id} 缺少S3键信息")
+                
+                # 验证S3文件存在
+                file_info = await upload_service.verify_s3_file_exists(job.s3_key)
+                if not file_info.get("exists"):
+                    raise ValueError(f"S3文件不存在: {job.s3_key}")
+                
+                s3_key = job.s3_key
+                logger.info(f"URL文件已上传到S3: {s3_key}")
             else:
                 raise ValueError(f"不支持的文件来源类型: {source_type}")
             
             # 更新状态：上传完成
-            await state_machine.transition(db, job_id, TableFillState.UPLOADED.value)
+            # 更新进度信息：文件上传完成
+            await task_service.update_task_progress(
+                job_id, 10, "文件上传完成，开始提取表格..."
+            )
             
             return {"status": "success", "s3_key": s3_key, "job_id": job_id}
             
@@ -219,7 +240,14 @@ async def _extract_table_async(job_id: str, s3_key: str, user_id: str):
     try:
         # 更新状态：开始提取表格
         async with get_db_context() as db:
-            await state_machine.transition(db, job_id, TableFillState.EXTRACTING_TABLE.value)
+            # 更新进度信息：开始提取表格
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 20, "正在提取表格..."
+            )
             
             # TODO: 实际业务逻辑 - 提取表格
             # 这里应该实现：
@@ -249,10 +277,9 @@ async def _extract_table_async(job_id: str, s3_key: str, user_id: str):
             
             # 更新状态：表格提取完成
             safe_table_data = make_json_safe(table_data)
-            await state_machine.transition(
-                db, job_id, TableFillState.TABLE_EXTRACTED.value,
-                "table_extraction_completed", None, "system",
-                {"table_data": safe_table_data}
+            # 更新进度信息：表格提取完成
+            await task_service.update_task_progress(
+                job_id, 30, "表格提取完成，开始搜索知识库..."
             )
             
             return {"status": "success", "table_data": table_data, "job_id": job_id}
@@ -304,7 +331,14 @@ async def _kb_search_async(job_id: str, table_data: Dict[str, Any], user_id: str
     try:
         # 更新状态：开始知识库检索
         async with get_db_context() as db:
-            await state_machine.transition(db, job_id, TableFillState.KB_SEARCHING.value)
+            # 更新进度信息：开始搜索知识库
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 40, "正在搜索知识库..."
+            )
             
             # TODO: 实际业务逻辑 - 知识库检索
             # 这里应该实现：
@@ -333,10 +367,9 @@ async def _kb_search_async(job_id: str, table_data: Dict[str, Any], user_id: str
             
             # 更新状态：知识库检索完成
             safe_search_results = make_json_safe(search_results)
-            await state_machine.transition(
-                db, job_id, TableFillState.KB_SEARCHED.value,
-                "kb_search_completed", None, "system",
-                {"search_results": safe_search_results}
+            # 更新进度信息：知识库搜索完成
+            await task_service.update_task_progress(
+                job_id, 50, "知识库搜索完成，开始LLM处理..."
             )
             
             return {"status": "success", "search_results": search_results, "job_id": job_id}
@@ -388,7 +421,14 @@ async def _llm_process_async(job_id: str, search_results: Dict[str, Any], user_i
     try:
         # 更新状态：开始LLM处理
         async with get_db_context() as db:
-            await state_machine.transition(db, job_id, TableFillState.LLM_PROCESSING.value)
+            # 更新进度信息：开始LLM处理
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 60, "正在LLM处理..."
+            )
             
             # 从状态历史中获取table_data
             from app.repositories.job_repository import JobRepository
@@ -426,10 +466,9 @@ async def _llm_process_async(job_id: str, search_results: Dict[str, Any], user_i
             
             # 更新状态：LLM处理完成
             safe_llm_results = make_json_safe(llm_results)
-            await state_machine.transition(
-                db, job_id, TableFillState.LLM_PROCESSED.value,
-                "llm_processing_completed", None, "system",
-                {"llm_results": safe_llm_results}
+            # 更新进度信息：LLM处理完成
+            await task_service.update_task_progress(
+                job_id, 70, "LLM处理完成，开始填充表格..."
             )
             
             return {"status": "success", "llm_results": llm_results, "job_id": job_id}
@@ -481,7 +520,14 @@ async def _fill_table_async(job_id: str, llm_results: Dict[str, Any], user_id: s
     try:
         # 更新状态：开始填充表格
         async with get_db_context() as db:
-            await state_machine.transition(db, job_id, TableFillState.FILLING_TABLE.value)
+            # 更新进度信息：开始填充表格
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 80, "正在填充表格..."
+            )
             
             # 从状态历史中获取table_data
             from app.repositories.job_repository import JobRepository
@@ -525,10 +571,9 @@ async def _fill_table_async(job_id: str, llm_results: Dict[str, Any], user_id: s
             
             # 更新状态：表格填充完成
             safe_filled_table_data = make_json_safe(filled_table_data)
-            await state_machine.transition(
-                db, job_id, TableFillState.TABLE_FILLED.value,
-                "table_filling_completed", None, "system",
-                {"filled_table_data": safe_filled_table_data}
+            # 更新进度信息：表格填充完成
+            await task_service.update_task_progress(
+                job_id, 90, "表格填充完成，正在生成结果..."
             )
             
             return {"status": "success", "filled_table_data": filled_table_data, "job_id": job_id}
@@ -582,7 +627,14 @@ async def _generate_result_async(job_id: str, filled_table_data: Dict[str, Any],
     try:
         # 更新状态：开始生成结果
         async with get_db_context() as db:
-            await state_machine.transition(db, job_id, TableFillState.GENERATING_RESULT.value)
+            # 更新进度信息：开始生成结果
+            from app.services.redis import RedisServiceFactory
+            from app.services.redis.task_redis_service import TaskRedisService
+            redis_service = RedisServiceFactory.get_service()
+            task_service = TaskRedisService(redis_service)
+            await task_service.update_task_progress(
+                job_id, 95, "正在生成最终结果..."
+            )
             
             # 生成结果文件（Excel格式）
             import tempfile
@@ -616,6 +668,7 @@ async def _generate_result_async(job_id: str, filled_table_data: Dict[str, Any],
                 result_s3_key=result_s3_key,
                 result_size=file_size
             )
+            job_result_repo = JobResultRepository()
             await job_result_repo.replace_chunks(db, job_result.id, [])
 
             # 更新状态：任务完成

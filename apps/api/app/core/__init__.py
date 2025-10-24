@@ -24,8 +24,7 @@ from .dependencies import (
 
 # 响应处理
 from .response import (
-    ResponseCode,
-    ResponseResult
+    ResponseCode
 )
 
 # 常量定义
@@ -65,7 +64,6 @@ __all__ = [
     
     # 响应
     'ResponseCode',
-    'ResponseResult',
     
     # 常量
     'SystemConstants',

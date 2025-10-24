@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
-import { api, JobResponse, JobStatus, JobCreate, ParsingParams } from '@/lib/api'
+import { api, JobResponse, JobStatus, JobCreate } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,14 +45,12 @@ export default function JobsPage() {
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [selectedJob, setSelectedJob] = useState<JobResponse | null>(null)
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null)
-  const [directories, setDirectories] = useState<Array<{id: string, title: string}>>([])
-
+  const [confirmingUpload, setConfirmingUpload] = useState<Record<string, boolean>>({})
   // 创建任务表单状态
   const [createForm, setCreateForm] = useState<{
     source_type: 'file' | 'url'
     source_url: string
     data_id: string
-    parsing_params: ParsingParams
     webhook: {
       url: string
       secret: string
@@ -62,15 +60,6 @@ export default function JobsPage() {
     source_type: 'file',
     source_url: '',
     data_id: '',
-    parsing_params: {
-      kb_dir: '',
-      doc_type: 'auto',
-      smart_title_parse: true,
-      summary_image: false,
-      summary_table: true,
-      summary_txt: true,
-      add_frag_desc: ''
-    },
     webhook: {
       url: '',
       secret: ''
@@ -86,7 +75,6 @@ export default function JobsPage() {
   useEffect(() => {
     if (user) {
       loadJobs()
-      loadDirectories()
     }
   }, [user])
 
@@ -114,26 +102,6 @@ export default function JobsPage() {
     }
   }
 
-  const loadDirectories = async () => {
-    try {
-      const response = await api.getDirectories()
-      const dirs = response || []
-      setDirectories(dirs)
-      
-      // 设置默认目录
-      if (dirs.length > 0) {
-        setCreateForm(prev => ({
-          ...prev,
-          parsing_params: {
-            ...prev.parsing_params,
-            kb_dir: dirs[0].title
-          }
-        }))
-      }
-    } catch (error) {
-      console.error('Failed to load directories:', error)
-    }
-  }
 
   const loadJobStatus = async (jobId: string) => {
     try {
@@ -142,6 +110,24 @@ export default function JobsPage() {
     } catch (error) {
       console.error('Failed to load job status:', error)
       toast.error('加载任务状态失败')
+    }
+  }
+
+  const handleConfirmUpload = async (jobId: string) => {
+    try {
+      setConfirmingUpload(prev => ({ ...prev, [jobId]: true }))
+      
+      await api.confirmUpload(jobId)
+      
+      toast.success('上传确认成功', '任务已开始处理')
+      
+      // 刷新任务列表
+      await loadJobs()
+    } catch (error: any) {
+      console.error('确认上传失败:', error)
+      toast.error('确认上传失败', error.message || '请稍后重试')
+    } finally {
+      setConfirmingUpload(prev => ({ ...prev, [jobId]: false }))
     }
   }
 
@@ -167,7 +153,6 @@ export default function JobsPage() {
           source_type: 'url',
           source_url: createForm.source_url,
           data_id: createForm.data_id || undefined,
-          parsing_params: createForm.parsing_params,
           webhook: createForm.webhook.url ? createForm.webhook : undefined,
           result_mode: createForm.result_mode
         }
@@ -202,15 +187,6 @@ export default function JobsPage() {
       source_type: 'file',
       source_url: '',
       data_id: '',
-      parsing_params: {
-        kb_dir: directories[0]?.title || '',
-        doc_type: 'auto',
-        smart_title_parse: true,
-        summary_image: false,
-        summary_table: true,
-        summary_txt: true,
-        add_frag_desc: ''
-      },
       webhook: {
         url: '',
         secret: ''
@@ -261,7 +237,7 @@ export default function JobsPage() {
         return <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
       case 'pending':
         return <Clock className="h-4 w-4 text-yellow-500" />
-      case 'waiting_for_upload':
+      case 'waiting-file':
         return <Upload className="h-4 w-4 text-blue-500" />
       default:
         return <AlertCircle className="h-4 w-4 text-gray-500" />
@@ -278,7 +254,7 @@ export default function JobsPage() {
         return 'bg-blue-100 text-blue-800'
       case 'pending':
         return 'bg-yellow-100 text-yellow-800'
-      case 'waiting_for_upload':
+      case 'waiting-file':
         return 'bg-blue-100 text-blue-800'
       default:
         return 'bg-gray-100 text-gray-800'
@@ -287,7 +263,7 @@ export default function JobsPage() {
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'waiting_for_upload':
+      case 'waiting-file':
         return '等待上传'
       case 'pending':
         return '排队中'
@@ -359,7 +335,7 @@ export default function JobsPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部状态</SelectItem>
-            <SelectItem value="waiting_for_upload">等待上传</SelectItem>
+            <SelectItem value="waiting-file">等待上传</SelectItem>
             <SelectItem value="pending">排队中</SelectItem>
             <SelectItem value="running">处理中</SelectItem>
             <SelectItem value="done">已完成</SelectItem>
@@ -441,6 +417,26 @@ export default function JobsPage() {
                       <Eye className="mr-1 h-3 w-3" />
                       查看详情
                     </Button>
+                    {(job.status === 'waiting-file' || job.status === 'pending') && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleConfirmUpload(job.job_id)}
+                        disabled={confirmingUpload[job.job_id]}
+                      >
+                        {confirmingUpload[job.job_id] ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            确认中...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            确认上传
+                          </>
+                        )}
+                      </Button>
+                    )}
                     {job.status === 'done' && (job.result_url || job.result) && (
                       <Button
                         size="sm"
@@ -484,7 +480,6 @@ export default function JobsPage() {
           {showUploadFlow && selectedFile ? (
             <FileUploadFlow
               file={selectedFile}
-              parsingParams={createForm.parsing_params}
               dataId={createForm.data_id || undefined}
               webhook={createForm.webhook.url ? createForm.webhook : undefined}
               resultMode={createForm.result_mode}
@@ -596,116 +591,6 @@ export default function JobsPage() {
                 </div>
               )}
 
-              {/* 知识库配置 */}
-              <div className="space-y-4 border-t pt-4">
-                <h4 className="font-medium">知识库配置</h4>
-                
-                <div>
-                  <Label htmlFor="kb_dir">知识库目录</Label>
-                  <Select
-                    value={createForm.parsing_params.kb_dir}
-                    onValueChange={(value) => setCreateForm({
-                      ...createForm,
-                      parsing_params: { ...createForm.parsing_params, kb_dir: value }
-                    })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择目录" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {directories.map((dir) => (
-                        <SelectItem key={dir.id} value={dir.title}>
-                          {dir.title}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="doc_type">文档类型</Label>
-                  <Select
-                    value={createForm.parsing_params.doc_type || 'auto'}
-                    onValueChange={(value) => setCreateForm({
-                      ...createForm,
-                      parsing_params: { ...createForm.parsing_params, doc_type: value as any }
-                    })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">自动检测</SelectItem>
-                      <SelectItem value="pdf">PDF</SelectItem>
-                      <SelectItem value="docx">Word文档</SelectItem>
-                      <SelectItem value="xlsx">Excel表格</SelectItem>
-                      <SelectItem value="pptx">PowerPoint</SelectItem>
-                      <SelectItem value="txt">文本文件</SelectItem>
-                      <SelectItem value="md">Markdown</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="smart_title_parse">智能标题解析</Label>
-                    <Switch
-                      id="smart_title_parse"
-                      checked={createForm.parsing_params.smart_title_parse}
-                      onCheckedChange={(checked) => setCreateForm({
-                        ...createForm,
-                        parsing_params: { ...createForm.parsing_params, smart_title_parse: checked }
-                      })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="summary_image">图像摘要</Label>
-                    <Switch
-                      id="summary_image"
-                      checked={createForm.parsing_params.summary_image}
-                      onCheckedChange={(checked) => setCreateForm({
-                        ...createForm,
-                        parsing_params: { ...createForm.parsing_params, summary_image: checked }
-                      })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="summary_table">表格摘要</Label>
-                    <Switch
-                      id="summary_table"
-                      checked={createForm.parsing_params.summary_table}
-                      onCheckedChange={(checked) => setCreateForm({
-                        ...createForm,
-                        parsing_params: { ...createForm.parsing_params, summary_table: checked }
-                      })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="summary_txt">文本摘要</Label>
-                    <Switch
-                      id="summary_txt"
-                      checked={createForm.parsing_params.summary_txt}
-                      onCheckedChange={(checked) => setCreateForm({
-                        ...createForm,
-                        parsing_params: { ...createForm.parsing_params, summary_txt: checked }
-                      })}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <Label htmlFor="add_frag_desc">额外描述</Label>
-                  <Textarea
-                    id="add_frag_desc"
-                    placeholder="针对文档的人工描述..."
-                    value={createForm.parsing_params.add_frag_desc}
-                    onChange={(e) => setCreateForm({
-                      ...createForm,
-                      parsing_params: { ...createForm.parsing_params, add_frag_desc: e.target.value }
-                    })}
-                  />
-                </div>
-              </div>
 
               {/* 可选配置 */}
               <div className="space-y-4 border-t pt-4">

@@ -73,7 +73,7 @@ class TaskRedisService:
             await self.redis.set(result_key, result, ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK))
             
             # 更新任务状态为完成
-            await self.set_task_status(task_id, "completed")
+            await self.set_task_status(task_id, "done")
             
             # 从处理中任务集合移除
             processing_tasks_key = redis_key_builder.set_processing_tasks()
