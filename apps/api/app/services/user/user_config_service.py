@@ -6,17 +6,12 @@ import os
 import json
 import shutil
 import pandas as pd
-import numpy as np
 import math
-import torch
-import uuid
 from typing import Dict, Any, Optional
 from loguru import logger
 
 from app.core.config import settings
-from app.utils.UrlFileReaderUtils import UrlFileReader
-from app.utils.FileDownUpUtils import get_pub_fileurl
-from app.services.common.kb_utils import clean_file, path_handle, check_internet
+from app.services.common.kb_utils import clean_file, path_handle
 from app.services.common.model_service import ModelService
 
 
@@ -56,81 +51,126 @@ class UserConfigService:
             kb_data_folder: 知识库数据文件夹
             kb_vecs_folder: 知识库向量文件夹
         """
-        subfolders = settings.DEFAULT_FOLDERS.split(",")
+        # 解析默认文件夹配置，处理特殊字符
+        subfolders = [folder.strip() for folder in settings.DEFAULT_FOLDERS.split(",") if folder.strip()]
         
-        # 分别检查并创建两个目录
-        data_folder_created = False
+        # 创建主目录
+        UserConfigService._ensure_directory_exists(kb_data_folder, "数据目录")
+        UserConfigService._ensure_directory_exists(kb_vecs_folder, "向量目录")
         
-        # 检查并创建数据目录
-        if not os.path.exists(kb_data_folder):
-            os.makedirs(kb_data_folder, exist_ok=True)
-            data_folder_created = True
-            logger.debug(f"创建数据目录: {kb_data_folder}")
+        # 创建所有必需的子目录
+        UserConfigService._create_subfolders(kb_data_folder, subfolders)
+        
+        # 复制配置文件（仅在数据目录不存在时）
+        if not os.path.exists(kb_data_folder) or not os.listdir(kb_data_folder):
+            UserConfigService._copy_config_files(kb_data_folder)
+        
+        # 验证目录结构
+        UserConfigService._validate_directory_structure(kb_data_folder, kb_vecs_folder, subfolders)
+        
+        logger.info(f"用户目录结构检查完成 - 数据目录: {kb_data_folder}, 向量目录: {kb_vecs_folder}")
+    
+    @staticmethod
+    def _ensure_directory_exists(directory_path: str, directory_type: str) -> None:
+        """
+        确保目录存在
+        
+        Args:
+            directory_path: 目录路径
+            directory_type: 目录类型（用于日志）
+        """
+        if not os.path.exists(directory_path):
+            os.makedirs(directory_path, exist_ok=True)
+            logger.debug(f"创建{directory_type}: {directory_path}")
         else:
-            logger.debug(f"数据目录已存在: {kb_data_folder}")
+            logger.debug(f"{directory_type}已存在: {directory_path}")
+    
+    @staticmethod
+    def _create_subfolders(parent_folder: str, subfolders: list) -> None:
+        """
+        创建子目录
         
-        # 检查并创建向量目录
-        if not os.path.exists(kb_vecs_folder):
-            os.makedirs(kb_vecs_folder, exist_ok=True)
-            logger.debug(f"创建向量目录: {kb_vecs_folder}")
-        else:
-            logger.debug(f"向量目录已存在: {kb_vecs_folder}")
+        Args:
+            parent_folder: 父目录路径
+            subfolders: 子目录名称列表
+        """
+        for subfolder in subfolders:
+            sub_path = os.path.join(parent_folder, subfolder)
+            UserConfigService._ensure_directory_exists(sub_path, f"子目录({subfolder})")
+    
+    @staticmethod
+    def _copy_config_files(kb_data_folder: str) -> None:
+        """
+        复制配置文件到用户目录
         
-        # 如果数据目录是新创建的，创建子目录和复制配置文件
-        if data_folder_created:
-            for sub in subfolders:
-                sub_path = os.path.join(kb_data_folder, sub)
-                if not os.path.exists(sub_path):
-                    os.makedirs(sub_path)
-                    logger.debug(f"创建子目录: {sub_path}")
-                else:
-                    logger.debug(f"子目录已存在: {sub_path}")
+        Args:
+            kb_data_folder: 知识库数据文件夹
+        """
+        try:
+            # 处理相对路径，确保从项目根目录开始
+            def get_absolute_path(relative_path: str) -> str:
+                if not relative_path:
+                    return ""
+                if os.path.isabs(relative_path):
+                    return relative_path
+                # 从当前文件所在目录开始计算相对路径
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                # 回到项目根目录 (apps/api)
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+                return os.path.join(project_root, relative_path)
             
-            try:
-                # 处理相对路径，确保从项目根目录开始
-                def get_absolute_path(relative_path: str) -> str:
-                    if not relative_path:
-                        return ""
-                    if os.path.isabs(relative_path):
-                        return relative_path
-                    # 从当前文件所在目录开始计算相对路径
-                    current_dir = os.path.dirname(os.path.abspath(__file__))
-                    # 回到项目根目录 (apps/api)
-                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-                    return os.path.join(project_root, relative_path)
-                
-                # 复制元数据配置文件
-                if settings.META_PATH:
-                    meta_path = get_absolute_path(settings.META_PATH)
-                    if os.path.exists(meta_path):
-                        dest_path = os.path.join(kb_data_folder, os.path.basename(meta_path))
-                        shutil.copy(meta_path, dest_path)
-                        logger.debug(f"复制元数据配置文件到: {dest_path}")
-                    else:
-                        logger.warning(f"元数据配置文件不存在: {meta_path}")
+            # 复制元数据配置文件
+            if settings.META_PATH:
+                meta_path = get_absolute_path(settings.META_PATH)
+                if os.path.exists(meta_path):
+                    dest_path = os.path.join(kb_data_folder, os.path.basename(meta_path))
+                    shutil.copy(meta_path, dest_path)
+                    logger.debug(f"复制元数据配置文件到: {dest_path}")
                 else:
-                    logger.debug("跳过元数据配置文件复制（路径为空）")
-                
-                # 复制配置文件
-                if settings.CONFIG_PATH:
-                    config_path = get_absolute_path(settings.CONFIG_PATH)
-                    if os.path.exists(config_path):
-                        shutil.copy(config_path, os.path.join(kb_data_folder, 'config.txt'))
-                        logger.debug("复制配置文件到: config.txt")
-                    else:   
-                        logger.warning(f"配置文件不存在: {config_path}")
-                else:
-                    logger.debug("跳过配置文件复制（路径为空）")
-            except Exception as e:
-                logger.warning(f"复制配置文件失败: {str(e)}")
+                    logger.warning(f"元数据配置文件不存在: {meta_path}")
+            else:
+                logger.debug("跳过元数据配置文件复制（路径为空）")
+            
+            # 复制配置文件
+            if settings.CONFIG_PATH:
+                config_path = get_absolute_path(settings.CONFIG_PATH)
+                if os.path.exists(config_path):
+                    shutil.copy(config_path, os.path.join(kb_data_folder, 'config.txt'))
+                    logger.debug("复制配置文件到: config.txt")
+                else:   
+                    logger.warning(f"配置文件不存在: {config_path}")
+            else:
+                logger.debug("跳过配置文件复制（路径为空）")
+        except Exception as e:
+            logger.warning(f"复制配置文件失败: {str(e)}")
+    
+    @staticmethod
+    def _validate_directory_structure(kb_data_folder: str, kb_vecs_folder: str, subfolders: list) -> None:
+        """
+        验证目录结构是否完整
         
-        # 确保两个目录都存在
+        Args:
+            kb_data_folder: 知识库数据文件夹
+            kb_vecs_folder: 知识库向量文件夹
+            subfolders: 子目录名称列表
+        """
+        # 验证主目录
         if not os.path.exists(kb_data_folder):
             raise Exception(f"无法创建数据目录: {kb_data_folder}")
         if not os.path.exists(kb_vecs_folder):
             raise Exception(f"无法创建向量目录: {kb_vecs_folder}")
         
-        logger.info(f"用户目录结构检查完成 - 数据目录: {kb_data_folder}, 向量目录: {kb_vecs_folder}")
+        # 验证子目录
+        missing_folders = []
+        for subfolder in subfolders:
+            sub_path = os.path.join(kb_data_folder, subfolder)
+            if not os.path.exists(sub_path):
+                missing_folders.append(subfolder)
+        
+        if missing_folders:
+            logger.warning(f"以下子目录创建失败: {missing_folders}")
+        else:
+            logger.debug("所有必需目录已成功创建")
     
     @staticmethod
     def load_meta_settings(user_info: Dict[str, Any], split_char: str = ';') -> Dict[str, Any]:
@@ -260,22 +300,20 @@ class UserConfigService:
         
         user_info = UserConfigService.load_meta_settings(user_info)
         
-        # 设置各种路径
-        user_info['USER_SETTINGS']['SUPP_FILE_PATH'] = os.path.join(
-            user_info['KB_PATH'], 'Supplementary_Files'
-        )
-        user_info['USER_SETTINGS']['TEMP_FILE_PATH'] = os.path.join(
-            user_info['KB_PATH'], 'Temporary_Files'
-        )
-        user_info['USER_SETTINGS']['TEMPLATE_DIR'] = os.path.join(
-            user_info['KB_PATH'], 'templates'
-        )
-        user_info['USER_SETTINGS']['RAW_IMG_DIR'] = os.path.join(
-            user_info['KB_PATH'], 'images'
-        )
-        user_info['USER_SETTINGS']['FRAGMENT_DIR'] = os.path.join(
-            user_info['KB_PATH'], 'fragments'
-        )
+        # 设置各种路径 - 使用统一的路径映射
+        path_mapping = {
+            'SUPP_FILE_PATH': 'Supplementary_Files',
+            'TEMP_FILE_PATH': 'Temporary_Files', 
+            'TEMPLATE_DIR': 'templates',
+            'RAW_IMG_DIR': 'images',
+            'FRAGMENT_DIR': 'fragments',
+            'DEFAULT_DIR': '默认目录'  # 直接使用原始名称
+        }
+        
+        for setting_key, folder_name in path_mapping.items():
+            user_info['USER_SETTINGS'][setting_key] = os.path.join(
+                user_info['KB_PATH'], folder_name
+            )
         user_info['USER_SETTINGS']['MATCH_DF'] = os.path.join(
             user_info['KB_VECS_PATH'], 'temp_match_df.csv'
         )
