@@ -354,7 +354,7 @@ async def create_job(
                     file_path=None,
                     webhook_url=request.webhook.url if request.webhook else None,
                     metadata=job_metadata,
-                    initial_state="pending",  # 使用pending状态
+                    initial_state=JobStatus.WAITING_FILE.value,  # 使用pending状态
                     s3_key=s3_key,  # 预设s3_key
                 )
 
