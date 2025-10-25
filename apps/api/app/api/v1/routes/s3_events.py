@@ -178,12 +178,26 @@ async def handle_sns_event(body: bytes):
         elif message_type == 'Notification':
             # 处理通知消息
             logger.info("收到SNS通知消息")
-            # 解析S3事件
-            s3_event_data = json.loads(sns_message['Message'])
-            s3_event = S3Event(**s3_event_data)
+            logger.info(f"SNS消息内容: {sns_message}")
             
-            # 处理上传事件
-            await process_upload_events(s3_event)
+            # 解析S3事件
+            try:
+                s3_event_data = json.loads(sns_message['Message'])
+                logger.info(f"S3事件数据: {s3_event_data}")
+                s3_event = S3Event(**s3_event_data)
+                
+                # 处理上传事件
+                await process_upload_events(s3_event)
+            except Exception as e:
+                logger.error(f"解析S3事件数据失败: {e}")
+                logger.error(f"SNS消息: {sns_message}")
+                # 尝试直接处理SNS消息作为S3事件
+                try:
+                    s3_event = S3Event(**sns_message)
+                    await process_upload_events(s3_event)
+                except Exception as e2:
+                    logger.error(f"直接解析SNS消息为S3事件也失败: {e2}")
+                    raise
         else:
             logger.warning(f"未知的SNS消息类型: {message_type}")
             return {"message": f"未知的SNS消息类型: {message_type}"}
@@ -245,7 +259,8 @@ async def process_upload_events(s3_event: S3Event):
         upload_events = s3_event.get_upload_events()
         
         for event in upload_events:
-            s3_key = event.object_key
+            # 从S3事件记录中获取对象键
+            s3_key = event.object_key or event.s3.get('object', {}).get('key')
             if not s3_key:
                 continue
             

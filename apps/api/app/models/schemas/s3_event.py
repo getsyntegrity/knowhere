@@ -21,10 +21,14 @@ class S3Bucket(BaseModel):
 
 class S3EventRecord(BaseModel):
     """S3事件记录"""
-    eventName: str = Field(..., description="事件名称")
-    eventTime: str = Field(..., description="事件时间")
+    eventVersion: str = Field(..., description="事件版本")
     eventSource: str = Field(..., description="事件源")
     awsRegion: str = Field(..., description="AWS区域")
+    eventTime: str = Field(..., description="事件时间")
+    eventName: str = Field(..., description="事件名称")
+    userIdentity: Optional[Dict[str, Any]] = Field(None, description="用户身份")
+    requestParameters: Optional[Dict[str, Any]] = Field(None, description="请求参数")
+    responseElements: Optional[Dict[str, Any]] = Field(None, description="响应元素")
     s3: Dict[str, Any] = Field(..., description="S3信息")
     
     # 解析后的字段
@@ -47,6 +51,6 @@ class S3Event(BaseModel):
         """获取文件上传事件"""
         upload_events = []
         for record in self.Records:
-            if record.eventName in ['s3:ObjectCreated:Put', 's3:ObjectCreated:Post', 's3:ObjectCreated:CompleteMultipartUpload']:
+            if record.eventName in ['ObjectCreated:Put', 'ObjectCreated:Post', 'ObjectCreated:CompleteMultipartUpload']:
                 upload_events.append(record)
         return upload_events
