@@ -22,16 +22,15 @@ def s3_upload_file(file: UploadFile , prefix: str ):
     if prefix and not prefix.endswith('/'):
         prefix += '/'
     object_key = f"{prefix}{file.filename}"
-    s3_client = settings.get_s3_client()
+    adapter = settings.get_storage_adapter()
     try:
         # 使用 upload_fileobj 可以高效地以流式方式上传，避免占用过多内存
-        s3_client.upload_fileobj(
+        adapter.upload_fileobj(
             file.file,
-            settings.S3_BUCKET_NAME,
-            object_key,  # 文件在存储桶中的完整路径 (Object Key)
-            ExtraArgs={'ContentType': "application/octet-stream"}
+            object_key,
+            content_type="application/octet-stream"
         )
-        public_url = f"{settings.S3_PRIVATE_DOMAIN}/{object_key}"
+        public_url = f"{settings.S3_PRIVATE_DOMAIN}/{object_key}" if settings.S3_PRIVATE_DOMAIN else f"storage/{object_key}"
         content={
             "message": "文件上传成功",
             "bucket": settings.S3_BUCKET_NAME,
@@ -40,12 +39,9 @@ def s3_upload_file(file: UploadFile , prefix: str ):
         }
         return content
 
-    except ClientError as e:
-        # 捕获 boto3 的客户端错误
-        raise HTTPException(status_code=500, detail=f"S3 upload failed: {e}")
     except Exception as e:
-        # 捕获其他未知错误
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
+        # 捕获存储上传错误
+        raise HTTPException(status_code=500, detail=f"存储上传失败: {e}")
 
 def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, filename: str = "parsed.zip", headers: Optional[dict] = None,
         timeout: int = None, chunk_size: int = None, keep_exts: tuple[str, ...] = (".md", ".json"), clean_empty_dirs: bool = True):

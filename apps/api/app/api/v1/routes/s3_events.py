@@ -12,7 +12,9 @@ from fastapi import APIRouter, HTTPException, status, Request, Header
 from loguru import logger
 
 from app.models.schemas.s3_event import S3Event
+from app.models.schemas.oss_event import OSSEvent
 from app.repositories.job_repository import JobRepository
+from app.core.config import settings
 from app.services.storage.file_upload_service import FileUploadService
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.table_fill.orchestrator import TableFillOrchestrator
@@ -58,6 +60,44 @@ def verify_minio_signature(auth_token: str, expected_token: str) -> bool:
         return True  # 如果没有配置token，跳过验证
     
     return auth_token == expected_token
+
+
+def verify_oss_signature(request_body: bytes, headers: Dict[str, str]) -> bool:
+    """
+    验证OSS事件回调签名
+    
+    Args:
+        request_body: 请求体
+        headers: 请求头
+        
+    Returns:
+        bool: 验证是否通过
+    """
+    try:
+        from app.core.config import settings
+        
+        # 如果禁用签名验证，直接返回True
+        if not getattr(settings, 'OSS_EVENT_VERIFY_SIGNATURE', True):
+            return True
+        
+        # OSS回调签名验证
+        # 实际实现需要根据OSS文档验证签名
+        # 这里简化处理，生产环境需要完整实现
+        callback_key = getattr(settings, 'OSS_EVENT_CALLBACK_KEY', '')
+        if not callback_key:
+            logger.warning("OSS_EVENT_CALLBACK_KEY未配置，跳过签名验证")
+            return True
+        
+        # TODO: 实现OSS签名验证逻辑
+        # OSS RBCallback签名验证需要：
+        # 1. 从headers中获取签名信息
+        # 2. 使用callback_key计算签名
+        # 3. 对比签名是否一致
+        
+        return True
+    except Exception as e:
+        logger.error(f"OSS签名验证失败: {e}")
+        return False
 
 
 def extract_job_id_from_s3_key(s3_key: str) -> str:
@@ -110,7 +150,7 @@ async def handle_s3_events(
     authorization: str = Header(None)
 ):
     """
-    处理S3事件通知POST请求 - 支持AWS SNS和MinIO
+    处理S3事件通知POST请求 - 支持AWS SNS、MinIO和OSS
     """
     logger.info(f"======== S3事件请求 =========")
     logger.info(f"Headers: {dict(request.headers)}")
@@ -118,6 +158,7 @@ async def handle_s3_events(
     try:
         # 获取请求体
         body = await request.body()
+        headers = dict(request.headers)
         
         # 判断事件来源
         if x_amz_sns_message_type:
@@ -128,6 +169,9 @@ async def handle_s3_events(
         elif x_minio_auth_token or authorization:
             # MinIO事件
             await handle_minio_event(body, x_minio_auth_token)
+        elif _is_oss_event(headers):
+            # OSS事件
+            await handle_oss_event(body, headers)
         else:
             # 直接S3事件（用于测试）
             await handle_direct_s3_event(body)
@@ -245,6 +289,103 @@ async def handle_direct_s3_event(body: bytes):
         
     except Exception as e:
         logger.error(f"处理直接S3事件失败: {e}")
+
+
+def _is_oss_event(headers: Dict[str, str]) -> bool:
+    """
+    判断是否为OSS事件
+    
+    Args:
+        headers: 请求头
+        
+    Returns:
+        bool: 是否为OSS事件
+    """
+    # OSS事件的特征标识
+    # 可以通过以下方式识别：
+    # 1. 检查S3_TYPE环境变量
+    # 2. 检查特定的请求头（如果有）
+    # 3. 检查请求体格式
+    
+    storage_type = os.getenv('S3_TYPE', 's3').lower()
+    if storage_type == 'oss':
+        return True
+    
+    # 也可以检查请求头中是否有OSS特有的标识
+    # 例如：'x-oss-pub-key-url' 或其他OSS特定的header
+    if 'x-oss-pub-key-url' in headers:
+        return True
+    
+    return False
+
+
+async def handle_oss_event(body: bytes, headers: Dict[str, str]):
+    """
+    处理OSS事件
+    """
+    try:
+        # 验证签名
+        if not verify_oss_signature(body, headers):
+            logger.warning("OSS事件签名验证失败")
+            return
+        
+        # 解析OSS事件
+        event_data = json.loads(body.decode('utf-8'))
+        logger.info(f"OSS事件数据: {event_data}")
+        
+        # 判断事件格式
+        if 'events' in event_data:
+            # 标准OSS事件格式
+            oss_event = OSSEvent(**event_data)
+        elif 'Records' in event_data:
+            # 兼容S3事件格式（OSS可能使用类似的格式）
+            # 尝试转换为OSS事件格式
+            oss_event = _convert_s3_format_to_oss(event_data)
+        else:
+            logger.error(f"未知的OSS事件格式: {event_data}")
+            return
+        
+        # 转换为S3Event格式，复用现有处理逻辑
+        s3_event = oss_event.to_s3_event()
+        
+        # 处理上传事件
+        await process_upload_events(s3_event)
+        
+    except Exception as e:
+        logger.error(f"处理OSS事件失败: {e}")
+        raise
+
+
+def _convert_s3_format_to_oss(event_data: Dict[str, Any]) -> OSSEvent:
+    """
+    将S3格式的事件转换为OSS事件格式
+    
+    Args:
+        event_data: S3格式的事件数据
+        
+    Returns:
+        OSSEvent: OSS事件对象
+    """
+    from app.models.schemas.oss_event import OSSEventRecord
+    
+    # 如果事件已经是S3格式，尝试转换为OSS格式
+    records = event_data.get('Records', [])
+    oss_records = []
+    
+    for record in records:
+        oss_record = OSSEventRecord(
+            eventName=record.get('eventName', '').replace('s3:', ''),
+            eventSource='acs:oss',
+            eventTime=record.get('eventTime', ''),
+            region=record.get('awsRegion', ''),
+            oss={
+                'bucket': record.get('s3', {}).get('bucket', {}),
+                'object': record.get('s3', {}).get('object', {})
+            }
+        )
+        oss_records.append(oss_record)
+    
+    return OSSEvent(events=oss_records)
 
 
 async def process_upload_events(s3_event: S3Event):

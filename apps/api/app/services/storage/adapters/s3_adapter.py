@@ -1,0 +1,162 @@
+"""
+S3存储适配器实现（支持AWS S3和MinIO）
+"""
+import boto3
+from botocore.exceptions import ClientError
+from typing import Optional, BinaryIO, Iterator, Dict, Any
+from datetime import datetime, timedelta
+from loguru import logger
+
+from app.services.storage.storage_adapter import StorageAdapter
+
+
+class S3StorageAdapter(StorageAdapter):
+    """S3存储适配器（支持AWS S3和MinIO）"""
+    
+    def __init__(self, s3_client: 'boto3.client', default_bucket: str):
+        """
+        初始化S3适配器
+        
+        Args:
+            s3_client: boto3 S3客户端
+            default_bucket: 默认存储桶名称
+        """
+        self.s3_client = s3_client
+        self.default_bucket = default_bucket
+    
+    def _get_bucket(self, bucket: Optional[str] = None) -> str:
+        """获取存储桶名称"""
+        return bucket or self.default_bucket
+    
+    def upload_file(self, local_path: str, key: str, bucket: Optional[str] = None) -> Dict[str, Any]:
+        """上传本地文件到S3"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            self.s3_client.upload_file(local_path, bucket_name, key)
+            logger.debug(f"S3上传成功: {key} -> {bucket_name}")
+            return {
+                "bucket": bucket_name,
+                "key": key,
+                "status": "success"
+            }
+        except ClientError as e:
+            logger.error(f"S3上传失败: {e}")
+            raise
+    
+    def upload_fileobj(self, file_obj: BinaryIO, key: str, bucket: Optional[str] = None,
+                      content_type: Optional[str] = None) -> Dict[str, Any]:
+        """上传文件对象到S3"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            extra_args = {}
+            if content_type:
+                extra_args['ContentType'] = content_type
+            
+            self.s3_client.upload_fileobj(
+                file_obj,
+                bucket_name,
+                key,
+                ExtraArgs=extra_args if extra_args else None
+            )
+            logger.debug(f"S3上传文件对象成功: {key} -> {bucket_name}")
+            return {
+                "bucket": bucket_name,
+                "key": key,
+                "status": "success"
+            }
+        except ClientError as e:
+            logger.error(f"S3上传文件对象失败: {e}")
+            raise
+    
+    def download_file(self, key: str, local_path: str, bucket: Optional[str] = None) -> str:
+        """从S3下载文件到本地"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            self.s3_client.download_file(bucket_name, key, local_path)
+            logger.debug(f"S3下载成功: {bucket_name}/{key} -> {local_path}")
+            return local_path
+        except ClientError as e:
+            logger.error(f"S3下载失败: {e}")
+            raise
+    
+    def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
+        """从S3下载文件对象"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            response = self.s3_client.get_object(Bucket=bucket_name, Key=key)
+            return response['Body'].read()
+        except ClientError as e:
+            logger.error(f"S3下载文件对象失败: {e}")
+            raise
+    
+    def delete_object(self, key: str, bucket: Optional[str] = None) -> bool:
+        """删除S3中的对象"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            self.s3_client.delete_object(Bucket=bucket_name, Key=key)
+            logger.debug(f"S3删除成功: {bucket_name}/{key}")
+            return True
+        except ClientError as e:
+            logger.error(f"S3删除失败: {e}")
+            return False
+    
+    def list_objects(self, prefix: str = "", bucket: Optional[str] = None) -> Iterator[str]:
+        """列出S3中的对象"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+            
+            for page in pages:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        yield obj['Key']
+        except ClientError as e:
+            logger.error(f"S3列出对象失败: {e}")
+            return
+    
+    def generate_presigned_url(self, key: str, expiration: int = 3600,
+                              bucket: Optional[str] = None, method: str = "GET") -> str:
+        """生成S3预签名URL"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            params = {'Bucket': bucket_name, 'Key': key}
+            
+            if method.upper() == "PUT":
+                url = self.s3_client.generate_presigned_url(
+                    'put_object', Params=params, ExpiresIn=expiration
+                )
+            else:
+                url = self.s3_client.generate_presigned_url(
+                    'get_object', Params=params, ExpiresIn=expiration
+                )
+            
+            logger.debug(f"S3生成预签名URL成功: {key}")
+            return url
+        except ClientError as e:
+            logger.error(f"S3生成预签名URL失败: {e}")
+            raise
+    
+    def exists(self, key: str, bucket: Optional[str] = None) -> bool:
+        """检查S3中的对象是否存在"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            self.s3_client.head_object(Bucket=bucket_name, Key=key)
+            return True
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return False
+            raise
+    
+    def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:
+        """获取S3对象大小"""
+        bucket_name = self._get_bucket(bucket)
+        try:
+            response = self.s3_client.head_object(Bucket=bucket_name, Key=key)
+            return response.get('ContentLength')
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return None
+            logger.error(f"S3获取对象大小失败: {e}")
+            raise
+

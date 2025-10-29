@@ -1,0 +1,48 @@
+[Unit]
+Description=Knowhere Celery Worker
+Documentation=https://github.com/your-org/knowhere
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=appuser
+Group=appuser
+WorkingDirectory=/opt/knowhere/apps/api
+Environment="PATH=/opt/knowhere/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/opt/knowhere/apps/api"
+Environment="PYTHONUNBUFFERED=1"
+Environment="FORKED_BY_MULTIPROCESSING=1"
+EnvironmentFile=/opt/knowhere/apps/api/.env
+
+# 启动命令
+ExecStart=/opt/knowhere/venv/bin/python worker.py
+
+# 重启策略
+Restart=always
+RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# 资源限制
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# 安全设置
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/knowhere
+ReadWritePaths=/tmp
+ReadWritePaths=/var/log
+ReadOnlyPaths=/home/appuser/.postgresql
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=knowhere-worker
+
+[Install]
+WantedBy=multi-user.target
+
