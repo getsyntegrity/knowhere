@@ -116,11 +116,19 @@ class S3StorageAdapter(StorageAdapter):
             return
     
     def generate_presigned_url(self, key: str, expiration: int = 3600,
-                              bucket: Optional[str] = None, method: str = "GET") -> str:
+                              bucket: Optional[str] = None, method: str = "GET",
+                              headers: Optional[Dict[str, str]] = None) -> str:
         """生成S3预签名URL"""
         bucket_name = self._get_bucket(bucket)
         try:
             params = {'Bucket': bucket_name, 'Key': key}
+            
+            # 当进行PUT并且指定了Content-Type时，将其纳入预签名参数，
+            # 这样S3端会设置对象的Content-Type，同时与前端请求头保持一致
+            if method.upper() == "PUT" and headers:
+                content_type = headers.get("Content-Type") or headers.get("content-type")
+                if content_type:
+                    params['ContentType'] = content_type
             
             if method.upper() == "PUT":
                 url = self.s3_client.generate_presigned_url(

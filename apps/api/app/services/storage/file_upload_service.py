@@ -104,9 +104,13 @@ class FileUploadService:
             # 智能识别Content-Type
             content_type = self.get_content_type(file_extension)
 
-            # 生成预签名URL（1小时过期）
+            # 生成预签名URL（1小时过期），将 Content-Type 纳入签名
             upload_url = self.adapter.generate_presigned_url(
-                s3_key, expiration=3600, bucket=self.uploads_bucket, method="PUT"
+                s3_key,
+                expiration=3600,
+                bucket=self.uploads_bucket,
+                method="PUT",
+                headers={"Content-Type": content_type}
             )
 
             return {

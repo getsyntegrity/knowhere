@@ -132,15 +132,16 @@ class OSSStorageAdapter(StorageAdapter):
             return
     
     def generate_presigned_url(self, key: str, expiration: int = 3600,
-                              bucket: Optional[str] = None, method: str = "GET") -> str:
+                              bucket: Optional[str] = None, method: str = "GET",
+                              headers: Optional[Dict[str, str]] = None) -> str:
         """生成OSS预签名URL"""
         _, OssError, _, _ = _import_oss2()
         bucket_name = self._get_bucket_name(bucket)
         try:
             if method.upper() == "PUT":
-                url = self.bucket.sign_url('PUT', key, expiration)
+                url = self.bucket.sign_url('PUT', key, expiration, headers=headers)
             else:
-                url = self.bucket.sign_url('GET', key, expiration)
+                url = self.bucket.sign_url('GET', key, expiration, headers=headers)
             
             logger.debug(f"OSS生成预签名URL成功: {key}")
             return url

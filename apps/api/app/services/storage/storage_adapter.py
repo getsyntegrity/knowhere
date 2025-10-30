@@ -101,7 +101,8 @@ class StorageAdapter(ABC):
     
     @abstractmethod
     def generate_presigned_url(self, key: str, expiration: int = 3600, 
-                              bucket: Optional[str] = None, method: str = "GET") -> str:
+                              bucket: Optional[str] = None, method: str = "GET",
+                              headers: Optional[Dict[str, str]] = None) -> str:
         """
         生成预签名URL
         
@@ -110,6 +111,7 @@ class StorageAdapter(ABC):
             expiration: 过期时间（秒）
             bucket: 存储桶名称（如果为None则使用默认bucket）
             method: HTTP方法（GET/PUT）
+            headers: 参与签名的请求头（例如 Content-Type 等）
             
         Returns:
             预签名URL
