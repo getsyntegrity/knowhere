@@ -339,18 +339,31 @@ async def handle_oss_event(body: bytes, headers: Dict[str, str]):
         # 解析OSS事件（兼容 MNS 外层 envelope）
         event_data = json.loads(body.decode('utf-8'))
         logger.info(f"OSS事件数据: {event_data}")
-        # 如果是 MNS 推送，实际事件位于 Message 字段中
+        # 如果是 MNS 推送，实际事件位于 Message 字段中（可能是 Base64 编码的 JSON）
         if isinstance(event_data, dict) and 'Message' in event_data:
-            try:
-                inner = event_data.get('Message')
-                if isinstance(inner, str):
-                    event_data = json.loads(inner)
+            inner = event_data.get('Message')
+            if isinstance(inner, str):
+                decoded = None
+                # 优先尝试 Base64 解码
+                try:
+                    decoded_bytes = base64.b64decode(inner, validate=True)
+                    decoded_str = decoded_bytes.decode('utf-8')
+                    decoded = json.loads(decoded_str)
+                except Exception:
+                    decoded = None
+                
+                if decoded is None:
+                    # 回退：直接按 JSON 字符串解析
+                    try:
+                        decoded = json.loads(inner)
+                    except Exception:
+                        decoded = None
+                
+                if decoded is not None:
+                    event_data = decoded
                     logger.info(f"解包MNS Message后的事件数据: {event_data}")
-                elif isinstance(inner, dict):
-                    event_data = inner
-            except Exception as _:
-                # 无法解包则按原样继续，后续分支会报未知格式
-                pass
+            elif isinstance(inner, dict):
+                event_data = inner
         
         # 判断事件格式
         if 'events' in event_data:
