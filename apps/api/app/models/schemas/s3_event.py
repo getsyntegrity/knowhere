@@ -51,6 +51,18 @@ class S3Event(BaseModel):
         """获取文件上传事件"""
         upload_events = []
         for record in self.Records:
-            if record.eventName in ['ObjectCreated:Put', 'ObjectCreated:Post', 'ObjectCreated:CompleteMultipartUpload']:
+            name = record.eventName or ""
+            # 兼容多种事件名变体：
+            # - ObjectCreated:Put / Post / CompleteMultipartUpload
+            # - ObjectCreated:PutObject / PostObject（如OSS转S3格式）
+            # - s3:ObjectCreated:PutObject 等带前缀形式
+            if (
+                "ObjectCreated" in name
+                and (
+                    "Put" in name
+                    or "Post" in name
+                    or "CompleteMultipartUpload" in name
+                )
+            ):
                 upload_events.append(record)
         return upload_events
