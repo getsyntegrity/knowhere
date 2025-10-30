@@ -166,12 +166,12 @@ async def handle_s3_events(
             result = await handle_sns_event(body)
             if result:
                 return result
-        elif x_minio_auth_token or authorization:
-            # MinIO事件
-            await handle_minio_event(body, x_minio_auth_token)
         elif _is_oss_event(headers):
-            # OSS事件
+            # OSS事件（包含阿里云 MNS 通知代理场景）
             await handle_oss_event(body, headers)
+        elif x_minio_auth_token:
+            # MinIO事件（仅当提供专用的 x-minio-auth-token 时识别）
+            await handle_minio_event(body, x_minio_auth_token)
         else:
             # 直接S3事件（用于测试）
             await handle_direct_s3_event(body)
@@ -316,6 +316,13 @@ def _is_oss_event(headers: Dict[str, str]) -> bool:
     if 'x-oss-pub-key-url' in headers:
         return True
     
+    # 识别阿里云 MNS 通知代理头/UA
+    if 'x-mns-version' in headers or 'x-mns-signing-cert-url' in headers:
+        return True
+    user_agent = headers.get('user-agent') or headers.get('User-Agent')
+    if user_agent and 'Aliyun Notification Service Agent' in user_agent:
+        return True
+    
     return False
 
 
@@ -329,9 +336,21 @@ async def handle_oss_event(body: bytes, headers: Dict[str, str]):
             logger.warning("OSS事件签名验证失败")
             return
         
-        # 解析OSS事件
+        # 解析OSS事件（兼容 MNS 外层 envelope）
         event_data = json.loads(body.decode('utf-8'))
         logger.info(f"OSS事件数据: {event_data}")
+        # 如果是 MNS 推送，实际事件位于 Message 字段中
+        if isinstance(event_data, dict) and 'Message' in event_data:
+            try:
+                inner = event_data.get('Message')
+                if isinstance(inner, str):
+                    event_data = json.loads(inner)
+                    logger.info(f"解包MNS Message后的事件数据: {event_data}")
+                elif isinstance(inner, dict):
+                    event_data = inner
+            except Exception as _:
+                # 无法解包则按原样继续，后续分支会报未知格式
+                pass
         
         # 判断事件格式
         if 'events' in event_data:
