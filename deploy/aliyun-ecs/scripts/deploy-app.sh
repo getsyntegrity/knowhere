@@ -51,7 +51,15 @@ cd "$APP_DIR"
 if [ -d ".git" ]; then
     # 修复Git权限问题
     git config --global --add safe.directory /opt/knowhere
-    git pull origin main
+    
+    # 放弃本地修改，确保与远程分支一致
+    log "放弃本地修改..."
+    git reset --hard HEAD
+    git clean -fd
+    git fetch origin
+    
+    # 拉取最新代码
+    git reset --hard origin/main
     log "代码已更新"
 else
     warn "不是Git仓库，跳过代码更新"
