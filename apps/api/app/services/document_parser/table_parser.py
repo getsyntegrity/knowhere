@@ -418,7 +418,7 @@ async def table_scope_analyze(query, tb_path, paras, num_row=7):
     return tb_context
 
 async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None, window_h=10):
-    split_char = settings.SPLIT_CHAR or ";"
+    split_char = settings.SPLIT_CHAR or "-->"
     time_stamp = get_str_time()
     df_list = []
 

@@ -13,7 +13,7 @@ class JobMetadataBase(BaseModel):
     parsing_params: Optional[Dict[str, Any]] = Field(None, description="解析参数")
     data_id: Optional[str] = Field(None, description="用户自定义ID")
     webhook: Optional[Dict[str, Any]] = Field(None, description="Webhook配置")
-    result_mode: str = Field("auto", description="结果返回模式")
+    # result_mode 已移除，不再支持
     
     # 文件相关字段
     source_type: Optional[str] = Field(None, description="来源类型")
@@ -39,7 +39,7 @@ class JobMetadataHelper:
             "parsing_params": request.parsing_params.model_dump() if request.parsing_params else None,
             "data_id": request.data_id,
             "webhook": request.webhook.model_dump() if request.webhook else None,
-            "result_mode": request.result_mode or "auto",
+            # result_mode 已移除，不再支持
             "user_config": user_config,
         }
         metadata.update(kwargs)

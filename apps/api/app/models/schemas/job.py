@@ -39,9 +39,6 @@ class JobCreate(BaseModel):
     data_id: Optional[str] = Field(None, max_length=128, description="用户自定义ID")
     parsing_params: Optional[ParsingParams] = Field(None, description="解析参数")
     webhook: Optional[WebhookConfig] = Field(None, description="Webhook配置")
-    result_mode: Literal["auto", "inline", "url"] = Field(
-        "auto", description="结果返回模式"
-    )
 
 
 class JobResponse(BaseModel):
@@ -73,8 +70,8 @@ class JobResult(BaseModel):
     error: Optional[Dict[str, Any]] = Field(None, description="错误信息")
 
     # 结果相关字段
-    result: Optional[Dict[str, Any]] = Field(None, description="解析结果")
-    result_url: Optional[str] = Field(None, description="结果文件URL")
+    result: Optional[Dict[str, Any]] = Field(None, description="解析结果（包含 checksum 和 statistics）")
+    result_url: Optional[str] = Field(None, description="结果文件URL（ZIP包下载链接）")
     result_url_expires_at: datetime = Field(..., description="结果文件URL过期时间")
 
 

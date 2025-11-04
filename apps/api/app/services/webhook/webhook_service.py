@@ -227,10 +227,11 @@ class WebhookService:
             "metadata": job.get("metadata", {})
         }
 
-        if job.get("delivery_mode") == "inline" and job.get("result") is not None:
-            payload["result"] = job.get("result")
-        elif job.get("delivery_mode") == "url" and job.get("download_url"):
+        # 统一使用 url 模式，添加 result_url 和 result（checksum 和 statistics）
+        if job.get("download_url"):
             payload["result_url"] = job.get("download_url")
+        if job.get("result") is not None:
+            payload["result"] = job.get("result")
 
         return payload
     

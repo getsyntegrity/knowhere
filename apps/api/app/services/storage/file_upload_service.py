@@ -221,7 +221,7 @@ class FileUploadService:
         *,
         content_type: str = "application/json",
     ) -> str:
-        """上传JSON结果文件"""
+        """上传JSON结果文件（已废弃，保留用于兼容）"""
         try:
             s3_key = f"results/{job_id}.json"
             from io import BytesIO
@@ -236,6 +236,29 @@ class FileUploadService:
             return s3_key
         except Exception as e:
             logger.error(f"上传结果JSON失败: {e}")
+            raise
+
+    async def upload_zip_result(
+        self,
+        job_id: str,
+        zip_file_path: str,
+    ) -> str:
+        """上传ZIP结果文件"""
+        try:
+            s3_key = f"results/{job_id}.zip"
+            await self._upload_to_s3(zip_file_path, s3_key, self.results_bucket)
+            logger.info(f"结果ZIP上传成功: job_id={job_id}, key={s3_key}")
+            
+            # 清理临时文件
+            try:
+                if os.path.exists(zip_file_path):
+                    os.remove(zip_file_path)
+            except Exception as e:
+                logger.warning(f"清理临时ZIP文件失败: {e}")
+            
+            return s3_key
+        except Exception as e:
+            logger.error(f"上传结果ZIP失败: {e}")
             raise
 
     def _ensure_bucket_exists(self, bucket_name: str) -> bool:

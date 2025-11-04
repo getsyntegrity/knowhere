@@ -90,7 +90,7 @@ async def handle_image(df_list, doc_data, img_intra_name, img_dir, headings_stac
 
 async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_count, smart_summary=False):
     time_stamp = get_str_time()
-    split_char = settings.SPLIT_CHAR or ";"
+    split_char = settings.SPLIT_CHAR or "-->"
     tb_html_str = table2html(block)
     if not tb_html_str.strip():
         return headings_stack

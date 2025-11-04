@@ -404,19 +404,18 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             redis_service = RedisServiceFactory.get_service()
             chunks_redis_service = ChunksRedisService(redis_service)
             
-            if user_info.get("all_contents_df") is not None:
-                all_contents_df = user_info["all_contents_df"]
-                logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(all_contents_df)}")
-                
-                # 使用服务方法直接保存DataFrame为chunks
-                success = await chunks_redis_service.save_dataframe_as_chunks(job_id, all_contents_df)
-                
+            # 单独处理当前文件解析的chunks
+            from app.services.knowledge.kb_encoder_service import load_new_data
+            add_contents_df = load_new_data(add_dir)
+            if add_contents_df is not None:
+                logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")
+                success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)
                 if success:
                     logger.info(f"DataFrame已保存为chunks到Redis: job_id={job_id}")
                 else:
                     logger.error(f"保存DataFrame为chunks失败: job_id={job_id}")
             else:
-                logger.warning("user_info中没有all_contents_df数据，保存空chunks")
+                logger.warning("add_contents_df为空，保存空chunks到Redis")
                 await chunks_redis_service.save_chunks(job_id, [])
             
             # 更新进度信息：向量化完成
@@ -563,47 +562,48 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             if isinstance(source_file_name, str) and "/" in source_file_name:
                 source_file_name = os.path.basename(source_file_name)
 
-            # 构建result_payload
-            result_payload = {
-                "document_metadata": {
-                    "source_file_name": source_file_name,
-                    "total_chunks": len(chunks)
-                },
-                "chunks": chunks
+            # 从 prev_result 获取 add_dir
+            add_dir = prev_result.get("add_dir")
+            if not add_dir:
+                raise ValueError("缺少 add_dir 参数，无法生成 ZIP 包")
+
+            # 获取 data_id
+            data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
+
+            # 生成 ZIP 包
+            from app.services.storage.zip_result_service import ZipResultService
+            zip_service = ZipResultService()
+            zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(
+                job_id=job_id,
+                chunks=chunks,
+                add_dir=add_dir,
+                source_file_name=source_file_name,
+                data_id=data_id,
+                job_metadata=job_metadata,
+            )
+
+            # 上传 ZIP 包到 S3
+            upload_service = FileUploadService()
+            result_s3_key = await upload_service.upload_zip_result(job_id, zip_file_path)
+
+            # 存储 checksum 到 inline_payload（只包含 checksum，用于 API 返回的 result 字段）
+            inline_payload = {
+                "checksum": checksum,
             }
 
-            # 处理 result_mode 逻辑
-            requested_mode = JobMetadataHelper.get_field(job_metadata, "result_mode", "auto")
-            inline_threshold = getattr(settings, "RESULT_INLINE_THRESHOLD", 3 * 1024 * 1024)
-            result_json_bytes = json.dumps(result_payload, ensure_ascii=False).encode("utf-8")
-
-            if requested_mode == "auto":
-                delivery_mode = "inline" if len(result_json_bytes) <= inline_threshold else "url"
-            else:
-                delivery_mode = requested_mode
-
-            upload_service = FileUploadService()
+            # 存储到数据库
             job_result_repo = JobResultRepository()
-            result_s3_key = None
-            inline_payload = None
-            if delivery_mode == "inline":
-                inline_payload = result_payload
-                result_size = len(result_json_bytes)
-            else:
-                result_s3_key = await upload_service.upload_json_result(job_id, result_payload)
-                result_size = len(result_json_bytes)
-
             job_result = await job_result_repo.upsert_job_result(
                 db,
                 job_id=job_id,
-                delivery_mode=delivery_mode,
-                document_metadata=result_payload.get("document_metadata"),
+                delivery_mode="url",  # 固定为 url 模式
+                document_metadata=None,  # 不再使用
                 inline_payload=inline_payload,
                 result_s3_key=result_s3_key,
-                result_size=result_size
+                result_size=zip_size
             )
 
-            await job_result_repo.replace_chunks(db, job_result.id, result_payload.get("chunks", []))
+            await job_result_repo.replace_chunks(db, job_result.id, chunks)
             
             # 更新进度信息：数据库存储完成
             await task_service.update_task_progress(
@@ -622,7 +622,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             await state_machine.mark_completed(db, job_id, {
                 "storage_completed": True,
                 "stored_count": stored_count,
-                "delivery_mode": delivery_mode
+                "delivery_mode": "url"
             })
 
             logger.info(f"知识库存储完成: job_id={job_id}, stored_count={stored_count}")
@@ -635,7 +635,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 "status": "success",
                 "job_id": job_id,
                 "stored_count": stored_count,
-                "delivery_mode": delivery_mode,
+                "delivery_mode": "url",
                 "result_s3_key": result_s3_key
             }
             
@@ -730,15 +730,18 @@ async def _send_webhook_async(prev_result: dict, user_id: str):
             webhook_payload: Dict[str, Any] = {
                 "job_id": job_id,
                 "status": "completed",
-                "delivery_mode": job_result.delivery_mode,
-                "document_metadata": job_result.document_metadata or {},
+                "delivery_mode": "url",  # 固定为 url 模式
                 "completed_at": datetime.utcnow().isoformat()
             }
 
-            if job_result.delivery_mode == "inline" and job_result.inline_payload:
+            # 添加 result_url（ZIP 包下载链接）
+            if job_result.result_s3_key:
+                result_url_info = await upload_service.generate_download_url(job_result.result_s3_key)
+                webhook_payload["result_url"] = result_url_info["download_url"]
+            
+            # 添加 result（包含 checksum 和 statistics）
+            if job_result.inline_payload:
                 webhook_payload["result"] = job_result.inline_payload
-            elif job_result.delivery_mode == "url" and job_result.result_s3_key:
-                webhook_payload["result_url"] = await upload_service.generate_download_url(job_result.result_s3_key)
 
             webhook_result = await webhook_service.send_webhook(
                 job_id=job_id,

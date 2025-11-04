@@ -121,7 +121,7 @@ async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', conte
         :function 1 merge bottom-level contents with the same key (heading)
     '''
     merged_dict = {}
-    split_char = settings.SPLIT_CHAR or ";"
+    split_char = settings.SPLIT_CHAR or "-->"
     for identifier, d in dict_list:
         identifier = split_char.join(identifier)
             

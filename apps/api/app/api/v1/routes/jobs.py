@@ -134,7 +134,6 @@ def create_job_response(
     job,
     source_type: str,
     data_id: Optional[str],
-    result_mode: str = "auto",
     upload_url: Optional[str] = None,
     upload_headers: Optional[dict] = None,
     expires_in: Optional[int] = None,
@@ -147,7 +146,6 @@ def create_job_response(
         job: 任务对象
         source_type: 来源类型
         data_id: 数据ID
-        result_mode: 结果模式
         upload_url: 上传URL（仅文件模式）
         upload_headers: 上传头（仅文件模式）
         expires_in: 过期时间（仅文件模式）
@@ -161,7 +159,6 @@ def create_job_response(
         source_type=source_type,
         data_id=data_id,
         created_at=job.created_at,
-        result_mode=result_mode,
         upload_url=upload_url,
         upload_headers=upload_headers,
         expires_in=expires_in,
@@ -308,7 +305,6 @@ async def create_job(
                 job=job,
                 source_type="file",
                 data_id=request.data_id,
-                result_mode=request.result_mode or "auto",
                 upload_url=upload_info["upload_url"],
                 upload_headers=upload_info["upload_headers"],
                 expires_in=upload_info["expires_in"],
@@ -382,7 +378,6 @@ async def create_job(
                     job=job,
                     source_type="url",
                     data_id=request.data_id,
-                    result_mode=request.result_mode or "auto",
                 )
 
                 return response
@@ -453,29 +448,26 @@ async def list_jobs(
             job_metadata = await job_repo.get_job_metadata(db, job.job_id, redis_service)
             job_result = job.job_result
             status_for_api = job.status
-            inline_result = (
-                job_result.inline_payload
-                if job_result and job_result.delivery_mode == "inline"
-                else None
-            )
+            
             result_url = None
-            if (
-                job_result
-                and job_result.delivery_mode == "url"
-                and job_result.result_s3_key
-            ):
-                result_url = await upload_service.generate_download_url(
+            result = None
+            result_url_expires_at = job.created_at  # 默认使用创建时间
+            
+            if job_result and job_result.result_s3_key:
+                result_url_info = await upload_service.generate_download_url(
                     job_result.result_s3_key
                 )
+                result_url = result_url_info["download_url"]
                 
-            # 处理result_url_expires_at字段（必填）
-            result_url_expires_at = job.created_at  # 默认使用创建时间
-            if result_url:
-                from datetime import datetime, timedelta
-
-                result_url_expires_at = datetime.now() + timedelta(
-                    hours=1
-                )  # 默认1小时过期
+                # 从 inline_payload 获取 checksum（只包含 checksum）
+                if job_result.inline_payload:
+                    result = job_result.inline_payload
+                
+                # 处理result_url_expires_at字段
+                if result_url:
+                    from datetime import datetime, timedelta
+                    expires_in = result_url_info.get("expires_in", 3600)
+                    result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
             job_responses.append(
                 JobResult(
@@ -486,7 +478,7 @@ async def list_jobs(
                     created_at=job.created_at,
                     progress=None,  # 任务列表不显示详细进度
                     error={"message": job.error_message} if job.error_message else None,
-                    result=inline_result,
+                    result=result,
                     result_url=result_url,
                     result_url_expires_at=result_url_expires_at,
                 )
@@ -571,35 +563,26 @@ async def get_job_result(
 
         # 结果交付信息
         job_result = job.job_result
-        result_mode = (
-            job_result.delivery_mode
-            if job_result
-            else JobMetadataHelper.get_field(job_metadata, "result_mode", "auto")
-        )
-        inlined_result = (
-            job_result.inline_payload
-            if job_result and job_result.delivery_mode == "inline"
-            else None
-        )
         result_url = None
-        if (
-            job_result
-            and job_result.delivery_mode == "url"
-            and job_result.result_s3_key
-        ):
+        result = None
+        result_url_expires_at = job.created_at  # 默认使用创建时间
+        
+        if job_result and job_result.result_s3_key:
             upload_service = FileUploadService()
             result_url_info = await upload_service.generate_download_url(
                 job_result.result_s3_key
             )
             result_url = result_url_info["download_url"]
             expires_in = result_url_info["expires_in"]
-
-        # 处理result_url_expires_at字段（必填）
-        result_url_expires_at = job.created_at  # 默认使用创建时间
-        if result_url and expires_in:
-            from datetime import datetime, timedelta
-
-            result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
+            
+            # 从 inline_payload 获取 checksum 和 statistics
+            if job_result.inline_payload:
+                result = job_result.inline_payload
+            
+            # 处理result_url_expires_at字段
+            if result_url:
+                from datetime import datetime, timedelta
+                result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
         response_data = JobResult(
             job_id=job.job_id,
@@ -609,7 +592,7 @@ async def get_job_result(
             created_at=job.created_at,
             progress=progress,
             error={"message": job.error_message} if job.error_message else None,
-            result=inlined_result,
+            result=result,
             result_url=result_url,
             result_url_expires_at=result_url_expires_at,
         )

@@ -127,7 +127,7 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
     os.makedirs(img_dir, exist_ok=True)
 
     # 初始化变量
-    split_char = settings.SPLIT_CHAR or ";"
+    split_char = settings.SPLIT_CHAR or "-->"
     df_list = []
     path_stack = []
     inner_paths = []

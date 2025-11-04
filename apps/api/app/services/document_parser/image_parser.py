@@ -152,7 +152,7 @@ async def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     return imgs
 
 async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_llm_paras=None, auto_rename=True):
-    split_char = settings.SPLIT_CHAR or ";"
+    split_char = settings.SPLIT_CHAR or "-->"
     df_list = []
     time_stamp = get_str_time()
     os.makedirs(kb_dir, exist_ok=True)

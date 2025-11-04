@@ -497,7 +497,7 @@ def outline_to_markdown(nodes, level=0, path=""):
     rows = []
     def traverse(node_list, level, path_prefix):
         for node in node_list:
-            split_char = settings.SPLIT_CHAR or ";"
+            split_char = settings.SPLIT_CHAR or "-->"
             current_path = f"{path_prefix} {split_char} {node['chapter']}" if path_prefix else node['chapter']
             rows.append({
                 "path": current_path,
