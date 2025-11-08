@@ -7,9 +7,7 @@ import numpy as np
 from openai import OpenAI
 from loguru import logger
 from app.core.dependencies import get_redis_service
-from app.services.redis import RedisService
 from app.services.ai import ai_query_service
-from app.core.database import get_db_context
 from app.core.config import settings
 from app.core.context import get_current_user
 from app.models.database.user import User
@@ -26,7 +24,7 @@ from app.services.knowledge.query_enhancer_service import label_queries
 from app.services.knowledge.encoder_finetuner import gen_train_data_from_interactions
 from app.services.common.kb_utils import remove_duplicates_orderkept, create_reply, process_dup_paths_df, gen_str_codes, \
     restore_graph_by_paths, path_handle, clean_contents, merge_df
-from app.services.common.kb_utils import use_llm_api, expand_summary_paths, extract_nested_dic_vals
+from app.services.common.kb_utils import use_llm_api, expand_summary_paths, gen_sim_matrix, extract_nested_dic_vals
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
@@ -34,6 +32,28 @@ from app.services.common.global_manager_service import global_vector_manager, gl
 from app.utils.CommonHelper import is_remote
 from app.utils.FileDownUpUtils import get_pub_fileurl
 
+
+async def build_sim_matrix(user, source_node, topk=5, min_threshold=0.2):
+    filter_path_vecs, _, filter_content_vecs, filter_contents_df = checkerboard_filter_kb(user, signal_paths=['templates'], filter_mode='delete',
+                                                                target_types=['PTXT', '_TABLE', '_IMAGE'])
+    masks = filter_contents_df['path'].str.contains(source_node, na=False, regex=False)
+    self_ids = np.where(masks)[0].tolist() # 注意这里不能直接用filter_contents_df的index因为那些是整个 all_contents_df的对应位置
+
+    top_content_ids, cthd = await gen_sim_matrix(filter_content_vecs, self_ids, topk, pre_threshold=min_threshold)
+    top_path_ids, pthd = await gen_sim_matrix(filter_path_vecs, self_ids, topk, pre_threshold=min_threshold)
+
+    merged_ids = np.concatenate([top_content_ids, top_path_ids], axis=1)  # (n, m*k)
+    n, m = merged_ids.shape
+    dedup_ids = merged_ids.copy()
+
+    for i in range(n):
+        row = merged_ids[i]
+        uniq, idx = np.unique(row, return_index=True) # 找到唯一值及其首次出现位置
+        idx = np.sort(idx)
+        mask = np.ones_like(row, dtype=bool)
+        mask[idx] = False  # 这些位置是合法的
+        dedup_ids[i][mask] = -1  # 其他重复值设为 -1
+    return dedup_ids, filter_contents_df, m
 
 def filter_path(current_df, signal_paths: list, remain_paths: list, mode="delete"):
     if mode=="delete":
@@ -601,6 +621,63 @@ def read_img_from_kb(img_record, img_id, KB_PATH):
         with open(img_path, 'rb') as fd:
             img_data = fd.read()
     return img_data
+
+def encapsulate_json(df, kb_dir):
+    def safe_int(x):
+        if pd.isna(x): return 0
+        try:
+            return int(float(x))
+        except:
+            return 0
+
+    def safe_split_kws(kw):
+        if pd.isna(kw): return []
+        return [k.strip() for k in str(kw).split(";") if k.strip()]
+
+    def safe_parse_rels(type_, connects):
+        rels_ = type_.split("\n")[1:-1]
+        if not pd.isna(connects):
+            rels_.extend(connects.split("\n"))
+        return rels_
+
+    chunks = []
+    for _, row in df.iterrows():
+        chunk = {
+            "chunk_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row.get("know_id", uuid.uuid4())))),
+            "content": str(row.get("content", "")),
+            "path": str(row.get("path", "")),
+            "metadata": {
+                "keywords": safe_split_kws(row.get("keywords")),
+                "summary": str(row.get("summary", "")),
+                "length": safe_int(row.get("length")),
+                "tokens": safe_int(row.get("tokens")),
+                "relationships": safe_parse_rels(row.get("type"), row.get("connectto"))
+            }
+        }
+
+        if row.get("type").startswith("PTXT"):
+            chunk.update({"type": "text"})
+
+        elif row.get("type").startswith("IMAGE_"):
+            chunk.update({"type": "image"})
+            img_name = chunk.get("path").split("-->")[-1]
+            chunk.get("metadata").update({
+                "file_path": f"images/{img_name}",
+                "original_name": img_name
+            })
+
+        elif row.get("type").startswith("TABLE_"):
+            chunk.update({"type": "table"})
+            tbl_name = chunk.get("path").split("-->")[-1]
+            chunk.get("metadata").update({
+                "file_path": f"images/{tbl_name}",
+                "original_name": tbl_name
+            })
+        chunks.append(chunk)
+
+    output_path = os.path.join(kb_dir, 'chunks.json')
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(chunks, f, ensure_ascii=False, indent=4)
 
 # async def checkerboard_create_know(user, dir_name, content, inner_key, resource={}, mode="append"):
 #     ''' function add new individual knowledge or inject knowledge to existing structure '''

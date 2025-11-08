@@ -3,6 +3,7 @@ import re
 import json
 import uuid
 import pandas as pd
+from loguru import logger
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 from app.core.config import settings
@@ -14,13 +15,13 @@ from app.services.document_parser.image_parser import detect_summary_img_md, MD_
 from app.services.document_parser.table_parser import extract_tb_keywords, identify_tables, extract_tables_by_forms
 
 
-def detect_md_tocs(md_lines):
-    def normalize_md(s):
-        s = re.sub(r"^\s*#+\s*", "", s)
-        s = re.sub(r"\s+", "", s)
-        return s.lower()
+def normalize_md(s):
+    s = re.sub(r"^\s*#+\s*", "", s)
+    s = re.sub(r"\s+", "", s)
+    return s.lower()
 
-    toc_titles = {"目录", "目次", "tableofcontents"}
+def detect_md_tocs(md_lines):
+    toc_titles = {"目录", "目次", "tableofcontents", "contents"}
 
     start_idx = None
     for i, line in enumerate(md_lines):
@@ -79,12 +80,12 @@ def heading_md_relocate(md_lines, heading_preds):
         return re.sub(r'^\s*(#+)\s*', '', txt)
 
     for lid, line_txt in enumerate(md_lines):
-        match = re.match(r'^\s*(#+)\s*', line_txt) # detect '#'s at the line beginning
         pred_level_df = heading_preds[heading_preds["id"] == lid]
 
         if pred_level_df.empty:
             line_txt = remove_hash(line_txt)
         else:
+            match = re.match(r'^\s*(#+)\s*', line_txt)  # detect '#'s at the line beginning
             if match:
                 original_hash_count = len(match.group(1)) # get the number of '#'
             else:
@@ -97,15 +98,15 @@ def heading_md_relocate(md_lines, heading_preds):
             # adjust the number of '#' based on preds
             else:
                 if pred_level > original_hash_count:
-                    line_txt = f"{'#' * int(pred_level-original_hash_count)}{line_txt.lstrip()}"
+                    line_txt = f"{'#' * int(pred_level - original_hash_count)}{line_txt.lstrip()}"
                 elif pred_level < original_hash_count:
-                    line_txt = f"{'#' * int(original_hash_count-pred_level)}{line_txt.lstrip('#').lstrip()}"
+                    line_txt = f"{'#' * int(original_hash_count - pred_level)}{line_txt.lstrip('#').lstrip()}"
         # update lines
         md_lines[lid] = line_txt
     md_lines = [l for l in md_lines if l.strip()!=""]
     # with open("./output.md", "w", encoding="utf-8-sig") as f:
     #     f.write("\n".join(md_lines))
-    return md_lines
+    return md_lines # note the length=original md_lines but contents/level are updated
     
 async def eval_md_headings(md_lines, source_type, smart_parse=False):
     heading_preds = await pred_titles(md_lines, source_type, enable_regx=True, smart_parse=smart_parse)
@@ -159,16 +160,19 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
         with open(file_path, 'r', encoding='utf-8') as file:
             md_lines = file.readlines()
 
-    md_lines = [l.strip() for l in md_lines if l.strip()!=""]
+    md_lines = [l.strip() for l in md_lines if l.strip() != ""]
     tocs = detect_md_tocs(md_lines)
+    if tocs is not None:
+        logger.debug(f"detected toc lines\n{tocs[-1]}")
+        md_lines = md_lines[:tocs[0]] + md_lines[tocs[1]+1:]
 
-    # 检查或创建图表文件夹
+    # create local storage
     tb_dir = os.path.join(kb_dir, "tables")
     os.makedirs(tb_dir, exist_ok=True)
     img_dir = os.path.join(kb_dir, "images")
     os.makedirs(img_dir, exist_ok=True)
 
-    # 初始化变量
+    # initialize vars
     split_char = settings.SPLIT_CHAR or "-->"
     df_list = []
     path_stack = []
@@ -182,6 +186,7 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
     table_count = 0
     img_count = 0
 
+    # estimate hierarchies
     lines_with_heading = await eval_md_headings(md_lines, source_type, base_llm_paras["smart_title_parse"])
     # with open("./output.md", 'r', encoding='utf-8') as file:
     #     lines_with_heading = file.readlines()
@@ -193,7 +198,7 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
                 current_pg_num += 1
                 continue
 
-        last_context = find_surround_context(md_lines, i) # 记录当前line的上下各一个非 image/table的line
+        last_context = find_surround_context(lines_with_heading, i) # 记录当前line的上下各一个非 image/table的line
         current_heading, current_heading_level = md_heading_match(line, as_is=False)
         if not current_heading_level==-1: # indicate a new path should be evaluated or added
             if not content.strip()=='': # record contents of the last path and reset content
@@ -239,9 +244,9 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
                 if i+1 >= len(lines_with_heading):
                     tb_bool_next = False
                 else:
-                    tb_bool_next, _, _ = identify_tables(md_lines[i+1].strip()) # 可以用来做跨页表优化
+                    tb_bool_next, _, _ = identify_tables(lines_with_heading[i+1].strip()) # 可以用来做跨页表优化
 
-                if not tb_bool_next or i==len(md_lines)-1: # 如果是html形式下一行自然不是table_line
+                if not tb_bool_next or i==len(lines_with_heading)-1: # 如果是html形式下一行自然不是table_line
                     if form=='md':
                         cleaned_table_lines, error_lines = clean_md_table_lines(table_lines, start_line_num=i)
                         tb_str = '\n'.join(cleaned_table_lines)

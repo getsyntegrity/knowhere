@@ -369,6 +369,10 @@ async def pred_titles(infos, doc_type, prompt_limt=4000, enable_regx=True, smart
 
     if heading_preds["level"].eq(-1).all(): # non are estimated as headings
         heading_preds = pd.DataFrame()
+    else:
+        mask = heading_preds["level"].map(lambda x: isinstance(x, str))
+        heading_preds.loc[mask, "level"] = -1
+        heading_preds["level"] = heading_preds["level"].fillna(-1).astype(int)
     return heading_preds # 4-row dataframe
 
 def est_hierarchies_naive(raw_preds, proceed_smart=True):
@@ -440,6 +444,8 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
             for l, level_df in tqdm(enumerate(level_dfs), total=len(level_dfs), desc=f"mapping and post-processing..."):
                 level_df = execute_level_mapping(level_df, lvl_mapping) # record origin level for debug
                 full_preds.append(level_df)
+        else:
+            full_preds.append(base_preds)
 
         full_preds = pd.concat(full_preds, ignore_index=True)
         full_preds['heading'] = raw_headings

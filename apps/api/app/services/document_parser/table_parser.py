@@ -7,18 +7,16 @@ import pandas as pd
 import numpy as np
 import datetime
 import threading
-from typing import Optional, Union, List
+from typing import Union, List
 from pandasql import sqldf
 from bs4 import BeautifulSoup
 from docx.table import Table as DocxTable
 from collections import OrderedDict
-from app.core.database import get_db_context
 from app.core.config import settings
 # TaskRedis依赖已移除，使用Redis直接追踪
 from app.services.document_parser.txt_parser import extract_summary_keywords
 from app.services.common.kb_utils import gen_str_codes, flatten_dic2paths, remove_spaces, restore_graph_by_paths, \
     remove_duplicates_orderkept, tokenize2stw_remove, get_str_time, process_dup_paths_df
-from app.services.storage.file_encryptor_service import encryptor
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
@@ -463,13 +461,10 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
 
                 tb_name = remove_spaces('表-' + sheet_name) + '.html'
                 tb_path = os.path.join(tb_dir, tb_name)
-                if encryptor.encrypt:
-                    encryptor.save_to_file(tb_strs, os.path.join(tb_dir, tb_name))
-                else:
-                    soup = BeautifulSoup(tb_strs, features='html.parser')
-                    tb_html_str = soup.prettify()
-                    with open(tb_path, 'w', encoding='utf-8') as f:
-                        f.write(tb_html_str)
+                soup = BeautifulSoup(tb_strs, features='html.parser')
+                tb_html_str = soup.prettify()
+                with open(tb_path, 'w', encoding='utf-8') as f:
+                    f.write(tb_html_str)
 
                 tb_id = 'TABLE_' + gen_str_codes(tb_strs) + '_TABLE'
                 tb_bottom_content = f"{tb_id}\n上表主要内容如下:\n{tb_summary}\n表内主要列名如下:\n{tb_keywords}"
@@ -490,12 +485,7 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
 
     # tb_graph, _ = restore_graph_by_paths(all_tb_paths)
     # graph_path = os.path.join(kb_dir, 'graph.json')
-
-    if encryptor.encrypt:
-        # encryptor.save_to_file(tb_graph, graph_path)
-        encryptor.save_to_file(table_df, os.path.join(kb_dir, 'KB_PTXT.csv'))
-    else:
-        table_df.to_csv(os.path.join(kb_dir, 'KB_PTXT.csv'), encoding='utf-8', index=False)
+    table_df.to_csv(os.path.join(kb_dir, 'KB_PTXT.csv'), encoding='utf-8', index=False)
     #     with open(graph_path, 'w', encoding='utf-8') as f:
     #         json.dump(tb_graph, f, ensure_ascii=False, indent=4)
     # return tb_graph

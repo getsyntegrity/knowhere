@@ -8,20 +8,17 @@ import pandas as pd
 import time
 import threading
 from tqdm import tqdm
-from itertools import combinations
 from loguru import logger
 from openai import OpenAI
 from app.core.dependencies import get_redis_service
-from app.services.redis import RedisService
 from app.services.ai import ai_query_service
-from app.core.database import get_db_context
 from app.core.config import settings
 from app.core.context import get_current_user
 from app.models.database.user import User
-from app.services.knowledge.knowledge_base_service import checkerboard_filter_kb
-from app.services.knowledge.rag_service import vectorize_texts, gen_sim_matrix
+from app.services.knowledge.knowledge_base_service import build_sim_matrix
+from app.services.knowledge.rag_service import vectorize_texts
 from app.services.document_parser.txt_parser import extract_summary_keywords
-from app.services.common.kb_utils import clean_contents, truncate_paths, gen_str_codes, build_tree_from_paths, split_path_by_node
+from app.services.common.kb_utils import clean_contents, truncate_paths, gen_str_codes, build_tree_from_paths, split_path_by_node, gen_sim_matrix
 from app.services.storage.file_encryptor_service import encryptor
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
@@ -80,7 +77,6 @@ def vec_individual_contents(contents_, cut_len=1024, encoder_=None, client=None)
         else:
             # 如果向量数量过多，截取
             content_vecs = content_vecs[:len(contents_)]
-    
     return content_vecs
 
 def vectorize_contents(added_contents_df, root_len, cut_len=8000, client=None):
@@ -330,28 +326,6 @@ def remove_from_kb(user_info, remove_node, all_vec, all_path_vec, all_contents_d
     os.makedirs(user_info['USER_SETTINGS']['FRAGMENT_DIR'], exist_ok=True)
     logger.info('删除知识库内容完成，花费时间 {} s'.format(np.round((time.time()-start)/60, 3)))
     return all_contents_df, all_vec, all_path_vec
-
-async def build_sim_matrix(user, source_node, topk=5, min_threshold=0.2):
-    filter_path_vecs, _, filter_content_vecs, filter_contents_df = checkerboard_filter_kb(user, signal_paths=['templates'], filter_mode='delete',
-                                                                target_types=['PTXT', '_TABLE', '_IMAGE'])
-    masks = filter_contents_df['path'].str.contains(source_node, na=False, regex=False)
-    self_ids = np.where(masks)[0].tolist() # 注意这里不能直接用filter_contents_df的index因为那些是整个 all_contents_df的对应位置
-
-    top_content_ids, cthd = await gen_sim_matrix(filter_content_vecs, self_ids, topk, pre_threshold=min_threshold)
-    top_path_ids, pthd = await gen_sim_matrix(filter_path_vecs, self_ids, topk, pre_threshold=min_threshold)
-
-    merged_ids = np.concatenate([top_content_ids, top_path_ids], axis=1)  # (n, m*k)
-    n, m = merged_ids.shape
-    dedup_ids = merged_ids.copy()
-
-    for i in range(n):
-        row = merged_ids[i]
-        uniq, idx = np.unique(row, return_index=True) # 找到唯一值及其首次出现位置
-        idx = np.sort(idx)
-        mask = np.ones_like(row, dtype=bool)
-        mask[idx] = False  # 这些位置是合法的
-        dedup_ids[i][mask] = -1  # 其他重复值设为 -1
-    return dedup_ids, filter_contents_df, m
 
 async def build_forest(source_node=None, k=5, cut_len=2000, threshold=0.8):
     user_context: User | None = get_current_user()

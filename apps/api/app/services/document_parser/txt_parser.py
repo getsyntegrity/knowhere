@@ -1,11 +1,9 @@
 import io
-import os
 import re
 import uuid
 import pandas as pd
 from bs4 import BeautifulSoup
 from loguru import logger
-from app.core.database import get_db_context
 from app.core.config import settings
 # TaskRedis依赖已移除，使用Redis直接追踪
 from app.services.ai.prompt_service import build_prompt

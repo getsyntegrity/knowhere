@@ -3,15 +3,16 @@ import re
 import copy
 import torch
 import gc
-import pandas as pd
 import uuid
 import Levenshtein
 import jieba
 import requests
+import numpy as np
+import pandas as pd
+from loguru import logger
 from datetime import datetime
 from collections import Counter
 from bs4 import BeautifulSoup
-
 from app.core.config import settings
 
 
@@ -308,22 +309,60 @@ def flatten_dic2paths(d, current_path=None, result=None):
             result.append(split_char.join(new_path))
     return result
 
-def get_bottom_level_titles(tree, titles=None, current_path=None, keep_path=False):
-    if titles is None:
-        titles = []
-    if current_path is None:
-        current_path = []
+async def gen_sim_matrix(vecs_, self_ids, k=10, use_cosine=True, pre_threshold=0.2, q=0.9):
+    logger.debug(f"开始生成相似度矩阵，向量数量: {len(vecs_)}, k: {k}, 使用余弦相似度: {use_cosine}")
+    logger.debug(f"预阈值: {pre_threshold}, 分位数: {q}, 自身ID数量: {len(self_ids)}")
 
-    for key, value in tree.items():
-        new_path = current_path + [key]
-        if not value:  # If the dictionary is empty, it's a bottom-level title
-            if keep_path:
-                titles.append(new_path)
-            else:
-                titles.append(key)
-        else:
-            get_bottom_level_titles(value, titles, new_path, keep_path)
-    return titles
+    try:
+        if use_cosine:
+            logger.debug("对向量进行余弦归一化")
+            norms = np.linalg.norm(vecs_, axis=1, keepdims=True)
+            vecs_ = vecs_ / (norms + 1e-10)
+            logger.debug("余弦归一化完成")
+
+        logger.debug("计算相似度矩阵")
+        sim_matrix = vecs_ @ vecs_.T  # 由于vecs本身ids总是012 所以得到的topids就是dataframe的行号
+        n = sim_matrix.shape[0]
+        logger.debug(f"相似度矩阵形状: {sim_matrix.shape}")
+
+        topk_indices = np.zeros((n, k), dtype=int)
+        topk_values = np.zeros((n, k))
+
+        logger.debug(f"开始计算每个向量的top-{k}相似向量")
+        for i in range(n):
+            sim_matrix[i, i] = -np.inf  # 去除自身
+            idx = np.argpartition(-sim_matrix[i], k)[:k]
+            idx = idx[np.argsort(-sim_matrix[i, idx])]  # 再次排序，保证从大到小
+
+            topk_indices[i] = idx
+            topk_values[i] = sim_matrix[i, idx]
+
+        logger.debug(f"top-{k}计算完成，开始阈值过滤")
+        threshold = np.max((np.quantile(topk_values, q), pre_threshold))
+        logger.debug(f"计算得到的阈值: {threshold:.4f}")
+
+        filtered_indices = topk_indices.copy()  # 拷贝，避免原地修改
+        mask = topk_values < threshold
+        filtered_count = np.sum(mask)
+        filtered_indices[mask] = -1
+        logger.debug(f"阈值过滤完成，过滤掉 {filtered_count} 个相似度低于阈值的项")
+
+        if len(self_ids) > 0:  # 凡是候选属于 self_ids 的置 -1
+            logger.debug(f"过滤自身ID: {self_ids}")
+            invalid_mask = np.isin(filtered_indices, self_ids)
+            self_filtered_count = np.sum(invalid_mask)
+            filtered_indices[invalid_mask] = -1
+            logger.debug(f"自身ID过滤完成，过滤掉 {self_filtered_count} 个自身项")
+
+        logger.debug(f"相似度矩阵生成完成，最终阈值: {threshold:.4f}")
+        return filtered_indices, threshold
+
+    except Exception as e:
+        logger.error(f"生成相似度矩阵过程中发生异常: {str(e)}")
+        logger.error(f"异常类型: {type(e).__name__}")
+        import traceback
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        raise e
 
 def merge_df(input_df):
     dfs_by_path = list(input_df.groupby('path', sort=False))
