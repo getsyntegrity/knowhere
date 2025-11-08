@@ -530,13 +530,7 @@ async def checkerboard_inject_parse(
     elif '.docx' in file_full_path:
         logger.debug(f"file type is docx")
         if filename is not None and file_full_path is not None:
-            try:
-                start_line = kwargs.get('start_symbol', '').strip()
-                end_line = kwargs.get('end_symbol', '').strip()
-            except:
-                start_line = ''
-                end_line = ''
-            parsed_structure, df_list = await parse_docx(file_full_path, base_llm_paras, kb_dir, filename, baseurl, start_line, end_line)
+            parsed_structure, df_list = await parse_docx(file_full_path, base_llm_paras, kb_dir, filename, baseurl)
             await convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras=base_llm_paras)
 
     elif '.xlsx' in file_full_path:

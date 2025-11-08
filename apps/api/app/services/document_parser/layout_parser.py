@@ -1,11 +1,13 @@
 import re
 import unicodedata
 import uuid
-import numpy as np
 import pandas as pd
-from collections import defaultdict
-from openai import OpenAI
+from tqdm import tqdm
+from collections import defaultdict, Counter
 from docx.oxml.ns import qn
+from app.services.common.kb_utils import count_cn_en
+from app.services.document_parser.table_parser import df2html
+
 try:
     from markitdown import MarkItDown
 except ImportError:
@@ -23,115 +25,110 @@ from app.services.ai import ai_query_service
 from loguru import logger
 
 
-def cal_heading_len_threshold(lines_, pct=50, pre_min=30):
-    lengths = [len(l) for l in lines_]
-    # 保留长度<Q2的标题
-    q1 = np.percentile(lengths, pct)
-    return np.max((q1, pre_min))
+def build_level_mapping(df, origin_lvls, mode="max"):
+    df = df.copy()
+    df["origin_level"] = origin_lvls
+    mask = df['reason'] != "no pos conditions"
 
-def denoise_doc_contents(preds_):
-    punc_pattern = re.compile(r'[.,!?;:，。！？；：）】〕｝〉》’”"]$')
-    denoise_rows = []
+    filtered_df = df[mask]
+    mapping = filtered_df.groupby("reason")["level"].apply(list).to_dict()
 
-    i = 0
-    while i < len(preds_):
-        curr_row = list(preds_[i])  # 转 list，便于修改
-        current_content = str(curr_row[2]).rstrip()
-        current_len = int(curr_row[3])
+    processed_mapping = {}
+    for reason, lvls in mapping.items():
+        positive_lvls = [lvl for lvl in lvls if lvl > -1]
+        counts = Counter(lvls)
 
-        style_ = find_docstyle(curr_row[1]) # 获取para
-        outset_ = find_otsetting(curr_row[1])
+        if not positive_lvls:
+            mapped_lvl = -1
+        elif mode == "max":
+            mapped_lvl = max(positive_lvls)
+        elif mode == "freq":
+            mapped_lvl = counts.most_common(1)[0][0]
+        else:
+            raise "wrong input mode"
 
-        j = i + 1
-        while j < len(preds_):
-            next_row = preds_[j]
-            next_content = str(next_row[2]).lstrip()
-            next_len = int(next_row[3])
+        processed_mapping[reason] = {
+            "lvls": lvls,
+            "positive_lvls": positive_lvls,
+            "freqs": dict(counts),
+            "mapped_lvl": mapped_lvl
+        }
+    return df, processed_mapping
 
-            is_punc = punc_pattern.search(current_content[-1]) if current_content else None
-            next_pos_code = judge_by_conditions(next_content)
-            # 满足合并条件就拼接，并继续往下检查
-            if (style_ is None and outset_ is None) and all(x == 0 for x in next_pos_code) and (not is_punc):
-                current_content = current_content + " " + next_content
-                current_len = current_len + next_len
-                j += 1
+def execute_level_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+    def map_row(row):
+        row_code = str(row["reason"]).strip()
+        need_mapping = (row_code.strip() != "no pos conditions")
+        if need_mapping:
+            reason = row["reason"]
+            if reason in mapping:
+                return mapping[reason]["mapped_lvl"]
             else:
-                break
+                return -1
+        return row["level"]
 
-        # 更新合并后的 heading
-        curr_row[2] = current_content
-        curr_row[3] = current_len
-        denoise_rows.append(tuple(curr_row))
-        # 跳到未合并的下一行
-        i = j
-    return denoise_rows
+    df = df.copy()
+    origin_est_lvls = df["level"].tolist()
+    df["level"] = df.apply(map_row, axis=1)
+    df["origin_level"] = origin_est_lvls
+    return df
 
-def denoise_md_contents(texts):
-    punc_pattern = re.compile(r'[.,!?;:，。！？；：）】〕｝〉》’”"]$')
-    denoise_texts = []
-    exist_tocs = []
-    toc_zone = False
+def detect_outlines_md(line):
+    pos_code = judge_by_conditions(line)
+    any(x>0 for x in pos_code)
+    pass
 
-    i = 0
-    while i < len(texts):
-        current_content = str(texts[i]).rstrip()
+def get_max_lvl(code_str: str):
+    match = re.search(r'\[([^]]+)]', code_str)
+    if not match:
+        return "Sure"
 
+    nums = [int(x.strip()) for x in match.group(1).split(',')]
+    max_val = int(max(nums))
+    return max_val if max_val>1 else "Not Sure"
 
+def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
+    def truncate_text(text, start_limit, end_limit):
+        #TODO use count_cn_en to define the scope
+        text = str(text)
+        total_limit = start_limit + end_limit
+        if len(text) <= total_limit:
+            return text
+        start_part = text[:start_limit]
+        end_part = text[-end_limit:] if end_limit > 0 else ''
+        return f"{start_part}...{end_part}"
 
+    raw_headings = df['heading'].tolist()
+    df["heading"] = df["heading"].apply(lambda x: truncate_text(x, max_start, max_end))
 
-
-        j = i + 1
-        while j < len(texts):
-            next_content = str(texts[j]).lstrip()
-
-            is_punc = punc_pattern.search(current_content[-1]) if current_content else None
-            next_pos_code = judge_by_conditions(next_content)
-            if all(x == 0 for x in next_pos_code) and (not is_punc):
-                current_content = current_content + " " + next_content
-                j += 1
-            else:
-                break
-
-        denoise_texts.append(current_content)
-        i = j
-    return denoise_texts
-
-def heading_tb_transfer(df, max_length=80, include_reason=False, threshold=3000):
-    def clean_md_txt(text):
-        if isinstance(text, str) and re.search(r'!\[.*\]\(.*\)', text):  # 替换图片为占位
-            return "【图像】"
-        text = text.replace("|", "｜")  # 替换竖线
-        if len(text) > max_length:  # 截断
-            return text[:max_length] + "..."
-        return text
-
-    headers = ["原始序号", "原始内容", "初步层级估计"]
-    if include_reason:
-        headers.append("估计的原因")
-
-    separator = ["-" * len(h) for h in headers]
-    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(separator) + " |"] # 初始行
-
+    sub_dfs = []
+    current_rows = []
+    current_len = 0
     for _, row in df.iterrows():
-        row_items = [
-            str(row["id"]),
-            clean_md_txt(str(row["heading"])),
-            str(row["level"]) if pd.notna(row["level"]) else "null"
-        ]
-        if include_reason:
-            row_items.append(str(row["reason"]) if pd.notna(row["reason"]) else "null")
+        row_filtered = row.drop(labels=["reason"], errors="ignore")
+        row_len = sum(count_cn_en(str(v)) for v in row_filtered.values)
 
-        new_line = "| " + " | ".join(row_items) + " |"
-        lines.append(new_line)
-    return "\n".join(lines)
+        if current_len + row_len > threshold and current_rows:
+            sub_dfs.append(pd.DataFrame(current_rows, columns=df.columns))
+            current_rows = [row.tolist()]
+            current_len = row_len
+        else:
+            current_rows.append(row.tolist())
+            current_len += row_len
+
+    if current_rows:
+        sub_dfs.append(pd.DataFrame(current_rows, columns=df.columns))
+    return sub_dfs, raw_headings
 
 def judge_by_conditions(text, scope=20):
     text = text.replace("\u3000", " ")
     text = unicodedata.normalize("NFKC", text)[:scope]
 
+    # TODO can be expanded to include more patterns, the more patterns, the more accurate mapping e.g.， 1.2、xxx
     # ========== 英文数字编号 ==========
     regex_en_num_dots = r"^\d+(?:\s*\.\s*\d+)+(?![、，。！？；：])(?=\s|$|\w|[一-龥])"
     regex_en_num_dun = r"^\d、\s{0,4}(?=\S|$)" # 1、xxx
+    regex_en_num_dots_dun = r"^\d+(?:\.\d+)*、\s*(?=[A-Za-z一-龥])"
     regex_en_num_single_dot = r"^\d+\.(?!\d)\s{0,4}(?=\S)" # 1.xxx
     regex_en_num_space = r"^[0-9]{1,2}\s{1,8}(?=\S)" # 1 xxx
     # ========== 中文数字编号 ==========
@@ -145,7 +142,8 @@ def judge_by_conditions(text, scope=20):
     regex_cn_brac_paren = r"^[\(\（]\s*[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*\s*[\)\）]"
     regex_cn_brac_right = r"^[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*\s*[\)\）]"
     # ========== 中文特殊（第x章/节/条/款/...） ==========
-    regex_cn_special = r"^第[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*(章|节|条|部分|款|目|项)?(?:\s{1,4}(?=\S)|$)"
+    # regex_cn_special = r"^第[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*(章|节|条|部分|款|目|项)?(?:\s{1,4}(?=\S)|$)"
+    regex_cn_special = r"^第[一二三四五六七八九十百千万\d]+(?:\.[一二三四五六七八九十百千万\d]+)*(章|节|条|部分|款|目|项)?(?=$|\s|[A-Za-z0-9\u4e00-\u9fa5])"
     # ========== 英文字母编号 ==========
     regex_letter_dot = r"^[A-Za-z](?:\.\d+)*[\.、](?=\s*\S)"
     regex_letter_brac_paren = r"^[\(\（]\s*[A-Za-z](?:\.\d+)*(?!\.0)\s*[\)\）]"
@@ -155,7 +153,7 @@ def judge_by_conditions(text, scope=20):
 
     pos_regex_conditions = [
         # 英文数字编号
-        regex_en_num_dots, regex_en_num_dun, regex_en_num_single_dot, regex_en_num_space,
+        regex_en_num_dots, regex_en_num_dun, regex_en_num_single_dot, regex_en_num_space, regex_en_num_dots_dun,
         # 中文数字编号
         regex_cn_num_dun, regex_cn_num_mix, regex_cn_num_plain,
         # 英文括号编号
@@ -174,174 +172,243 @@ def judge_by_conditions(text, scope=20):
     for idx, regex in enumerate(pos_regex_conditions):
         match = re.match(regex, text)
         if match:
-            pos_triggered_code.append(1)
+            symbols = ".-" #TODO can be expanded to include more symbols indicating level depth
+            count_ = (sum(match.group(0).count(s) for s in symbols) + 1)
+            pos_triggered_code.append(count_)
         else:
             pos_triggered_code.append(0)
     return pos_triggered_code
 
-def remove_by_conditions(text, len_threshold=None):
+def remove_by_conditions(text, include_punc=False):
     neg_condition_num = r"^\d{3,}"
+    neg_condition_zero = r"^0\.\d+[\u4e00-\u9fa5A-Za-z\S]*" # 0.2xxx
+    neg_decimal_only = r"^\d*\.\d+$" # 0.2 .23
     neg_condition_http = r"(?i)(^https?://\S+|^www\.\S+|^P\.S|^\b\d{0,2}\s*(?:a\.m|p\.m)\b)"
     neg_condition_latex = r"\$[^$]*\\[A-Za-z]+(?:\s*\{[^{}]*\})?[^$]*\$"
-    neg_condition_punc_end = r"[.,!?;，。！？；）】〕｝〉》’”]$"
+    neg_condition_punc_end = r"[.,;，。；]$"
 
-    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex] #neg_condition_punc_end
+    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex, neg_condition_zero, neg_decimal_only]
+    if include_punc:
+        neg_conditions.append(neg_condition_punc_end)
 
     neg_triggered_code = []
     for regex in neg_conditions:
         match = re.search(regex, text)
         neg_triggered_code.append(1 if match else 0)
-
-    if len_threshold is not None:
-        neg_triggered_code.append(1 if len(text) > len_threshold else 0)
     return neg_triggered_code
 
-'''处理markdown headings 考虑#<![等特殊规则'''
 def md_heading_match(line, as_is=True):
-    match = re.match(r'^\s*(#+)\s*(.*)$', line)  # 允许 `#` 后面有空格或直接跟文字
+    '''handle markdown headings, considering # < ! [....'''
+    match = re.match(r'^\s*(#+)\s*(.*)$', line)
     if match:
-        level = len(match.group(1))  # 计算 `#` 的数量
-        if as_is:
+        level = len(match.group(1))  # count the number of '#'
+        if as_is: # determine if remove the '#'
             return line, level
         else:
-            return line.lstrip('#').strip(), level  # 删除 `#` 并去除前后空格
+            return line.lstrip('#').strip(), level
     else:
         return line, -1
 
-def filter_md_headings(md_lines, consider_len=False):
-    md_lines = denoise_md_contents(md_lines)
-
-    if consider_len:
-        threshold = cal_heading_len_threshold(md_lines)
-        print(f"[INFO] 长度超过 {threshold} 的标题会被降格")
-    else:
-        threshold = None
-
+def filter_md_headings(md_lines):
     raw_candidates = []
     for i, line in enumerate(md_lines):
         line = line.strip()
+        if not line:
+            continue
+
         if (
-            not line or
-            ('<!--' in line and '-->' in line) or  # 注释
-            line.startswith("|") or                # 表格行
-            "![" in line and "](" in line          # 图片行
+            ('<!--' in line and '-->' in line) or  # annotation line
+            line.startswith("|") or                # table line
+            line.startswith("<table>") or
+            "![" in line and "](" in line          # image line
         ):
-            raw_candidates.append((i, "md注释 表格 或图片", -1, "发现md格式特殊占位行"))
+            est_lvl = -1
+            str_lvl = "No pos conditions"
+            line = "resource or annotation"
         else:
-            heading, raw_level = md_heading_match(line) # md 专项条件查询pos
-            pos_code = judge_by_conditions(line)
-            neg_code = remove_by_conditions(line, threshold)
+            line_clean, hash_lvl = md_heading_match(line, as_is=False) # detect "#" in .md lines
+            pos_code = judge_by_conditions(line_clean)
+            neg_code = remove_by_conditions(line_clean)
 
             if any(x>0 for x in neg_code):
-                raw_candidates.append((i, heading, -1, f"pos条件{pos_code} BUT neg条件{neg_code}"))
-            elif raw_level>0 and all(x==0 for x in pos_code):
-                raw_candidates.append((i, heading, raw_level, "发现MD符号"))
-            elif raw_level<0 and any(x>0 for x in pos_code):
-                raw_candidates.append((i, heading, "待定", f"pos条件{pos_code}"))
-    return raw_candidates
+                code_lvl = -1
+                code_str = f"pos conditions {pos_code} BUT neg conditions {neg_code}"
 
-'''处理docx headings 考虑para style'''
-def find_docstyle(para_):
-    try:
-        style_name = para_.style.name
-    except:
-        style_name = "normal"
-    
-    # 处理style_name为None的情况
-    if style_name is None:
-        style_name = "normal"
-    
-    if style_name.startswith('Heading') or style_name.startswith('标题'):
+            elif any(x>0 for x in pos_code) and all(x==0 for x in neg_code):
+                code_lvl = get_max_lvl(str(pos_code))
+                code_str = f"pos conditions {pos_code} AND no neg conditions"
+
+            else:
+                code_lvl = -1
+                code_str = f"No pos conditions"
+
+            if hash_lvl<=0:
+                est_lvl = code_lvl
+                str_lvl = code_str
+            else:
+                if isinstance(code_lvl, int):
+                    est_lvl = max(hash_lvl, code_lvl) # current miner tend to produce fewer #s
+                else:
+                    est_lvl = code_lvl # code_lvl could be not sure
+                str_lvl = f"{hash_lvl}# AND {code_str}"
+        raw_candidates.append((i, line, est_lvl, str_lvl))
+
+    preds_df = pd.DataFrame(raw_candidates, columns=["id", "heading", "level", "reason"], index=None)
+    return preds_df
+
+def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=False):
+    def find_docstyle(para_):
         try:
-            outline_level = int(style_name.split(' ')[1])
+            style_name = para_.style.name
         except:
-            outline_level = "待定"
-        return outline_level
-    else:
-        return None
+            style_name = "normal"
+        if style_name.startswith('Heading') or style_name.startswith('标题'):
+            try:
+                outline_level = int(style_name.split(' ')[1])
+            except:
+                outline_level = "Not Sure"
+            return outline_level
+        else:
+            return None
 
-def find_otsetting(para_):
-    ppr = para_._element.find(qn('w:pPr'))
-    if not (ppr is None):
-        plvl = ppr.find(qn('w:outlineLvl'))
-    else:
-        return None
+    def find_otsetting(para_):
+        ppr = para_._element.find(qn('w:pPr'))
+        if not (ppr is None):
+            plvl = ppr.find(qn('w:outlineLvl'))
+        else:
+            return None
 
-    if plvl is not None:
-        outline_level = int(plvl.get(qn('w:val'))) + 1
-        return outline_level
-    else:
-        return None
+        if plvl is not None:
+            outline_level = int(plvl.get(qn('w:val'))) + 1
+            return outline_level
+        else:
+            return None
 
-def find_bold(para_):
-    if para_.runs and all(run.bold for run in para_.runs if run.text.strip()):
-        return True
-    else:
-        return None
-
-def filter_doc_headings(titles_material, consider_len=False):
-    titles_material = denoise_doc_contents(titles_material)  # 这个也会合并部分不合规标题
-
-    text_lens = [tm[3] for tm in titles_material]
-    if consider_len:
-        threshold = cal_heading_len_threshold(text_lens)
-        logger.debug(f"[INFO] 长度超过 {threshold} 的标题会被降格")
-    else:
-        threshold = None
+    def find_bold(para_):
+        if para_.runs and all(run.bold for run in para_.runs if run.text.strip()):
+            return True
+        else:
+            return None
 
     raw_candidates = []
-    for id, para, text, _ in titles_material:
+    for ele_id, para, text in tqdm(titles_material, total=len(titles_material), desc=f"Filtering docx heading candidates..."):
+        str_lvl = ""
+        est_lvl = None
         style_lvl = find_docstyle(para)
         setting_lvl = find_otsetting(para)
-        bold_lvl = find_bold(para)
 
         # 1. check .docx style settings
         if style_lvl is not None:
-            raw_candidates.append((id, text, style_lvl, f"docx style {style_lvl}"))
+            est_lvl = style_lvl
+            str_lvl = f"style-{style_lvl}"
+
         # 2. check .docx paragraph numbering settings
         elif setting_lvl is not None:
-            raw_candidates.append((id, text, setting_lvl, f"outline setting {setting_lvl}"))
-        # 3. check bold style existence
-        # elif bold_lvl is not None:
-        #     raw_candidates.append((id, text, "待定", f"bold style"))
-        # 4. proceed condition judge
-        else:
-            pos_code = judge_by_conditions(text)
-            neg_code = remove_by_conditions(text, threshold)
-            if any(x > 0 for x in neg_code):
-                raw_candidates.append((id, text, -1, f"pos条件{pos_code} BUT neg条件{neg_code}"))
-            elif any(x > 0 for x in pos_code):
-                raw_candidates.append((id, text, "待定", f"pos条件{pos_code}"))
-            else:
-                raw_candidates.append((id, text, -1, "无pos条件"))
-    return raw_candidates
+            est_lvl = setting_lvl
+            str_lvl = f"outline-{setting_lvl}"
 
-async def pred_titles(infos, doc_type, len_threshold=3000):
-    logger.debug("🔥 正在解析文档层级结构")
+        # 3. check bold style existence
+        if enable_style_check:
+            bold_lvl = find_bold(para)
+            if bold_lvl is not None and est_lvl is None:
+                est_lvl = "Not Sure"
+                str_lvl = f"{str_lvl} AND bold-{bold_lvl}"
+
+        # 4. proceed condition judge
+        if enable_regx:
+            pos_code = judge_by_conditions(text)
+            neg_code = remove_by_conditions(text)
+
+            if any(x > 0 for x in neg_code):
+                code_lvl = -1
+                code_str = f"pos conditions {pos_code} BUT neg conditions {neg_code}"
+            elif any(x > 0 for x in pos_code) and all(x==0 for x in neg_code):
+                code_lvl = get_max_lvl(str(pos_code))
+                code_str = f"pos conditions {pos_code} AND no neg conditions"
+            else:
+                code_lvl = -1
+                code_str = f"no pos conditions"
+
+            if est_lvl is None:
+                est_lvl = code_lvl
+                str_lvl = code_str
+            else:
+                str_lvl = f"{str_lvl} AND {code_str}"
+        raw_candidates.append((ele_id, text, est_lvl, str_lvl))
+
+    preds_df = pd.DataFrame(raw_candidates, columns=["id", "heading", "level", "reason"], index=None)
+
+    # initial merge isolated and short texts
+    preds_df = postprocess_headings(preds_df, task="merge_continuous")
+    preds_df = postprocess_headings(preds_df, task="merge_short")
+    return preds_df
+
+async def pred_titles(infos, doc_type, prompt_limt=4000, enable_regx=True, smart_parse=False):
+    logger.debug("🔥parsing data hierarchies...")
     if doc_type == "pptx":
-        raw_preds = filter_md_headings(infos, consider_len=False)
+        raw_preds = filter_md_headings(infos)
     elif doc_type == "md":
-        raw_preds = filter_md_headings(infos, consider_len=False)
+        raw_preds = filter_md_headings(infos)
     elif doc_type=="docx":
-        raw_preds = filter_doc_headings(infos, consider_len=False)
+        raw_preds = filter_doc_headings(infos, enable_regx)
     else:
         raw_preds = []
 
-    # raw_preds = denoise_contents(raw_preds) # 这个也会合并部分不合规标题
-    level_df = clean_redundant_headings(raw_preds)
+    # 2. parse smart/not smart
+    # raw_preds.to_csv(f"./test_naive_1.csv", index=False, encoding='utf-8-sig')
+    heading_preds = est_hierarchies_naive(raw_preds, smart_parse)
 
-    if len(level_df)==0:
+    if smart_parse:
+        heading_preds = await est_hierarchies_llm(heading_preds, prompt_limt)
+
+    # 3. final polishing for certain types
+    if doc_type in ["docx"]:
+        heading_preds = postprocess_headings(heading_preds, task="merge_continuous")
+        heading_preds = postprocess_headings(heading_preds, task="merge_short")
+        heading_preds = postprocess_headings(heading_preds, task="judge_negs")
+
+    if heading_preds["level"].eq(-1).all(): # non are estimated as headings
+        heading_preds = pd.DataFrame()
+    return heading_preds # 4-row dataframe
+
+def est_hierarchies_naive(raw_preds, proceed_smart=True):
+    logger.debug("🚀non-llm parsing => recursive processing")
+    save_preds = raw_preds.copy()
+
+    heading_preds = postprocess_headings(raw_preds, task="collapse")
+    save_preds.insert(save_preds.columns.get_loc('level')+1, 'lvl_cola', heading_preds['level'].tolist())
+
+    heading_preds = postprocess_headings(heading_preds, task="judge_negs", max_depth=-1)
+    save_preds.insert(save_preds.columns.get_loc('lvl_cola')+1, 'lvl_neg', heading_preds['level'].tolist())
+
+    # mapping based on freq
+    if not proceed_smart:
+        heading_preds['level'] = heading_preds['level'].map(lambda x: -1 if str(x)=='Not Sure' else x)
+        heading_preds, lvl_mapping = build_level_mapping(heading_preds, heading_preds['level'].tolist(), mode="freq")
+        heading_preds = execute_level_mapping(heading_preds, lvl_mapping)
+        heading_preds.drop("origin_level", axis=1, inplace=True)
+        save_preds.insert(save_preds.columns.get_loc('lvl_neg')+1, 'lvl_map', heading_preds['level'].tolist())
+
+    # save_preds.to_csv(f"./test_naive_2.csv", index=False, encoding='utf-8-sig')
+    return heading_preds
+
+async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
+    if len(raw_preds)==0:
         return []
 
-    level_txts = heading_tb_transfer(level_df, threshold=len_threshold)
+    full_preds = []
+    level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
+
+    basic_df = level_dfs[0]
     try:
-        basic_preds = ""
-        full_preds = []
-        # for level_txt in level_txts:
-        paras = {"max_tokens": len(level_txts), "basic_preds":basic_preds}
-        prompt, temperature, top_p, max_tokens = build_prompt(task="eval-headings", texts=level_txts, query="", paras=paras)
+        logger.debug("🚀smart parse => interpreting hierarchy patterns...")
+        level_html = df2html(basic_df.drop(columns=["reason"]))
+        ot_limit = int(len(level_html)*1.2)  # min(int(len(level_html)*1.2), 8192) #int(len(level_html)*1.2)
+
+        paras = {"max_tokens": ot_limit, "max_depth": max_depth}
+        prompt, temperature, top_p, max_tokens = build_prompt(task="eval-headings", texts=level_html, query="", paras=paras)
         messages = [
-            {"role": "system", "content": "你是一个有帮助的助手"},
+            {"role": "system", "content": "you are a document auditing expert"},
             {"role": "user", "content": prompt}
         ]
 
@@ -363,100 +430,147 @@ async def pred_titles(infos, doc_type, len_threshold=3000):
             max_tokens=max_tokens
         )
 
-        heading_preds = eval_response(layout_res)
-        heading_preds = pd.DataFrame(heading_preds)
-        if not basic_preds.strip(): # 只用第一次解析的作为参考
-            basic_preds = heading_tb_transfer(heading_preds, threshold=len_threshold)[0]
+        base_preds = pd.DataFrame(eval_response(layout_res))
+        base_preds.insert(1, "heading", basic_df["heading"].values)  # insert original heading back
+        base_preds["reason"] = basic_df["reason"].values
+        # base_preds.to_csv(f"./test_llm_base.csv", index=False, encoding='utf-8-sig')
+        base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
 
-        full_preds.append(heading_preds)
-        heading_preds = pd.concat(full_preds, ignore_index=True)
+        if len(level_dfs)>1:
+            for l, level_df in tqdm(enumerate(level_dfs), total=len(level_dfs), desc=f"mapping and post-processing..."):
+                level_df = execute_level_mapping(level_df, lvl_mapping) # record origin level for debug
+                full_preds.append(level_df)
+
+        full_preds = pd.concat(full_preds, ignore_index=True)
+        full_preds['heading'] = raw_headings
+        # full_preds.to_csv(f"./test_llm_full.csv", index=False, encoding='utf-8-sig')
+        full_preds.drop("origin_level", axis=1, inplace=True)
 
     except Exception as e:
-            logger.debug(f"[INFO] 大模型解析标题层级失败 原因是{e}\n所有待定标题均被降格为-1")
-            level_df.rename(columns={"level": 'level'}, inplace=True)
-            level_df['final_level'] = level_df['level'].replace('待定', -1)
-            heading_preds = level_df.iloc[:, :3]
+        logger.debug(f"[INFO] LLM-based parsing fails due to {e}\n"
+          "using non-llm pipeline...")
+        full_preds = pd.concat(level_dfs, ignore_index=True)
+        full_preds = est_hierarchies_naive(full_preds)
+    return full_preds
 
-    if (not isinstance(heading_preds, pd.DataFrame)) or heading_preds["level"].eq(-1).all(): #如果解析失败或者全部解析为不适合做标题
-        heading_preds = pd.DataFrame()
-    return heading_preds
+def collapse_recursive(df, task, indices, merge_th=3, checked_pairs=None, depth=0):
+    if checked_pairs is None:
+        checked_pairs = set()
 
-def mark_level_boundary(idx, df_):
-    level = df_.loc[idx, 'level']
-    if str(level) == "-1":
-        return -1  # 本身是正文
-
-    if idx + 1 >= len(df_):
-        return 0  # 最后一行不是正文，也无法比较
-
-    next_level = str(df_.loc[idx + 1, 'level'])
-    if next_level == "-1":
-        return 0  # 下一行是正文，不算边界
-
-    current_code = df_.loc[idx, 'reason']
-    next_code = df_.loc[idx + 1, 'reason']
-    if current_code != next_code:
-        return 1
-    else:
-        return 0
-
-def collapse_recursive(df, indices, depth=0):
-    indent = "  " * depth
-    logger.debug(f"{indent}进入递归，indices={indices}")
+    if len(indices)<2:
+        return
 
     for k in range(len(indices) - 1):
         i, j = indices[k], indices[k + 1]
-        logger.debug(f"{indent}检查标题对 i={i} ({df.at[i, 'heading']}) -> j={j} ({df.at[j, 'heading']})")
+        if (i, j) in checked_pairs:
+            continue
+        checked_pairs.add((i, j))
 
         between = df.loc[i+1:j-1]
+        i_txt = df.at[i, 'heading'].strip()
+        j_txt = df.at[j, 'heading'].strip()
 
-        if between.empty:
-            logger.debug(f"{indent}  between 为空, 行 {i} ({df.at[i,'heading']}) 坍缩")
-            df.loc[i, "level"] = -1
-            df.loc[i, "reason"] = "触发坍缩规则"
-        else:
-            logger.debug(f"{indent}  between 行范围 {between.index[0]}~{between.index[-1]} (共 {len(between)} 行)")
-            # 在 between 内部 reason 一致的标题递归划为一组
-            code2sub = defaultdict(list)
-            for idx, row in between.iterrows():
-                if row["level"] != -1:  # 是标题
-                    code2sub[row["reason"]].append(idx)
+        if task=="merge_short" and len(between)>0:
+            between_lens = [count_cn_en(c) for c in between['heading'].tolist()]
+            between_lvls = [bl for bl in between['level'].tolist()]
+            i_half_len = int(count_cn_en(i_txt) / 2)
+            too_short = sum(between_lens) <= merge_th or sum(between_lens) < i_half_len
 
-            for sub_code, sub_indices in code2sub.items():
-                logger.debug(f"{indent}  递归处理子组 reason={sub_code}, indices={sub_indices}")
-                collapse_recursive(df, sub_indices, depth+1)
-    logger.debug(f"{indent}退出递归，indices={indices}")
+            if too_short and all(bl==-1 for bl in between_lvls): # only non-headings can be merged
+                logger.debug(f"⚠️too short between {i}=>{i_txt[:15]} and {j}=>{j_txt[:15]} =>merge to {i}")
+                between_txts = [
+                    str(r["heading"]).strip()
+                    for _, r in between.iterrows()
+                    if isinstance(r.get("heading"), str) and r["heading"].strip()
+                ]
 
-def clean_redundant_headings(data):
-    df_cleaned = pd.DataFrame(data, columns=["id", "heading", "level", "reason"], index=None)
-    df_cleaned['boundary'] = [mark_level_boundary(i, df_cleaned) for i in range(len(df_cleaned))]
-    df_cleaned['pre_level'] = df_cleaned['level']
-    df_cleaned.to_csv(f"./test.csv", index=False, encoding='utf-8-sig')
+                if between_txts:
+                    joined_txt = "\n".join(between_txts)
+                    df.at[i, "heading"] = f"{i_txt} {joined_txt}"
 
-    code2indices = defaultdict(list)
-    for idx, row in df_cleaned.iterrows():
-        level, code = row["level"], row["reason"]
-        if str(level) != "-1":  # 标题
-            code2indices[code].append(idx)
+                for idx in between.index:
+                    df.at[idx, "level"] = -1
+                    df.at[idx, "reason"] = f"Merged into {i}"
+                logger.debug(f"\tmerged texts: {joined_txt}")
 
-    for code, indices in code2indices.items():
-        collapse_recursive(df_cleaned, indices)
+        elif task=="collapse" and len(between) == 0:
+            logger.debug(f"⚠️Empty between i={i_txt[:15]}, j={j_txt[:15]} => set i.level=-1, j.level=Not Sure")
+            df.at[i, "level"] = "Not Sure"
+            df.at[j, "level"] = "Not Sure"
 
-    # 处理边界标题
-    for i, row in df_cleaned.iterrows():
-        if i<1 or i==len(df_cleaned)-1:
-            continue
-        else:
-            boundary = df_cleaned.at[i, 'boundary']
-            pre_row_reason = df_cleaned.at[i-1, 'reason']
-            pos_row_level = df_cleaned.at[i+1, 'level']
-            if (pre_row_reason=="触发坍缩规则" and pos_row_level!=-1) and boundary==1:
-                df_cleaned.at[i, 'level'] = -1
-                df_cleaned.at[i, 'reason'] = "触发边界规则"
+        # ========== get subgroups for recursive tasks ==========
+        sub_between = between[between["level"] != -1]
+        code2sub = defaultdict(list)
+        for idx, row in sub_between.iterrows():
+            level = row["level"]
+            reason = row["reason"]
+            if level != -1:
+                code2sub[(level, reason)].append(idx)
 
-    df_cleaned.to_csv(f"./test2.csv", index=False, encoding='utf-8-sig')
-    df_cleaned = df_cleaned[df_cleaned["level"] != -1].copy()  # 仅保留不是-1的部分
-    return df_cleaned
+        for _, sub_indices in code2sub.items():
+            collapse_recursive(df, task, sub_indices, merge_th, checked_pairs, depth+1)
+
+def postprocess_headings(df, task, max_depth=-1):
+    if task=="judge_negs":
+        for i, row in df.iterrows():
+            neg_code = remove_by_conditions(row['heading'], include_punc=True)
+            if any(x > 0 for x in neg_code):
+                df.loc[i, "level"] = -1
+                continue
+        return df
+
+    elif task=="merge_continuous":
+        denoised_rows = []
+        punc_pattern = re.compile(r'[.,!?;:，。！？；：）】〕｝〉》’”"]$')
+
+        i = 0
+        while i < len(df):
+            row = df.iloc[i]
+            current_content = str(row['heading']).strip()
+            current_level = row['level']
+
+            j = i + 1
+            while j < len(df):
+                next_row = df.iloc[j]
+                next_content = str(next_row['heading']).strip()
+                next_level = next_row['level']
+
+                # both current and next rows are not heading & current row has no punctuation -> merge
+                current_not_punc = not punc_pattern.search(current_content[-2:])
+                if (current_level == -1 and next_level == -1) and current_not_punc:
+                    current_content += " " + next_content
+                    j += 1
+                else:
+                    break
+
+            merge_row = row.copy()
+            merge_row['heading'] = current_content
+            denoised_rows.append(tuple(merge_row))
+            i = j
+        return pd.DataFrame(denoised_rows, columns=["id", "heading", "level", "reason"])
+
+    elif task=="merge_short" or task=="collapse":
+        group2indices = defaultdict(list)
+        for idx, row in df.iterrows():
+            level = row["level"]
+            reason = row["reason"]
+            if level != -1:
+                group2indices[(level, reason)].append(idx)
+
+        checked_pairs = set()
+        for _, indices in group2indices.items():
+            collapse_recursive(df, task, indices, merge_th=3, checked_pairs=checked_pairs, depth=0)
+
+        if task=="merge_short":
+            drop_between = df.index[df["reason"].astype(str).str.startswith("Merged into", na=False)].tolist()
+            if drop_between:
+                logger.debug(f"🛠️Delete rows labeled as merged into, total {len(drop_between)} rows")
+                df.drop(drop_between, inplace=True)
+                df.reset_index(drop=True, inplace=True)
+        return df
+
+    else:
+        return None
 
 def parse_outline_hier(markdown_text):
     """
@@ -510,15 +624,7 @@ def outline_to_markdown(nodes, level=0, path=""):
     traverse(nodes, level, path)
     return pd.DataFrame(rows)
 
-def heading_dic_trans(df, col1, col2, col3):
-    result = {
-        f"{row[col1]}_{row[col2]}": int(row[col3])
-        for _, row in df.iterrows()
-    }
-    return result
-
-
-'''暂时废弃代码'''
+'''abandon codes'''
 # def matches_number_dot_pattern(text):
 #     # primary_regex = r"^(\d+(\.\d+)+)(\s+.+)?$"
 #     primary_regex = r"^([A-Za-z0-9]+(\s*\.\s*[A-Za-z0-9]+)+)(.*)?$"

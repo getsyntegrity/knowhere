@@ -6,14 +6,52 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 from app.core.config import settings
-from app.services.storage.file_encryptor_service import encryptor
-from app.services.common.kb_utils import gen_str_codes, find_matches_parsing, restore_graph_by_paths, process_path_texts, path_handle, \
+from app.services.common.kb_utils import gen_str_codes, find_matches_parsing, restore_graph_by_paths, path_handle, \
     tokenize2stw_remove, get_str_time, process_dup_paths_df
-from app.services.document_parser.layout_parser import pred_titles, md_heading_match, remove_by_conditions
+from app.services.document_parser.layout_parser import pred_titles, md_heading_match
 from app.services.document_parser.txt_parser import extract_summary_keywords
 from app.services.document_parser.image_parser import detect_summary_img_md, MD_IMAGE_PATTERN
 from app.services.document_parser.table_parser import extract_tb_keywords, identify_tables, extract_tables_by_forms
 
+
+def detect_md_tocs(md_lines):
+    def normalize_md(s):
+        s = re.sub(r"^\s*#+\s*", "", s)
+        s = re.sub(r"\s+", "", s)
+        return s.lower()
+
+    toc_titles = {"目录", "目次", "tableofcontents"}
+
+    start_idx = None
+    for i, line in enumerate(md_lines):
+        if normalize_md(line) in toc_titles:
+            start_idx = i
+            break
+    if start_idx is None:
+        return None
+
+    # Step 2 find the pivot line
+    pivot_line = None
+    pivot_idx = None
+    for j in range(start_idx + 1, len(md_lines)):
+        text = md_lines[j].strip()
+        if text:
+            pivot_line = normalize_md(text)
+            pivot_idx = j
+            break
+    if pivot_line is None:
+        return None
+
+    end_idx = pivot_idx
+    for k in range(pivot_idx + 1, len(md_lines)):
+        text = md_lines[k].strip()
+        repeated = (normalize_md(text) in pivot_line) or (pivot_line in normalize_md(text))
+        if text and repeated:
+            break
+        end_idx = k
+
+    toc_lines = md_lines[start_idx:end_idx + 1]
+    return start_idx, end_idx, toc_lines
 
 def find_surround_context(md_lines, lid):
     def is_skip(line):
@@ -37,40 +75,41 @@ def find_surround_context(md_lines, lid):
     return f"{prev_text} {next_text}".strip()
 
 def heading_md_relocate(md_lines, heading_preds):
+    def remove_hash(txt):
+        return re.sub(r'^\s*(#+)\s*', '', txt)
+
     for lid, line_txt in enumerate(md_lines):
-        match = re.match(r'^\s*(#+)\s*', line_txt)  # 匹配开头的#，包括空格
-        neg_code_re = remove_by_conditions(line_txt)
-
+        match = re.match(r'^\s*(#+)\s*', line_txt) # detect '#'s at the line beginning
         pred_level_df = heading_preds[heading_preds["id"] == lid]
+
         if pred_level_df.empty:
-            # 如果该行被预测不是标题 再次调用neg code消除一些噪音 且避免完全不使用 mineru的判断
-            # e.g. 原始行 #公司 $\math.... 可能被解析器判定为标题 预测过程其不作为标题 但是在原文中还保留#
-            if neg_code_re:
-                line_txt = re.sub(r'^\s*(#+)\s*', '', line_txt)
-
-        else: # 如果该行被预测是标题
-            pred_level = pred_level_df['level'].iloc[0]
+            line_txt = remove_hash(line_txt)
+        else:
             if match:
-                original_hash_count = len(match.group(1))  # 获取当前行#的数量
+                original_hash_count = len(match.group(1)) # get the number of '#'
             else:
-                original_hash_count = 0  # 没有#，说明原始行不是标题
+                original_hash_count = 0
 
-            if pred_level < 0: # 如果判定不是标题，移除原先的#
-                # if neg_code_re: # 这里是多加了一层判定 存在neg才删除 如果不加 就是只要大模型判断不是标题就删除标题标识
-                line_txt = re.sub(r'^\s*(#+)\s*', '', line_txt)
+            pred_level = pred_level_df['level'].iloc[0]
+            # if the line is estimated as non-title, remove all '#'
+            if pred_level < 0:
+                line_txt = remove_hash(line_txt)
+            # adjust the number of '#' based on preds
             else:
                 if pred_level > original_hash_count:
-                    # 如果预测级别更深，增加#数量
                     line_txt = f"{'#' * int(pred_level-original_hash_count)}{line_txt.lstrip()}"
                 elif pred_level < original_hash_count:
-                    # 如果预测级别更浅，减少#数量
                     line_txt = f"{'#' * int(original_hash_count-pred_level)}{line_txt.lstrip('#').lstrip()}"
-        # 更新md_lines
+        # update lines
         md_lines[lid] = line_txt
+    md_lines = [l for l in md_lines if l.strip()!=""]
+    # with open("./output.md", "w", encoding="utf-8-sig") as f:
+    #     f.write("\n".join(md_lines))
     return md_lines
     
-async def eval_md_headings(md_lines, source_type):
-    heading_preds = await pred_titles(md_lines, source_type)
+async def eval_md_headings(md_lines, source_type, smart_parse=False):
+    heading_preds = await pred_titles(md_lines, source_type, enable_regx=True, smart_parse=smart_parse)
+
     if len(heading_preds) == 0:
         lines_with_heading = md_lines
     else:
@@ -120,6 +159,9 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
         with open(file_path, 'r', encoding='utf-8') as file:
             md_lines = file.readlines()
 
+    md_lines = [l.strip() for l in md_lines if l.strip()!=""]
+    tocs = detect_md_tocs(md_lines)
+
     # 检查或创建图表文件夹
     tb_dir = os.path.join(kb_dir, "tables")
     os.makedirs(tb_dir, exist_ok=True)
@@ -140,13 +182,12 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
     table_count = 0
     img_count = 0
 
-    lines_with_heading = await eval_md_headings(md_lines, source_type)
-    time_stamp = get_str_time()
+    lines_with_heading = await eval_md_headings(md_lines, source_type, base_llm_paras["smart_title_parse"])
+    # with open("./output.md", 'r', encoding='utf-8') as file:
+    #     lines_with_heading = file.readlines()
 
-    for i, line in tqdm(enumerate(lines_with_heading), total=len(lines_with_heading)):
-        line = line.strip()
-        if line.strip()=="":
-            continue
+    time_stamp = get_str_time()
+    for i, line in tqdm(enumerate(lines_with_heading), total=len(lines_with_heading), desc="Parsing md data..."):
         if '<!--' in line and '-->' in line: # 注释信息
             if 'page' in line or 'Slide number' in line: 
                 current_pg_num += 1
@@ -164,7 +205,7 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
             elif current_heading_level<base_level:
                 base_level = current_heading_level
             
-            adjusted_level = current_heading_level - base_level + 1  # 使最顶层始终从1开始
+            adjusted_level = current_heading_level - base_level + 1
             while len(path_stack) >= adjusted_level:
                 path_stack.pop()
             path_stack.append(current_heading)
@@ -175,15 +216,14 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
             # a. handle lines containing images
             img_name = path_handle(last_context[:10], mode="clean_single")
             img_name = f"图-{str(img_count)}-{img_name}"
-            imgs = await detect_summary_img_md(line, img_name, kb_dir, mode=base_llm_paras['summary_image']) #
+            imgs = await detect_summary_img_md(line, img_name, kb_dir, mode=base_llm_paras['summary_image'])
 
             for img_path, img_summary in imgs:
-                # ***重要***更新image_path 因为mineru返回的图片全部是uuid命名
                 img_suffix = os.path.splitext(img_path)[-1]
                 update_img_path = os.path.join(img_dir, f"{img_name}{img_suffix}")
-                os.rename(os.path.join(kb_dir, img_path), update_img_path)
+                os.rename(os.path.join(kb_dir, img_path), update_img_path) # update image path, not using uuid
 
-                img_id = 'IMAGE_' + gen_str_codes((img_summary + img_path.split(os.sep)[-1])) + '_IMAGE'  # 使用mineru的id
+                img_id = 'IMAGE_' + gen_str_codes((img_summary + img_path.split(os.sep)[-1])) + '_IMAGE'
                 img_kid = gen_str_codes(img_id + str(uuid.uuid4()))
                 img_content = ('\n' + img_id + '\n' + img_summary + '\n')
                 content = content + ('\n' + img_id + '\n' + img_summary + '\n')
@@ -247,11 +287,8 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
     doc_df = pd.DataFrame(df_list, columns=all_df_cols)
     doc_df = process_dup_paths_df(doc_df)
     doc_df_path = os.path.join(kb_dir, 'KB_PTXT.csv')
+    doc_df.to_csv(doc_df_path, encoding='utf-8', index=False)
 
-    if encryptor.encrypt:
-        encryptor.save_to_file(doc_df, doc_df_path)
-    else:
-        doc_df.to_csv(doc_df_path, encoding='utf-8', index=False)
     # path_keys = [f"{base_llm_paras['doc_name']}{split_char}{k}" for k in inner_paths]
     # doc_graph, _ = restore_graph_by_paths(path_keys)
     #     with open(graph_path, 'w', encoding='utf-8') as f:

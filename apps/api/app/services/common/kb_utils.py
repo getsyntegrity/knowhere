@@ -41,6 +41,19 @@ def build_tree_from_paths(paths):
             cur = cur.setdefault(part, {})
     return root
 
+def count_cn_en(text: str):
+    # Chinese words: \u4e00-\u9fff
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', str(text))
+    cn_counts = len(chinese_chars)
+
+    # English words continuous alphabets
+    english_words = re.findall(r'[A-Za-z]+', str(text))
+    en_counts = len(english_words)
+
+    numbers = re.findall(r'\d+(?:\.\d+)?', text)
+    number_count = len(numbers)
+    return cn_counts + en_counts + number_count
+
 def clean_contents(contents):
     pattern = re.compile(r'(TABLE_.*?_TABLE|IMAGE_.*?_IMAGE)')
     cleaned_contents = []

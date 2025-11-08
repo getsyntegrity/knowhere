@@ -3,18 +3,14 @@ import io
 import re
 import os
 import uuid
-import zipfile
 from pathlib import Path
 import pandas as pd
-import requests
 import threading
-from io import BytesIO
 from PIL import Image
 from openai import OpenAI
 from loguru import logger
 from app.utils.CommonHelper import is_remote, load_file_bytes
 from app.services.common.kb_utils import gen_str_codes, path_handle, get_str_time, process_dup_paths_df
-from app.services.storage.file_encryptor_service import encryptor
 from app.core.config import settings
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
@@ -56,20 +52,6 @@ def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
         img_data = base64.b64encode(f.read()).decode("utf-8")
         img_data_base64 = image_bytes_to_base64(img_data, path.suffix.lower())
     return img_data_base64
-
-def detect_images(file_path, valid_extensions=['.png', '.jpg', '.jpeg']):
-    if is_remote(file_path):
-        response = requests.get(file_path)
-        response.raise_for_status()
-        file_bytes = BytesIO(response.content)
-    else: # file 是本地路径
-        file_bytes = open(file_path, 'rb')
-
-    with zipfile.ZipFile(file_bytes, 'r') as zip_ref:
-        image_files = [file_info for file_info in zip_ref.infolist()
-                       if file_info.filename.startswith('word/media/') and
-                       any(file_info.filename.lower().endswith(ext) for ext in valid_extensions)]
-    return image_files
 
 def process_img_path4read(paths_, kb_dir, cut):
     urls = []
@@ -162,10 +144,7 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
         img_path = os.path.join(kb_dir, filename)
         img_bytes = await load_file_bytes(image_path, file_url=baseurl)
         img_obj = Image.open(io.BytesIO(img_bytes))
-        if encryptor.encrypt:
-            encryptor.save_to_file(img_obj, img_path)
-        else:
-            img_obj.save(img_path)
+        img_obj.save(img_path)
 
         # 提取图像内容
         client = OpenAI(
@@ -226,10 +205,8 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
     img_df = pd.DataFrame(df_list, columns=all_df_cols)
     img_df = process_dup_paths_df(img_df)
 
-    if encryptor.encrypt:
-        encryptor.save_to_file(img_df, os.path.join(kb_dir, 'KB_PTXT.csv'))
-    else:
-        img_df.to_csv(os.path.join(kb_dir, 'KB_PTXT.csv'), encoding='utf-8', index=False)
+    img_df.to_csv(os.path.join(kb_dir, 'KB_PTXT.csv'), encoding='utf-8', index=False)
+
 
 
         

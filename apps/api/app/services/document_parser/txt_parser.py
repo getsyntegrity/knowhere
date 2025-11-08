@@ -143,7 +143,7 @@ async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', conte
 
         local_contents = row['content_lst']
         if len(local_contents)>0 and not llm_paras['doc_type'] in "templates":
-            sublists, num = divide_long_contents(local_contents)
+            sublists, num = divide_long_contents(local_contents, max_threshold=int(3*summary_len))
         else:
             num = 0
 
