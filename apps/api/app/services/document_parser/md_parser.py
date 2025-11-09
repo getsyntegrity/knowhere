@@ -10,49 +10,10 @@ from app.core.config import settings
 from app.services.common.kb_utils import gen_str_codes, find_matches_parsing, restore_graph_by_paths, path_handle, \
     tokenize2stw_remove, get_str_time, process_dup_paths_df
 from app.services.document_parser.layout_parser import pred_titles, md_heading_match
-from app.services.document_parser.txt_parser import extract_summary_keywords
+from app.services.document_parser.txt_parser import extract_summary_keywords, detect_tocs_in_texts
 from app.services.document_parser.image_parser import detect_summary_img_md, MD_IMAGE_PATTERN
 from app.services.document_parser.table_parser import extract_tb_keywords, identify_tables, extract_tables_by_forms
 
-
-def normalize_md(s):
-    s = re.sub(r"^\s*#+\s*", "", s)
-    s = re.sub(r"\s+", "", s)
-    return s.lower()
-
-def detect_md_tocs(md_lines):
-    toc_titles = {"目录", "目次", "tableofcontents", "contents"}
-
-    start_idx = None
-    for i, line in enumerate(md_lines):
-        if normalize_md(line) in toc_titles:
-            start_idx = i
-            break
-    if start_idx is None:
-        return None
-
-    # Step 2 find the pivot line
-    pivot_line = None
-    pivot_idx = None
-    for j in range(start_idx + 1, len(md_lines)):
-        text = md_lines[j].strip()
-        if text:
-            pivot_line = normalize_md(text)
-            pivot_idx = j
-            break
-    if pivot_line is None:
-        return None
-
-    end_idx = pivot_idx
-    for k in range(pivot_idx + 1, len(md_lines)):
-        text = md_lines[k].strip()
-        repeated = (normalize_md(text) in pivot_line) or (pivot_line in normalize_md(text))
-        if text and repeated:
-            break
-        end_idx = k
-
-    toc_lines = md_lines[start_idx:end_idx + 1]
-    return start_idx, end_idx, toc_lines
 
 def find_surround_context(md_lines, lid):
     def is_skip(line):
@@ -161,7 +122,7 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
             md_lines = file.readlines()
 
     md_lines = [l.strip() for l in md_lines if l.strip() != ""]
-    tocs = detect_md_tocs(md_lines)
+    tocs = detect_tocs_in_texts(md_lines)
     if tocs is not None:
         logger.debug(f"detected toc lines\n{tocs[-1]}")
         md_lines = md_lines[:tocs[0]] + md_lines[tocs[1]+1:]

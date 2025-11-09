@@ -20,6 +20,46 @@ def clean_texts_by_form(text, form='html'):
     # try other formats
     return text
 
+def detect_tocs_in_texts(md_lines):
+    def normalize_md(s):
+        s = re.sub(r"^\s*#+\s*", "", s)
+        s = re.sub(r"\s+", "", s)
+        return s.lower()
+
+    #TODO only detect the first area should consider more areas in texts, maybe changed to vlm page detection?
+    toc_titles = {"目录", "目次", "tableofcontents", "contents"}
+
+    start_idx = None
+    for i, line in enumerate(md_lines):
+        if normalize_md(line) in toc_titles:
+            start_idx = i
+            break
+    if start_idx is None:
+        return None
+
+    # Step 2 find the pivot line
+    pivot_line = None
+    pivot_idx = None
+    for j in range(start_idx + 1, len(md_lines)):
+        text = md_lines[j].strip()
+        if text:
+            pivot_line = normalize_md(text)
+            pivot_idx = j
+            break
+    if pivot_line is None:
+        return None
+
+    end_idx = pivot_idx
+    for k in range(pivot_idx + 1, len(md_lines)):
+        text = md_lines[k].strip()
+        repeated = (normalize_md(text) in pivot_line) or (pivot_line in normalize_md(text))
+        if text and repeated:
+            break
+        end_idx = k
+
+    toc_lines = md_lines[start_idx:end_idx + 1]
+    return start_idx, end_idx, toc_lines
+
 async def parse_texts(file_path=None, fragment_content=None, baseurl=""): #base_llm_paras=None
     if not ".fragment" in file_path:
         txt_bytes = await load_file_bytes(file_path, file_url=baseurl)
