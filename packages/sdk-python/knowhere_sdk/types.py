@@ -31,38 +31,6 @@ class ApiError(Exception):
         super().__init__(message)
 
 
-# 表格填充相关类型
-class TableFillJobCreate(BaseModel):
-    """表格填充任务创建请求"""
-    file_url: str
-    webhook_url: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-
-class TableFillJobResponse(BaseModel):
-    """表格填充任务响应"""
-    job_id: str
-    status: str
-    current_state: str
-    created_at: datetime
-    file_url: str
-    webhook_url: Optional[str] = None
-
-
-class TableFillJobStatus(BaseModel):
-    """表格填充任务状态"""
-    job_id: str
-    status: str
-    current_state: str
-    progress: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime
-    file_url: str
-    webhook_url: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
-
-
 # 知识库相关类型
 class KBJobCreate(BaseModel):
     """知识库任务创建请求"""

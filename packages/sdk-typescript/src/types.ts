@@ -31,35 +31,6 @@ export class ApiError extends Error {
   }
 }
 
-// 表格填充相关类型
-export interface TableFillJobCreate {
-  fileUrl: string;
-  webhookUrl?: string;
-  metadata?: Record<string, any>;
-}
-
-export interface TableFillJobResponse {
-  jobId: string;
-  status: string;
-  currentState: string;
-  createdAt: string;
-  fileUrl: string;
-  webhookUrl?: string;
-}
-
-export interface TableFillJobStatus {
-  jobId: string;
-  status: string;
-  currentState: string;
-  progress?: number;
-  createdAt: string;
-  updatedAt: string;
-  fileUrl: string;
-  webhookUrl?: string;
-  metadata?: Record<string, any>;
-  errorMessage?: string;
-}
-
 // 知识库相关类型
 export interface KBJobCreate {
   fileUrl: string;

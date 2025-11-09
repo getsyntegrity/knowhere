@@ -201,9 +201,7 @@ class MoesifMiddleware(BaseHTTPMiddleware):
         
         # 根据路径添加标签
         uri = request_data.get("uri", "")
-        if "/table-fill" in uri:
-            tags["feature"] = "table_fill"
-        elif "/kb" in uri:
+        if "/kb" in uri:
             tags["feature"] = "knowledge_base"
         elif "/billing" in uri:
             tags["feature"] = "billing"

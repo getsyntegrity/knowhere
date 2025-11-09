@@ -22,21 +22,12 @@ celery_app = Celery(
     backend=app_config.get_celery_result_backend(),
     include=[
         'app.core.tasks.celery_tasks',
-        'app.core.tasks.table_fill_tasks',
         'app.core.tasks.kb_tasks'
     ]
 )
 
 # 定义优先级队列（统一任务系统）
 celery_app.conf.task_queues = (
-    # 表格填充队列（按优先级分）
-    Queue('table_fill_high', routing_key='table_fill.high', 
-          queue_arguments={'x-max-priority': 10}),
-    Queue('table_fill_medium', routing_key='table_fill.medium',
-          queue_arguments={'x-max-priority': 5}),
-    Queue('table_fill_low', routing_key='table_fill.low',
-          queue_arguments={'x-max-priority': 1}),
-    
     # 知识库队列（按优先级分）
     Queue('kb_high', routing_key='kb.high',
           queue_arguments={'x-max-priority': 10}),
@@ -79,9 +70,6 @@ celery_app.conf.update(
     task_routes={
         # 现有任务路由
         'app.tasks.celery_tasks.process_ai_query': {'queue': 'ai_high_priority'},
-        
-        # 表格填充任务路由（动态路由）
-        'app.core.tasks.table_fill_tasks.*': {'queue': 'table_fill_medium'},  # 默认中等优先级
         
         # 知识库任务路由（动态路由）
         'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # 默认中等优先级

@@ -23,7 +23,6 @@ class TaskType(Enum):
     ANALYTICS = "analytics"
     BACKUP = "backup"
     LOG_PROCESSING = "log_processing"
-    TABLE_FILL = "table_fill"
     KB_MANAGEMENT = "kb_management"
 
 class UserLevel(Enum):
@@ -72,7 +71,6 @@ class CeleryTaskRouter:
             TaskType.ANALYTICS: 1,
             TaskType.BACKUP: 1,
             TaskType.LOG_PROCESSING: 1,
-            TaskType.TABLE_FILL: 7,
             TaskType.KB_MANAGEMENT: 6,
         }
         
@@ -188,7 +186,7 @@ class CeleryTaskRouter:
         根据用户订阅级别获取队列名称
         
         Args:
-            job_type: 任务类型 (table_fill, kb_management, ai_query, document_processing, etc.)
+            job_type: 任务类型 (kb_management, ai_query, document_processing, etc.)
             user_id: 用户ID
             
         Returns:
@@ -199,14 +197,7 @@ class CeleryTaskRouter:
             priority_level = 1  # 默认Free订阅
             
             # 根据任务类型和优先级选择队列
-            if job_type in ["table_fill"]:
-                if priority_level >= 9:
-                    return "table_fill_high"
-                elif priority_level >= 5:
-                    return "table_fill_medium"
-                else:
-                    return "table_fill_low"
-            elif job_type in ["kb_management", "kb_encoding"]:
+            if job_type in ["kb_management", "kb_encoding"]:
                 if priority_level >= 9:
                     return "kb_high"
                 elif priority_level >= 5:
@@ -232,9 +223,7 @@ class CeleryTaskRouter:
         except Exception as e:
             logger.error(f"获取用户 {user_id} 队列失败: {e}")
             # 默认返回中等优先级队列
-            if job_type in ["table_fill"]:
-                return "table_fill_medium"
-            elif job_type in ["kb_management", "kb_encoding"]:
+            if job_type in ["kb_management", "kb_encoding"]:
                 return "kb_medium"
             elif job_type in ["ai_query", "user_auth", "urgent_document"]:
                 return "ai_high_priority"
