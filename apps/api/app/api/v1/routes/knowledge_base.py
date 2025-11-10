@@ -176,6 +176,7 @@ async def search_knowledge_base(
     try:
         from app.core.database import get_db_context
         from app.services.knowledge.knowledge_base_service import checkerboard_find
+        # Redis服务已在共享包中
         from app.services.redis.user_redis_service import UserRedisService
         from app.services.user.user_config_service import UserConfigService
         import json

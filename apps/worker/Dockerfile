@@ -1,4 +1,4 @@
-# API服务Dockerfile
+# Worker服务Dockerfile
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -13,12 +13,12 @@ RUN apt-get update && apt-get install -y \
 # 复制共享包代码（保持目录结构）
 COPY packages/shared-python/app /app/shared/app
 
-# 复制API服务依赖
-COPY apps/api/requirements.txt .
+# 复制Worker服务依赖
+COPY apps/worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制API服务代码
-COPY apps/api/ .
+# 复制Worker服务代码
+COPY apps/worker/ .
 
 # 设置PYTHONPATH：共享包路径 + 服务路径
 ENV PYTHONPATH=/app:/app/shared
@@ -31,10 +31,8 @@ USER appuser
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5005/health || exit 1
+    CMD python -c "from app.core.celery_app import celery_app; celery_app.control.inspect().stats()" || exit 1
 
-# 暴露端口
-EXPOSE 5005
+# 默认命令 - 启动Worker
+CMD ["python", "worker.py"]
 
-# 默认命令
-CMD ["python", "main.py"]

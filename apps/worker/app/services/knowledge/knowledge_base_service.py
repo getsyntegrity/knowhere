@@ -14,11 +14,23 @@ from app.models.database.user import User
 from app.services.storage.file_encryptor_service import encryptor
 # 延迟导入PDF解析器
 from app.services.knowledge.rag_service import find_closest, merge_paths_soft, rerank_, vectorize_texts
+from app.services.document_parser.txt_parser import parse_texts, extract_summary_keywords
+from app.services.document_parser.pptx_parser import parse_pptx2md
+from app.services.document_parser.doc_parser import parse_docx, convert_doc2dics
+from app.services.document_parser.table_parser import parse_xlsx, table_scope_analyze, html_to_md_lines, clean_html_tb
+from app.services.document_parser.image_parser import parse_image, ask_image
+from app.services.document_parser.md_parser import parse_md
 from app.services.knowledge.query_enhancer_service import label_queries
+from app.services.knowledge.encoder_finetuner import gen_train_data_from_interactions
+from app.services.common.kb_utils import remove_duplicates_orderkept, create_reply, process_dup_paths_df, gen_str_codes, \
+    restore_graph_by_paths, path_handle, clean_contents, merge_df
+from app.services.common.kb_utils import use_llm_api, expand_summary_paths, gen_sim_matrix, extract_nested_dic_vals
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
-# 注意：document_parser, common, utils 等已移到Worker服务或共享包
-# 这些导入在API中不再需要，因为API只负责查询，不负责处理
+# ARQ依赖已移除，使用Celery替代
+from app.services.common.global_manager_service import global_vector_manager, global_df_manager, global_dict_manager
+from app.utils.CommonHelper import is_remote
+from app.utils.FileDownUpUtils import get_pub_fileurl
 
 
 async def build_sim_matrix(user, source_node, topk=5, min_threshold=0.2):
@@ -434,6 +446,134 @@ def checkerboard_qlabel(user, query, qlabel, api_name='qwen_api'):
         return labeled_queries
     else:
         return [{'query':query, 'predefined_res':''}]
+
+async def checkerboard_inject_parse(
+    file_full_path, 
+    filename, 
+    user_config: dict = None,  # 新增参数：可选的用户配置
+    **kwargs
+):
+    """
+    解析文档
+    
+    Args:
+        file_full_path: 文件完整路径
+        filename: 文件名
+        user_config: 用户配置字典（可选，如果不提供则从上下文获取）
+        **kwargs: 其他参数
+    
+    Returns:
+        解析后的目录路径
+    """
+    # 如果没有传入user_config，则从上下文获取（兼容旧调用方式）
+    if user_config is None:
+        user_context: User | None = get_current_user()
+        redis_service = await get_redis_service()
+        from app.services.redis.user_redis_service import UserRedisService
+        user_redis_service = UserRedisService(redis_service)
+        
+        if not user_context:
+            raise ValueError("用户上下文为空")
+        
+        user_config = await user_redis_service.get_user_config(str(user_context.id))
+        if not user_config:
+            from app.services.user.user_config_service import UserConfigService
+            import json
+            user_dic_str = UserConfigService.init_user(str(user_context.id))
+            user = json.loads(user_dic_str) if isinstance(user_dic_str, str) else user_dic_str
+            await user_redis_service.save_user_config(str(user_context.id), user)
+        else:
+            user = user_config
+    else:
+        # 使用传入的user_config
+        user = user_config
+    
+    # 构建base_llm_paras
+    base_llm_paras = {
+        "llm_histories": user['USER_SETTINGS']['llm_histories'],
+        "smart_title_parse": kwargs.get('smart_title_parse', True),
+        "summary_image": kwargs.get('summary_image', True),
+        "summary_table": kwargs.get('summary_table', True),
+        "summary_txt": kwargs.get('summary_txt', True),
+        "stopwords": user.get('stopwords', []),
+        "doc_type": kwargs.get('doc_type', 'auto'),
+        "frag_desc": kwargs.get('add_frag_desc', ''),
+    }
+    
+    try:
+        baseurl = kwargs.get('base_url', '')
+    except:
+        baseurl = ""
+        
+    logger.debug(f"baseurl: {baseurl}")
+    logger.debug(f"file_full_path: {file_full_path}")
+
+    if is_remote(file_full_path):
+        # 如果已经是完整的URL（预签名URL），直接使用
+        # 不需要调用 get_pub_fileurl()
+        pass # TODO: 后续需要处理
+    # 对于本地文件，保持原始路径，不要替换为.fragment
+    # file_full_path 保持原值
+
+    split_char = settings.SPLIT_CHAR or ";"
+    kb_dir = kwargs.get('kb_dir', '默认目录')
+    dir_terms = kb_dir.split(split_char)
+    dir_terms.insert(0, user['KB_PATH'])
+    filename = path_handle(filename, mode="clean_single")
+    
+    if not "images" in dir_terms and filename is not None:
+        dir_terms.append(filename)
+
+    kb_dir = path_handle(os.path.join(*dir_terms), mode="sanitize")
+    os.makedirs(kb_dir, exist_ok=True)
+
+    # 根据文件类型解析
+    if '.txt' in file_full_path or ".fragment" in file_full_path:
+        logger.debug(f"file type is txt or fragment")
+        try:
+            fragment_content = kwargs.get('fragment_content')
+        except:
+            fragment_content = None
+        txt_lines = await parse_texts(file_path=file_full_path, fragment_content=fragment_content, baseurl=baseurl)
+        await parse_md(kb_dir, source_type='md', md_lines=txt_lines, base_llm_paras=base_llm_paras)
+
+    elif ('.png' in file_full_path or '.jpg' in file_full_path or '.jpeg' in file_full_path) or ".fragment" in file_full_path:
+        logger.debug(f"file type is image")
+        await parse_image(file_full_path, filename=filename, kb_dir=kb_dir, baseurl=baseurl, base_llm_paras=base_llm_paras)
+
+    elif '.pdf' in file_full_path:
+        logger.debug(f"file type is pdf")
+        if filename is not None and file_full_path is not None:
+            from app.services.document_parser.pdf_parser import parse_pdfs
+            await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
+
+    elif '.docx' in file_full_path:
+        logger.debug(f"file type is docx")
+        if filename is not None and file_full_path is not None:
+            parsed_structure, df_list = await parse_docx(file_full_path, base_llm_paras, kb_dir, filename, baseurl)
+            await convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras=base_llm_paras)
+
+    elif '.xlsx' in file_full_path:
+        logger.debug(f"file type is xlsx")
+        if filename is not None and file_full_path is not None:
+            await parse_xlsx(file_full_path, filename, kb_dir, baseurl, base_llm_paras=base_llm_paras)
+
+    elif '.pptx' in file_full_path:
+        logger.debug(f"file type is pptx")
+        if filename is not None and file_full_path is not None:
+            from app.services.document_parser.pdf_parser import parse_pdfs
+            await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
+
+    elif '.md' in file_full_path:
+        logger.debug(f"file type is md")
+        if filename is not None and file_full_path is not None:
+            await parse_md(kb_dir, source_type="md", file_path=file_full_path, base_llm_paras=base_llm_paras)
+
+    elif '.json' in file_full_path:
+        logger.debug(f"file type is json")
+        pass
+    logger.debug(f"kb_dir: {kb_dir}")
+    return kb_dir
 
 def checkerboard_learn(user, reply, user_intention, sim_contents, user_selected_ids, current_markers):
     # 改造为微调大模型

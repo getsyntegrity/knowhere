@@ -53,6 +53,7 @@ async def get_redis_service():
     """
     依赖函数：获取Redis服务实例
     """
+    # Redis服务已在共享包中
     from app.services.redis import RedisServiceFactory
     return RedisServiceFactory.get_service()
 
@@ -60,6 +61,7 @@ async def get_redis_service_factory():
     """
     依赖函数：获取Redis服务工厂实例
     """
+    # Redis服务已在共享包中
     from app.services.redis import RedisServiceFactory
     return RedisServiceFactory
 

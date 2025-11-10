@@ -55,3 +55,6 @@ deploy/aws/terraform/terraform.tfvars
 .terraform.lock.hcl
 LICENSE.txt
 .terraform
+
+# Temp 临时
+*.md

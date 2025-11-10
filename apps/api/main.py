@@ -1,18 +1,108 @@
 import asyncio
 import sys
+import os
 from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
-from app.core import image_cli as ImageCli
-from app.core.config import redis_pool_manager
+
+# 设置PYTHONPATH以包含共享包路径（必须在所有导入之前）
+project_root = Path(__file__).parent.resolve()
+shared_python_path = project_root.parent.parent / "packages" / "shared-python"
+shared_python_path = shared_python_path.resolve()
+
+# 关键：需要同时支持共享包和服务自己的app模块
+# 策略：共享包路径优先（用于共享代码），服务路径其次（用于服务专用代码）
+shared_path_str = str(shared_python_path)
+project_path_str = str(project_root)
+
+# 清除可能已缓存的app模块（如果之前从错误的位置导入了）
+if 'app' in sys.modules:
+    del sys.modules['app']
+    # 同时清除app的子模块
+    modules_to_remove = [key for key in sys.modules.keys() if key.startswith('app.')]
+    for key in modules_to_remove:
+        del sys.modules[key]
+
+# 移除可能存在的路径，避免重复
+if shared_path_str in sys.path:
+    sys.path.remove(shared_path_str)
+if project_path_str in sys.path:
+    sys.path.remove(project_path_str)
+
+# 按优先级顺序插入：共享包优先，然后是项目根目录
+# 这样：共享包的app.core会被优先找到，但服务自己的app.api也能被找到
+if shared_python_path.exists():
+    sys.path.insert(0, shared_path_str)
+if project_root.exists():
+    sys.path.insert(1 if shared_python_path.exists() else 0, project_path_str)
+
+# 设置环境变量（共享包路径优先）
+current_pythonpath = os.environ.get('PYTHONPATH', '')
+if shared_path_str not in current_pythonpath:
+    os.environ['PYTHONPATH'] = f"{shared_path_str}:{project_path_str}:{current_pythonpath}" if current_pythonpath else f"{shared_path_str}:{project_path_str}"
+
+# 关键修复：导入app后，扩展app.__path__以包含API服务的app路径
+# 注意：共享包的路径应该在前面（优先），API服务的路径在后面（用于查找服务专用模块）
+import app
+api_app_path = project_root / "app"
+shared_app_path = shared_python_path / "app"
+if api_app_path.exists():
+    # 确保共享包的app路径在最前面（优先查找共享代码）
+    if str(shared_app_path) in app.__path__:
+        app.__path__.remove(str(shared_app_path))
+    app.__path__.insert(0, str(shared_app_path))
+    # API服务的app路径在后面（用于查找服务专用模块如app.api）
+    if str(api_app_path) not in app.__path__:
+        app.__path__.append(str(api_app_path))
+
+# 同样需要扩展app.core和app.services的__path__，以便能找到API服务专用的模块
+# 扩展app.core.__path__
+import app.core
+api_core_path = project_root / "app" / "core"
+shared_core_path = shared_python_path / "app" / "core"
+if api_core_path.exists() and hasattr(app.core, '__path__'):
+    # 确保共享包的core路径在最前面
+    if str(shared_core_path) in app.core.__path__:
+        app.core.__path__.remove(str(shared_core_path))
+    app.core.__path__.insert(0, str(shared_core_path))
+    # API服务的core路径在后面（用于查找服务专用模块如users.py）
+    if str(api_core_path) not in app.core.__path__:
+        app.core.__path__.append(str(api_core_path))
+
+# 扩展app.services.__path__
+import app.services
+api_services_path = project_root / "app" / "services"
+shared_services_path = shared_python_path / "app" / "services"
+if api_services_path.exists() and hasattr(app.services, '__path__'):
+    # 确保共享包的services路径在最前面
+    if str(shared_services_path) in app.services.__path__:
+        app.services.__path__.remove(str(shared_services_path))
+    app.services.__path__.insert(0, str(shared_services_path))
+    # API服务的services路径在后面（用于查找服务专用模块）
+    if str(api_services_path) not in app.services.__path__:
+        app.services.__path__.append(str(api_services_path))
+
+# 现在可以安全地从共享包导入
+from app.core.config import redis_pool_manager, settings
 from app.core.database import engine, Base
+
+# 注意：image_cli是API专用的，需要从本地API项目的app.core导入
+# 由于共享包的app.core已经在sys.modules中，我们需要直接导入本地模块
+import importlib.util
+image_cli_path = project_root / "app" / "core" / "image_cli.py"
+if image_cli_path.exists():
+    spec = importlib.util.spec_from_file_location("app.core.image_cli", image_cli_path)
+    image_cli_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(image_cli_module)
+    ImageCli = image_cli_module
+else:
+    raise ImportError(f"无法找到image_cli模块: {image_cli_path}")
 from loguru import logger
 from app.core.logging import setup_logging
 from contextlib import asynccontextmanager
 # ARQ依赖已移除，使用Celery替代
-from app.core.config import settings
 from app.api.api_router import api_router
 from app.services.user.user_config_service import UserConfigService
 from app.core.middleware import setup_cors, LoggingMiddleware
