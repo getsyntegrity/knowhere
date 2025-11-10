@@ -17,7 +17,6 @@ from app.repositories.job_repository import JobRepository
 from app.core.config import settings
 from app.services.storage.file_upload_service import FileUploadService
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
-from app.services.table_fill.orchestrator import TableFillOrchestrator
 from app.core.state_machine import JobStatus
 from app.core.database import get_db_context
 
@@ -489,15 +488,7 @@ async def process_upload_events(s3_event: S3Event):
                         user_id=str(job.user_id)
                     )
                 else:
-                    orchestrator = TableFillOrchestrator()
-                    await orchestrator.start_workflow(
-                        db=db,
-                        job_id=job_id,
-                        source_type="file",
-                        file_path=None,
-                        file_url=None,
-                        user_id=str(job.user_id)
-                    )
+                    logger.warning(f"不支持的任务类型: {job.job_type}, job_id: {job_id}")
                 
                 logger.info(f"Job {job_id} 已触发处理流程")
         

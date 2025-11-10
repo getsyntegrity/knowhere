@@ -23,7 +23,6 @@ from app.models.schemas.job import (
 from app.repositories.job_repository import JobRepository
 from app.services.storage.file_upload_service import FileUploadService
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
-from app.services.table_fill.orchestrator import TableFillOrchestrator
 from app.core.state_machine import (
     JobStatus,
     JobStateMachine,
@@ -98,15 +97,7 @@ async def start_workflow_for_job(
             user_id=user_id,
         )
     else:
-        orchestrator = TableFillOrchestrator()
-        await orchestrator.start_workflow(
-            db=db,
-            job_id=job_id,
-            source_type=source_type,
-            file_path=file_path,
-            file_url=file_url,
-            user_id=user_id,
-        )
+        raise ValueError(f"不支持的任务类型: {job_type}")
 
 
 def check_job_permission(job, current_user: User) -> None:
@@ -234,7 +225,6 @@ async def create_job(
         # 生成job_id
         job_id = f"job_{uuid.uuid4().hex[:12]}"
 
-        # TODO: job_type 后续需要加入 table_fill 类型
         job_type = "kb_management"
 
         # 1. 获取用户配置（1天缓存）

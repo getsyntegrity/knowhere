@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, Optional, Union
 import httpx
 from .types import KnowhereClientConfig, ApiResponse, ApiError
-from .services import TableFillService, KnowledgeBaseService, WebhookService, JobManagementService
+from .services import KnowledgeBaseService, WebhookService, JobManagementService
 
 
 class KnowhereClient:
@@ -38,7 +38,6 @@ class KnowhereClient:
             self.headers['Authorization'] = f'Bearer {config.api_key}'
         
         # 初始化各个服务模块
-        self.table_fill = TableFillService(self)
         self.kb = KnowledgeBaseService(self)
         self.webhook = WebhookService(self)
         self.jobs = JobManagementService(self)

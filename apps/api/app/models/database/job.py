@@ -32,7 +32,7 @@ class Job(Base):
     user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     
     # 任务基本信息
-    job_type: Mapped[str] = mapped_column(String(50), nullable=False)  # table_fill, kb_management
+    job_type: Mapped[str] = mapped_column(String(50), nullable=False)  # kb_management
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # PRD状态: pending, waiting-file, running, converting, done, failed
     
     # 文件信息

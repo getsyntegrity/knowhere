@@ -77,70 +77,7 @@ const status = await client.kb.getJobStatus(job.jobId);
 console.log(`当前状态: ${status.currentState}`);
 ```
 
-## 步骤 4: 创建表格填充任务
-
-### Python 示例
-
-```python
-# 创建表格填充任务
-table_job = client.table_fill.create_job(
-    file_url="https://example.com/data-table.xlsx",
-    webhook_url="https://your-app.com/webhook"  # 可选
-)
-
-print(f"表格填充任务已创建: {table_job.job_id}")
-
-# 轮询任务状态
-import time
-while True:
-    status = client.table_fill.get_job_status(table_job.job_id)
-    print(f"当前状态: {status.current_state}")
-    
-    if status.status in ['completed', 'failed']:
-        break
-    
-    time.sleep(5)  # 等待5秒后再次检查
-
-# 下载结果
-if status.status == 'completed':
-    result = client.table_fill.download_result(table_job.job_id)
-    print(f"结果文件已下载: {result.file_path}")
-```
-
-### TypeScript 示例
-
-```typescript
-// 创建表格填充任务
-const tableJob = await client.tableFill.createJob({
-  fileUrl: 'https://example.com/data-table.xlsx',
-  webhookUrl: 'https://your-app.com/webhook'  // 可选
-});
-
-console.log(`表格填充任务已创建: ${tableJob.jobId}`);
-
-// 轮询任务状态
-const pollStatus = async () => {
-  const status = await client.tableFill.getJobStatus(tableJob.jobId);
-  console.log(`当前状态: ${status.currentState}`);
-  
-  if (['completed', 'failed'].includes(status.status)) {
-    return status;
-  }
-  
-  // 等待5秒后再次检查
-  setTimeout(pollStatus, 5000);
-};
-
-const finalStatus = await pollStatus();
-
-// 下载结果
-if (finalStatus.status === 'completed') {
-  const result = await client.tableFill.downloadResult(tableJob.jobId);
-  console.log(`结果文件已下载: ${result.filePath}`);
-}
-```
-
-## 步骤 5: 设置 Webhook（可选）
+## 步骤 4: 设置 Webhook（可选）
 
 为了实时接收任务状态更新，您可以设置 Webhook：
 
@@ -156,8 +93,7 @@ print(f"Webhook 已配置: {webhook_config.webhook_id}")
 
 ## 下一步
 
-- 查看 [API 参考](/api-reference/table-fill) 了解所有可用的 API
-- 阅读 [使用指南](/guides/table-filling-guide) 学习高级功能
+- 查看 [API 参考](/api-reference/jobs) 了解所有可用的 API
 - 探索 [SDK 文档](/sdks/python) 了解 SDK 的详细用法
 
 ## 常见问题

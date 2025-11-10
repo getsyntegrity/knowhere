@@ -3,7 +3,6 @@
  */
 
 import type { KnowhereClientConfig, ApiResponse, ApiError } from './types';
-import { TableFillService } from './services/tableFill';
 import { KnowledgeBaseService } from './services/knowledgeBase';
 import { WebhookService } from './services/webhook';
 import { JobManagementService } from './services/jobManagement';
@@ -12,7 +11,6 @@ export class KnowhereClient {
   private config: Required<KnowhereClientConfig>;
 
   // 服务模块
-  public readonly tableFill: TableFillService;
   public readonly kb: KnowledgeBaseService;
   public readonly webhook: WebhookService;
   public readonly jobs: JobManagementService;
@@ -34,7 +32,6 @@ export class KnowhereClient {
     }
 
     // 初始化服务模块
-    this.tableFill = new TableFillService(this);
     this.kb = new KnowledgeBaseService(this);
     this.webhook = new WebhookService(this);
     this.jobs = new JobManagementService(this);

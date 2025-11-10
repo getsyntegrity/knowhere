@@ -92,8 +92,6 @@ async def get_job_stats(
         failed_jobs = await job_repo.get_jobs_by_status(db, "failed", limit=1000)
         
         # 按类型统计
-        table_fill_jobs = [job for job in pending_jobs + processing_jobs + completed_jobs + failed_jobs 
-                          if job.job_type == "table_fill"]
         kb_jobs = [job for job in pending_jobs + processing_jobs + completed_jobs + failed_jobs 
                   if job.job_type == "kb_management"]
         
@@ -106,7 +104,6 @@ async def get_job_stats(
                 "failed": len(failed_jobs)
             },
             "by_type": {
-                "table_fill": len(table_fill_jobs),
                 "kb_management": len(kb_jobs)
             },
             "success_rate": len(completed_jobs) / max(1, len(completed_jobs) + len(failed_jobs))
@@ -161,18 +158,7 @@ async def retry_job(
         )
         
         # 重新启动工作流
-        if job.job_type == "table_fill":
-            from app.services.table_fill.orchestrator import TableFillOrchestrator
-            orchestrator = TableFillOrchestrator()
-            await orchestrator.start_workflow(
-                db=db,
-                job_id=job_id,
-                source_type=job.source_type,
-                file_path=job.file_path,
-                file_url=None,  # 需要从metadata获取
-                user_id=str(job.user_id)
-            )
-        elif job.job_type == "kb_management":
+        if job.job_type == "kb_management":
             from app.services.knowledge.kb_orchestrator import KBOrchestrator
             orchestrator = KBOrchestrator()
             await orchestrator.start_workflow(
@@ -182,6 +168,11 @@ async def retry_job(
                 file_path=job.file_path,
                 file_url=None,  # 需要从metadata获取
                 user_id=str(job.user_id)
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"不支持的任务类型: {job.job_type}"
             )
         
         return {

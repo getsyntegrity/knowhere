@@ -122,7 +122,7 @@ export const trackCreditsPurchased = (amount: number, planType: string, transact
 }
 
 // 追踪任务创建
-export const trackJobCreated = (jobType: 'table_fill' | 'kb_management', jobId: string, sourceType: 'direct_upload' | 'url') => {
+export const trackJobCreated = (jobType: 'kb_management', jobId: string, sourceType: 'direct_upload' | 'url') => {
   trackEvent('job_created', {
     job_type: jobType,
     job_id: jobId,
@@ -132,7 +132,7 @@ export const trackJobCreated = (jobType: 'table_fill' | 'kb_management', jobId: 
 }
 
 // 追踪任务完成
-export const trackJobCompleted = (jobType: 'table_fill' | 'kb_management', jobId: string, processingTimeMs: number) => {
+export const trackJobCompleted = (jobType: 'kb_management', jobId: string, processingTimeMs: number) => {
   trackEvent('job_completed', {
     job_type: jobType,
     job_id: jobId,
@@ -142,7 +142,7 @@ export const trackJobCompleted = (jobType: 'table_fill' | 'kb_management', jobId
 }
 
 // 追踪任务失败
-export const trackJobFailed = (jobType: 'table_fill' | 'kb_management', jobId: string, errorMessage: string) => {
+export const trackJobFailed = (jobType: 'kb_management', jobId: string, errorMessage: string) => {
   trackEvent('job_failed', {
     job_type: jobType,
     job_id: jobId,
