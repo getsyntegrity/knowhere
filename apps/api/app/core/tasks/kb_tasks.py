@@ -376,8 +376,8 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),
                 smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
                 summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
-                summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
-                summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),
+                summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", False),
+                summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),
                 add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
             )
             
