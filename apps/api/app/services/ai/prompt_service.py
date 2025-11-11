@@ -3,7 +3,10 @@ from app.services.ai.response_process_service import process_llm_history
 
 
 def build_prompt(task, texts, query, **kwargs):
-    his_record = process_llm_history(kwargs['paras'])
+    from loguru import logger
+    logger.debug(f"build_prompt 调用: task={task}, texts长度={len(str(texts)) if texts else 0}")
+    his_record = process_llm_history(kwargs.get('paras', {}))
+    logger.debug("process_llm_history 完成")
     temperature = 0.1
     top_p = 0.1
     max_tokens = 2000

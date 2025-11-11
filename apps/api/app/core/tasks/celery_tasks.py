@@ -41,8 +41,12 @@ def process_ai_query(self, prompt: str, user_id: str, temperature: float = 0.1,
     """
     AI查询任务 - 高优先级
     """
+    logger.info(f"🚀 [Celery Worker] AI查询任务开始: task_id={self.request.id}, user_id={user_id}")
+    logger.debug(f"[Celery Worker] 任务参数: temperature={temperature}, conversation_id={conversation_id}")
+    
     try:
         # 创建任务上下文
+        logger.debug("[Celery Worker] 正在创建任务上下文...")
         context = task_router.create_task_context(
             task_type='ai_query',
             user_id=user_id,
@@ -50,74 +54,104 @@ def process_ai_query(self, prompt: str, user_id: str, temperature: float = 0.1,
             is_urgent=kwargs.get('is_urgent', False),
             metadata=kwargs
         )
+        logger.debug(f"[Celery Worker] 任务上下文创建完成: priority={context.priority}")
         
         # 更新任务状态
+        logger.debug("[Celery Worker] 更新Celery任务状态...")
         self.update_state(state='PROGRESS', meta={'status': '正在连接AI大模型...'})
+        logger.debug("[Celery Worker] Celery任务状态已更新")
         
         # 异步执行AI查询
+        logger.info("[Celery Worker] 创建事件循环，准备执行异步AI查询...")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        logger.debug("[Celery Worker] 事件循环已创建")
         
         try:
+            logger.info("[Celery Worker] 开始执行异步AI查询...")
             result = loop.run_until_complete(_process_ai_query_async(
                 prompt, user_id, temperature, conversation_id, context
             ))
+            logger.info(f"✅ [Celery Worker] AI查询任务完成: status={result.get('status')}")
             return result
         finally:
+            logger.debug("[Celery Worker] 关闭事件循环")
             loop.close()
             
     except Exception as e:
-        logger.error(f"AI查询任务失败: {e}")
+        logger.error(f"❌ [Celery Worker] AI查询任务失败: {e}")
         raise self.retry(exc=e, countdown=60, max_retries=3)
 
 async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
                                  conversation_id: str, context: TaskContext):
     """异步AI查询处理"""
+    logger.info("[Celery Worker Async] 进入异步处理函数")
+    
     # 获取Redis服务
+    logger.debug("[Celery Worker Async] 获取Redis服务...")
     redis_service = RedisServiceFactory.get_service()
     task_service = TaskRedisService(redis_service)
+    logger.debug("[Celery Worker Async] Redis服务获取成功")
     
     # 初始化状态机
+    logger.debug("[Celery Worker Async] 初始化状态机...")
     state_machine = JobStateMachine(redis_service)
+    logger.debug("[Celery Worker Async] 状态机初始化完成")
     
     # 设置任务状态
+    logger.debug("[Celery Worker Async] 设置任务状态到Redis...")
     await task_service.set_task_status(context.user_id, "正在连接AI大模型...")
+    logger.debug("[Celery Worker Async] 任务状态已设置")
     
     # 延迟导入DeepSeek客户端
+    logger.debug("[Celery Worker Async] 导入DeepSeek客户端...")
     from app.utils.DeepSeekClient import DeepSeekRedisStreamClient
     ai_client = DeepSeekRedisStreamClient(redis_service)
+    logger.debug("[Celery Worker Async] DeepSeek客户端初始化完成")
     
     # 设置对话ID
     if not conversation_id:
         conversation_id = f"ai_query_{user_id}_{int(time.time())}"
+    logger.info(f"[Celery Worker Async] 会话ID: {conversation_id}")
     
     # 执行AI查询
     try:
-        logger.debug(f'process_ai_query_async prompt: {prompt}')
-        logger.debug(f'process_ai_query_async temperature: {temperature}')
-        logger.debug(f'process_ai_query_async conversation_id: {conversation_id}')
+        logger.debug(f'[Celery Worker Async] 提示词长度: {len(str(prompt))} 字符')
+        logger.debug(f'[Celery Worker Async] 温度参数: {temperature}')
         
         # 更新状态为处理中
+        logger.debug("[Celery Worker Async] 更新状态机...")
         await state_machine.set_task_timeout(context.user_id, JobStatus.RUNNING.value)
+        logger.debug("[Celery Worker Async] 状态机更新完成")
         
+        logger.info("[Celery Worker Async] 🤖 开始调用AI客户端...")
+        import time as time_module
+        start_time = time_module.time()
         result = await ai_client.chat_completion(
             messages=prompt,
             temperature=temperature,
             conversation_id=conversation_id,
         )
-        logger.debug(f'process_ai_query_async result: {result}')
+        elapsed = time_module.time() - start_time
+        logger.info(f"✅ [Celery Worker Async] AI客户端调用完成，总耗时: {elapsed:.2f}秒")
+        logger.debug(f'[Celery Worker Async] 结果长度: {len(str(result))} 字符')
         
         # 保存结果
+        logger.debug("[Celery Worker Async] 保存结果到Redis...")
         await task_service.save_task_result(context.user_id, {
             'result': result,
             'conversation_id': conversation_id,
             'timestamp': time.time()
         })
+        logger.debug("[Celery Worker Async] 结果已保存")
         
+        logger.debug("[Celery Worker Async] 设置任务状态为完成...")
         await task_service.set_task_status(context.user_id, "complete")
+        logger.info("✅ [Celery Worker Async] 异步处理完成，返回结果")
         return {'status': 'success', 'result': result}
         
     except Exception as e:
+        logger.error(f"❌ [Celery Worker Async] 异步处理失败: {e}")
         await task_service.mark_task_failed(context.user_id, str(e))
         raise
 

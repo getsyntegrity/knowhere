@@ -95,7 +95,7 @@ async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images"
                 }
             }
             messages[0]['content'].append(url_header)
-
+        resp = ''
         try:
             resp = client.chat.completions.create(
                 model=image_model,
