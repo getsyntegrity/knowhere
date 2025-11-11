@@ -165,8 +165,24 @@ async def lifespan(app: FastAPI):
     # 初始化HTTP客户端
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     
+    # 启动消息消费者（仅在API服务中运行）
+    try:
+        from app.services.messaging_service import messaging_service
+        messaging_service.start()
+        logger.info("消息消费者已启动")
+    except Exception as e:
+        logger.error(f"启动消息消费者失败: {e}")
+        # 消息消费者启动失败不应该阻止API服务启动
+    
     logger.info("知识库API服务启动完成！")
     yield
+    
+    # 停止消息消费者
+    try:
+        from app.services.messaging_service import messaging_service
+        messaging_service.stop()
+    except Exception as e:
+        logger.error(f"停止消息消费者失败: {e}")
     
     # 应用关闭时的清理工作
     logger.info("开始关闭服务...")

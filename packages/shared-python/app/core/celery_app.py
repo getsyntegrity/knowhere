@@ -23,7 +23,8 @@ celery_app = Celery(
     include=[
         'app.core.tasks.celery_tasks',
         'app.core.tasks.kb_tasks',
-        'app.core.tasks.state_machine_tasks'
+        'app.core.tasks.state_machine_tasks',
+        'app.core.tasks.message_handlers'  # 消息处理器（仅在API服务中运行）
     ]
 )
 
@@ -74,6 +75,12 @@ celery_app.conf.update(
         
         # 知识库任务路由（动态路由）
         'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # 默认中等优先级
+        
+        # 消息处理器路由（仅在API服务队列中运行）
+        'app.core.tasks.message_handlers.handle_job_status_update': {'queue': 'kb_medium'},
+        'app.core.tasks.message_handlers.handle_job_progress_update': {'queue': 'kb_medium'},
+        'app.core.tasks.message_handlers.handle_job_result': {'queue': 'kb_medium'},
+        'app.core.tasks.message_handlers.handle_job_failure': {'queue': 'kb_medium'},
     }
 )
 

@@ -10,13 +10,13 @@ from celery import Task
 from loguru import logger
 
 from app.core.celery_app import get_celery_app
-from app.core.state_machine import JobStateMachine, JobStatus
-from app.repositories.job_repository import JobRepository
-from app.repositories.job_result_repository import JobResultRepository
+from app.core.state_machine import JobStatus  # 仅用于状态常量，不直接操作状态机
+from app.repositories.job_repository import JobRepository  # 仅用于只读操作
 from app.services.storage.file_upload_service import FileUploadService
 from app.core.database import get_db_context
 from app.core.config import settings
 from app.utils.json_utils import make_json_safe
+from app.services.messaging import get_message_publisher
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -37,50 +37,35 @@ class KBBaseTask(Task):
         """任务重试回调"""
         logger.warning(f"知识库任务 {task_id} 重试: {exc}")
         
-        # 处理重试时的状态机逻辑
-        try:
-            import asyncio
-            from app.core.state_machine import JobStateMachine
-            from app.core.database import get_db_context
-            
-            # 获取job_id（从args或kwargs中）
-            job_id = None
-            if args and len(args) > 0:
-                if isinstance(args[0], dict) and 'job_id' in args[0]:
-                    job_id = args[0]['job_id']
-                elif isinstance(args[0], str):
-                    job_id = args[0]
-            elif 'job_id' in kwargs:
-                job_id = kwargs['job_id']
-            
-            if job_id:
-                # 异步处理重试状态
-                try:
-                    # 尝试获取当前事件循环
-                    loop = asyncio.get_event_loop()
-                    if loop.is_closed():
-                        raise RuntimeError("Event loop is closed")
-                except RuntimeError:
-                    # 如果没有事件循环或循环已关闭，创建新的
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                try:
-                    async def handle_retry_async():
-                        state_machine = JobStateMachine()
-                        async with get_db_context() as db:
-                            await state_machine.handle_retry(db, job_id, {
-                                "retry_count": self.request.retries,
-                                "error_message": str(exc)
-                            })
-                    
-                    loop.run_until_complete(handle_retry_async())
-                finally:
-                    # 只有在创建了新循环时才关闭
-                    if loop != asyncio.get_event_loop():
-                        loop.close()
-        except Exception as e:
-            logger.error(f"处理重试状态时出错: {e}")
+        # 获取job_id（从args或kwargs中）
+        job_id = None
+        if args and len(args) > 0:
+            if isinstance(args[0], dict) and 'job_id' in args[0]:
+                job_id = args[0]['job_id']
+            elif isinstance(args[0], str):
+                job_id = args[0]
+        elif 'job_id' in kwargs:
+            job_id = kwargs['job_id']
+        
+        if job_id:
+            # 发布重试消息（通过消息通知API服务处理重试状态）
+            try:
+                message_publisher = get_message_publisher()
+                message_publisher.publish_status_update(
+                    job_id=job_id,
+                    status=JobStatus.RUNNING.value,  # 重试时保持running状态
+                    trigger="task_retry",
+                    metadata={
+                        "retry_count": self.request.retries,
+                        "error_message": str(exc),
+                        "task_id": task_id
+                    },
+                    operator_type="system",
+                    async_mode=False
+                )
+                logger.info(f"任务重试消息已发布: job_id={job_id}, retry_count={self.request.retries}")
+            except Exception as e:
+                logger.error(f"发布重试消息失败: {e}")
 
 
 # 文件上传任务已移除 - 文件通过S3直传处理
@@ -112,15 +97,10 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None
 
 async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job_type: str = None):
     """异步URL文件下载并上传到S3"""
-    state_machine = JobStateMachine()
     job_repo = JobRepository()
+    message_publisher = get_message_publisher()
     
-    # 初始化Redis服务
-    from app.services.redis import RedisServiceFactory
-    from app.services.redis.task_redis_service import TaskRedisService
-    redis_service = RedisServiceFactory.get_service()
-    task_service = TaskRedisService(redis_service)
-    
+    # 初始化Redis服务（用于进度更新，但改为消息发布）
     try:
         # 第一次数据库连接：获取Job信息
         async with get_db_context() as db:
@@ -129,9 +109,12 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
                 raise ValueError("Job不存在")
             s3_key = job.s3_key  # 提前获取s3_key，避免后续数据库连接问题
         
-        # 更新进度：验证文件类型
-        await task_service.update_task_progress(
-            job_id, 3, "正在验证URL文件类型..."
+        # 发布进度更新消息：验证文件类型
+        message_publisher.publish_progress_update(
+            job_id=job_id,
+            progress=3,
+            message_text="正在验证URL文件类型...",
+            async_mode=False
         )
         
         # 步骤1：验证URL文件类型（在下载前，防止下载不安全的文件）
@@ -153,9 +136,12 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         
         logger.info(f"URL文件类型验证通过: {file_extension}")
         
-        # 更新进度：开始下载
-        await task_service.update_task_progress(
-            job_id, 10, "正在从URL下载文件..."
+        # 发布进度更新消息：开始下载
+        message_publisher.publish_progress_update(
+            job_id=job_id,
+            progress=10,
+            message_text="正在从URL下载文件...",
+            async_mode=False
         )
         
         # 步骤2：下载文件到临时目录
@@ -163,9 +149,12 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         temp_file_path = await upload_service._download_file_from_url(source_url)
         
         try:
-            # 更新进度：验证文件大小
-            await task_service.update_task_progress(
-                job_id, 30, "正在验证文件大小..."
+            # 发布进度更新消息：验证文件大小
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=30,
+                message_text="正在验证文件大小...",
+                async_mode=False
             )
             
             # 步骤3：验证文件大小（在上传S3前）
@@ -176,9 +165,12 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
             
             logger.info(f"文件大小验证通过: {file_size / 1024 / 1024:.2f}MB")
             
-            # 更新进度：上传到S3
-            await task_service.update_task_progress(
-                job_id, 50, "正在上传文件到S3..."
+            # 发布进度更新消息：上传到S3
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=50,
+                message_text="正在上传文件到S3...",
+                async_mode=False
             )
             
             # 步骤4：上传到S3（使用job中预设的s3_key）
@@ -192,9 +184,12 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
                 os.remove(temp_file_path)
                 logger.debug(f"临时文件已清理: {temp_file_path}")
         
-        # 更新进度：验证上传结果
-        await task_service.update_task_progress(
-            job_id, 80, "正在验证上传结果..."
+        # 发布进度更新消息：验证上传结果
+        message_publisher.publish_progress_update(
+            job_id=job_id,
+            progress=80,
+            message_text="正在验证上传结果...",
+            async_mode=False
         )
         
         # 步骤5：验证S3文件存在
@@ -202,9 +197,12 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         if not file_info.get("exists"):
             raise ValueError("S3文件验证失败")
         
-        # 更新进度：完成
-        await task_service.update_task_progress(
-            job_id, 100, "URL文件上传完成，等待处理..."
+        # 发布进度更新消息：完成
+        message_publisher.publish_progress_update(
+            job_id=job_id,
+            progress=100,
+            message_text="URL文件上传完成，等待处理...",
+            async_mode=False
         )
         
         logger.info(f"URL文件上传完成，等待S3 webhook触发: {job_id} -> {s3_key}")
@@ -218,12 +216,15 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         
     except Exception as e:
         logger.error(f"URL文件上传失败: {e}")
-        # 使用新的数据库连接标记失败
-        try:
-            async with get_db_context() as db:
-                await state_machine.mark_failed(db, job_id, str(e))
-        except Exception as db_error:
-            logger.error(f"标记任务失败时数据库错误: {db_error}")
+        import traceback
+        # 发布失败消息
+        message_publisher.publish_failure(
+            job_id=job_id,
+            error_message=str(e),
+            error_type=type(e).__name__,
+            stack_trace=traceback.format_exc(),
+            async_mode=False
+        )
         raise
 
 
@@ -262,8 +263,8 @@ def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: s
 
 async def _parse_and_vectorize_async(job_id: str, user_id: str):
     """异步解析并向量化（文件已通过S3直传）"""
-    state_machine = JobStateMachine()
     job_repo = JobRepository()
+    message_publisher = get_message_publisher()
     
     try:
         async with get_db_context() as db:
@@ -321,26 +322,33 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             if not user_config:
                 raise ValueError("Job metadata中缺少用户配置")
             
-            # 检查当前状态，如果是failed，先转换到pending
+            # 检查当前状态，如果是failed，先发布状态更新消息转换到pending
             if job.status == JobStatus.FAILED.value:
-                await state_machine.transition(
-                    db, job_id, JobStatus.PENDING.value,
-                    "retry_from_failed", None, "system"
+                message_publisher.publish_status_update(
+                    job_id=job_id,
+                    status=JobStatus.PENDING.value,
+                    trigger="retry_from_failed",
+                    previous_status=job.status,
+                    operator_type="system",
+                    async_mode=False
                 )
             
-            # 更新状态：开始处理
-            await state_machine.transition(
-                db, job_id, JobStatus.RUNNING.value,
-                "start_processing", None, "system"
+            # 发布状态更新消息：开始处理
+            message_publisher.publish_status_update(
+                job_id=job_id,
+                status=JobStatus.RUNNING.value,
+                trigger="start_processing",
+                previous_status=job.status if job.status != JobStatus.FAILED.value else JobStatus.PENDING.value,
+                operator_type="system",
+                async_mode=False
             )
             
-            # 更新进度信息：开始解析
-            from app.services.redis import RedisServiceFactory
-            from app.services.redis.task_redis_service import TaskRedisService
-            redis_service = RedisServiceFactory.get_service()
-            task_service = TaskRedisService(redis_service)
-            await task_service.update_task_progress(
-                job_id, 10, "正在解析文档..."
+            # 发布进度更新消息：开始解析
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=10,
+                message_text="正在解析文档...",
+                async_mode=False
             )
             
             # 获取S3键和文件信息
@@ -387,9 +395,12 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             
             logger.info(f"文件解析成功: {add_dir}")
             
-            # 更新进度信息：解析完成，开始向量化
-            await task_service.update_task_progress(
-                job_id, 30, "解析完成，正在向量化..."
+            # 发布进度更新消息：解析完成，开始向量化
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=30,
+                message_text="解析完成，正在向量化...",
+                async_mode=False
             )
             
             # 调用旧方案的向量化逻辑
@@ -418,9 +429,12 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 logger.warning("add_contents_df为空，保存空chunks到Redis")
                 await chunks_redis_service.save_chunks(job_id, [])
             
-            # 更新进度信息：向量化完成
-            await task_service.update_task_progress(
-                job_id, 70, "向量化完成，正在存储到数据库..."
+            # 发布进度更新消息：向量化完成
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=70,
+                message_text="向量化完成，正在存储到数据库...",
+                async_mode=False
             )
             
             return {
@@ -433,8 +447,16 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             
     except Exception as e:
         logger.error(f"解析并向量化失败: {e}")
-        async with get_db_context() as db:
-            await state_machine.mark_failed(db, job_id, str(e))
+        import traceback
+        # 发布失败消息
+        message_publisher = get_message_publisher()
+        message_publisher.publish_failure(
+            job_id=job_id,
+            error_message=str(e),
+            error_type=type(e).__name__,
+            stack_trace=traceback.format_exc(),
+            async_mode=False
+        )
         raise
 
 
@@ -474,9 +496,9 @@ def store_to_db_task(self, prev_result: dict, user_id: str = None, job_type: str
 
 
 async def _store_to_db_async(prev_result: dict, user_id: str):
-    """异步存储到数据库"""
-    state_machine = JobStateMachine()
+    """异步存储到数据库（Worker处理业务逻辑，通过消息通知API服务存储）"""
     job_repo = JobRepository()
+    message_publisher = get_message_publisher()
     
     try:
         # 从上一个任务的结果中获取job_id
@@ -485,7 +507,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             raise ValueError("缺少job_id参数")
             
         async with get_db_context() as db:
-            # 获取Job
+            # 获取Job（只读，用于获取必要信息）
             job = await job_repo.get_job_by_id(db, job_id)
             if not job:
                 raise ValueError("Job不存在")
@@ -501,20 +523,17 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             if not user_config:
                 raise ValueError("Job metadata中缺少用户配置")
             
-            # 更新进度信息：开始存储数据库
-            from app.services.redis import RedisServiceFactory
-            from app.services.redis.task_redis_service import TaskRedisService
-            redis_service = RedisServiceFactory.get_service()
-            task_service = TaskRedisService(redis_service)
-            await task_service.update_task_progress(
-                job_id, 80, "正在存储到数据库..."
+            # 发布进度更新消息：开始存储数据库
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=80,
+                message_text="正在存储到数据库...",
+                async_mode=False
             )
             
-            # 从Redis获取chunks数据
+            # 从Redis获取chunks数据（用于生成ZIP包）
             from app.services.redis.chunks_redis_service import ChunksRedisService
-            from app.services.redis import RedisServiceFactory
             
-            redis_service = RedisServiceFactory.get_service()
             chunks_redis_service = ChunksRedisService(redis_service)
             chunks = await chunks_redis_service.get_chunks(job_id)
             
@@ -524,38 +543,32 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 logger.warning(f"从Redis获取chunks数据失败: job_id={job_id}")
                 chunks = []
             
-            # 从全局管理器获取向量化结果（用于存储到knowledge_base表）
+            # 从全局管理器获取向量化结果（用于准备存储到knowledge_base表的数据）
             from app.services.common.global_manager_service import global_df_manager
             user_key = f"{user_config['user']}_all_contents_df"
             all_contents_df = global_df_manager.get_dataframe(user_key)
             logger.debug(f"user_key: {user_key}, all_contents_df length: {len(all_contents_df) if all_contents_df is not None else 'None'}")
             
+            # 准备知识库记录数据（转换为字典格式，用于消息传递）
             kb_records = []
             if all_contents_df is not None and len(all_contents_df) > 0:
-                # 存储到数据库（knowledge_base表）
-                from app.repositories.knowledge_base_repository import create_update_kb
                 from app.models.database.knowledge_base import KBPydantic
                 
-                # 转换DataFrame为数据库记录（只存新增的内容）
+                # 转换DataFrame为字典（只处理新增的内容）
                 contents_count = len(all_contents_df)
                 for _, row in all_contents_df.tail(contents_count).iterrows():
-                    logger.debug(f"row: {row}")
-                    kb_record = KBPydantic(
-                        content=row.get('content'),
-                        path=row.get('path'),
-                        type=row.get('type'),
-                        length=row.get('length'),
-                        keywords=row.get('keywords'),
-                        summary=row.get('summary'),
-                        know_id=row.get('know_id'),
-                        tokens=row.get('tokens'),
-                        embedding=None  # 向量存储在文件系统
-                    )
-                    kb_records.append(kb_record)
-                
-                # 批量插入数据库
-                if kb_records:
-                    await create_update_kb(kb_records)
+                    kb_record_dict = {
+                        'content': row.get('content'),
+                        'path': row.get('path'),
+                        'type': row.get('type'),
+                        'length': row.get('length'),
+                        'keywords': row.get('keywords'),
+                        'summary': row.get('summary'),
+                        'know_id': row.get('know_id'),
+                        'tokens': row.get('tokens'),
+                        'embedding': None  # 向量存储在文件系统
+                    }
+                    kb_records.append(kb_record_dict)
             
             # 从job_metadata获取信息
             source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or job.file_path or JobMetadataHelper.get_field(job_metadata, "source_url")
@@ -570,7 +583,7 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             # 获取 data_id
             data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 
-            # 生成 ZIP 包
+            # 生成 ZIP 包（业务逻辑处理）
             from app.services.storage.zip_result_service import ZipResultService
             zip_service = ZipResultService()
             zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(
@@ -582,54 +595,45 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 job_metadata=job_metadata,
             )
 
-            # 上传 ZIP 包到 S3
+            # 上传 ZIP 包到 S3（业务逻辑处理）
             upload_service = FileUploadService()
             result_s3_key = await upload_service.upload_zip_result(job_id, zip_file_path)
 
-            # 存储 checksum 到 inline_payload（只包含 checksum，用于 API 返回的 result 字段）
-            inline_payload = {
-                "checksum": checksum,
-            }
-
-            # 存储到数据库
-            job_result_repo = JobResultRepository()
-            job_result = await job_result_repo.upsert_job_result(
-                db,
+            # 发布进度更新消息：数据库存储完成
+            message_publisher.publish_progress_update(
                 job_id=job_id,
-                delivery_mode="url",  # 固定为 url 模式
-                document_metadata=None,  # 不再使用
-                inline_payload=inline_payload,
-                result_s3_key=result_s3_key,
-                result_size=zip_size
-            )
-
-            await job_result_repo.replace_chunks(db, job_result.id, chunks)
-            
-            # 更新进度信息：数据库存储完成
-            await task_service.update_task_progress(
-                job_id, 95, "数据库存储完成，正在生成结果..."
+                progress=95,
+                message_text="数据库存储完成，正在生成结果...",
+                async_mode=False
             )
             
             # 安全地获取kb_records的长度
             stored_count = len(kb_records) if kb_records is not None else 0
             
-            # 更新进度信息：任务完成
-            await task_service.update_task_progress(
-                job_id, 100, "任务完成！"
+            # 发布进度更新消息：任务完成
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=100,
+                message_text="任务完成！",
+                async_mode=False
             )
             
-            # 直接标记任务为完成（Webhook发送与任务完成状态无关）
-            await state_machine.mark_completed(db, job_id, {
-                "storage_completed": True,
-                "stored_count": stored_count,
-                "delivery_mode": "url"
-            })
+            # 发布结果消息（包含所有需要存储的数据）
+            message_publisher.publish_result(
+                job_id=job_id,
+                chunks_job_id=job_id,  # chunks数据通过job_id从Redis读取
+                result_s3_key=result_s3_key,
+                checksum=checksum,
+                zip_size=zip_size,
+                stored_count=stored_count,
+                kb_records=kb_records,  # 知识库记录数据
+                statistics=statistics,
+                delivery_mode="url",
+                add_dir=add_dir,
+                async_mode=False
+            )
 
-            logger.info(f"知识库存储完成: job_id={job_id}, stored_count={stored_count}")
-            
-            # 清理Redis中的chunks数据
-            await chunks_redis_service.delete_chunks(job_id)
-            logger.debug(f"Redis chunks数据已清理: job_id={job_id}")
+            logger.info(f"Worker处理完成，结果消息已发布: job_id={job_id}, stored_count={stored_count}")
 
             return {
                 "status": "success",
@@ -641,8 +645,15 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
             
     except Exception as e:
         logger.error(f"存储数据库失败: {e}")
-        async with get_db_context() as db:
-            await state_machine.mark_failed(db, job_id, str(e))
+        import traceback
+        # 发布失败消息
+        message_publisher.publish_failure(
+            job_id=job_id if 'job_id' in locals() else "unknown",
+            error_message=str(e),
+            error_type=type(e).__name__,
+            stack_trace=traceback.format_exc(),
+            async_mode=False
+        )
         raise
 
 
