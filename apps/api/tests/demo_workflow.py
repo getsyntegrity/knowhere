@@ -137,7 +137,7 @@ async def main():
     print("upload_info", upload_info)
     upload_url = upload_info["upload_url"]
     upload_headers = upload_info["upload_headers"]
-    upload_file_to_presigned_url(upload_url, "data/测试文档.docx", upload_headers)
+    upload_file_to_presigned_url(upload_url, "data/简化版测试文档.docx", upload_headers)
 
     # 7. 创建 Job（使用包含 user_config 的 metadata）
     async with get_db_context() as db:

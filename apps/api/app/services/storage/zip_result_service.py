@@ -381,7 +381,30 @@ class ZipResultService:
                 pass
 
             file_size = os.path.getsize(source_path)
-            zip_path = f"images/{chunk_id}.{ext}"
+            
+            # 优先使用 metadata 中的 file_path，否则使用 original_name，最后使用 chunk_id
+            metadata = chunk.get("metadata", {})
+            if metadata and isinstance(metadata, dict):
+                # metadata.file_path 格式: "images/xxx.jpg"
+                zip_file_path = metadata.get("file_path")
+                if zip_file_path and zip_file_path.startswith("images/"):
+                    # 使用 metadata 中的完整路径
+                    zip_path = zip_file_path
+                    # 提取文件名作为 original_name
+                    if not original_name:
+                        original_name = metadata.get("original_name") or os.path.basename(zip_file_path)
+                else:
+                    # 如果 metadata 中没有 file_path，使用 original_name 或 chunk_id
+                    if original_name:
+                        zip_path = f"images/{original_name}"
+                    else:
+                        zip_path = f"images/{chunk_id}.{ext}"
+            else:
+                # 如果没有 metadata，使用 original_name 或 chunk_id
+                if original_name:
+                    zip_path = f"images/{original_name}"
+                else:
+                    zip_path = f"images/{chunk_id}.{ext}"
 
             image_files.append({
                 "id": str(chunk_id),
@@ -455,7 +478,30 @@ class ZipResultService:
                 continue
 
             file_size = os.path.getsize(source_path)
-            zip_path = f"tables/{chunk_id}.html"
+            
+            # 优先使用 metadata 中的 file_path，否则使用 original_name，最后使用 chunk_id
+            metadata = chunk.get("metadata", {})
+            if metadata and isinstance(metadata, dict):
+                # metadata.file_path 格式: "tables/xxx.html"
+                zip_file_path = metadata.get("file_path")
+                if zip_file_path and zip_file_path.startswith("tables/"):
+                    # 使用 metadata 中的完整路径
+                    zip_path = zip_file_path
+                    # 提取文件名作为 original_name
+                    if not original_name:
+                        original_name = metadata.get("original_name") or os.path.basename(zip_file_path)
+                else:
+                    # 如果 metadata 中没有 file_path，使用 original_name 或 chunk_id
+                    if original_name:
+                        zip_path = f"tables/{original_name}"
+                    else:
+                        zip_path = f"tables/{chunk_id}.html"
+            else:
+                # 如果没有 metadata，使用 original_name 或 chunk_id
+                if original_name:
+                    zip_path = f"tables/{original_name}"
+                else:
+                    zip_path = f"tables/{chunk_id}.html"
 
             table_files.append({
                 "id": str(chunk_id),
