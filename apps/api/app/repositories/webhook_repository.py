@@ -27,13 +27,12 @@ class WebhookRepository:
     ) -> bool:
         """记录Webhook尝试日志"""
         try:
-            import json
-            
+            # request_payload 是 Dict，SQLAlchemy 的 JSON 类型会自动序列化
             webhook_log = WebhookLog(
                 job_id=job_id,
                 webhook_url=webhook_url,
                 attempt_number=attempt_number,
-                request_payload=json.dumps(request_payload) if request_payload else None,
+                request_payload=request_payload,  # 直接传递 Dict，SQLAlchemy 会自动处理
                 signature=signature,
                 idempotency_key=idempotency_key,
                 response_status_code=response_status_code,

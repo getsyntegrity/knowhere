@@ -17,8 +17,7 @@ from app.models.schemas.webhook import (
     WebhookTestResponse
 )
 from app.repositories.webhook_repository import WebhookRepository
-# 注意：WebhookService在Worker服务中，改为延迟导入
-# from app.services.webhook.webhook_service import WebhookService
+# WebhookService已迁移到API服务
 
 router = APIRouter(tags=["Webhook管理"])
 
@@ -178,68 +177,34 @@ async def test_webhook(
 ):
     """测试Webhook连接"""
     try:
-        # 延迟导入WebhookService（Worker专用）
-        # 如果导入失败，使用httpx直接发送请求
-        try:
-            from app.services.webhook.webhook_service import WebhookService
-            webhook_service = WebhookService()
-            
-            # 构建测试payload
-            test_payload = {
-                "event": "webhook.test",
-                "message": "This is a test webhook from Knowhere",
-                "timestamp": "2024-01-01T00:00:00Z",
-                "user_id": str(current_user.id)
-            }
-            
-            # 发送测试Webhook
-            result = await webhook_service.send_webhook(
-                job_id="test",
-                webhook_url=str(request.webhook_url),
-                payload=test_payload,
-                attempt_number=1
-            )
-            
-            response = WebhookTestResponse(
-                success=result.get("success", False),
-                status_code=result.get("status_code"),
-                response_body=result.get("response_body"),
-                error_message=result.get("error"),
-                test_time=datetime.utcnow()
-            )
-        except ImportError:
-            # 如果无法导入WebhookService，使用httpx直接发送测试请求
-            import httpx
-            
-            test_payload = {
-                "event": "webhook.test",
-                "message": "This is a test webhook from Knowhere",
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "user_id": str(current_user.id)
-            }
-            
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                try:
-                    http_response = await client.post(
-                        str(request.webhook_url),
-                        json=test_payload,
-                        headers={"Content-Type": "application/json"}
-                    )
-                    response = WebhookTestResponse(
-                        success=http_response.status_code < 400,
-                        status_code=http_response.status_code,
-                        response_body=http_response.text[:500] if http_response.text else None,
-                        error_message=None,
-                        test_time=datetime.utcnow()
-                    )
-                except Exception as e:
-                    response = WebhookTestResponse(
-                        success=False,
-                        status_code=None,
-                        response_body=None,
-                        error_message=str(e),
-                        test_time=datetime.utcnow()
-                    )
+        from datetime import datetime
+        from app.services.webhook.webhook_service import WebhookService
+        
+        webhook_service = WebhookService()
+        
+        # 构建测试payload
+        test_payload = {
+            "event": "webhook.test",
+            "message": "This is a test webhook from Knowhere",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "user_id": str(current_user.id)
+        }
+        
+        # 发送测试Webhook
+        result = await webhook_service.send_webhook(
+            job_id="test",
+            webhook_url=str(request.webhook_url),
+            payload=test_payload,
+            attempt_number=1
+        )
+        
+        response = WebhookTestResponse(
+            success=result.get("success", False),
+            status_code=result.get("status_code"),
+            response_body=result.get("response_body"),
+            error_message=result.get("error"),
+            test_time=datetime.utcnow()
+        )
         
         return response
         

@@ -7,7 +7,7 @@ import sys
 from typing import Dict, Any
 from loguru import logger
 
-from app.core.state_machine import JobStateMachine
+from app.services.state_machine.manager import JobStateMachine
 from app.core.database import get_db_context
 
 

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_db, get_current_user
 from app.models.database.user import User
 from app.repositories.job_repository import JobRepository
-from app.core.state_machine import JobStateMachine
+from app.services.state_machine import JobStateMachine
 
 router = APIRouter(tags=["Job管理"])
 

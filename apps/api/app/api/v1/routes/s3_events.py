@@ -17,7 +17,7 @@ from app.repositories.job_repository import JobRepository
 from app.core.config import settings
 from app.services.storage.file_upload_service import FileUploadService
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
-from app.core.state_machine import JobStatus
+from app.core.state_machine.states import JobStatus
 from app.core.database import get_db_context
 
 router = APIRouter(tags=["Internal"])
@@ -467,7 +467,7 @@ async def process_upload_events(s3_event: S3Event):
                     continue
                 
                 # 更新job状态
-                from app.core.state_machine import JobStateMachine
+                from app.services.state_machine import JobStateMachine
                 state_machine = JobStateMachine()
                 
                 # 文件上传完成后，转换到pending状态

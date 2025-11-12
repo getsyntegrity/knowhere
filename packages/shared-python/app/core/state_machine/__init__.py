@@ -1,16 +1,9 @@
 """
 状态机模块
+注意：状态机管理器已迁移到 API 服务，这里只保留状态定义
 """
-from .manager import JobStateMachine
 from .states import JobStatus
-from .state_machine_service import StateMachineService
-from .state_sync_service import StateSyncService
-from .state_timeout_service import StateTimeoutService
 
 __all__ = [
-    "JobStateMachine",
     "JobStatus",
-    "StateMachineService",
-    "StateSyncService", 
-    "StateTimeoutService"
 ]

@@ -9,7 +9,7 @@ from loguru import logger
 
 from app.models.database.job import Job
 from app.models.database.job_state_history import JobStateHistory
-from app.core.state_machine import JobStateMachine
+from app.services.state_machine import JobStateMachine
 
 
 class JobRepository:

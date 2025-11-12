@@ -9,7 +9,8 @@ from celery import Task
 from loguru import logger
 
 from app.core.celery_app import get_celery_app
-from app.core.state_machine import JobStateMachine, JobStatus
+from app.services.state_machine import JobStateMachine
+from app.core.state_machine.states import JobStatus
 from app.repositories.job_repository import JobRepository
 from app.repositories.job_result_repository import JobResultRepository
 from app.repositories.knowledge_base_repository import create_update_kb
@@ -44,7 +45,7 @@ class MessageHandlerBaseTask(Task):
         logger.error(f"异常信息: {einfo}")
 
 
-@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.core.tasks.message_handlers.handle_job_status_update')
+@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.services.messaging.message_handlers.handle_job_status_update')
 def handle_job_status_update(self, message_data: Dict[str, Any]):
     """
     处理Job状态更新消息
@@ -123,7 +124,7 @@ async def _handle_status_update_async(message: JobStatusUpdateMessage):
         raise
 
 
-@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.core.tasks.message_handlers.handle_job_progress_update')
+@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.services.messaging.message_handlers.handle_job_progress_update')
 def handle_job_progress_update(self, message_data: Dict[str, Any]):
     """
     处理Job进度更新消息
@@ -199,7 +200,7 @@ async def _handle_progress_update_async(message: JobProgressUpdateMessage):
         raise
 
 
-@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.core.tasks.message_handlers.handle_job_result')
+@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.services.messaging.message_handlers.handle_job_result')
 def handle_job_result(self, message_data: Dict[str, Any]):
     """
     处理Job结果数据消息
@@ -311,6 +312,9 @@ async def _handle_result_async(message: JobResultMessage):
             
             logger.info(f"Job {message.job_id} 结果存储完成: stored_count={message.stored_count}")
             
+            # 7. 处理Webhook和邮件发送（如果启用）
+            await _handle_job_completion_notifications(db, message.job_id, job_result)
+            
             return {
                 "status": "success",
                 "job_id": message.job_id,
@@ -322,7 +326,7 @@ async def _handle_result_async(message: JobResultMessage):
         raise
 
 
-@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.core.tasks.message_handlers.handle_job_failure')
+@celery_app.task(bind=True, base=MessageHandlerBaseTask, name='app.services.messaging.message_handlers.handle_job_failure')
 def handle_job_failure(self, message_data: Dict[str, Any]):
     """
     处理Job失败消息
@@ -392,6 +396,9 @@ async def _handle_failure_async(message: JobFailureMessage):
                 if message.stack_trace:
                     logger.error(f"Job {message.job_id} 堆栈跟踪:\n{message.stack_trace}")
                 
+                # 处理失败Webhook和邮件发送（如果启用）
+                await _handle_job_failure_notifications(db, message.job_id, message.error_message, message.error_type)
+                
                 return {
                     "status": "success",
                     "job_id": message.job_id,
@@ -408,4 +415,121 @@ async def _handle_failure_async(message: JobFailureMessage):
     except Exception as e:
         logger.error(f"处理失败消息时出错: {e}")
         raise
+
+
+async def _handle_job_completion_notifications(db, job_id: str, job_result: Any):
+    """处理Job完成的通知（Webhook和邮件）"""
+    try:
+        from app.repositories.job_repository import JobRepository
+        from app.services.webhook.webhook_handler_service import WebhookHandlerService
+        from app.services.email.job_email_service import JobEmailService
+        from app.models.schemas.job_metadata import JobMetadataHelper
+        from app.services.redis import RedisServiceFactory, JobMetadataService
+        
+        job_repo = JobRepository()
+        job = await job_repo.get_job_by_id(db, job_id)
+        
+        if not job:
+            logger.warning(f"Job {job_id} 不存在，跳过通知")
+            return
+        
+        # 检查是否需要发送Webhook
+        webhook_enabled = job.webhook_enabled
+        webhook_url = job.webhook_url
+        
+        if webhook_enabled and webhook_url:
+            # 从job_metadata获取webhook配置
+            redis_service = RedisServiceFactory.get_service()
+            metadata_service = JobMetadataService(redis_service)
+            job_metadata = await metadata_service.get_metadata(job_id)
+            
+            if job_metadata:
+                webhook_config = JobMetadataHelper.get_webhook(job_metadata)
+                if webhook_config and webhook_config.get("url"):
+                    webhook_url = webhook_config["url"]
+            
+            # 发送Webhook
+            webhook_handler = WebhookHandlerService()
+            webhook_result = await webhook_handler.handle_job_completion_webhook(
+                db=db,
+                job_id=job_id,
+                job_result=job_result,
+                webhook_url=webhook_url
+            )
+            logger.info(f"Job完成Webhook发送结果: job_id={job_id}, result={webhook_result}")
+        
+        # 发送邮件（如果需要）
+        try:
+            from sqlalchemy import select
+            from app.models.database.user import User
+            result = await db.execute(select(User).where(User.id == job.user_id))
+            user = result.scalar_one_or_none()
+            
+            if user and user.email:
+                email_service = JobEmailService()
+                email_result = await email_service.send_job_completion_email(
+                    db=db,
+                    job_id=job_id,
+                    job_result=job_result,
+                    user_email=user.email,
+                    user_name=getattr(user, 'full_name', None) or user.email,
+                    job_type=job.job_type or "kb_management"
+                )
+                logger.info(f"Job完成邮件发送结果: job_id={job_id}, user_email={user.email}, result={email_result}")
+        except Exception as e:
+            logger.error(f"发送Job完成邮件失败: {e}")
+        
+    except Exception as e:
+        logger.error(f"处理Job完成通知失败: {e}")
+
+
+async def _handle_job_failure_notifications(db, job_id: str, error_message: str, error_type: str = None):
+    """处理Job失败的通知（Webhook和邮件）"""
+    try:
+        from app.repositories.job_repository import JobRepository
+        from app.services.webhook.webhook_handler_service import WebhookHandlerService
+        from app.services.email.job_email_service import JobEmailService
+        
+        job_repo = JobRepository()
+        job = await job_repo.get_job_by_id(db, job_id)
+        
+        if not job:
+            logger.warning(f"Job {job_id} 不存在，跳过通知")
+            return
+        
+        # 检查是否需要发送Webhook
+        if job.webhook_enabled and job.webhook_url:
+            webhook_handler = WebhookHandlerService()
+            webhook_result = await webhook_handler.handle_job_failure_webhook(
+                db=db,
+                job_id=job_id,
+                error_message=error_message,
+                error_type=error_type,
+                webhook_url=job.webhook_url
+            )
+            logger.info(f"Job失败Webhook发送结果: job_id={job_id}, result={webhook_result}")
+        
+        # 发送邮件（如果需要）
+        try:
+            from sqlalchemy import select
+            from app.models.database.user import User
+            result = await db.execute(select(User).where(User.id == job.user_id))
+            user = result.scalar_one_or_none()
+            
+            if user and user.email:
+                email_service = JobEmailService()
+                email_result = await email_service.send_job_failure_email(
+                    db=db,
+                    job_id=job_id,
+                    user_email=user.email,
+                    error_message=error_message,
+                    user_name=getattr(user, 'full_name', None) or user.email,
+                    job_type=job.job_type or "kb_management"
+                )
+                logger.info(f"Job失败邮件发送结果: job_id={job_id}, user_email={user.email}, result={email_result}")
+        except Exception as e:
+            logger.error(f"发送Job失败邮件失败: {e}")
+        
+    except Exception as e:
+        logger.error(f"处理Job失败通知失败: {e}")
 

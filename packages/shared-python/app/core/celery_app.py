@@ -24,7 +24,8 @@ celery_app = Celery(
         'app.core.tasks.celery_tasks',
         'app.core.tasks.kb_tasks',
         'app.core.tasks.state_machine_tasks',
-        'app.core.tasks.message_handlers'  # 消息处理器（仅在API服务中运行）
+        'app.core.tasks.message_handlers',  # 消息处理器（仅在API服务中运行）
+        'app.core.tasks.webhook_tasks'  # Webhook任务（仅在API服务中运行）
     ]
 )
 
@@ -81,6 +82,9 @@ celery_app.conf.update(
         'app.core.tasks.message_handlers.handle_job_progress_update': {'queue': 'kb_medium'},
         'app.core.tasks.message_handlers.handle_job_result': {'queue': 'kb_medium'},
         'app.core.tasks.message_handlers.handle_job_failure': {'queue': 'kb_medium'},
+        
+        # Webhook任务路由（仅在API服务队列中运行）
+        'app.core.tasks.webhook_tasks.send_webhook_retry_task': {'queue': 'kb_medium'},
     }
 )
 

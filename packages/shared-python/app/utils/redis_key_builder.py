@@ -84,6 +84,10 @@ class RedisKeyBuilder:
         """任务进度键"""
         return self.build_key(RedisKeyType.TASK, task_id, "progress")
     
+    def task_info(self, task_id: str) -> str:
+        """任务基本信息键"""
+        return self.build_key(RedisKeyType.TASK, task_id, "info")
+    
     def task_queue(self, queue_name: str) -> str:
         """任务队列键"""
         return self.build_key(RedisKeyType.QUEUE, queue_name)

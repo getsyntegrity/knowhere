@@ -7,9 +7,9 @@ from typing import Optional, Dict, Any, List
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.state_machine.state_machine_service import StateMachineService
-from app.core.state_machine.state_sync_service import StateSyncService
-from app.core.state_machine.state_timeout_service import StateTimeoutService
+from app.services.state_machine.state_machine_service import StateMachineService
+from app.services.state_machine.state_sync_service import StateSyncService
+from app.services.state_machine.state_timeout_service import StateTimeoutService
 from app.services.redis import RedisServiceFactory
 
 

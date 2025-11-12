@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from app.core.celery_app import get_celery_app
-from app.repositories.subscription_repository import SubscriptionRepository
-from app.core.database import get_db_context
+# 注意：get_queue_for_job 已简化，不再需要直接访问数据库
 
 
 class TaskType(Enum):
@@ -58,7 +57,7 @@ class CeleryTaskRouter:
     
     def __init__(self):
         self.celery_app = get_celery_app()
-        self.subscription_repo = SubscriptionRepository()
+        # 注意：get_queue_for_job 已简化，不再需要 subscription_repo
         
         # 基础优先级配置（从TaskPriorityService迁移）
         self.base_priorities = {

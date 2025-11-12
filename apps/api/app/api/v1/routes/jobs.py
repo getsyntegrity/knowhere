@@ -23,10 +23,8 @@ from app.models.schemas.job import (
 from app.repositories.job_repository import JobRepository
 from app.services.storage.file_upload_service import FileUploadService
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
-from app.core.state_machine import (
-    JobStatus,
-    JobStateMachine,
-)
+from app.core.state_machine.states import JobStatus
+from app.services.state_machine import JobStateMachine
 
 router = APIRouter(tags=["Jobs"])
 
@@ -284,10 +282,25 @@ async def create_job(
             # 更新job的s3_key
             await job_repo.update_job_s3_key(db, job_id, s3_key)
 
-            # 3. 保存到Redis（2小时缓存）
+            # 3. 保存job_metadata到Redis（2小时缓存）
             from app.services.redis.job_metadata_service import JobMetadataService
             metadata_service = JobMetadataService(redis_service)
             await metadata_service.save_metadata(job_id, job_metadata)
+            
+            # 4. 保存Job基本信息到Redis（2小时缓存）
+            from app.services.redis import JobInfoRedisService
+            from datetime import datetime
+            job_info_service = JobInfoRedisService(redis_service)
+            job_info = {
+                "job_id": job_id,
+                "s3_key": s3_key,
+                "user_id": str(current_user.id),
+                "webhook_enabled": bool(request.webhook and request.webhook.url),
+                "job_type": job_type,
+                "source_type": "file",
+                "created_at": datetime.utcnow().isoformat()
+            }
+            await job_info_service.save_job_info(job_id, job_info)
 
             # 构建响应
             response = create_job_response(
@@ -350,13 +363,30 @@ async def create_job(
                         detail="创建任务失败",
                     )
 
-                # 保存到Redis（2小时缓存）
+                # 保存job_metadata到Redis（2小时缓存）
                 from app.services.redis.job_metadata_service import JobMetadataService
                 metadata_service = JobMetadataService(redis_service)
                 await metadata_service.save_metadata(job_id, job_metadata)
+                
+                # 保存Job基本信息到Redis（2小时缓存）
+                from app.services.redis import JobInfoRedisService
+                from datetime import datetime
+                job_info_service = JobInfoRedisService(redis_service)
+                job_info = {
+                    "job_id": job_id,
+                    "s3_key": s3_key,
+                    "user_id": str(current_user.id),
+                    "webhook_enabled": bool(request.webhook and request.webhook.url),
+                    "job_type": job_type,
+                    "source_type": "url",
+                    "created_at": datetime.utcnow().isoformat()
+                }
+                await job_info_service.save_job_info(job_id, job_info)
 
-                # 异步启动URL文件下载和上传任务
-                from app.core.tasks.kb_tasks import upload_url_file_task
+                # 异步启动URL文件下载和上传任务（任务已迁移到 Worker，通过名称引用）
+                from app.core.celery_app import get_celery_app
+                celery_app = get_celery_app()
+                upload_url_file_task = celery_app.signature('app.core.tasks.kb_tasks.upload_url_file_task')
                 upload_url_file_task.apply_async(
                     args=[job_id, request.source_url, str(current_user.id)],
                     kwargs={'job_type': job_type}
