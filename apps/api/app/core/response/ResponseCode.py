@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Dict
 
+
 class ResponseCode(Enum):
     """
     响应状态码枚举。

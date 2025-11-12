@@ -1,32 +1,44 @@
 import asyncio
-import sys
 from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
-from app.core import image_cli as ImageCli
-from app.core.config import redis_pool_manager
-from app.core.database import engine, Base
+
+# 从共享包导入
+from shared.core.config import redis_pool_manager, settings
+from shared.core.database import engine, Base, safe_dispose_engine
+from shared.core.logging import setup_logging
+from shared.models.database.user import User
+from shared.models.schemas.user import UserCreate, UserUpdate, UserRead
+
+# 从本地 API 项目导入
 from loguru import logger
-from app.core.logging import setup_logging
 from contextlib import asynccontextmanager
-# ARQ依赖已移除，使用Celery替代
-from app.core.config import settings
 from app.api.api_router import api_router
 from app.services.user.user_config_service import UserConfigService
 from app.core.middleware import setup_cors, LoggingMiddleware
 from app.core.users import get_user_manager
 from app.core.jwt import auth_backend
-from app.models.database.user import User
-from app.models.schemas.user import UserCreate, UserUpdate, UserRead
-from fastapi_users import FastAPIUsers
-from uuid import UUID
+from app.core.image_cli import ImageCli
 from app.middleware.api_key_auth_middleware import api_key_auth_middleware
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
+from fastapi_users import FastAPIUsers
+from uuid import UUID
+
+# 动态导入 API 服务特定的 Celery 任务模块
+# 这些模块不在共享包中，而是在 API 服务本地
+try:
+    import app.core.tasks.state_machine_tasks
+    import app.core.tasks.webhook_tasks
+    logger.info("成功导入 API 服务特定的 Celery 任务模块")
+except ImportError as e:
+    logger.warning(f"无法导入某些 Celery 任务模块: {e}")
+    logger.warning("部分 Celery 任务可能不可用")
 
 setup_logging()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -61,10 +73,10 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     
     # 导入所有模型以确保它们被注册
-    from app.models.database import user
+    from shared.models.database import user
     
     # 预热数据库连接池
-    from app.core.database import prewarm_connection_pool
+    from shared.core.database import prewarm_connection_pool
     await prewarm_connection_pool()
     logger.info("数据库连接池预热完成。")
     
@@ -75,12 +87,28 @@ async def lifespan(app: FastAPI):
     # 初始化HTTP客户端
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     
+    # 启动消息消费者（仅在API服务中运行）
+    try:
+        from app.services.messaging_service import messaging_service
+        await messaging_service.start()
+        logger.info("消息消费者已启动")
+    except Exception as e:
+        logger.error(f"启动消息消费者失败: {e}")
+        # 消息消费者启动失败不应该阻止API服务启动
+    
     logger.info("知识库API服务启动完成！")
     yield
     
+    # 停止消息消费者
+    try:
+        from app.services.messaging_service import messaging_service
+        await messaging_service.stop()
+    except Exception as e:
+        logger.error(f"停止消息消费者失败: {e}")
+    
     # 应用关闭时的清理工作
     logger.info("开始关闭服务...")
-    await engine.dispose()
+    await safe_dispose_engine(engine)
     logger.info("数据库引擎连接池已关闭。")
     logger.info("服务关闭完成。")
 

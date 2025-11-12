@@ -47,7 +47,7 @@ packages/shared-types/generated/
 # custom
 apps/api/users/
 s3-notification.json
-*.md
+users/
 
 # Deploy files (contain sensitive information)
 deploy/aws/terraform/terraform.tfstate

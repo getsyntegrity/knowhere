@@ -1,14 +1,14 @@
 """
 Credits 数据访问层
 """
-from typing import Optional, List, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
 from datetime import datetime, timedelta
+from typing import Any, Dict, List
 
-from app.models.database.credits_transaction import CreditsTransaction
-from app.models.database.user import User
+from shared.models.database.credits_transaction import CreditsTransaction
+from shared.models.database.user import User
 from app.repositories.base_repository import BaseRepository
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
@@ -60,7 +60,7 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
     
     async def deduct_credits(self, session: AsyncSession, user_id: str, amount: int) -> bool:
         """扣除Credits"""
-        from sqlalchemy import update, and_
+        from sqlalchemy import and_, update
         result = await session.execute(
             update(User)
             .where(and_(User.id == user_id, User.credits_balance >= amount))

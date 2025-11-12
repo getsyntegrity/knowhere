@@ -2,14 +2,12 @@
 OAuth 服务基类
 """
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
-from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, Optional
 
-from app.models.database.user import User
-from app.models.database.oauth_provider import OAuthProvider
+from shared.models.database.oauth_provider import OAuthProvider
+from shared.models.database.user import User
 from app.repositories.oauth_repository import OAuthRepository
-from app.core.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class OAuthService(ABC):
@@ -21,12 +19,10 @@ class OAuthService(ABC):
     @abstractmethod
     async def authenticate_user(self, session: AsyncSession, token: str) -> Optional[User]:
         """验证用户身份"""
-        pass
     
     @abstractmethod
     async def get_user_info(self, token: str) -> Dict[str, Any]:
         """获取用户信息"""
-        pass
     
     async def create_or_update_user(self, session: AsyncSession, user_info: Dict[str, Any], provider: str) -> User:
         """创建或更新用户"""
@@ -45,7 +41,7 @@ class OAuthService(ABC):
     async def _find_existing_user(self, session: AsyncSession, user_info: Dict[str, Any], provider: str) -> Optional[User]:
         """查找现有用户"""
         from sqlalchemy import select
-        
+
         # 根据邮箱查找
         email = user_info.get("email")
         if email:
@@ -70,8 +66,9 @@ class OAuthService(ABC):
     
     async def _update_user_info(self, session: AsyncSession, user: User, user_info: Dict[str, Any]):
         """更新用户信息"""
-        from sqlalchemy import update
         from datetime import datetime
+
+        from sqlalchemy import update
         
         update_data = {}
         
@@ -94,9 +91,9 @@ class OAuthService(ABC):
     
     async def _create_new_user(self, session: AsyncSession, user_info: Dict[str, Any], provider: str) -> User:
         """创建新用户"""
-        from datetime import datetime
         import uuid
-        
+        from datetime import datetime
+
         # 创建用户
         user = User(
             id=str(uuid.uuid4()),

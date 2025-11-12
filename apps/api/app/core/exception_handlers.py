@@ -1,13 +1,13 @@
 """
 全局异常处理器
 """
-from fastapi import Request, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from loguru import logger
 import traceback
-from typing import Union
+
+from fastapi import HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from loguru import logger
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 async def http_exception_handler(request: Request, exc: HTTPException):

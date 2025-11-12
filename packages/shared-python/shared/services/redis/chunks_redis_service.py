@@ -1,0 +1,196 @@
+"""
+Chunks数据Redis服务
+"""
+
+import uuid
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
+
+from shared.services.redis.redis_service import RedisService
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+
+
+class ChunksRedisService:
+    """Chunks数据Redis服务"""
+
+    def __init__(self, redis_service: RedisService):
+        self.redis = redis_service
+
+    def _dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
+        """
+        将DataFrame转换为chunks格式，兼容标准格式
+
+        Args:
+            df: pandas DataFrame，包含文档解析结果
+
+        Returns:
+            List[Dict]: chunks数据列表
+        """
+        if df is None or len(df) == 0:
+            logger.warning("DataFrame为空，返回空chunks列表")
+            return []
+
+        logger.debug(f"开始转换DataFrame为chunks: DataFrame长度={len(df)}")
+
+        # 辅助函数
+        def safe_int(x):
+            """安全转换为整数"""
+            if pd is not None and pd.isna(x):
+                return 0
+            try:
+                return int(float(x))
+            except (ValueError, TypeError):
+                return 0
+
+        def safe_split_kws(kw):
+            """安全分割关键词"""
+            if pd is not None and pd.isna(kw):
+                return []
+            kw_str = str(kw)
+            # 支持多种分隔符：分号、逗号
+            if ";" in kw_str:
+                return [k.strip() for k in kw_str.split(";") if k.strip()]
+            elif "," in kw_str:
+                return [k.strip() for k in kw_str.split(",") if k.strip()]
+            else:
+                return [kw_str.strip()] if kw_str.strip() else []
+
+        def safe_parse_rels(type_val, connects):
+            """安全解析关系"""
+            rels = []
+            # 从type字段提取关系（多行格式）
+            type_is_valid = type_val and not (pd is not None and pd.isna(type_val))
+            if type_is_valid:
+                type_str = str(type_val)
+                if "\n" in type_str:
+                    lines = type_str.split("\n")[1:-1]
+                    rels.extend([line.strip() for line in lines if line.strip()])
+            # 从connectto字段提取关系
+            connects_is_valid = connects and not (pd is not None and pd.isna(connects))
+            if connects_is_valid:
+                connects_str = str(connects)
+                if "\n" in connects_str:
+                    lines = connects_str.split("\n")
+                    rels.extend([line.strip() for line in lines if line.strip()])
+                else:
+                    rels.append(connects_str.strip())
+            return rels if rels else []
+
+        chunks = []
+        for i, (_, row) in enumerate(df.iterrows()):
+            # 基础字段
+            know_id = row.get("know_id", uuid.uuid4())
+            chunk_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(know_id)))
+            content = str(row.get("content", ""))
+            path = str(row.get("path", ""))
+            type_val = row.get("type", "")
+
+            # 确定chunk类型
+            if isinstance(type_val, str):
+                if type_val.startswith("PTXT"):
+                    chunk_type = "text"
+                elif type_val.startswith("IMAGE_"):
+                    chunk_type = "image"
+                elif type_val.startswith("TABLE_"):
+                    chunk_type = "table"
+                else:
+                    chunk_type = "text"
+            else:
+                chunk_type = "text"
+
+            # 构建metadata
+            metadata = {
+                "keywords": safe_split_kws(row.get("keywords")),
+                "summary": str(row.get("summary", "")),
+                "length": safe_int(row.get("length")) or len(content),
+                "tokens": safe_int(row.get("tokens")),
+                "relationships": safe_parse_rels(type_val, row.get("connectto")),
+            }
+
+            # 根据类型添加特定字段
+            if chunk_type == "image":
+                img_name = (
+                    path.split("-->")[-1] if "-->" in path else f"image_{chunk_id}.jpg"
+                )
+                metadata["file_path"] = f"images/{img_name}"
+                metadata["original_name"] = img_name
+            elif chunk_type == "table":
+                tbl_name = (
+                    path.split("-->")[-1] if "-->" in path else f"table_{chunk_id}.html"
+                )
+                metadata["file_path"] = f"tables/{tbl_name}"
+                metadata["original_name"] = tbl_name
+
+            # 构建chunk对象
+            chunk = {
+                "chunk_id": chunk_id,
+                "type": chunk_type,
+                "content": content,
+                "path": path,
+                "metadata": metadata,
+                # 兼容性字段（用于内部处理）
+                "text": content,
+                "order": i,
+                "know_id": str(know_id),
+                "keywords": metadata["keywords"],
+                "summary": metadata["summary"],
+                "tokens": metadata["tokens"],
+            }
+
+            chunks.append(chunk)
+
+        logger.debug(f"DataFrame转换完成: chunks数量={len(chunks)}")
+        return chunks
+
+    async def save_dataframe_as_chunks(self, job_id: str, df) -> bool:
+        """将DataFrame转换为chunks并保存到Redis"""
+        try:
+            chunks = self._dataframe_to_chunks(df)
+            return await self.save_chunks(job_id, chunks)
+        except Exception as e:
+            error_msg = f"保存DataFrame为chunks失败: job_id={job_id}"
+            logger.error(f"{error_msg}, error={e}")
+            return False
+
+    async def save_chunks(self, job_id: str, chunks: List[Dict[str, Any]]) -> bool:
+        """保存chunks数据到Redis"""
+        try:
+            chunks_key = f"job_chunks:{job_id}"
+            await self.redis.set(chunks_key, chunks, ttl=3600)  # 1小时过期
+            msg = f"Chunks数据保存成功: job_id={job_id}"
+            logger.debug(f"{msg}, count={len(chunks)}")
+            return True
+        except Exception as e:
+            logger.error(f"保存chunks数据失败: job_id={job_id}, error={e}")
+            return False
+
+    async def get_chunks(self, job_id: str) -> Optional[List[Dict[str, Any]]]:
+        """从Redis获取chunks数据"""
+        try:
+            chunks_key = f"job_chunks:{job_id}"
+            chunks = await self.redis.get(chunks_key)
+            if chunks:
+                msg = f"Chunks数据获取成功: job_id={job_id}"
+                logger.debug(f"{msg}, count={len(chunks)}")
+            else:
+                logger.warning(f"Chunks数据不存在: job_id={job_id}")
+            return chunks
+        except Exception as e:
+            logger.error(f"获取chunks数据失败: job_id={job_id}, error={e}")
+            return None
+
+    async def delete_chunks(self, job_id: str) -> bool:
+        """删除chunks数据"""
+        try:
+            chunks_key = f"job_chunks:{job_id}"
+            await self.redis.delete(chunks_key)
+            logger.debug(f"Chunks数据删除成功: job_id={job_id}")
+            return True
+        except Exception as e:
+            logger.error(f"删除chunks数据失败: job_id={job_id}, error={e}")
+            return False

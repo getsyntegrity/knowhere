@@ -1,24 +1,20 @@
 """
 OAuth 认证 API
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.database import get_db
-from app.core.jwt import auth_backend
-from fastapi_users import FastAPIUsers
 from uuid import UUID
+
+from shared.core.database import get_db
+from app.core.jwt import auth_backend
 from app.core.users import get_user_manager
-from app.models.database.user import User
-from app.services.auth.google_auth_service import GoogleAuthService
+from shared.models.database.user import User
+from shared.models.schemas.oauth import (AppleLoginRequest, GitHubLoginRequest,
+                                      GoogleLoginRequest, OAuthLoginResponse)
 from app.services.auth.apple_auth_service import AppleAuthService
 from app.services.auth.github_auth_service import GitHubAuthService
-from app.models.schemas.oauth import (
-    GoogleLoginRequest, 
-    AppleLoginRequest, 
-    GitHubLoginRequest,
-    OAuthLoginResponse
-)
+from app.services.auth.google_auth_service import GoogleAuthService
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi_users import FastAPIUsers
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["OAuth Authentication"])
 

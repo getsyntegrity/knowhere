@@ -1,13 +1,12 @@
 """
 订阅数据访问层
 """
-from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-from sqlalchemy.orm import selectinload
+from typing import List, Optional
 
-from app.models.database.subscription import Subscription
+from shared.models.database.subscription import Subscription
 from app.repositories.base_repository import BaseRepository
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class SubscriptionRepository(BaseRepository[Subscription, dict, dict]):

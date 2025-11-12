@@ -1,16 +1,16 @@
 """
 认证相关 API - 使用 FastAPI Users
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi_users import FastAPIUsers
 from uuid import UUID
 
-from app.core.users import UserManager, get_user_manager
-from app.core.jwt import auth_backend
-from app.core.permissions import current_user, require_admin
 from app.core.dependencies import get_current_user_dual_auth
-from app.models.database.user import User
-from app.models.schemas.user import UserCreate, UserUpdate, UserRead
+from app.core.jwt import auth_backend
+from app.core.permissions import require_admin
+from app.core.users import get_user_manager
+from shared.models.database.user import User
+from shared.models.schemas.user import UserCreate, UserRead, UserUpdate
+from fastapi import APIRouter, Depends, Request
+from fastapi_users import FastAPIUsers
 
 router = APIRouter(tags=["Authentication"])
 
@@ -69,7 +69,7 @@ async def get_current_user_info(request: Request, user: User = Depends(get_curre
 async def renew_token(user: User = Depends(get_current_user_dual_auth)):
     """续期访问令牌 - 在token有效时获取新的7天token"""
     from app.core.jwt import jwt_strategy
-    
+
     # 使用JWT策略创建新的token，传入User对象
     new_access_token = await jwt_strategy.write_token(user)
     

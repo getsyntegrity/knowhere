@@ -1,6 +1,6 @@
+# API服务Dockerfile
 FROM python:3.12-slim
 
-# 设置工作目录
 WORKDIR /app
 
 # 安装系统依赖
@@ -10,16 +10,17 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制requirements文件
-COPY apps/api/requirements.txt .
+# 复制共享包代码（用于可编辑安装）
+COPY packages/shared-python /app/packages/shared-python
 
-# 安装Python依赖
+# 复制API服务依赖
+COPY apps/api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制应用代码
+# 复制API服务代码
 COPY apps/api/ .
 
-# 设置环境变量
+# 设置PYTHONPATH
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 

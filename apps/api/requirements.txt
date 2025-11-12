@@ -1,3 +1,6 @@
+# 共享包（可编辑安装）
+-e ../../packages/shared-python
+
 # Web框架
 fastapi==0.115.14
 uvicorn==0.34.3
@@ -31,6 +34,8 @@ flower==2.0.1
 
 # RabbitMQ消息队列
 amqp==5.3.1
+# 异步RabbitMQ客户端
+aio-pika==9.3.0
 
 # 认证相关依赖
 fastapi-users[sqlalchemy,jwt,oauth]==14.0.1
@@ -58,15 +63,10 @@ loguru==0.7.3
 # 数据库连接监控
 psutil==5.9.8
 
-# 机器学习和AI
+# 数据处理（保留pandas用于CSV处理，numpy作为pandas依赖保留）
+# 注意：已移除ML相关依赖（torch, sentence-transformers等），这些依赖在Worker服务中
 numpy==2.2.6
 pandas==2.3.1
-torch==2.2.2
-torchvision==0.17.2
-sentence-transformers==2.7.0
-transformers==4.39.3
-scikit-learn==1.5.2
-scipy==1.16.1
 
 # 文本处理
 jieba==0.42.1
@@ -98,24 +98,19 @@ pillow==11.2.1
 # 加密
 cryptography==45.0.5
 
-# 工具库
+# 工具库（已移除ML相关依赖）
 tqdm==4.67.1
 click==8.2.1
-joblib==1.5.1
 pytz==2025.2
 PyYAML==6.0.2
-huggingface-hub==0.33.5
 
 # 类型提示
 typing-extensions==4.14.1
 
-# 文档处理相关
-ultralytics==8.1.47
+# 文档处理相关（已移除ML相关依赖）
 rapid-table==3.0.1
 rank-bm25==0.2.2
 pptx2md==2.0.6
-datasets==2.19.2
-accelerate==0.29.3
 
 # 其他工具库
 rapidfuzz==3.14.1
@@ -126,20 +121,13 @@ frozenlist==1.8.0
 multidict==6.7.0
 yarl==1.22.0
 
-# 数据可视化
-matplotlib==3.10.5
-networkx==3.2.1
+# 数据可视化和其他工具（已移除ML相关依赖）
 jinja2==3.1.6
-sympy==1.11.1
-mpmath==1.2.1
 fsspec==2023.12.2
 filelock==3.13.4
 MarkupSafe==2.1.5
 packaging==23.2
 regex==2023.12.25
-tokenizers==0.15.2
-safetensors==0.4.1
-threadpoolctl==3.2.0
 
 # WebSocket相关
 websocket-client==1.8.0
@@ -149,9 +137,7 @@ distro==1.9.0
 # 时区数据
 tzdata==2025.2
 
-# 图像处理相关
-opencv-python==4.8.1.78
-opencv-python-headless==4.8.1.78
+# 图像处理相关（已移除opencv，如需图像处理请使用Worker服务）
 
 # 数据分析
 moesifapi==1.5.5

@@ -1,16 +1,17 @@
 """
 知识库相关控制器 - 仅保留必要的API
 """
-import os
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+
+from app.core.dependencies import get_current_user, get_redis_service
+from shared.models.database.user import User
+from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDto,
+                                      FileDirectoryListDto,
+                                      FileDirectoryUpdateDto)
+from app.repositories.knowledge_base_repository import (create_directory,
+                                                        delete_directory,
+                                                        update_directory)
+from fastapi import APIRouter, Depends, HTTPException
 from starlette import status
-from app.core.dependencies import get_redis_service
-from app.services.redis import RedisService
-from app.core.dependencies import get_current_user
-from app.repositories.knowledge_base_repository import create_directory, delete_directory, update_directory
-from app.models.schemas.files import FileDirectoryDto, FileDirectoryCreateDto, FileDirectoryUpdateDto, FileDirectoryListDto
-from app.models.database.user import User
-from app.utils.FileDownUpUtils import s3_upload_file
 
 router = APIRouter(tags=["知识库"])
 
@@ -24,7 +25,7 @@ async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: User 
     """
     try:
         request_data.user_id = current_user.id
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await create_directory(db, request_data):
                 return {"message": "创建目录成功"}
@@ -41,7 +42,7 @@ async def delete_sql_path(request_data: FileDirectoryDto, current_user: User = D
     """
     try:
         request_data.user_id = current_user.id
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await delete_directory(db, request_data.id):
                 return {"message": "删除目录成功"}
@@ -58,7 +59,7 @@ async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: Us
     """
     try:
         request_data.user_id = current_user.id
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await update_directory(db, request_data):
                 return {"message": "更新目录成功"}
@@ -74,9 +75,10 @@ async def get_sql_path(current_user: User = Depends(get_current_user)):
     获取用户知识库目录树，如果用户没有目录则自动创建默认目录
     """
     try:
-        from app.core.database import get_db_context
-        from app.repositories.knowledge_base_repository import get_directories, get_directories_by_user, create_directory
-        from app.models.schemas.files import FileDirectoryCreateDto
+        from shared.core.database import get_db_context
+        from shared.models.schemas.files import FileDirectoryCreateDto
+        from app.repositories.knowledge_base_repository import (
+            create_directory, get_directories, get_directories_by_user)
         
         async with get_db_context() as db:
             # 获取用户的所有目录
@@ -110,8 +112,9 @@ async def list_directory(request_data: FileDirectoryListDto, current_user: User 
     模拟知识库知识片段增加的时候，增加目录树
     """
     try:
-        from app.core.database import get_db_context
-        from app.repositories.knowledge_base_repository import get_directory_contents
+        from shared.core.database import get_db_context
+        from app.repositories.knowledge_base_repository import \
+            get_directory_contents
         async with get_db_context() as db:
             contents = await get_directory_contents(db, request_data.id)
             return contents
@@ -127,10 +130,10 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
     添加知识库路径
     """
     try:
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
+        from shared.models.schemas.files import FileDirectoryCreateDto
         from app.repositories.knowledge_base_repository import create_directory
-        from app.models.schemas.files import FileDirectoryCreateDto
-        
+
         # 构建目录创建请求
         create_request = FileDirectoryCreateDto(
             title=request_data.get('path', ''),
@@ -151,10 +154,10 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
 
 # 临时文件上传API已移除，请使用统一的 /v1/jobs 接口
 
-# 注意：以下旧方案同步API已删除，请使用新的异步API: /v1/kb/jobs
+# 注意：以下旧方案同步API已删除，请使用新的异步API: /v1/jobs
 # - /add_kb_data (增加知识内容)
 # - /add_kb_fragment (增加知识碎片)  
-# - /search (知识库搜索) - 已恢复
+# - /search (知识库搜索) - 已移除，请使用Worker服务处理
 # - /get_kb_data (查询知识库信息)
 # - /delete_kb_data (删除知识信息)
 # - /delete_kb (删除知识库)
@@ -163,57 +166,6 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
 # - /get_fileTree (查看知识树)
 # - /tree_kb (建立单树结构)
 # - /forest_kb (建立森林结构)
-
-# 恢复知识库搜索API
-@router.post('/search', status_code=status.HTTP_200_OK, summary="知识库搜索", description="搜索知识库内容并获取AI回答")
-async def search_knowledge_base(
-    request_data: dict,
-    current_user: User = Depends(get_current_user)
-):
-    """
-    搜索知识库内容
-    """
-    try:
-        from app.core.database import get_db_context
-        from app.services.knowledge.knowledge_base_service import checkerboard_find
-        from app.services.redis.user_redis_service import UserRedisService
-        from app.services.user.user_config_service import UserConfigService
-        import json
-        
-        # 获取用户配置
-        redis_service = await get_redis_service()
-        user_redis_service = UserRedisService(redis_service)
-        user_config = await user_redis_service.get_user_config(str(current_user.id))
-        
-        if not user_config:
-            # 初始化用户配置
-            user_dic_str = UserConfigService.init_user(str(current_user.id))
-            user_config = json.loads(user_dic_str) if isinstance(user_dic_str, str) else user_dic_str
-            await user_redis_service.save_user_config(str(current_user.id), user_config)
-        
-        # 构建用户信息对象
-        user_info = {
-            'USER_SETTINGS': user_config,
-            'stopwords': user_config.get('STOPWORDS', [])
-        }
-        
-        # 调用搜索服务
-        result = await checkerboard_find(
-            user=user_info,
-            user_message=request_data.get('question', ''),
-            topk=request_data.get('topk', 3),
-            rerank=request_data.get('rerank', True),
-            signal_paths=request_data.get('filter_nodes', []),
-            data_type=request_data.get('filter_type', 1),
-            filter_mode=request_data.get('filter_mode', 'include')
-        )
-        
-        return result
-        
-    except Exception as e:
-        from loguru import logger
-        logger.error(f"知识库搜索失败: {e}")
-        raise HTTPException(status_code=400, detail="搜索失败")
 
 # 添加知识库内容删除API
 @router.delete('/contents/{content_id}', status_code=status.HTTP_200_OK, summary="删除知识库内容或目录", description="根据ID自动判断删除内容或目录")
@@ -226,8 +178,9 @@ async def delete_knowledge_content(
     根据ID类型自动判断是删除内容还是目录
     """
     try:
-        from app.core.database import get_db_context
-        from app.repositories.knowledge_base_repository import delete_kb_content, delete_directory
+        from shared.core.database import get_db_context
+        from app.repositories.knowledge_base_repository import (
+            delete_directory, delete_kb_content)
         from sqlalchemy import text
         
         async with get_db_context() as db:

@@ -1,13 +1,10 @@
 """
 API Key 认证中间件
 """
-from fastapi import Request, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
-from app.core.database import get_db
+from shared.core.database import get_db
 from app.services.auth.api_key_service import APIKeyService
-from app.models.database.user import User
+from fastapi import HTTPException, Request, status
 
 
 class APIKeyAuthMiddleware:

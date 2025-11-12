@@ -1,17 +1,15 @@
 """
 API Key 管理服务
 """
-import secrets
 import hashlib
 import uuid
-from typing import Optional, List
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List, Optional
 
-from app.models.database.api_key import APIKey
-from app.models.database.user import User
+from shared.models.database.api_key import APIKey
+from shared.models.database.user import User
 from app.repositories.api_key_repository import APIKeyRepository
-from app.core.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class APIKeyService:
@@ -185,7 +183,6 @@ class APIKeyService:
     async def _cache_api_key(self, api_key: str, user_id: str):
         """缓存API Key到Redis"""
         # TODO: 实现Redis缓存
-        pass
     
     async def _get_cached_user_id(self, api_key: str) -> Optional[str]:
         """从缓存获取用户ID"""
@@ -195,7 +192,6 @@ class APIKeyService:
     async def _remove_cached_api_key(self, api_key_id: str):
         """从缓存中移除API Key"""
         # TODO: 实现Redis缓存
-        pass
     
     async def get_api_key(self, session: AsyncSession, user_id: str, api_key_id: str) -> Optional[APIKey]:
         """获取单个API Key"""
