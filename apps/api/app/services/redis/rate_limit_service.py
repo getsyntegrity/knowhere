@@ -1,6 +1,7 @@
 """
 速率限制服务
 """
+import os
 import time
 from typing import Dict, Any
 from loguru import logger
@@ -12,11 +13,19 @@ from app.utils.redis_key_builder import redis_key_builder
 class RateLimitService:
     """速率限制服务"""
     
-    RATE_LIMIT_WINDOW = 60  # 60秒窗口
-    RATE_LIMIT_MAX_REQUESTS = 60  # 最大请求数
+    # 默认值，可通过环境变量覆盖
+    RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # 60秒窗口
+    RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "1000"))  # 最大请求数
+    RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"  # 是否启用
     
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
+        logger.info(
+            f"速率限制服务初始化: "
+            f"启用={self.RATE_LIMIT_ENABLED}, "
+            f"窗口={self.RATE_LIMIT_WINDOW}秒, "
+            f"最大请求数={self.RATE_LIMIT_MAX_REQUESTS}"
+        )
     
     async def check_rate_limit(self, user_id: str, api_name: str) -> Dict[str, Any]:
         """
@@ -34,6 +43,15 @@ class RateLimitService:
                 "reset": int,  # 重置时间戳
             }
         """
+        # 如果速率限制未启用，直接允许所有请求
+        if not self.RATE_LIMIT_ENABLED:
+            return {
+                "allowed": True,
+                "limit": self.RATE_LIMIT_MAX_REQUESTS,
+                "remaining": self.RATE_LIMIT_MAX_REQUESTS,
+                "reset": int(time.time()) + self.RATE_LIMIT_WINDOW,
+            }
+        
         try:
             # 构建速率限制键
             rate_limit_key = redis_key_builder.rate_limit_api(user_id, api_name)
