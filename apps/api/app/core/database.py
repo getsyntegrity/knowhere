@@ -29,7 +29,6 @@ engine = create_async_engine(
     pool_reset_on_return=ProcessingConstants.DB_POOL_RESET_ON_RETURN,
     # PostgreSQL 特定配置
     connect_args={
-        "ssl": True,
         "server_settings": {
             "application_name": "knowhere_api",
             "timezone": "UTC",
