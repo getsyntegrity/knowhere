@@ -1,14 +1,12 @@
 """
 Credits 管理服务
 """
-from typing import Optional, Dict, Any, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from app.models.database.user import User
-from app.repositories.credits_repository import CreditsRepository
 from app.core.config import settings
 from app.core.logging import logger
+from app.repositories.credits_repository import CreditsRepository
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class CreditsService:
@@ -44,7 +42,8 @@ class CreditsService:
         
         if success:
             # 3. 记录交易
-            from app.models.database.credits_transaction import CreditsTransaction
+            from app.models.database.credits_transaction import \
+                CreditsTransaction
             transaction = CreditsTransaction(
                 user_id=user_id,
                 credits_amount=-amount,
@@ -75,7 +74,8 @@ class CreditsService:
         
         if success:
             # 2. 记录交易
-            from app.models.database.credits_transaction import CreditsTransaction
+            from app.models.database.credits_transaction import \
+                CreditsTransaction
             transaction = CreditsTransaction(
                 user_id=user_id,
                 credits_amount=amount,
@@ -156,10 +156,8 @@ class CreditsService:
         """发送余额不足提醒"""
         # TODO: 实现邮件或推送通知
         print(f"用户 {user_id} Credits余额不足: {balance}")
-        pass
     
     async def _send_credits_added_notification(self, session: AsyncSession, user_id: str, amount: int):
         """发送Credits增加通知"""
         # TODO: 实现邮件或推送通知
         print(f"用户 {user_id} 获得 {amount} Credits")
-        pass

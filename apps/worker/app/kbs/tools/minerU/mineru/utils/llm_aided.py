@@ -1,7 +1,6 @@
 # Copyright (c) Opendatalab. All rights reserved.
 from loguru import logger
 from openai import OpenAI
-import ast
 
 from mineru.backend.pipeline.pipeline_middle_json_mkcontent import merge_para_with_text
 

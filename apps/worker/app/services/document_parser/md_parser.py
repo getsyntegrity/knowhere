@@ -1,18 +1,25 @@
 import os
 import re
-import json
 import uuid
+
 import pandas as pd
-from loguru import logger
-from bs4 import BeautifulSoup
-from tqdm import tqdm
 from app.core.config import settings
-from app.services.common.kb_utils import gen_str_codes, find_matches_parsing, restore_graph_by_paths, path_handle, \
-    tokenize2stw_remove, get_str_time, process_dup_paths_df
-from app.services.document_parser.layout_parser import pred_titles, md_heading_match
-from app.services.document_parser.txt_parser import extract_summary_keywords, detect_tocs_in_texts
-from app.services.document_parser.image_parser import detect_summary_img_md, MD_IMAGE_PATTERN
-from app.services.document_parser.table_parser import extract_tb_keywords, identify_tables, extract_tables_by_forms
+from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
+                                          get_str_time, process_dup_paths_df)
+from app.services.document_parser.image_parser import (MD_IMAGE_PATTERN,
+                                                       detect_summary_img_md)
+from app.services.document_parser.layout_parser import (md_heading_match,
+                                                        pred_titles)
+from app.services.document_parser.table_parser import (extract_tables_by_forms,
+                                                       extract_tb_keywords,
+                                                       identify_tables)
+from app.services.document_parser.txt_parser import (detect_tocs_in_texts,
+                                                     extract_summary_keywords)
+from app.utils.file_utils import path_handle
+from app.utils.text_utils import tokenize2stw_remove
+from bs4 import BeautifulSoup
+from loguru import logger
+from tqdm import tqdm
 
 
 def find_surround_context(md_lines, lid):

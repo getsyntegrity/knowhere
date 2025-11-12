@@ -3,14 +3,14 @@
 """
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, List
-from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Any, Dict, List, Optional
 
 from app.models.database.job import Job
 from app.services.redis import RedisServiceFactory
-from app.utils.redis_key_builder import redis_key_builder, RedisKeyType
+from app.utils.redis_key_builder import RedisKeyType, redis_key_builder
+from loguru import logger
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class StateSyncService:

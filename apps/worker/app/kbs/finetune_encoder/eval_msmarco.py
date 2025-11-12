@@ -1,13 +1,13 @@
-import faiss
-import torch
 import logging
-import datasets
-import numpy as np
-from tqdm import tqdm
-from typing import Optional
 from dataclasses import dataclass, field
-from transformers import HfArgumentParser
+
+import datasets
+import faiss
+import numpy as np
+import torch
 from FlagEmbedding import FlagModel
+from tqdm import tqdm
+from transformers import HfArgumentParser
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +223,6 @@ def main():
     for sample in eval_data:
         ground_truths.append(sample["positive"])
         
-    from FlagEmbedding.llm_embedder.src.utils import save_json
 
     metrics = evaluate(retrieval_results, ground_truths)
 

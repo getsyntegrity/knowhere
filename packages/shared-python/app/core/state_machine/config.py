@@ -1,8 +1,8 @@
 """
 状态机配置管理
 """
-from typing import Dict, Any
 from dataclasses import dataclass
+from typing import Dict
 
 
 @dataclass

@@ -3,30 +3,26 @@ API服务的消息处理器
 处理Worker发布的消息并执行相应的数据操作
 """
 import asyncio
-import traceback
-from typing import Dict, Any
-from celery import Task
-from loguru import logger
+import time
+from typing import Any, Dict
 
 from app.core.celery_app import get_celery_app
-from app.services.state_machine import JobStateMachine
-from app.core.state_machine.states import JobStatus
+from app.core.database import get_db_context
+from app.models.database.knowledge_base import KBPydantic
+from app.models.schemas.messages import (JobFailureMessage,
+                                         JobProgressUpdateMessage,
+                                         JobResultMessage,
+                                         JobStatusUpdateMessage)
 from app.repositories.job_repository import JobRepository
 from app.repositories.job_result_repository import JobResultRepository
 from app.repositories.knowledge_base_repository import create_update_kb
-from app.models.database.knowledge_base import KBPydantic
-from app.core.database import get_db_context
-from app.models.schemas.messages import (
-    JobStatusUpdateMessage,
-    JobProgressUpdateMessage,
-    JobResultMessage,
-    JobFailureMessage,
-)
-from app.services.redis import RedisServiceFactory
-from app.services.redis.task_redis_service import TaskRedisService
-from app.services.redis.chunks_redis_service import ChunksRedisService
 from app.services.messaging.monitoring import message_monitoring
-import time
+from app.services.redis import RedisServiceFactory
+from app.services.redis.chunks_redis_service import ChunksRedisService
+from app.services.redis.task_redis_service import TaskRedisService
+from app.services.state_machine import JobStateMachine
+from celery import Task
+from loguru import logger
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -420,11 +416,12 @@ async def _handle_failure_async(message: JobFailureMessage):
 async def _handle_job_completion_notifications(db, job_id: str, job_result: Any):
     """处理Job完成的通知（Webhook和邮件）"""
     try:
-        from app.repositories.job_repository import JobRepository
-        from app.services.webhook.webhook_handler_service import WebhookHandlerService
-        from app.services.email.job_email_service import JobEmailService
         from app.models.schemas.job_metadata import JobMetadataHelper
-        from app.services.redis import RedisServiceFactory, JobMetadataService
+        from app.repositories.job_repository import JobRepository
+        from app.services.email.job_email_service import JobEmailService
+        from app.services.redis import JobMetadataService, RedisServiceFactory
+        from app.services.webhook.webhook_handler_service import \
+            WebhookHandlerService
         
         job_repo = JobRepository()
         job = await job_repo.get_job_by_id(db, job_id)
@@ -460,8 +457,8 @@ async def _handle_job_completion_notifications(db, job_id: str, job_result: Any)
         
         # 发送邮件（如果需要）
         try:
-            from sqlalchemy import select
             from app.models.database.user import User
+            from sqlalchemy import select
             result = await db.execute(select(User).where(User.id == job.user_id))
             user = result.scalar_one_or_none()
             
@@ -487,8 +484,9 @@ async def _handle_job_failure_notifications(db, job_id: str, error_message: str,
     """处理Job失败的通知（Webhook和邮件）"""
     try:
         from app.repositories.job_repository import JobRepository
-        from app.services.webhook.webhook_handler_service import WebhookHandlerService
         from app.services.email.job_email_service import JobEmailService
+        from app.services.webhook.webhook_handler_service import \
+            WebhookHandlerService
         
         job_repo = JobRepository()
         job = await job_repo.get_job_by_id(db, job_id)
@@ -511,8 +509,8 @@ async def _handle_job_failure_notifications(db, job_id: str, error_message: str,
         
         # 发送邮件（如果需要）
         try:
-            from sqlalchemy import select
             from app.models.database.user import User
+            from sqlalchemy import select
             result = await db.execute(select(User).where(User.id == job.user_id))
             user = result.scalar_one_or_none()
             

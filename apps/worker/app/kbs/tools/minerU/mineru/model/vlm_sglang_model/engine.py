@@ -11,7 +11,6 @@ from sglang.srt.managers.tokenizer_manager import (
     dataclass_to_string_truncated,
     logger,
 )
-from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.server_args import ServerArgs
 
 from ...utils.run_async import run_async

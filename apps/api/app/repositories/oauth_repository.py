@@ -1,13 +1,13 @@
 """
 OAuth 数据访问层
 """
-from typing import Optional, List
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from typing import List, Optional
 
 from app.models.database.oauth_provider import OAuthProvider
 from app.repositories.base_repository import BaseRepository
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class OAuthRepository(BaseRepository[OAuthProvider, dict, dict]):
@@ -60,8 +60,9 @@ class OAuthRepository(BaseRepository[OAuthProvider, dict, dict]):
     
     async def update_tokens(self, session: AsyncSession, oauth_id: str, access_token: str, refresh_token: Optional[str] = None, expires_at: Optional[datetime] = None) -> bool:
         """更新访问令牌"""
-        from sqlalchemy import update
         from datetime import datetime
+
+        from sqlalchemy import update
         
         update_data = {
             "access_token": access_token,

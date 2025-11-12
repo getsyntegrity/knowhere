@@ -3,11 +3,11 @@ Webhook Celery任务
 用于异步重试Webhook发送
 """
 import asyncio
-from typing import Dict, Any
-from celery import Task
-from loguru import logger
+from typing import Any, Dict
 
 from app.core.celery_app import get_celery_app
+from celery import Task
+from loguru import logger
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -54,7 +54,7 @@ def send_webhook_retry_task(
     """
     try:
         from app.services.webhook.webhook_service import WebhookService
-        
+
         # 创建事件循环（Celery任务在同步上下文中运行）
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

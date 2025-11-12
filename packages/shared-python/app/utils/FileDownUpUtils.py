@@ -1,15 +1,17 @@
 import os
 import uuid
 import zipfile
-import aiohttp
 from pathlib import Path
-from urllib.parse import urljoin
 from typing import Optional, Union
+from urllib.parse import urljoin
+
+import aiohttp
+import requests
 from botocore.exceptions import ClientError
-from fastapi import UploadFile, HTTPException
+from fastapi import HTTPException, UploadFile
+
 from app.core.config import settings
 from app.models.schemas.s3_file import FliesDownload
-import requests
 
 
 def s3_upload_file(file: UploadFile , prefix: str ):
@@ -46,7 +48,7 @@ def s3_upload_file(file: UploadFile , prefix: str ):
 def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, filename: str = "parsed.zip", headers: Optional[dict] = None,
         timeout: int = None, chunk_size: int = None, keep_exts: tuple[str, ...] = (".md", ".json"), clean_empty_dirs: bool = True):
     from app.core.constants import APIConstants, ProcessingConstants
-    
+
     # 使用默认值
     if timeout is None:
         timeout = APIConstants.ZIP_DOWNLOAD_TIMEOUT

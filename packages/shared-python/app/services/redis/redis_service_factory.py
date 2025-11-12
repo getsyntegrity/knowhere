@@ -2,6 +2,7 @@
 Redis服务工厂
 """
 from typing import Optional
+
 from app.core.config.redis import RedisConfigManager
 from app.services.redis.redis_service import RedisService
 

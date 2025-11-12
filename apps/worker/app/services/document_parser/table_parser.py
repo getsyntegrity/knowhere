@@ -1,27 +1,30 @@
+import datetime
 import io
 import os
 import re
-import json
-import uuid
-import pandas as pd
-import numpy as np
-import datetime
 import threading
-from typing import Union, List
-from pandasql import sqldf
-from bs4 import BeautifulSoup
-from docx.table import Table as DocxTable
+import uuid
 from collections import OrderedDict
+from typing import List, Union
+
+import numpy as np
+import pandas as pd
 from app.core.config import settings
-# TaskRedis依赖已移除，使用Redis直接追踪
-from app.services.document_parser.txt_parser import extract_summary_keywords
-from app.services.common.kb_utils import gen_str_codes, flatten_dic2paths, remove_spaces, restore_graph_by_paths, \
-    remove_duplicates_orderkept, tokenize2stw_remove, get_str_time, process_dup_paths_df
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
 from app.services.ai import ai_query_service
+from app.services.ai.prompt_service import build_prompt
+from app.services.ai.response_process_service import eval_response
+from app.services.common.kb_utils import (flatten_dic2paths, gen_str_codes,
+                                          get_str_time, process_dup_paths_df,
+                                          remove_duplicates_orderkept,
+                                          remove_spaces,
+                                          tokenize2stw_remove)
+# TaskRedis依赖已移除，使用Redis直接追踪
+from app.services.document_parser.txt_parser import extract_summary_keywords
 from app.utils.CommonHelper import load_file_bytes
+from bs4 import BeautifulSoup
+from docx.table import Table as DocxTable
+from pandasql import sqldf
 
 g_tbl_lock = threading.Lock()
 

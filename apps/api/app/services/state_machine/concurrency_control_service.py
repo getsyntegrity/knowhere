@@ -2,12 +2,12 @@
 并发控制服务 - 处理状态更新的竞争条件
 """
 import asyncio
-import time
 import random
-from typing import Optional, Dict, Any
-from loguru import logger
+import time
+from typing import Any, Dict, Optional
 
 from app.services.redis import RedisServiceFactory
+from loguru import logger
 
 
 class ConcurrencyControlService:

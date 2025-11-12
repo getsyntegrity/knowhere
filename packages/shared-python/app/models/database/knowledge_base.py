@@ -1,9 +1,9 @@
-from typing import Optional, List
+from typing import List, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Column, String, Integer, LargeBinary, Text, DateTime, ForeignKey
-from sqlalchemy.orm import relationship, Mapped
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, relationship
 
 from app.core.database import Base
 from app.models.database.user import utc_now

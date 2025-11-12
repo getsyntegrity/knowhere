@@ -1,11 +1,11 @@
 """
 基础配置类
 """
-from pydantic_settings import BaseSettings
-from pydantic import Field, field_validator
-from typing import Optional, Dict, Any
 import os
+
 from loguru import logger
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
 
 
 class BaseConfig(BaseSettings):

@@ -9,6 +9,7 @@ from typing import Any, Optional
 from celery import current_task
 from loguru import logger
 
+
 class AIQueryService:
     """AI查询服务"""
 
@@ -74,7 +75,8 @@ class AIQueryService:
                 )
 
             # 延迟导入避免循环导入
-            from app.core.tasks.celery_tasks import process_ai_query as celery_process_ai_query
+            from app.core.tasks.celery_tasks import \
+                process_ai_query as celery_process_ai_query
 
             # 提交Celery任务
             task = celery_process_ai_query.delay(

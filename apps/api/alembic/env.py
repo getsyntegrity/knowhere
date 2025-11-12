@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -7,8 +8,40 @@ from sqlalchemy import pool
 
 from alembic import context
 
-# 添加项目根目录到 Python 路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 设置PYTHONPATH以包含共享包路径（必须在所有导入之前）
+alembic_dir = Path(__file__).parent.resolve()
+project_root = alembic_dir.parent
+monorepo_root = project_root.parent.parent
+shared_python_path = monorepo_root / "packages" / "shared-python"
+shared_python_path = shared_python_path.resolve()
+
+# 确保共享包路径在sys.path的最前面
+shared_path_str = str(shared_python_path)
+project_path_str = str(project_root)
+
+# 移除可能存在的路径，避免重复
+if shared_path_str in sys.path:
+    sys.path.remove(shared_path_str)
+if project_path_str in sys.path:
+    sys.path.remove(project_path_str)
+
+# 按优先级顺序插入：共享包优先，然后是项目根目录
+if shared_python_path.exists():
+    sys.path.insert(0, shared_path_str)
+if project_root.exists():
+    sys.path.insert(1 if shared_python_path.exists() else 0, project_path_str)
+
+# 设置环境变量
+current_pythonpath = os.environ.get('PYTHONPATH', '')
+if shared_path_str not in current_pythonpath:
+    os.environ['PYTHONPATH'] = f"{shared_path_str}:{project_path_str}:{current_pythonpath}" if current_pythonpath else f"{shared_path_str}:{project_path_str}"
+
+# 清除可能缓存的app模块
+if 'app' in sys.modules:
+    del sys.modules['app']
+    modules_to_remove = [key for key in sys.modules.keys() if key.startswith('app.')]
+    for key in modules_to_remove:
+        del sys.modules[key]
 
 # 导入我们的数据库配置和模型
 from app.core.config import settings

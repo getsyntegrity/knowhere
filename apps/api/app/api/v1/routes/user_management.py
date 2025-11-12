@@ -1,16 +1,15 @@
 """
 用户管理 API
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 
 from app.core.database import get_db
 from app.core.permissions import current_user
 from app.models.database.user import User
 from app.models.schemas.user import UserResponse, UserUpdateRequest
-from app.services.user.user_service import UserService
 from app.services.billing.credits_service import CreditsService
+from app.services.user.user_service import UserService
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 

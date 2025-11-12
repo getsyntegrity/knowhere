@@ -2,10 +2,11 @@
 消息服务监控
 提供消息发布和消费的监控指标
 """
-from typing import Dict, Any
-from loguru import logger
-from datetime import datetime, timedelta
 from collections import defaultdict
+from datetime import datetime, timedelta
+from typing import Any, Dict
+
+from loguru import logger
 
 from app.services.redis import RedisServiceFactory
 

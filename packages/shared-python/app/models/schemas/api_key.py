@@ -2,9 +2,9 @@
 API Key 相关 Schema
 """
 from datetime import datetime
-from typing import Optional, List
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
-from uuid import UUID
 
 
 class CreateAPIKeyRequest(BaseModel):

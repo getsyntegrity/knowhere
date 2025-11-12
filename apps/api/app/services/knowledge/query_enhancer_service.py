@@ -1,12 +1,15 @@
 import os
 import pickle
-import numpy as np
+from collections import Counter
+from math import exp, log2
+
 import jieba
-from collections import Counter, defaultdict
-from joblib import Parallel, delayed
-from math import log2, exp
-from app.services.common.kb_utils import use_llm_api, min_max_normalize, tokenize2stw_remove
+import numpy as np
 from app.services.storage.file_encryptor_service import encryptor
+from app.utils.llm_utils import use_llm_api
+from app.utils.math_utils import min_max_normalize
+from app.utils.text_utils import tokenize2stw_remove
+from joblib import Parallel, delayed
 
 
 # Load external corpus

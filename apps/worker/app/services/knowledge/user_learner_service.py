@@ -1,10 +1,12 @@
 import os
+
 import numpy as np
 import torch as T
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
+import torch.optim as optim
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
+
 # 延迟导入避免循环导入
 
 

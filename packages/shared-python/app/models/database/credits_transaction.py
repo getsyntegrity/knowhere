@@ -2,12 +2,14 @@
 Credits 交易记录数据模型
 """
 from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional, Dict, Any
-from sqlalchemy import Column, String, Integer, DateTime, JSON, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
+from typing import Any, Dict, Optional
 from uuid import uuid4
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 

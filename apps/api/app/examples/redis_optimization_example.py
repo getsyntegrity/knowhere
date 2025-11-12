@@ -2,12 +2,12 @@
 Redis优化使用示例
 """
 import asyncio
-import json
+
 from app.services.redis import RedisServiceFactory
+from app.services.redis.redis_alerts import RedisAlertManager
+from app.services.redis.redis_monitor import RedisMonitor
 from app.services.redis.task_redis_service import TaskRedisService
 from app.services.redis.user_redis_service import UserRedisService
-from app.services.redis.redis_monitor import RedisMonitor
-from app.services.redis.redis_alerts import RedisAlertManager
 
 
 async def redis_optimization_example():
@@ -136,7 +136,7 @@ async def redis_optimization_example():
     print("\n6. 键值命名规范示例:")
     
     from app.utils.redis_key_builder import redis_key_builder
-    
+
     # 展示不同类型的键
     keys = {
         "用户配置": redis_key_builder.user_config("test_user"),

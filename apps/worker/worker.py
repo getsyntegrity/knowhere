@@ -72,6 +72,15 @@ if __name__ == "__main__":
     pid = os.getpid()
     node_name = f"celery@{hostname}-{pid}"
 
+    # 动态导入 kb_tasks（仅在 Worker 服务中使用）
+    # 注意：kb_tasks 不在共享包中，而是在 worker 本地路径中
+    try:
+        import app.core.tasks.kb_tasks
+        logger.info("成功导入 kb_tasks 模块")
+    except ImportError as e:
+        logger.warning(f"无法导入 kb_tasks 模块: {e}")
+        logger.warning("kb_tasks 相关任务将不可用")
+    
     # 获取日志级别设置
     log_level = os.getenv("LOG_LEVEL", "INFO").lower()
     

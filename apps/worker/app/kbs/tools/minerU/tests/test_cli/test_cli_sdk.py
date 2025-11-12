@@ -5,11 +5,8 @@ import pytest
 from conf import conf
 from lib import common
 import time
-import magic_pdf.model as model_config
 from magic_pdf.data.read_api import read_local_images
 from magic_pdf.data.read_api import read_local_office
-from magic_pdf.data.data_reader_writer import S3DataReader, S3DataWriter
-from magic_pdf.config.make_content_config import DropMode, MakeMode
 from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
 from magic_pdf.data.dataset import PymuDocDataset
 from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
@@ -98,7 +95,6 @@ class TestCli:
             image_dir = str(os.path.basename(local_image_dir))
             name_without_suff = os.path.basename(pdf_path).split(".pdf")[0]
             dir_path = os.path.join(pdf_dev_path, 'mineru')
-            pass
 
     @pytest.mark.P0
     def test_pdf_local_ppt(self):

@@ -3,7 +3,8 @@
 用于API服务和Worker服务之间的消息通信
 """
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 

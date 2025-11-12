@@ -1,7 +1,6 @@
 """
 系统常量
 """
-from typing import Dict, List
 
 
 class SystemConstants:

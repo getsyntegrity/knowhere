@@ -3,15 +3,16 @@
 监听RabbitMQ队列并触发相应的Celery任务
 """
 import json
+import socket
 import time
-from typing import Dict, Any, Optional
-from kombu import Connection, Exchange, Queue, Consumer
-from kombu.pools import connections
+
+from kombu import Connection, Consumer, Exchange, Queue
+from kombu.exceptions import TimeoutError as KombuTimeoutError
 from loguru import logger
 
+from app.core.celery_app import get_celery_app
 from app.core.config import app_config
 from app.core.config.messaging import messaging_config
-from app.core.celery_app import get_celery_app
 
 
 class MessageConsumer:
@@ -26,15 +27,8 @@ class MessageConsumer:
             durable=True
         )
         self.celery_app = get_celery_app()
-        self._connection_pool = None
         self._consumers = []
         self._running = False
-    
-    def _get_connection(self):
-        """获取RabbitMQ连接"""
-        if self._connection_pool is None:
-            self._connection_pool = connections[self.broker_url]
-        return self._connection_pool.acquire(block=True, timeout=5)
     
     def _parse_message_body(self, body):
         """解析消息体（可能是字符串或字典）"""
@@ -59,9 +53,9 @@ class MessageConsumer:
                 return
             
             logger.debug(f"收到状态更新消息: job_id={message_data.get('job_id')}")
-            # 触发Celery任务
+            # 触发Celery任务（注意：实际路径是 app.services.messaging.message_handlers）
             task = self.celery_app.send_task(
-                'app.core.tasks.message_handlers.handle_job_status_update',
+                'app.services.messaging.message_handlers.handle_job_status_update',
                 args=[message_data],
                 queue='kb_medium'
             )
@@ -80,9 +74,9 @@ class MessageConsumer:
                 return
             
             logger.debug(f"收到进度更新消息: job_id={message_data.get('job_id')}, progress={message_data.get('progress')}")
-            # 触发Celery任务
+            # 触发Celery任务（注意：实际路径是 app.services.messaging.message_handlers）
             task = self.celery_app.send_task(
-                'app.core.tasks.message_handlers.handle_job_progress_update',
+                'app.services.messaging.message_handlers.handle_job_progress_update',
                 args=[message_data],
                 queue='kb_medium'
             )
@@ -101,9 +95,9 @@ class MessageConsumer:
                 return
             
             logger.debug(f"收到结果消息: job_id={message_data.get('job_id')}")
-            # 触发Celery任务
+            # 触发Celery任务（注意：实际路径是 app.services.messaging.message_handlers）
             task = self.celery_app.send_task(
-                'app.core.tasks.message_handlers.handle_job_result',
+                'app.services.messaging.message_handlers.handle_job_result',
                 args=[message_data],
                 queue='kb_medium'
             )
@@ -122,9 +116,9 @@ class MessageConsumer:
                 return
             
             logger.debug(f"收到失败消息: job_id={message_data.get('job_id')}")
-            # 触发Celery任务
+            # 触发Celery任务（注意：实际路径是 app.services.messaging.message_handlers）
             task = self.celery_app.send_task(
-                'app.core.tasks.message_handlers.handle_job_failure',
+                'app.services.messaging.message_handlers.handle_job_failure',
                 args=[message_data],
                 queue='kb_medium'
             )
@@ -144,7 +138,8 @@ class MessageConsumer:
         logger.info("启动消息消费者...")
         
         try:
-            with self._get_connection() as conn:
+            # 直接使用Connection而不是连接池（与message_publisher保持一致）
+            with Connection(self.broker_url) as conn:
                 # 创建队列
                 queues = {
                     'status': Queue(
@@ -217,11 +212,15 @@ class MessageConsumer:
                 while self._running:
                     try:
                         conn.drain_events(timeout=1)
+                    except (socket.timeout, KombuTimeoutError, TimeoutError) as e:
+                        # 超时是正常行为，当没有消息到达时会超时
+                        # 不需要记录错误，继续循环即可
+                        continue
                     except Exception as e:
+                        # 真正的错误才记录
                         if self._running:
-                            logger.error(f"消费消息时出错: {e}")
-                            # 短暂等待后继续
-                            import time
+                            logger.error(f"消费消息时出错: {e}", exc_info=True)
+                            # 短暂等待后继续，避免快速重试导致日志刷屏
                             time.sleep(1)
                         
         except KeyboardInterrupt:
@@ -245,15 +244,7 @@ class MessageConsumer:
         
         self._consumers = []
         
-        # 释放连接池资源
-        if self._connection_pool is not None:
-            try:
-                self._connection_pool.release_all()
-            except Exception as e:
-                logger.error(f"释放消息消费者连接池失败: {e}")
-            finally:
-                self._connection_pool = None
-        
+        # 连接会在with语句中自动关闭，这里不需要额外操作
         logger.info("消息消费者已停止")
 
 

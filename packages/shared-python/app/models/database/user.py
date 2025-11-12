@@ -1,12 +1,12 @@
 from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List
-from uuid import UUID
+from typing import List, Optional
 
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
-from sqlalchemy.orm import Mapped, mapped_column, relationship
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
+from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 

@@ -1,13 +1,13 @@
 from typing import List, Optional
 
-from loguru import logger
-from sqlalchemy import select, and_
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import get_db_context
-from app.models.database import knowledge_base as KBModels
-from app.models.database.knowledge_base import KBPydantic, PathPydantic, PathBase, ContentBase, FileDirectory
-from app.models.schemas.files import FileDirectoryUpdateDto, FileDirectoryDto, FileDirectoryCreateDto
+from app.models.database.knowledge_base import (ContentBase, FileDirectory,
+                                                KBPydantic, PathBase,
+                                                PathPydantic)
+from app.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryUpdateDto)
+from loguru import logger
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def create_update_kb(kbs:list[KBPydantic]) -> bool:

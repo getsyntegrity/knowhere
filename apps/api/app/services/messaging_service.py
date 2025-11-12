@@ -2,11 +2,10 @@
 API服务的消息消费者服务
 在API服务启动时启动消息消费者
 """
-import asyncio
 import threading
-from loguru import logger
 
 from app.services.messaging import get_message_consumer
+from loguru import logger
 
 
 class MessagingService:

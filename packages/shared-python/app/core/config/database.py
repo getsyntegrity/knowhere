@@ -1,12 +1,11 @@
 """
 数据库配置
 """
-from pydantic import Field
 from typing import Optional
-import redis
-from sqlalchemy import create_engine
+
 from loguru import logger
 from pydantic import BaseModel, Field
+from sqlalchemy import create_engine
 
 
 class DatabaseConfig(BaseModel):
@@ -55,7 +54,7 @@ class DatabaseConfig(BaseModel):
             else:
                 # 高级模式：需要证书验证
                 import ssl
-                
+
                 # 创建SSL上下文
                 ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
                 

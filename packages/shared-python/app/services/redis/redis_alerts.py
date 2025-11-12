@@ -2,8 +2,10 @@
 Redis告警服务
 """
 import time
-from typing import Dict, Any, List, Optional, Callable
+from typing import Any, Callable, Dict, List
+
 from loguru import logger
+
 from app.services.redis.redis_monitor import RedisMonitor
 
 

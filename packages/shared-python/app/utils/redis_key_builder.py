@@ -1,8 +1,8 @@
 """
 Redis键值命名规范工具
 """
-from typing import Optional, Dict, Any
 from enum import Enum
+from typing import Any, Dict
 
 
 class RedisKeyType(Enum):

@@ -27,7 +27,6 @@ class DataReader(ABC):
         Returns:
             bytes: the content of the file
         """
-        pass
 
 
 class DataWriter(ABC):
@@ -39,7 +38,6 @@ class DataWriter(ABC):
             path (str): the target file where to write
             data (bytes): the data want to write
         """
-        pass
 
     def write_string(self, path: str, data: str) -> None:
         """Write the data to file, the data will be encoded to bytes.

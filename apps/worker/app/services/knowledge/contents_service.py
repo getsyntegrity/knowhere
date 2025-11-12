@@ -2,12 +2,9 @@
 """
 处理知识库的all_contents.csv相关的业务
 """
-import csv
-import json
 
 import pandas as pd
 # ARQ依赖已移除，使用Celery替代
-from loguru import logger
 
 
 def create_json_path_list_from_csv(file_path: str, user_id:str,row_num:int):

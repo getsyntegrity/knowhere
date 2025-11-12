@@ -2,23 +2,25 @@
 Job数据模型 - 用户API业务任务
 """
 from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional, Dict, Any
-from sqlalchemy import String, Text, DateTime, Boolean, ForeignKey, Index, JSON, Integer
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
+
+# 前向引用，避免循环导入
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
-# 前向引用，避免循环导入
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from app.models.database.user import User
-    from app.models.database.job_state_history import JobStateHistory
-    from app.models.database.job_state_audit_log import JobStateAuditLog
-    from app.models.database.webhook_log import WebhookLog
     from app.models.database.job_result import JobResult
+    from app.models.database.job_state_audit_log import JobStateAuditLog
+    from app.models.database.job_state_history import JobStateHistory
+    from app.models.database.user import User
+    from app.models.database.webhook_log import WebhookLog
 
 
 class Job(Base):

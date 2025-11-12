@@ -1,16 +1,18 @@
 import os
 import re
 import subprocess
-from fastapi import UploadFile
+
 from app.core.config import settings
+from app.services.common.kb_utils import find_images
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
-from app.services.common.kb_utils import find_images, path_handle
-from pptx2md import convert, ConversionConfig
+from app.utils.CommonHelper import load_file_bytes
+from app.utils.file_utils import path_handle
+from app.utils.FileDownUpUtils import s3_upload_file
+from fastapi import UploadFile
 from markitdown import MarkItDown
 from pptx import Presentation
-from app.utils.CommonHelper import load_file_bytes
-from app.utils.FileDownUpUtils import s3_upload_file
+from pptx2md import ConversionConfig, convert
 
 
 def pptx2md_lines(pptx_path, kb_dir):

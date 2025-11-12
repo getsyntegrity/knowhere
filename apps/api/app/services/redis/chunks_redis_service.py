@@ -2,9 +2,10 @@
 Chunks数据Redis服务
 """
 import uuid
-from typing import List, Dict, Any, Optional
-from loguru import logger
+from typing import Any, Dict, List, Optional
+
 from app.services.redis.redis_service import RedisService
+from loguru import logger
 
 try:
     import pandas as pd

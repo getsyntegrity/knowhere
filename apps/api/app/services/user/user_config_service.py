@@ -2,17 +2,17 @@
 用户配置服务
 处理用户配置相关的业务逻辑
 """
-import os
 import json
-import shutil
-import pandas as pd
 import math
-from typing import Dict, Any, Optional
-from loguru import logger
+import os
+import shutil
+from typing import Any, Dict, Optional
 
+import pandas as pd
 from app.core.config import settings
-from app.services.common.kb_utils import clean_file, path_handle
-from app.services.common.model_service import ModelService
+from app.utils.device_utils import check_device_capabilities
+from app.utils.file_utils import clean_file, path_handle
+from loguru import logger
 
 
 class UserConfigService:
@@ -230,7 +230,7 @@ class UserConfigService:
         meta_dic['OCR_TIMEOUT'] = float(meta_dic.get('OCR_TIMEOUT', 30.0))
         
         # 检查GPU和网络
-        device_info = ModelService.check_device_capabilities()
+        device_info = check_device_capabilities()
         if not device_info['has_internet']:
             meta_dic['USE_LOCAL_LLM'] = True
         meta_dic['device'] = device_info['device']

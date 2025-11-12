@@ -3,8 +3,7 @@
 支持S3、OSS和MinIO的统一访问接口
 """
 from abc import ABC, abstractmethod
-from typing import Optional, BinaryIO, Iterator, Dict, Any
-from pathlib import Path
+from typing import Any, BinaryIO, Dict, Iterator, Optional
 
 
 class StorageAdapter(ABC):
@@ -23,7 +22,6 @@ class StorageAdapter(ABC):
         Returns:
             上传结果信息
         """
-        pass
     
     @abstractmethod
     def upload_fileobj(self, file_obj: BinaryIO, key: str, bucket: Optional[str] = None, 
@@ -40,7 +38,6 @@ class StorageAdapter(ABC):
         Returns:
             上传结果信息
         """
-        pass
     
     @abstractmethod
     def download_file(self, key: str, local_path: str, bucket: Optional[str] = None) -> str:
@@ -55,7 +52,6 @@ class StorageAdapter(ABC):
         Returns:
             本地文件路径
         """
-        pass
     
     @abstractmethod
     def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
@@ -69,7 +65,6 @@ class StorageAdapter(ABC):
         Returns:
             文件内容（字节）
         """
-        pass
     
     @abstractmethod
     def delete_object(self, key: str, bucket: Optional[str] = None) -> bool:
@@ -83,7 +78,6 @@ class StorageAdapter(ABC):
         Returns:
             是否删除成功
         """
-        pass
     
     @abstractmethod
     def list_objects(self, prefix: str = "", bucket: Optional[str] = None) -> Iterator[str]:
@@ -97,7 +91,6 @@ class StorageAdapter(ABC):
         Yields:
             对象键
         """
-        pass
     
     @abstractmethod
     def generate_presigned_url(self, key: str, expiration: int = 3600, 
@@ -116,7 +109,6 @@ class StorageAdapter(ABC):
         Returns:
             预签名URL
         """
-        pass
     
     @abstractmethod
     def exists(self, key: str, bucket: Optional[str] = None) -> bool:
@@ -130,7 +122,6 @@ class StorageAdapter(ABC):
         Returns:
             对象是否存在
         """
-        pass
     
     @abstractmethod
     def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:
@@ -144,5 +135,4 @@ class StorageAdapter(ABC):
         Returns:
             对象大小（字节），如果不存在返回None
         """
-        pass
 

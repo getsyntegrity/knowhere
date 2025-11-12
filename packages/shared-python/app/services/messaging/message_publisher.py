@@ -2,12 +2,11 @@
 消息发布服务
 封装RabbitMQ消息发布逻辑
 """
-import json
-import sys
 import asyncio
-from typing import Dict, Any, Optional, List
-from kombu import Connection, Exchange, Queue, Producer
-from kombu.pools import connections
+import sys
+from typing import Any, Dict, List, Optional
+
+from kombu import Exchange, Producer, Queue
 from loguru import logger
 
 # 增加整数字符串转换限制（用于处理大数字，如时间戳）
@@ -17,10 +16,10 @@ from app.core.config import app_config
 from app.core.config.messaging import messaging_config
 from app.models.schemas.messages import (
     BaseMessage,
-    JobStatusUpdateMessage,
+    JobFailureMessage,
     JobProgressUpdateMessage,
     JobResultMessage,
-    JobFailureMessage,
+    JobStatusUpdateMessage,
 )
 from app.services.messaging.monitoring import message_monitoring
 
@@ -41,7 +40,6 @@ class MessagePublisher:
     def close(self):
         """关闭连接池（清理资源）"""
         # 连接池会在with语句中自动关闭，这里不需要额外操作
-        pass
     
     def _publish_sync(
         self,

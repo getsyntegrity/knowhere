@@ -1,10 +1,12 @@
 """
 用户相关Redis服务
 """
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
+
 from app.services.redis.redis_service import RedisService
-from app.utils.redis_key_builder import redis_key_builder, RedisKeyType
+from app.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
 
 class UserRedisService:

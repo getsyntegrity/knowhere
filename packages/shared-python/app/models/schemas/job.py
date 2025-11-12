@@ -2,9 +2,10 @@
 统一Job相关Schema（符合PRD规范）
 """
 
-from typing import Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Any, Dict, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 
 class WebhookConfig(BaseModel):

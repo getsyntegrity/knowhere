@@ -1,36 +1,49 @@
-import os
-import uuid
-import pandas as pd
-import re
 import json
+import os
+import re
+import uuid
+
 import numpy as np
-from openai import OpenAI
-from loguru import logger
-from app.core.dependencies import get_redis_service
-from app.services.ai import ai_query_service
+import pandas as pd
 from app.core.config import settings
 from app.core.context import get_current_user
+from app.core.dependencies import get_redis_service
 from app.models.database.user import User
-from app.services.storage.file_encryptor_service import encryptor
-# 延迟导入PDF解析器
-from app.services.knowledge.rag_service import find_closest, merge_paths_soft, rerank_, vectorize_texts
-from app.services.document_parser.txt_parser import parse_texts, extract_summary_keywords
-from app.services.document_parser.pptx_parser import parse_pptx2md
-from app.services.document_parser.doc_parser import parse_docx, convert_doc2dics
-from app.services.document_parser.table_parser import parse_xlsx, table_scope_analyze, html_to_md_lines, clean_html_tb
-from app.services.document_parser.image_parser import parse_image, ask_image
-from app.services.document_parser.md_parser import parse_md
-from app.services.knowledge.query_enhancer_service import label_queries
-from app.services.knowledge.encoder_finetuner import gen_train_data_from_interactions
-from app.services.common.kb_utils import remove_duplicates_orderkept, create_reply, process_dup_paths_df, gen_str_codes, \
-    restore_graph_by_paths, path_handle, clean_contents, merge_df
-from app.services.common.kb_utils import use_llm_api, expand_summary_paths, gen_sim_matrix, extract_nested_dic_vals
+from app.services.ai import ai_query_service
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
-from app.services.common.global_manager_service import global_vector_manager, global_df_manager, global_dict_manager
+from app.services.common.global_manager_service import (global_df_manager,
+                                                        global_dict_manager,
+                                                        global_vector_manager)
+from app.services.common.kb_utils import (clean_contents, create_reply,
+                                          expand_summary_paths,
+                                          gen_sim_matrix,
+                                          gen_str_codes, merge_df,
+                                          restore_graph_by_paths)
+from app.services.document_parser.doc_parser import (convert_doc2dics,
+                                                     parse_docx)
+from app.services.document_parser.image_parser import ask_image, parse_image
+from app.services.document_parser.md_parser import parse_md
+from app.services.document_parser.pdf_parser import parse_pdfs
+from app.services.document_parser.table_parser import (clean_html_tb,
+                                                       html_to_md_lines,
+                                                       parse_xlsx,
+                                                       table_scope_analyze)
+from app.services.document_parser.txt_parser import parse_texts
+from app.services.knowledge.encoder_finetuner import \
+    gen_train_data_from_interactions
+from app.services.knowledge.query_enhancer_service import label_queries
+# 延迟导入PDF解析器
+from app.services.knowledge.rag_service import (find_closest, merge_paths_soft,
+                                                rerank_, vectorize_texts)
+from app.services.storage.file_encryptor_service import encryptor
 from app.utils.CommonHelper import is_remote
-from app.utils.FileDownUpUtils import get_pub_fileurl
+from app.utils.file_utils import path_handle
+from app.utils.llm_utils import use_llm_api
+from app.utils.text_utils import remove_duplicates_orderkept
+from loguru import logger
+from openai import OpenAI
 
 
 async def build_sim_matrix(user, source_node, topk=5, min_threshold=0.2):
@@ -478,7 +491,6 @@ async def checkerboard_inject_parse(
         user_config = await user_redis_service.get_user_config(str(user_context.id))
         if not user_config:
             from app.services.user.user_config_service import UserConfigService
-            import json
             user_dic_str = UserConfigService.init_user(str(user_context.id))
             user = json.loads(user_dic_str) if isinstance(user_dic_str, str) else user_dic_str
             await user_redis_service.save_user_config(str(user_context.id), user)
@@ -544,7 +556,6 @@ async def checkerboard_inject_parse(
     elif '.pdf' in file_full_path:
         logger.debug(f"file type is pdf")
         if filename is not None and file_full_path is not None:
-            from app.services.document_parser.pdf_parser import parse_pdfs
             await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
 
     elif '.docx' in file_full_path:
@@ -561,7 +572,6 @@ async def checkerboard_inject_parse(
     elif '.pptx' in file_full_path:
         logger.debug(f"file type is pptx")
         if filename is not None and file_full_path is not None:
-            from app.services.document_parser.pdf_parser import parse_pdfs
             await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
 
     elif '.md' in file_full_path:
@@ -571,7 +581,6 @@ async def checkerboard_inject_parse(
 
     elif '.json' in file_full_path:
         logger.debug(f"file type is json")
-        pass
     logger.debug(f"kb_dir: {kb_dir}")
     return kb_dir
 

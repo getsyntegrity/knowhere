@@ -2,8 +2,9 @@
 Dashboard 相关 Schema
 """
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List
+
+from pydantic import BaseModel
 
 
 class OverviewResponse(BaseModel):

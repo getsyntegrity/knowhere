@@ -3,9 +3,15 @@ Redis重试机制工具
 """
 import asyncio
 import random
-from typing import Callable, Any, Optional
+from typing import Any, Callable
+
 from loguru import logger
-from app.core.exceptions.redis_exceptions import RedisConnectionError, RedisOperationError, RedisTimeoutError
+
+from app.core.exceptions.redis_exceptions import (
+    RedisConnectionError,
+    RedisOperationError,
+    RedisTimeoutError,
+)
 
 
 class RedisRetry:

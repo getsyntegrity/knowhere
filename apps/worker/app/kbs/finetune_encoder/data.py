@@ -3,10 +3,11 @@ import os.path
 import random
 from dataclasses import dataclass
 from typing import List, Tuple
+
 import datasets
+from app.kbs.finetune_encoder.arguments import DataArguments
 from torch.utils.data import Dataset
 from transformers import DataCollatorWithPadding, PreTrainedTokenizer
-from app.kbs.finetune_encoder.arguments import DataArguments
 
 
 class TrainDatasetForEmbedding(Dataset):

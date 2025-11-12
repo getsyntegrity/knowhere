@@ -1,8 +1,9 @@
 """
 认证相关配置
 """
-from pydantic import Field
 from typing import Optional
+
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 

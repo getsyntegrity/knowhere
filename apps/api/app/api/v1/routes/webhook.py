@@ -2,21 +2,19 @@
 Webhook配置管理API路由
 """
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+
+from app.core.dependencies import get_current_user, get_db
+from app.models.database.user import User
+from app.models.schemas.webhook import (WebhookConfigCreate,
+                                        WebhookConfigResponse, WebhookLogList,
+                                        WebhookLogResponse,
+                                        WebhookStatsResponse,
+                                        WebhookTestRequest,
+                                        WebhookTestResponse)
+from app.repositories.webhook_repository import WebhookRepository
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_db, get_current_user
-from app.models.database.user import User
-from app.models.schemas.webhook import (
-    WebhookConfigCreate,
-    WebhookConfigResponse,
-    WebhookLogResponse,
-    WebhookLogList,
-    WebhookStatsResponse,
-    WebhookTestRequest,
-    WebhookTestResponse
-)
-from app.repositories.webhook_repository import WebhookRepository
 # WebhookService已迁移到API服务
 
 router = APIRouter(tags=["Webhook管理"])
@@ -178,6 +176,7 @@ async def test_webhook(
     """测试Webhook连接"""
     try:
         from datetime import datetime
+
         from app.services.webhook.webhook_service import WebhookService
         
         webhook_service = WebhookService()

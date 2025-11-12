@@ -2,12 +2,14 @@
 API 使用日志数据模型
 """
 from __future__ import annotations
+
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
 from uuid import uuid4
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 

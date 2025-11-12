@@ -2,28 +2,33 @@ import json
 import os
 import re
 import shutil
+import threading
+import time
 import uuid
+
 import numpy as np
 import pandas as pd
-import time
-import threading
-from tqdm import tqdm
-from loguru import logger
-from openai import OpenAI
-from app.core.dependencies import get_redis_service
-from app.services.ai import ai_query_service
 from app.core.config import settings
 from app.core.context import get_current_user
+from app.core.dependencies import get_redis_service
 from app.models.database.user import User
-from app.services.knowledge.knowledge_base_service import build_sim_matrix
-from app.services.knowledge.rag_service import vectorize_texts
-from app.services.document_parser.txt_parser import extract_summary_keywords
-from app.services.common.kb_utils import clean_contents, truncate_paths, gen_str_codes, build_tree_from_paths, split_path_by_node, gen_sim_matrix
-from app.services.storage.file_encryptor_service import encryptor
+from app.services.ai import ai_query_service
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
-from app.services.common.global_manager_service import global_vector_manager, global_df_manager, global_dict_manager
+from app.services.common.global_manager_service import (global_df_manager,
+                                                        global_dict_manager,
+                                                        global_vector_manager)
+from app.services.common.kb_utils import (build_tree_from_paths,
+                                          clean_contents, gen_str_codes,
+                                          split_path_by_node, truncate_paths)
+from app.services.document_parser.txt_parser import extract_summary_keywords
+from app.services.knowledge.knowledge_base_service import build_sim_matrix
+from app.services.knowledge.rag_service import vectorize_texts
+from app.services.storage.file_encryptor_service import encryptor
+from loguru import logger
+from openai import OpenAI
+from tqdm import tqdm
 
 g_lock = threading.Lock()
 
@@ -402,7 +407,6 @@ async def build_forest(source_node=None, k=5, cut_len=2000, threshold=0.8):
             # 更新任务状态为完成
             await redis_service.set(f"task:{ctx_task_id}:status", "completed", ttl=7200)
 
-    pass
 
 async def build_tree(root_node, smart_summary, cut_len=2000, summary_term="包括以下部分"):
     user_context: User | None = get_current_user()

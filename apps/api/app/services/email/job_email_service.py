@@ -2,10 +2,10 @@
 Job邮件服务（API服务专用）
 处理Job完成和失败的邮件发送
 """
-from typing import Dict, Any, Optional
-from loguru import logger
+from typing import Any, Dict, Optional
 
 from app.services.storage.file_upload_service import FileUploadService
+from loguru import logger
 
 
 class JobEmailService:

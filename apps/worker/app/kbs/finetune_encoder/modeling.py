@@ -4,7 +4,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.distributed as dist
-from torch import nn, Tensor
+from torch import Tensor, nn
 from transformers import AutoModel
 from transformers.file_utils import ModelOutput
 

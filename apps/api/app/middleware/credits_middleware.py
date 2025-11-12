@@ -1,14 +1,14 @@
 """
 Credits 扣费中间件
 """
-from fastapi import Request, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Callable
 import time
+from typing import Callable
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.services.billing.credits_service import CreditsService
-from app.core.config import settings
+from fastapi import HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class CreditsMiddleware:
@@ -101,8 +101,9 @@ class CreditsMiddleware:
     ):
         """记录使用日志"""
         try:
-            from app.models.database.usage_log import UsageLog
             from datetime import datetime
+
+            from app.models.database.usage_log import UsageLog
             
             usage_log = UsageLog(
                 user_id=str(user.id),

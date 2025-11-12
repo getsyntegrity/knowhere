@@ -6,12 +6,12 @@ Webhook处理服务（API服务专用）
 - 第一次尝试同步发送（快速成功）
 - 失败后创建Celery任务进行异步重试（不阻塞主流程）
 """
-from typing import Dict, Any, Optional
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, Optional
 
 from app.repositories.webhook_repository import WebhookRepository
 from app.services.storage.file_upload_service import FileUploadService
+from loguru import logger
 
 
 class WebhookHandlerService:

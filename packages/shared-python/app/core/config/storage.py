@@ -2,11 +2,10 @@
 存储配置
 """
 import os
+
 import boto3
 from botocore.config import Config
-from pydantic import Field
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
 
 # Storage适配器延迟导入，避免循环依赖
 # from app.services.storage.adapters import S3StorageAdapter

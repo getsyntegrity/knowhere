@@ -1,7 +1,8 @@
 """
 Job元数据Redis服务
 """
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from loguru import logger
 
 from app.services.redis.redis_service import RedisService

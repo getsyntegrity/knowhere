@@ -17,14 +17,11 @@ __all__ = ["build_head"]
 
 def build_head(config, **kwargs):
     # det head
-    from .det_db_head import DBHead, PFHeadLocal
+    pass
 
     # rec head
-    from .rec_ctc_head import CTCHead
-    from .rec_multi_head import MultiHead
 
     # cls head
-    from .cls_head import ClsHead
 
     support_dict = [
         "DBHead",

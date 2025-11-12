@@ -1,24 +1,21 @@
 """
 S3事件Webhook路由
 """
+import base64
 import json
 import os
-import hmac
-import hashlib
-import base64
-import aiohttp
-from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, status, Request, Header
-from loguru import logger
+from typing import Any, Dict
 
-from app.models.schemas.s3_event import S3Event
-from app.models.schemas.oss_event import OSSEvent
-from app.repositories.job_repository import JobRepository
-from app.core.config import settings
-from app.services.storage.file_upload_service import FileUploadService
-from app.services.knowledge.kb_orchestrator import KBOrchestrator
-from app.core.state_machine.states import JobStatus
+import aiohttp
 from app.core.database import get_db_context
+from app.core.state_machine.states import JobStatus
+from app.models.schemas.oss_event import OSSEvent
+from app.models.schemas.s3_event import S3Event
+from app.repositories.job_repository import JobRepository
+from app.services.knowledge.kb_orchestrator import KBOrchestrator
+from app.services.storage.file_upload_service import FileUploadService
+from fastapi import APIRouter, Header, Request
+from loguru import logger
 
 router = APIRouter(tags=["Internal"])
 
@@ -74,7 +71,7 @@ def verify_oss_signature(request_body: bytes, headers: Dict[str, str]) -> bool:
     """
     try:
         from app.core.config import settings
-        
+
         # 如果禁用签名验证，直接返回True
         if not getattr(settings, 'OSS_EVENT_VERIFY_SIGNATURE', True):
             return True
@@ -398,7 +395,7 @@ def _convert_s3_format_to_oss(event_data: Dict[str, Any]) -> OSSEvent:
         OSSEvent: OSS事件对象
     """
     from app.models.schemas.oss_event import OSSEventRecord
-    
+
     # 如果事件已经是S3格式，尝试转换为OSS格式
     records = event_data.get('Records', [])
     oss_records = []

@@ -1,19 +1,22 @@
 import base64
 import io
-import re
 import os
+import re
+import threading
 import uuid
 from pathlib import Path
+
 import pandas as pd
-import threading
-from PIL import Image
-from openai import OpenAI
-from loguru import logger
-from app.utils.CommonHelper import is_remote, load_file_bytes
-from app.services.common.kb_utils import gen_str_codes, path_handle, get_str_time, process_dup_paths_df
 from app.core.config import settings
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
+from app.services.common.kb_utils import (gen_str_codes, get_str_time,
+                                          process_dup_paths_df)
+from app.utils.CommonHelper import is_remote, load_file_bytes
+from app.utils.file_utils import path_handle
+from loguru import logger
+from openai import OpenAI
+from PIL import Image
 
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
 g_img_lock = threading.Lock()

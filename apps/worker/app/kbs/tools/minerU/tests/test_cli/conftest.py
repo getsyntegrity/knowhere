@@ -1,4 +1,3 @@
-import pytest
 import torch
 
 def clear_gpu_memory():

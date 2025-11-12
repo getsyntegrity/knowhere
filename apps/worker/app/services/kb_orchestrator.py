@@ -2,15 +2,11 @@
 知识库管理编排服务
 """
 from typing import Optional
-from loguru import logger
 
-from app.core.tasks.kb_tasks import (
-    parse_and_vectorize_task,  # 解析、向量化、生成ZIP并上传S3任务（已合并）
-    # store_to_db_task 已移除，逻辑已合并到 parse_and_vectorize_task 中
-    # send_webhook_task 已移除，Webhook发送已迁移到API服务
-)
-from app.core.state_machine import JobStatus
 from app.core.celery_router import task_router
+from app.core.tasks.kb_tasks import \
+    parse_and_vectorize_task  # store_to_db_task 已移除，逻辑已合并到 parse_and_vectorize_task 中; send_webhook_task 已移除，Webhook发送已迁移到API服务; 解析、向量化、生成ZIP并上传S3任务（已合并）
+from loguru import logger
 
 
 class KBOrchestrator:
@@ -45,9 +41,9 @@ class KBOrchestrator:
         try:
             # 如果source_type是url但没有提供file_url，尝试从job_metadata中获取
             if source_type == "url" and not file_url:
+                from app.models.schemas.job_metadata import JobMetadataHelper
                 from app.repositories.job_repository import JobRepository
                 from app.services.redis import RedisServiceFactory
-                from app.models.schemas.job_metadata import JobMetadataHelper
                 
                 job_repo = JobRepository()
                 redis_service = RedisServiceFactory.get_service()

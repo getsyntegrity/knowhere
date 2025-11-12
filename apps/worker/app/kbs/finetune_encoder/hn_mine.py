@@ -1,11 +1,11 @@
 import argparse
 import json
 import random
-import numpy as np
-import faiss
-from tqdm import tqdm
 
+import faiss
+import numpy as np
 from FlagEmbedding import FlagModel
+from tqdm import tqdm
 
 
 def get_args():

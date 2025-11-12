@@ -10,7 +10,6 @@ from __future__ import unicode_literals
 
 # from .rec_img_aug import RecAug, RecResizeImg, ClsResizeImg
 # from .randaugment import RandAugment
-from .operators import *
 # from .label_ops import *
 
 # from .east_process import *

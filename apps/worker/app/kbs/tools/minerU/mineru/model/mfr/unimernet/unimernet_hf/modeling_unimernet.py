@@ -5,7 +5,6 @@ from typing import Optional
 
 import torch
 from ftfy import fix_text
-from loguru import logger
 
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer, PretrainedConfig, PreTrainedModel
 from transformers import VisionEncoderDecoderConfig, VisionEncoderDecoderModel

@@ -2,13 +2,14 @@
 Redis配置
 """
 import asyncio
-from typing import Optional, Dict, Any
-from pydantic import Field, field_validator
+from typing import Any, Dict, Optional
+
 import redis.asyncio as redis
+
 # ARQ依赖已移除，使用Celery替代
 from loguru import logger
-from pydantic import BaseModel
-from app.core.exceptions.redis_exceptions import RedisConfigurationError
+from pydantic import BaseModel, Field, field_validator
+
 
 
 class RedisConfig(BaseModel):

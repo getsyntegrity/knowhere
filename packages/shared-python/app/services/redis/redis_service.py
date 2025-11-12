@@ -1,19 +1,19 @@
 """
 Redis服务抽象层
 """
-import json
 import asyncio
-from typing import Any, Dict, List, Optional, Union
-from loguru import logger
+import json
+from typing import Any, Dict, List, Optional
+
 import redis.asyncio as redis
+from loguru import logger
 
 from app.core.config.redis import RedisConfigManager
 from app.core.exceptions.redis_exceptions import (
-    RedisConnectionError, 
-    RedisOperationError, 
-    RedisTimeoutError
+    RedisConnectionError,
+    RedisOperationError,
 )
-from app.utils.redis_retry import RedisRetry, RedisHealthChecker
+from app.utils.redis_retry import RedisHealthChecker, RedisRetry
 
 
 class RedisService:

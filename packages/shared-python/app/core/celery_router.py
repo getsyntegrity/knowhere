@@ -2,12 +2,14 @@
 Celery任务路由器 - 基于用户订阅的动态路由
 整合了TaskPriorityService的优先级计算逻辑
 """
-from enum import Enum
-from typing import Optional, Dict, Any
 from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Dict
+
 from loguru import logger
 
 from app.core.celery_app import get_celery_app
+
 # 注意：get_queue_for_job 已简化，不再需要直接访问数据库
 
 

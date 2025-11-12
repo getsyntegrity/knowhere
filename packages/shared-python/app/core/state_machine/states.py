@@ -2,9 +2,7 @@
 状态机状态枚举和转换规则 - 简化版本
 """
 from enum import Enum
-from typing import Dict, List, Set
-
-
+from typing import Dict, Set
 
 
 class JobStatus(str, Enum):

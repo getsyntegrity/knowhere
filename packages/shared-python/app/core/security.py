@@ -4,7 +4,8 @@
 """
 
 import bcrypt
-from app.core.config import settings
+
+
 
 def get_password_hash(password: str) -> str:
     """

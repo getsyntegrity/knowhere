@@ -2,11 +2,11 @@
 速率限制服务
 """
 import time
-from typing import Dict, Any
-from loguru import logger
+from typing import Any, Dict
 
 from app.services.redis.redis_service import RedisService
 from app.utils.redis_key_builder import redis_key_builder
+from loguru import logger
 
 
 class RateLimitService:

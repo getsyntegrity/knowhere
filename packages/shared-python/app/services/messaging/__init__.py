@@ -2,8 +2,8 @@
 消息服务模块
 提供消息发布和订阅功能
 """
-from .message_publisher import MessagePublisher, get_message_publisher
 from .message_consumer import MessageConsumer, get_message_consumer
+from .message_publisher import MessagePublisher, get_message_publisher
 
 __all__ = [
     "MessagePublisher",

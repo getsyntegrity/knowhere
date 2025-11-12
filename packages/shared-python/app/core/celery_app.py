@@ -4,9 +4,12 @@ Celery应用配置
 """
 import os
 import socket
+
 from celery import Celery
 from kombu import Queue
+
 from app.core.config import app_config
+
 
 # 生成唯一的节点名称
 def get_unique_node_name():
@@ -22,10 +25,11 @@ celery_app = Celery(
     backend=app_config.get_celery_result_backend(),
     include=[
         'app.core.tasks.celery_tasks',
-        'app.core.tasks.kb_tasks',
-        'app.core.tasks.state_machine_tasks',
-        'app.core.tasks.message_handlers',  # 消息处理器（仅在API服务中运行）
-        'app.core.tasks.webhook_tasks'  # Webhook任务（仅在API服务中运行）
+        # 以下模块已移除，改为在各自服务启动时动态导入：
+        # 'app.core.tasks.kb_tasks',  # 仅在 Worker 服务中使用
+        # 'app.core.tasks.state_machine_tasks',  # 仅在 API 服务中使用
+        # 'app.services.messaging.message_handlers',  # 仅在 API 服务中使用（注意：实际路径是 services.messaging）
+        # 'app.core.tasks.webhook_tasks',  # 仅在 API 服务中使用
     ]
 )
 
@@ -77,11 +81,11 @@ celery_app.conf.update(
         # 知识库任务路由（动态路由）
         'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # 默认中等优先级
         
-        # 消息处理器路由（仅在API服务队列中运行）
-        'app.core.tasks.message_handlers.handle_job_status_update': {'queue': 'kb_medium'},
-        'app.core.tasks.message_handlers.handle_job_progress_update': {'queue': 'kb_medium'},
-        'app.core.tasks.message_handlers.handle_job_result': {'queue': 'kb_medium'},
-        'app.core.tasks.message_handlers.handle_job_failure': {'queue': 'kb_medium'},
+        # 消息处理器路由（仅在API服务队列中运行，注意：实际路径是 app.services.messaging.message_handlers）
+        'app.services.messaging.message_handlers.handle_job_status_update': {'queue': 'kb_medium'},
+        'app.services.messaging.message_handlers.handle_job_progress_update': {'queue': 'kb_medium'},
+        'app.services.messaging.message_handlers.handle_job_result': {'queue': 'kb_medium'},
+        'app.services.messaging.message_handlers.handle_job_failure': {'queue': 'kb_medium'},
         
         # Webhook任务路由（仅在API服务队列中运行）
         'app.core.tasks.webhook_tasks.send_webhook_retry_task': {'queue': 'kb_medium'},

@@ -1,7 +1,6 @@
 """
 业务常量
 """
-from typing import Dict
 
 
 class BusinessConstants:

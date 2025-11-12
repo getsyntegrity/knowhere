@@ -2,10 +2,8 @@
 bench
 """
 import os
-import shutil
 import json
 from lib import calculate_score
-import pytest
 from conf import conf
 
 code_path = os.environ.get('GITHUB_WORKSPACE')

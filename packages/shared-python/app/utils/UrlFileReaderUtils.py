@@ -1,8 +1,10 @@
-import requests
-import pandas as pd
 import io
 import os
 from urllib.parse import urlparse
+
+import pandas as pd
+import requests
+
 from app.core.config import settings
 
 

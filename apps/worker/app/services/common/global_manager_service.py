@@ -1,8 +1,9 @@
 import threading
-from typing import Union, List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
+
 
 class GlobalDataFrameManager:
     """

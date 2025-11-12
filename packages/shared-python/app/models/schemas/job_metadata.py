@@ -1,7 +1,8 @@
 """
 Job元数据Schema定义
 """
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 from pydantic import BaseModel, Field
 
 

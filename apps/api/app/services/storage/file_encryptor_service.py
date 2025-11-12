@@ -1,6 +1,8 @@
 import os
 import pickle
+
 from cryptography.fernet import Fernet
+
 
 class FernetPickleEncryptor:
     encrypt = False

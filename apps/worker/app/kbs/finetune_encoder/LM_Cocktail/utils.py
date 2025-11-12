@@ -1,14 +1,14 @@
-import os
 import gc
+import os
+import random
 import tempfile
+from typing import Any, Dict, List
 
 import torch
-import random
-import numpy as np
 from tqdm import tqdm
-from typing import List, Dict, Any
-
-from transformers import AutoModelForCausalLM, AutoModel, AutoModelForSequenceClassification, is_torch_npu_available
+from transformers import (AutoModel, AutoModelForCausalLM,
+                          AutoModelForSequenceClassification,
+                          is_torch_npu_available)
 
 
 def load_llm(model_name:str, trust_remote_code:bool):

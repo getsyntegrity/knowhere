@@ -2,9 +2,9 @@
 消息队列配置
 定义RabbitMQ交换器、队列和路由规则
 """
-from typing import Dict, Any
-from pydantic import Field
-from pydantic import BaseModel
+from typing import Any, Dict
+
+from pydantic import BaseModel, Field
 
 
 class MessagingConfig(BaseModel):

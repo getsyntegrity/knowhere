@@ -1,7 +1,6 @@
-import re
 
 from mineru.utils.cut_image import cut_image_and_table
-from mineru.utils.enum_class import BlockType, ContentType
+from mineru.utils.enum_class import ContentType
 from mineru.utils.hash_utils import str_md5
 from mineru.backend.vlm.vlm_magic_model import MagicModel
 from mineru.version import __version__

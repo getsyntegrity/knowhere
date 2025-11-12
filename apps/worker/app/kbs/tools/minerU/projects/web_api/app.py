@@ -7,7 +7,7 @@ import tempfile
 from typing import Tuple, Union
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, UploadFile
 from fastapi.responses import JSONResponse
 from loguru import logger
 

@@ -1,8 +1,7 @@
 """
 AI模型配置
 """
-from pydantic import Field
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AIConfig(BaseModel):

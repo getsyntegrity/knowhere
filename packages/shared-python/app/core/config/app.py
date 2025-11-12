@@ -2,14 +2,14 @@
 应用配置
 整合所有配置组件
 """
-from .base import BaseConfig
-from .database import DatabaseConfig
-from .redis import RedisConfig, RedisPoolManager, RedisConfigManager
-from .celery import CeleryConfig
-from .storage import StorageConfig
 from .ai import AIConfig
 from .auth import AuthConfig
+from .base import BaseConfig
 from .billing import BillingConfig
+from .celery import CeleryConfig
+from .database import DatabaseConfig
+from .redis import RedisConfig, RedisConfigManager, RedisPoolManager
+from .storage import StorageConfig
 
 
 class AppConfig(BaseConfig, DatabaseConfig, RedisConfig, CeleryConfig, StorageConfig, AIConfig, AuthConfig, BillingConfig):

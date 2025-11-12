@@ -1,16 +1,16 @@
-import numpy as np
-import os
-import pandas as pd
-import re
 import json
-from collections import Counter, deque
+import os
+from collections import Counter
+
+import pandas as pd
 from file_encryptor import encryptor
-from txt_parser import clean_texts_by_form
-from md_parser import update_df_list
 from image_parser import image_summary
-from table_parser import extract_tb_keywords, identify_tables, extract_tables_by_forms
+from md_parser import update_df_list
+from table_parser import (extract_tables_by_forms, extract_tb_keywords,
+                          identify_tables)
+from txt_parser import clean_texts_by_form
 # from knowledge_generator import process_full_contents
-from utlis import know_df_cols, gen_str_codes, find_matches_parsing, restore_graph_by_paths
+from utlis import (gen_str_codes, know_df_cols)
 
 
 def get_common_keys(json_data):

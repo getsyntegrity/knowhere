@@ -2,11 +2,10 @@
 知识库管理编排服务
 """
 from typing import Optional
-from loguru import logger
 
-# 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
-from app.core.state_machine.states import JobStatus
 from app.core.celery_router import task_router
+# 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
+from loguru import logger
 
 
 class KBOrchestrator:
@@ -41,9 +40,9 @@ class KBOrchestrator:
         try:
             # 如果source_type是url但没有提供file_url，尝试从job_metadata中获取
             if source_type == "url" and not file_url:
+                from app.models.schemas.job_metadata import JobMetadataHelper
                 from app.repositories.job_repository import JobRepository
                 from app.services.redis import RedisServiceFactory
-                from app.models.schemas.job_metadata import JobMetadataHelper
                 
                 job_repo = JobRepository()
                 redis_service = RedisServiceFactory.get_service()
@@ -90,6 +89,7 @@ class KBOrchestrator:
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
         
         from celery import signature
+
         # 返回单任务签名（任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息）
         # Webhook和邮件发送已迁移到API服务，由消息处理器处理
         return signature(

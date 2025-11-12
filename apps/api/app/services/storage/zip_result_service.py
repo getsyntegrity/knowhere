@@ -2,13 +2,14 @@
 ZIP 结果包生成服务
 根据 Knowhere-API-ZIP-Spec.md 规范生成 ZIP 包
 """
-import os
-import json
-import zipfile
 import hashlib
+import json
+import os
 import tempfile
-from typing import Dict, Any, List, Optional, Tuple
+import zipfile
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
 from loguru import logger
 from PIL import Image
 
@@ -239,6 +240,7 @@ class ZipResultService:
         
         # 查找最后一个 .pdf、.docx 等文件扩展名
         import re
+
         # 匹配文件名模式（包含扩展名）
         file_pattern = r'[^/]+\.(pdf|docx|doc|txt|md|xlsx|xls|pptx|ppt)'
         match = re.search(file_pattern, path, re.IGNORECASE)

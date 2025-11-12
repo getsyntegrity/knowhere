@@ -1,5 +1,5 @@
 import contextvars
-from typing import Optional, Any
+from typing import Any, Optional
 
 _current_user_context: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar('current_user', default=None)
 

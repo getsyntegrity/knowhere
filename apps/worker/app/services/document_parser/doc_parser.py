@@ -1,28 +1,32 @@
 import io
-import json
 import os
 import re
 import uuid
 import zipfile
+
 import pandas as pd
-from openai import OpenAI
-from loguru import logger
-from tqdm import tqdm
+from app.core.config import settings
+from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
+                                          get_str_time, process_dup_paths_df,
+                                          process_path_texts, remove_spaces,
+                                          tokenize2stw_remove)
+from app.services.document_parser.image_parser import ask_image
+from app.services.document_parser.layout_parser import pred_titles
+from app.services.document_parser.table_parser import (extract_tb_keywords,
+                                                       table2html)
+from app.services.document_parser.txt_parser import (extract_summary_keywords,
+                                                     postprocess_leaf_dics)
+from app.utils.CommonHelper import load_file_bytes
 from bs4 import BeautifulSoup
 from docx import Document
-from lxml import etree
-from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
+from docx.oxml.text.paragraph import CT_P
 from docx.table import Table
 from docx.text.paragraph import Paragraph
-from app.core.config import settings
-from app.services.document_parser.layout_parser import pred_titles
-from app.services.common.kb_utils import remove_spaces, find_matches_parsing, gen_str_codes, process_dup_paths_df, process_path_texts, \
-    restore_graph_by_paths, tokenize2stw_remove, get_str_time
-from app.services.document_parser.txt_parser import postprocess_leaf_dics, extract_summary_keywords
-from app.services.document_parser.image_parser import ask_image
-from app.services.document_parser.table_parser import table2html, extract_tb_keywords
-from app.utils.CommonHelper import load_file_bytes
+from loguru import logger
+from lxml import etree
+from openai import OpenAI
+from tqdm import tqdm
 
 
 def get_leaf_dics(node, path=[]):

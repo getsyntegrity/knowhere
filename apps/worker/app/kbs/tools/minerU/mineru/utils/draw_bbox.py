@@ -1,7 +1,6 @@
 import json
 from io import BytesIO
 
-from loguru import logger
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 

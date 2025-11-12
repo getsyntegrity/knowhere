@@ -1,7 +1,6 @@
 import os
 import cv2
 import numpy as np
-from loguru import logger
 from rapid_table import RapidTable, RapidTableInput
 
 from mineru.utils.enum_class import ModelPath

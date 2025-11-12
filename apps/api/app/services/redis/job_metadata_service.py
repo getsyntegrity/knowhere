@@ -1,11 +1,11 @@
 """
 Job元数据Redis服务
 """
-from typing import Dict, Any, Optional
-from loguru import logger
+from typing import Any, Dict, Optional
 
 from app.services.redis.redis_service import RedisService
 from app.utils.redis_key_builder import redis_key_builder
+from loguru import logger
 
 
 class JobMetadataService:

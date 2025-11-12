@@ -4,7 +4,6 @@ import statistics
 
 import cv2
 import numpy as np
-from loguru import logger
 
 from mineru.utils.boxbase import calculate_overlap_area_in_bbox1_area_ratio, calculate_iou, \
     get_minbox_if_overlap_by_ratio

@@ -1,16 +1,15 @@
 import os
 import shutil
-
-import torch
-import random
-import numpy as np
-from typing import List, Dict, Any
+from typing import Dict, List
 
 from accelerate import init_empty_weights, load_checkpoint_and_dispatch
-from transformers import AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer, models
-from transformers import pipeline
-from .utils import load_model, get_model_param_list, merge_param, compute_weights, get_model_param_dirs, merge_param_by_layer
+from transformers import (AutoModel, AutoModelForCausalLM,
+                          AutoModelForSequenceClassification, AutoTokenizer)
+
+from .utils import (compute_weights, get_model_param_dirs,
+                    get_model_param_list, load_model, merge_param,
+                    merge_param_by_layer)
 
 
 def save_ckpt_for_sentence_transformers(ckpt_dir, pooling_mode: str = 'cls', normalized: bool = True):

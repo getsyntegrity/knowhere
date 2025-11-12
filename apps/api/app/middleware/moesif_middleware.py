@@ -3,12 +3,12 @@ Moesif API监控中间件
 """
 import json
 import time
-from typing import Dict, Any, Optional
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-from loguru import logger
+from typing import Any, Dict, Optional
 
 from app.core.config import settings
+from fastapi import Request, Response
+from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
 
 
 class MoesifMiddleware(BaseHTTPMiddleware):
@@ -21,8 +21,8 @@ class MoesifMiddleware(BaseHTTPMiddleware):
         
         if self.moesif_application_id:
             try:
-                from moesifapi.moesif_api_client import MoesifAPIClient
                 from moesifapi.configuration import Configuration
+                from moesifapi.moesif_api_client import MoesifAPIClient
                 
                 configuration = Configuration()
                 configuration.api_key = self.moesif_application_id
@@ -129,13 +129,11 @@ class MoesifMiddleware(BaseHTTPMiddleware):
                     token = auth_header[7:]
                     # TODO: 解析JWT获取用户ID
                     # 这里需要实现JWT解析逻辑
-                    pass
                 elif auth_header.startswith('ApiKey '):
                     # API Key
                     api_key = auth_header[7:]
                     # TODO: 从API Key获取用户ID
                     # 这里需要查询数据库获取用户ID
-                    pass
             
             # 从X-User-ID header获取（如果前端设置）
             return request.headers.get('x-user-id')

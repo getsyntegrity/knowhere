@@ -1,7 +1,8 @@
 """
 OSS存储适配器实现（阿里云对象存储）
 """
-from typing import Optional, BinaryIO, Iterator, Dict, Any
+from typing import Any, BinaryIO, Dict, Iterator, Optional
+
 from loguru import logger
 
 from app.services.storage.storage_adapter import StorageAdapter
@@ -12,7 +13,7 @@ def _import_oss2():
     """延迟导入oss2模块"""
     try:
         import oss2
-        from oss2.exceptions import OssError, NoSuchKey, NotFound
+        from oss2.exceptions import NoSuchKey, NotFound, OssError
         return oss2, OssError, NoSuchKey, NotFound
     except ImportError as e:
         raise ImportError(

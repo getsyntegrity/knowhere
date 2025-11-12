@@ -1,25 +1,20 @@
 """
 计费相关 API
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.database.user import User
-from app.services.billing.stripe_service import StripeService
+from app.models.schemas.billing import (BuyCreditsRequest,
+                                        CheckoutSessionResponse,
+                                        CreditsBalanceResponse,
+                                        PaymentIntentResponse,
+                                        SubscribeRequest, TransactionHistoryResponse,
+                                        UsageStatsResponse)
 from app.services.billing.credits_service import CreditsService
-from app.models.schemas.billing import (
-    SubscribeRequest,
-    BuyCreditsRequest,
-    SubscriptionResponse,
-    CreditsBalanceResponse,
-    UsageStatsResponse,
-    TransactionHistoryResponse,
-    PaymentIntentResponse,
-    CheckoutSessionResponse
-)
+from app.services.billing.stripe_service import StripeService
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["Billing"])
 
@@ -97,7 +92,8 @@ async def get_current_subscription(
 ):
     """获取当前订阅信息"""
     try:
-        from app.repositories.subscription_repository import SubscriptionRepository
+        from app.repositories.subscription_repository import \
+            SubscriptionRepository
         
         subscription_repo = SubscriptionRepository()
         subscription = await subscription_repo.get_active_by_user_id(db, str(current_user.id))
@@ -143,7 +139,8 @@ async def get_credits_balance(
         balance = await credits_service.check_balance(db, str(current_user.id))
         
         # 获取订阅信息计算限制
-        from app.repositories.subscription_repository import SubscriptionRepository
+        from app.repositories.subscription_repository import \
+            SubscriptionRepository
         subscription_repo = SubscriptionRepository()
         subscription = await subscription_repo.get_active_by_user_id(db, str(current_user.id))
         
@@ -259,10 +256,10 @@ async def stripe_webhook(
 async def _send_purchase_confirmation_email(user_id: str, plan_type: str, amount: float, db: AsyncSession):
     """发送购买确认邮件"""
     try:
+        from app.models.database.user import User
         from app.services.email import EmailService
         from sqlalchemy import select
-        from app.models.database.user import User
-        
+
         # 获取用户信息
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()

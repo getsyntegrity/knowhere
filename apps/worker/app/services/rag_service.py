@@ -1,25 +1,22 @@
-import os
-import uuid
 import math
-import torch
+import traceback
+import uuid
+
 import matplotlib.pyplot as plt
 import numpy as np
-from pylab import mpl
-from loguru import logger
-from app.core.dependencies import get_redis_service
-from app.services.redis import RedisService
-from app.core.database import get_db_context
+import torch
 from app.core.config import settings
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
+from app.core.dependencies import get_redis_service
 # ARQ依赖已移除，使用Celery替代
 from app.services.ai import ai_query_service
-import networkx as nx
-import torch as T
+from app.services.ai.prompt_service import build_prompt
+from app.services.ai.response_process_service import eval_response
+from app.utils.gc_utils import gc_collect as _gc
+from app.utils.text_utils import tokenize2stw_remove
+from loguru import logger
+from pylab import mpl
 from rank_bm25 import BM25Okapi
 from sentence_transformers import util
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from app.services.common.kb_utils import tokenize2stw_remove, _gc
 
 plt.rcParams['font.sans-serif'] = 'SimHei'
 mpl.rcParams['font.sans-serif'] = ['SimHei']
@@ -147,7 +144,6 @@ async def find_closest(texts, text_vectors, q_vec, topk, msg=None, add_identifie
     except Exception as e:
         logger.error(f"相似度搜索过程中发生异常: {str(e)}")
         logger.error(f"异常类型: {type(e).__name__}")
-        import traceback
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise e
 
@@ -201,7 +197,6 @@ def merge_paths_soft(zips_pa, zips_con, con_weight=3):
     except Exception as e:
         logger.error(f"合并路径得分过程中发生异常: {str(e)}")
         logger.error(f"异常类型: {type(e).__name__}")
-        import traceback
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise e
 
@@ -251,7 +246,6 @@ async def rerank_(rerank_txt, msg, paths4rank, keep_one=False):
     except Exception as e:
         logger.error(f"重新排序过程中发生异常: {str(e)}")
         logger.error(f"异常类型: {type(e).__name__}")
-        import traceback
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         raise e
 
@@ -273,13 +267,11 @@ def vectorize_texts(texts, encoder_=None, use_tensor=False, client=None):
         logger.debug(f"Qwen API向量化完成，向量维度: {embeddings.shape if hasattr(embeddings, 'shape') else 'unknown'}")
         return texts, embeddings
     except Exception as e:
-        import traceback
         logger.error(f"向量化过程中发生异常: {str(e)}")
         logger.error(f"异常类型: {type(e).__name__}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         logger.warning(f"向量化失败，使用零向量替代: {e}")
         
-        import numpy as np
         fallback_dim = getattr(settings, "DEFAULT_EMBEDDING_DIM", 1024)
         logger.debug(f"使用备用向量维度: {fallback_dim}")
         zero_embeddings = np.zeros((len(texts), fallback_dim), dtype=np.float32)

@@ -1,7 +1,7 @@
 
-from app.core.config import settings
 from loguru import logger
 
+from app.core.config import settings
 
 """
 S3协议文件系统相关操作，

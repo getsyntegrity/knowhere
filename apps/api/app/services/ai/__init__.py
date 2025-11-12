@@ -1,9 +1,10 @@
 """
 AI服务模块
 """
+from .ai_query_service import (AIQueryService, ai_query_service,
+                               ai_query_service_arq)
 from .prompt_service import build_prompt
-from .response_process_service import process_llm_history, eval_response
-from .ai_query_service import AIQueryService, ai_query_service, ai_query_service_arq
+from .response_process_service import eval_response, process_llm_history
 
 __all__ = [
     'build_prompt',

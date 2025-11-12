@@ -1,9 +1,9 @@
 """
 Celery配置
 """
-from pydantic import Field
 from typing import Dict
-from pydantic import BaseModel
+
+from pydantic import BaseModel, Field
 
 
 class CeleryConfig(BaseModel):

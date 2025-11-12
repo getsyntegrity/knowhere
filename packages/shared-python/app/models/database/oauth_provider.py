@@ -3,10 +3,11 @@ OAuth 提供商数据模型
 """
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
 from uuid import uuid4
+
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 

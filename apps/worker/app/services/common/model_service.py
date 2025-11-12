@@ -4,17 +4,14 @@
 """
 import os
 import time
-import numpy as np
-import torch
-from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from loguru import logger
 
-from app.core.config import settings
-from app.services.knowledge.user_learner_service import CBD_Memory, SequencePredictor, MarkerPredictor
+import numpy as np
+from app.services.knowledge.user_learner_service import CBD_Memory
 # 注意：encoder_finetuner是Worker专用的，改为延迟导入
 # from app.services.knowledge.encoder_finetuner import EncoderFinetuner, gen_train_data_from_queries, gen_queries, load_gen_queries, gen_train_data_from_contents, gen_corpus
-from app.services.common.kb_utils import check_internet
+from loguru import logger
+from sentence_transformers import SentenceTransformer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 class LocalModelSetting:
@@ -29,7 +26,8 @@ class LocalModelSetting:
         """初始化本地大语言模型"""
         if user_info['USER_SETTINGS']['USE_LOCAL_LLM']:
             try:
-                from app.services.ai.Local_API.call_locals import call_local_llm, call_local_stream
+                from app.services.ai.Local_API.call_locals import (
+                    call_local_llm, call_local_stream)
                 self.local_llm_path = os.path.join(
                     user_info['USER_SETTINGS']['LOCAL_MODELS_DIR'], 
                     user_info['USER_SETTINGS']['LOCAL_LLM_NAME']
@@ -123,7 +121,8 @@ class ModelService:
             if user_info['USER_SETTINGS']['BN_RL']:
                 # 延迟导入encoder_finetuner（Worker专用）
                 try:
-                    from app.services.knowledge.encoder_finetuner import EncoderFinetuner
+                    from app.services.knowledge.encoder_finetuner import \
+                        EncoderFinetuner
                     st_time = time.time()
                     fine_tuner = EncoderFinetuner(user_info['USER_SETTINGS'])
                     logger.info(f'词嵌入微调模型载入完成 耗时 {np.round(time.time()-st_time, 2)}s')
@@ -154,18 +153,6 @@ class ModelService:
         Returns:
             设备信息字典
         """
-        device_info = {
-            'device': "cuda" if torch.cuda.is_available() else "cpu",
-            'has_internet': check_internet(),
-            'can_use_local_llm': False,
-            'can_use_local_summary': False
-        }
-        
-        if device_info['device'] == "cuda":
-            device_info['can_use_local_llm'] = True
-            device_info['can_use_local_summary'] = True
-        elif device_info['device'] == "cpu":
-            device_info['can_use_local_llm'] = False
-            device_info['can_use_local_summary'] = False
-        
-        return device_info
+        from app.utils.device_utils import \
+            check_device_capabilities as _check_device_capabilities
+        return _check_device_capabilities()

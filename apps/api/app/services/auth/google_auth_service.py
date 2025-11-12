@@ -1,13 +1,13 @@
 """
 Google OAuth 服务
 """
-import httpx
-from typing import Optional, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, Optional
 
-from app.services.auth.oauth_service import OAuthService
-from app.models.database.user import User
+import httpx
 from app.core.config import settings
+from app.models.database.user import User
+from app.services.auth.oauth_service import OAuthService
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class GoogleAuthService(OAuthService):

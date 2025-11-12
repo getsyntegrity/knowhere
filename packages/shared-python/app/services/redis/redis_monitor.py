@@ -3,9 +3,11 @@ Redis监控服务
 """
 import asyncio
 import time
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
+
 from loguru import logger
-from app.services.redis import RedisService
+
+from app.services.redis.redis_service import RedisService
 from app.utils.redis_key_builder import redis_key_builder
 
 

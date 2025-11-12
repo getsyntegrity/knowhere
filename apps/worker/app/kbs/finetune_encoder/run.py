@@ -2,18 +2,13 @@ import logging
 import os
 from pathlib import Path
 
-from transformers import AutoConfig, AutoTokenizer
-from transformers import (
-    HfArgumentParser,
-    set_seed,
-)
-
-from arguments import ModelArguments, DataArguments, \
-    RetrieverTrainingArguments as TrainingArguments
-from data import TrainDatasetForEmbedding, EmbedCollator
+from arguments import DataArguments, ModelArguments
+from arguments import RetrieverTrainingArguments as TrainingArguments
+from data import EmbedCollator, TrainDatasetForEmbedding
+from LM_Cocktail import mix_models
 from modeling import BiEncoderModel
 from trainer import BiTrainer
-from LM_Cocktail import mix_models, mix_models_with_data
+from transformers import AutoConfig, AutoTokenizer, HfArgumentParser, set_seed
 
 logger = logging.getLogger(__name__)
 

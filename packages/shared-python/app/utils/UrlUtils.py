@@ -1,5 +1,6 @@
 from urllib.parse import unquote, unquote_plus
 
+
 class UrlDecoder:
     """
     一个用于URL解码的工具类，可以处理包含特殊字符和中文字符的编码字符串。

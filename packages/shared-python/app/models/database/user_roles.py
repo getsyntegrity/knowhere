@@ -1,4 +1,4 @@
-from sqlalchemy import Table, Column, String, ForeignKey
+from sqlalchemy import Column, ForeignKey, String, Table
 
 from app.core.database import Base
 

@@ -2,12 +2,12 @@
 Redis Keyspace Notifications 超时处理机制
 真正实现基于Redis TTL的实时超时处理
 """
-import json
 import asyncio
-from typing import Dict, Any, Optional, Callable
-from loguru import logger
+import json
+from typing import Any, Callable, Dict, Optional
 
 from app.services.redis import RedisServiceFactory
+from loguru import logger
 
 
 class RedisKeyspaceNotificationHandler:

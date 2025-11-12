@@ -1,12 +1,13 @@
 import re
 import unicodedata
 import uuid
+from collections import Counter, defaultdict
+
 import pandas as pd
-from tqdm import tqdm
-from collections import defaultdict, Counter
-from docx.oxml.ns import qn
 from app.services.common.kb_utils import count_cn_en
 from app.services.document_parser.table_parser import df2html
+from docx.oxml.ns import qn
+from tqdm import tqdm
 
 try:
     from markitdown import MarkItDown
@@ -15,13 +16,12 @@ except ImportError:
     class MarkItDown:
         def convert(self, content):
             return content
-from app.core.database import get_db_context
 from app.core.config import settings
+# ARQ依赖已移除，使用Celery替代
+from app.services.ai import ai_query_service
 # TaskRedis依赖已移除，使用Redis直接追踪
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
-# ARQ依赖已移除，使用Celery替代
-from app.services.ai import ai_query_service
 from loguru import logger
 
 
@@ -76,7 +76,6 @@ def execute_level_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
 def detect_outlines_md(line):
     pos_code = judge_by_conditions(line)
     any(x>0 for x in pos_code)
-    pass
 
 def get_max_lvl(code_str: str):
     match = re.search(r'\[([^]]+)]', code_str)

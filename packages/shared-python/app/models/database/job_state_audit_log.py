@@ -2,12 +2,12 @@
 Job状态转换审计日志模型
 """
 from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional, Dict, Any
-from sqlalchemy import String, Text, DateTime, ForeignKey, Index, JSON, Integer
+from typing import Any, Dict, Optional
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
-from uuid import uuid4
 
 from app.core.database import Base
 

@@ -1,16 +1,17 @@
 import io
 import re
 import uuid
+
 import pandas as pd
-from bs4 import BeautifulSoup
-from loguru import logger
 from app.core.config import settings
+# ARQ依赖已移除，使用Celery替代
+from app.services.ai import ai_query_service
 # TaskRedis依赖已移除，使用Redis直接追踪
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
-# ARQ依赖已移除，使用Celery替代
-from app.services.ai import ai_query_service
 from app.utils.CommonHelper import load_file_bytes
+from bs4 import BeautifulSoup
+from loguru import logger
 
 
 def clean_texts_by_form(text, form='html'):

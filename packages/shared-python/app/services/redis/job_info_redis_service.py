@@ -2,7 +2,8 @@
 Job基本信息Redis服务
 统一管理Job基本信息的Redis缓存，供API和Worker服务使用
 """
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from loguru import logger
 
 from app.services.redis.redis_service import RedisService

@@ -1,36 +1,21 @@
+import copy
 import os
 import re
-import copy
-import torch
-import gc
 import uuid
+from collections import Counter
+from datetime import datetime
+
 import Levenshtein
-import jieba
-import requests
 import numpy as np
 import pandas as pd
-from loguru import logger
-from datetime import datetime
-from collections import Counter
-from bs4 import BeautifulSoup
+import requests
 from app.core.config import settings
+from app.utils.file_utils import path_handle
+# 通用工具函数从 shared-python 导入
+from app.utils.text_utils import remove_duplicates_orderkept
+from bs4 import BeautifulSoup
+from loguru import logger
 
-
-async def use_llm_api(call_llm, histories, paras, config):
-    paras.update({'histories':histories})
-    print(f"\n🚀 当前大模型任务 {paras['task']}...")
-    result = call_llm(paras=paras, config=config)
-    try: 
-        use_stream = paras['stream'] 
-    except:
-        use_stream = False
-
-    if use_stream: # 流式生成器，不追加 history，交给前端去消费
-        return result, histories
-    else: # 非流式：追加 history 并返回答案
-        if (paras.get('task') != 'if-history') and paras.get('use_his'):
-            histories.append((paras['query'], result))
-        return result, histories
 
 def build_tree_from_paths(paths):
     """把 path list 转换为嵌套 dict"""
@@ -72,10 +57,8 @@ def check_internet(url='http://www.baidu.com'):
         print(f"网络连接失败: {e}")
         return False
 
-def _gc():
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+# _gc 已移到 shared-python 的 gc_utils，重命名为 gc_collect
+
 
 def get_node_level(tree, target_node, current_level=0):
     if target_node in tree:
@@ -102,24 +85,6 @@ def cal_levenshtein_dis(text, target):
     similarity = 1 - (distance / max_len)
     return similarity
 
-def clean_file(path_, mode='remove', cols=None):
-    try:
-        if mode=='remove':
-            os.remove(path_)
-        elif mode=='clean':
-            if '.txt' in path_:
-                pass
-            elif '.csv' in path_:
-                exist_df = pd.read_csv(path_, encoding='utf-8', keep_default_na=False)
-                if not cols==None:
-                    empty_df = pd.DataFrame(columns=cols)
-                else:
-                    empty_df = pd.DataFrame(columns=exist_df.columns)
-                empty_df.to_csv(path_, index=False)
-        else:
-            pass
-    except:
-        pass
     
 def create_reply(contents, intentions):
     reply = '为你找到如下信息：\n'
@@ -408,38 +373,6 @@ def text_list2md(text_list, headers, splitchar="\t"):
         md_lines.append("| " + " | ".join(row) + " |")
     return "\n".join(md_lines)
 
-def min_max_normalize(value, min_val, max_val):
-    if max_val == min_val:
-        return 0  # Avoid division by zero
-    normalized = (value - min_val) / (max_val - min_val)
-    return max(0, min(1, normalized))  # Clip to [0, 1]
-
-def path_handle(path, mode):
-    illegal_chars = r'[\t\n<>：:;；"　/\\|?*]'
-    safe_char = '_'
-
-    if mode=='split':
-        path_lst = path.split(os.sep)
-        return path_lst
-
-    elif mode=='extract-base':
-        base_name = os.path.basename(path)
-        base_name = os.path.splitext(base_name)[0]
-        return base_name
-
-    elif mode=='sanitize':
-        path = path.replace("\\", "/")
-        parts = path.split("/")
-        sanitized_parts = []
-        for part in parts: # 用正则替换掉非法字符（包括 / 本身）
-            clean_part = re.sub(illegal_chars, safe_char, part)
-            sanitized_parts.append(clean_part)
-        return os.sep.join(sanitized_parts)
-
-    elif mode=='clean_single':
-        path = re.sub(illegal_chars, safe_char, path)
-        return path
-    return None
 
 def process_path_texts(path_, last=50):
     temp_path = path_handle(path_, mode='sanitize')
@@ -451,15 +384,6 @@ def process_dup_paths_df(df):
         df['path'] = df.apply(lambda x: f"{x['path']}_{x['count']}" if x['count'] > 1 else x['path'], axis=1)
         df.drop(columns=['count'], inplace=True)
     return df
-    
-def remove_duplicates_orderkept(input_list):
-    seen = set()
-    output_list = []
-    for item in input_list:
-        if item not in seen:
-            output_list.append(item)
-            seen.add(item)
-    return output_list
     
 def remove_spaces(text, handle_punctuation=False):
     '''
@@ -546,42 +470,6 @@ def truncate_paths(elements: list[str], keyword: str) -> list[str]:
             new_elem = split_char.join(parts[:idx + 1])  # 保留 keyword
             new_list.append(new_elem)
     return new_list
-
-def merge_non_chinese_until_chinese(lst):
-    # 去除空字符串
-    lst = [item for item in lst if item.strip()]
-    
-    result = []
-    temp = ""
-    
-    for item in lst:
-        # 判断是否是中文字符
-        if re.search(r'[\u4e00-\u9fff]', item):
-            # 如果前面有非中文字符要先合并
-            if temp:
-                result.append(temp)
-                temp = ""
-            result.append(item)
-        else:
-            temp += item  # 合并非中文字符
-    # 如果最后一个是非中文字符也要加到结果中
-    if temp:
-        result.append(temp)
-    return result
-
-def tokenize2stw_remove(contents, stopwords=None, link_char='->'):
-    res_contents = []
-    tokens = []
-    for content in contents:
-        tokens.append(merge_non_chinese_until_chinese(jieba.lcut(content)))
-    for token in tokens:
-        if not stopwords is None:
-            filtered_tokens = [w for w in token if w not in stopwords and (not w.strip()=='')]
-        else:
-            filtered_tokens = token
-        filtered_tokens = remove_duplicates_orderkept(filtered_tokens)
-        res_contents.append(link_char.join(filtered_tokens))
-    return res_contents
 
 def html2txt(html_text):
     soup = BeautifulSoup(html_text, 'html.parser')

@@ -1,15 +1,15 @@
 """
 Job仓储层
 """
-from typing import Optional, List, Dict, Any
-from sqlalchemy import select, and_, desc
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
+from typing import Any, Dict, List, Optional
 
 from app.models.database.job import Job
 from app.models.database.job_state_history import JobStateHistory
 from app.services.state_machine import JobStateMachine
+from loguru import logger
+from sqlalchemy import and_, desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 
 class JobRepository:
@@ -150,7 +150,8 @@ class JobRepository:
             # 将file_url存储到job_metadata中
             # 更新job_metadata中的file_url（同时更新Redis）
             from app.services.redis import RedisServiceFactory
-            from app.services.redis.job_metadata_service import JobMetadataService
+            from app.services.redis.job_metadata_service import \
+                JobMetadataService
             
             redis_service = RedisServiceFactory.get_service()
             metadata_service = JobMetadataService(redis_service)
@@ -315,7 +316,8 @@ class JobRepository:
         """
         # 1. 尝试从Redis获取
         if redis_service:
-            from app.services.redis.job_metadata_service import JobMetadataService
+            from app.services.redis.job_metadata_service import \
+                JobMetadataService
             metadata_service = JobMetadataService(redis_service)
             metadata = await metadata_service.get_metadata(job_id)
             if metadata:
@@ -326,7 +328,8 @@ class JobRepository:
         if job and job.job_metadata:
             # 回写到Redis（2小时缓存）
             if redis_service:
-                from app.services.redis.job_metadata_service import JobMetadataService
+                from app.services.redis.job_metadata_service import \
+                    JobMetadataService
                 metadata_service = JobMetadataService(redis_service)
                 await metadata_service.save_metadata(job_id, job.job_metadata)
             return job.job_metadata

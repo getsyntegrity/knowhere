@@ -12,7 +12,6 @@ class IOReader(ABC):
         Returns:
             bytes: the content of the file
         """
-        pass
 
     @abstractmethod
     def read_at(self, path: str, offset: int = 0, limit: int = -1) -> bytes:
@@ -26,7 +25,6 @@ class IOReader(ABC):
         Returns:
             bytes: the content of file
         """
-        pass
 
 
 class IOWriter(ABC):
@@ -39,4 +37,3 @@ class IOWriter(ABC):
             path (str): the path of file, if the path is relative path, it will be joined with parent_dir.
             data (bytes): the data want to write
         """
-        pass

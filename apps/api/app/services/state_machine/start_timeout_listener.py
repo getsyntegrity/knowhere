@@ -4,11 +4,11 @@
 import asyncio
 import signal
 import sys
-from typing import Dict, Any
-from loguru import logger
+from typing import Any, Dict
 
-from app.services.state_machine.manager import JobStateMachine
 from app.core.database import get_db_context
+from app.services.state_machine.manager import JobStateMachine
+from loguru import logger
 
 
 class TimeoutListener:

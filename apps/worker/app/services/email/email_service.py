@@ -1,13 +1,12 @@
 """
 邮件服务
 """
-import asyncio
-import aiohttp
-from typing import Optional, Dict, Any, List
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, Optional
 
+import aiohttp
 from app.core.config import settings
+from loguru import logger
 
 
 class EmailService:

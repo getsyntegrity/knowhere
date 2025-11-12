@@ -1,5 +1,6 @@
-import httpx
 from typing import Optional
+
+import httpx
 
 http_client: Optional[httpx.AsyncClient] = None
 def get_http_client() -> httpx.AsyncClient:

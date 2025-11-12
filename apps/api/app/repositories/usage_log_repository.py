@@ -1,13 +1,13 @@
 """
 使用日志数据访问层
 """
-from typing import Optional, List, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, desc
 from datetime import datetime, timedelta
+from typing import Any, Dict, List
 
 from app.models.database.usage_log import UsageLog
 from app.repositories.base_repository import BaseRepository
+from sqlalchemy import desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class UsageLogRepository(BaseRepository[UsageLog, dict, dict]):

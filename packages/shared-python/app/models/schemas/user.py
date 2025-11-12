@@ -1,11 +1,12 @@
 """
 用户相关 Schema
 """
-from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
 from uuid import UUID
+
 from fastapi_users.schemas import BaseUserUpdate
+from pydantic import BaseModel, EmailStr, Field
 
 from app.models.database.user import UserType
 
@@ -125,7 +126,6 @@ class LoginResponse(BaseModel):
 
 class RegisterRequest(UserCreate):
     """注册请求"""
-    pass
 
 
 class RegisterResponse(BaseModel):

@@ -1,9 +1,10 @@
 """
 Webhook相关Schema
 """
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, HttpUrl
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class WebhookConfigCreate(BaseModel):

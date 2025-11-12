@@ -2,7 +2,8 @@
 速率限制服务
 """
 import time
-from typing import Dict, Any
+from typing import Any, Dict
+
 from loguru import logger
 
 from app.services.redis.redis_service import RedisService

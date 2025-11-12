@@ -2,10 +2,11 @@
 Job状态历史数据模型
 """
 from datetime import datetime
-from typing import Optional, Dict, Any
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index, JSON
+from typing import Any, Dict, Optional
+from uuid import uuid4
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from uuid import UUID, uuid4
 
 from app.core.database import Base
 

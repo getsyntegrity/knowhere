@@ -1,8 +1,9 @@
 import os
+
 import requests
+from app.core.config import settings
 from app.services.document_parser.md_parser import parse_md
 from app.utils.FileDownUpUtils import s3_download_extract_zip
-from app.core.config import settings
 from loguru import logger
 
 
@@ -34,8 +35,8 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
             }
 
             # 优化轮询策略：添加延迟、超时和错误处理
-            import time
             import asyncio
+            import time
             
             max_polling_attempts = 120   # 最大轮询次数 (10分钟)
             polling_interval = 5.0      # 轮询间隔(秒)
@@ -117,8 +118,8 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
 
     elif mode == "local":
         # 延迟导入minerU相关模块
-        from app.kbs.tools.minerU.mineru.cli.common import read_fn
         from app.kbs.tools.minerU.demo.demo import do_parse
+        from app.kbs.tools.minerU.mineru.cli.common import read_fn
         
         file_data = read_fn(pdf_path)
         do_parse(

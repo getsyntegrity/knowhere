@@ -1,13 +1,12 @@
 """
 Stripe 支付服务
 """
-import stripe
-from typing import Dict, Any, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict
 
+import stripe
 from app.core.config import settings
-from app.repositories.subscription_repository import SubscriptionRepository
 from app.repositories.credits_repository import CreditsRepository
+from app.repositories.subscription_repository import SubscriptionRepository
 
 
 class StripeService:
@@ -99,8 +98,9 @@ class StripeService:
         plan_id = session['metadata']['plan_id']
         
         # 创建订阅记录
-        from app.models.database.subscription import Subscription
         from datetime import datetime
+
+        from app.models.database.subscription import Subscription
         
         subscription = Subscription(
             user_id=user_id,

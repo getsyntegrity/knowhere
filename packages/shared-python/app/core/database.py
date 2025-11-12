@@ -1,14 +1,16 @@
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator, TypeVar, Callable, Awaitable
 import asyncio
-import time
-from datetime import datetime
-
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import text
-from app.core.config import settings
 import logging
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import AsyncGenerator, Awaitable, Callable, TypeVar
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # 创建 SQLAlchemy 异步引擎
@@ -90,7 +92,8 @@ async def create_tables():
     """创建所有数据表"""
     async with engine.begin() as conn:
         # 导入所有模型以确保它们被注册
-        from app.models.database import user, api_key, subscription, credits_transaction, usage_log
+        pass
+
         # 创建所有表
         await conn.run_sync(Base.metadata.create_all)
 
@@ -263,6 +266,7 @@ def setup_pool_event_listeners():
 
 # 设置事件监听器
 from sqlalchemy import event
+
 setup_pool_event_listeners()
 
 # 连接池预热功能

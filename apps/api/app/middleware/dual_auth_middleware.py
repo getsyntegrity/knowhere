@@ -2,16 +2,15 @@
 双重认证中间件：JWT + API Key
 优化版本：统一使用Authorization头部，支持Bearer格式
 """
-from fastapi import Request, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
-from loguru import logger
 
 from app.core.database import get_db
 from app.core.jwt import jwt_strategy
-from app.services.auth.api_key_service import APIKeyService
 from app.models.database.user import User
+from app.services.auth.api_key_service import APIKeyService
+from fastapi import HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from loguru import logger
 
 
 class DualAuthMiddleware:

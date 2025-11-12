@@ -1,22 +1,18 @@
 """
 API Key 管理 API
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 
 from app.core.database import get_db
 from app.core.permissions import current_user
 from app.models.database.user import User
+from app.models.schemas.api_key import (APIKeyListResponse, APIKeyResponse,
+                                        CreateAPIKeyRequest,
+                                        CreateAPIKeyResponse,
+                                        RegenerateAPIKeyRequest,
+                                        RevokeAPIKeyRequest)
 from app.services.auth.api_key_service import APIKeyService
-from app.models.schemas.api_key import (
-    CreateAPIKeyRequest,
-    CreateAPIKeyResponse,
-    APIKeyResponse,
-    RegenerateAPIKeyRequest,
-    RevokeAPIKeyRequest,
-    APIKeyListResponse
-)
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["API Key Management"])
 

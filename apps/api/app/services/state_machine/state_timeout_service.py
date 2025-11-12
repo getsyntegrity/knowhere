@@ -2,13 +2,13 @@
 状态超时处理服务 - 基于Redis Keyspace Notifications
 """
 import json
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
+from app.services.redis import RedisServiceFactory
+from app.services.state_machine.redis_keyspace_notifications import \
+    RedisKeyspaceNotificationHandler
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.state_machine.states import get_state_timeout, JobStatus
-from app.services.state_machine.redis_keyspace_notifications import RedisKeyspaceNotificationHandler
-from app.services.redis import RedisServiceFactory
 
 
 class StateTimeoutService:

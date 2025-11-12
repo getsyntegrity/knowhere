@@ -2,19 +2,19 @@
 Webhook推送服务（API服务专用）
 负责发送Webhook请求并记录日志
 """
-import json
-import hmac
-import hashlib
-import uuid
 import asyncio
-import aiohttp
-from typing import Dict, Any, Optional
+import hashlib
+import hmac
+import json
+import uuid
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, Optional
 
+import aiohttp
 from app.core.config import settings
-from app.repositories.webhook_repository import WebhookRepository
 from app.core.database import get_db_context
+from app.repositories.webhook_repository import WebhookRepository
+from loguru import logger
 
 
 class WebhookService:
@@ -130,7 +130,7 @@ class WebhookService:
     def _calculate_delay(self, attempt: int) -> float:
         """计算重试延迟（指数退避 + 抖动）"""
         import random
-        
+
         # 指数退避
         delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
         

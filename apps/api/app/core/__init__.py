@@ -4,12 +4,11 @@
 注意：共享包内容需要从共享包导入
 """
 
+import os
 # 共享包内容 - 从共享包导入
 # 注意：由于Python的模块查找机制，当从apps/api/app/core导入时，
 # Python会先查找本地模块。我们需要确保共享包路径在sys.path的最前面
 import sys
-import os
-import importlib
 from pathlib import Path
 
 # 确保共享包路径在sys.path的最前面
@@ -35,13 +34,22 @@ if shared_python_path.exists():
 
 # 现在可以安全地从共享包导入
 # 使用importlib来确保从共享包导入，而不是本地模块
+import importlib.util
+
+# 清除可能缓存的app.core模块（包括config子模块）
+modules_to_remove = [k for k in sys.modules.keys() if k.startswith('app.core.')]
+for mod in modules_to_remove:
+    del sys.modules[mod]
+
 try:
     # 先尝试直接导入（如果路径设置正确，应该能成功）
-    from app.core.config import app_config, redis_config_manager, redis_pool_manager
+    from app.core.config import (app_config, redis_config_manager,
+                                 redis_pool_manager)
+    from app.core.constants import (APIConstants, BusinessConstants,
+                                    ProcessingConstants, SystemConstants)
     from app.core.database import get_db
-    from app.core.security import get_password_hash, verify_password
-    from app.core.constants import SystemConstants, BusinessConstants, APIConstants, ProcessingConstants
     from app.core.logging import setup_logging
+    from app.core.security import get_password_hash, verify_password
 except ImportError as e:
     # 如果直接导入失败，说明路径设置有问题
     # 检查sys.path，确保共享包路径在最前面
@@ -52,18 +60,42 @@ except ImportError as e:
             sys.path.remove(shared_path_str)
         sys.path.insert(0, shared_path_str)
         
-        # 清除可能缓存的失败导入
+        # 再次清除可能缓存的失败导入
         modules_to_remove = [k for k in sys.modules.keys() if k.startswith('app.core.')]
         for mod in modules_to_remove:
             del sys.modules[mod]
         
-        # 重新尝试导入
-        try:
-            from app.core.config import app_config, redis_config_manager, redis_pool_manager
+        # 使用importlib直接从共享包文件导入，避免模块查找问题
+        config_module_path = shared_python_path / "app" / "core" / "config" / "__init__.py"
+        if config_module_path.exists():
+            spec = importlib.util.spec_from_file_location("app.core.config", config_module_path)
+            config_module = importlib.util.module_from_spec(spec)
+            sys.modules['app.core.config'] = config_module
+            spec.loader.exec_module(config_module)
+            
+            # 从加载的模块中获取需要的对象
+            app_config = config_module.app_config
+            redis_config_manager = config_module.redis_config_manager
+            redis_pool_manager = config_module.redis_pool_manager
+            
+            # 继续导入其他模块
+            from app.core.constants import (APIConstants, BusinessConstants,
+                                            ProcessingConstants,
+                                            SystemConstants)
             from app.core.database import get_db
-            from app.core.security import get_password_hash, verify_password
-            from app.core.constants import SystemConstants, BusinessConstants, APIConstants, ProcessingConstants
             from app.core.logging import setup_logging
+            from app.core.security import get_password_hash, verify_password
+        else:
+            # 如果文件不存在，尝试重新导入
+        try:
+            from app.core.config import (app_config, redis_config_manager,
+                                         redis_pool_manager)
+            from app.core.constants import (APIConstants, BusinessConstants,
+                                            ProcessingConstants,
+                                            SystemConstants)
+            from app.core.database import get_db
+            from app.core.logging import setup_logging
+            from app.core.security import get_password_hash, verify_password
         except ImportError as e2:
             raise ImportError(
                 f"无法从共享包导入模块。\n"
@@ -71,6 +103,8 @@ except ImportError as e:
                 f"重试错误: {e2}\n"
                 f"共享包路径: {shared_python_path}\n"
                 f"路径存在: {shared_python_path.exists()}\n"
+                    f"config模块路径: {config_module_path}\n"
+                    f"config模块存在: {config_module_path.exists()}\n"
                 f"sys.path前5项: {sys.path[:5]}\n"
                 f"请确保main.py已正确设置PYTHONPATH，且共享包路径在sys.path的最前面"
             ) from e2
@@ -81,16 +115,10 @@ except ImportError as e:
         )
 
 # 依赖注入 - API专用，保留在API中
-from .dependencies import (
-    get_current_user,
-    get_redis_service,
-    get_redis_service_factory
-)
-
+from .dependencies import (get_current_user, get_redis_service,
+                           get_redis_service_factory)
 # 响应处理 - API专用，保留在API中
-from .response import (
-    ResponseCode
-)
+from .response import ResponseCode
 
 # 向后兼容的别名
 settings = app_config

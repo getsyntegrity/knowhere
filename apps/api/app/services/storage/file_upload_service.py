@@ -2,16 +2,15 @@
 文件上传服务
 """
 
+import asyncio
+import json
 import os
 import uuid
-import json
-import asyncio
-import aiohttp
-from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
-from loguru import logger
+from typing import Any, Dict, Optional
 
+import aiohttp
 from app.core.config import settings
+from loguru import logger
 
 
 class FileUploadService:
@@ -328,7 +327,6 @@ class FileUploadService:
 
     async def download_from_s3(self, s3_key: str, bucket: Optional[str] = None) -> str:
         """从S3下载文件到本地临时目录"""
-        import tempfile
         import uuid
 
         if bucket is None:

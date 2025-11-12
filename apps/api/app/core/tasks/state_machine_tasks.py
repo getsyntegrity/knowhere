@@ -2,13 +2,13 @@
 状态机相关定时任务
 """
 import asyncio
-from typing import Dict, Any
-from loguru import logger
-from celery import Task
+from typing import Any, Dict
 
 from app.core.celery_app import get_celery_app
-from app.core.state_machine import JobStateMachine
 from app.core.database import get_db_context
+from app.services.state_machine import JobStateMachine
+from celery import Task
+from loguru import logger
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -212,3 +212,4 @@ async def _health_check_async() -> Dict[str, Any]:
             "status": "unhealthy",
             "error": str(e)
         }
+

@@ -2,8 +2,10 @@
 Chunks数据Redis服务
 """
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
+
 from app.services.redis.redis_service import RedisService
 
 try:

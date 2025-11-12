@@ -1,16 +1,17 @@
 """
 统一状态机管理器 - 集成所有状态机服务
 """
-import json
 import time
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
+from app.services.redis import RedisServiceFactory
+from app.services.state_machine.state_machine_service import \
+    StateMachineService
+from app.services.state_machine.state_sync_service import StateSyncService
+from app.services.state_machine.state_timeout_service import \
+    StateTimeoutService
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.services.state_machine.state_machine_service import StateMachineService
-from app.services.state_machine.state_sync_service import StateSyncService
-from app.services.state_machine.state_timeout_service import StateTimeoutService
-from app.services.redis import RedisServiceFactory
 
 
 class JobStateMachine:

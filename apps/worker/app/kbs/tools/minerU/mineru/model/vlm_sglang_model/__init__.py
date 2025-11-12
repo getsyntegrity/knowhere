@@ -12,7 +12,6 @@ except ImportError:
         IMAGE_PROCESSOR_MAPPING as PROCESSOR_MAPPING,
     )
 
-from .. import vlm_hf_model as _
 from .image_processor import Mineru2ImageProcessor
 from .model import Mineru2QwenForCausalLM
 

@@ -1,15 +1,15 @@
-from fastapi import Depends, HTTPException, status, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Union, Tuple, Dict, Any
-from loguru import logger
+from typing import Any, Dict, Optional, Tuple
 
 from app.core.database import get_db
-from app.core.permissions import current_user
 from app.core.jwt import auth_backend
-from app.core.users import get_user_manager, UserManager
+from app.core.permissions import current_user
+from app.core.users import UserManager
 from app.models.database.user import User
 from app.models.schemas.user import UserResponse
 from app.services.auth.api_key_service import APIKeyService
+from fastapi import Depends, HTTPException, Request, status
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # ============================================================================
 # 工具函数和常量
@@ -17,15 +17,12 @@ from app.services.auth.api_key_service import APIKeyService
 
 class AuthError(Exception):
     """认证错误基类"""
-    pass
 
 class APIKeyAuthError(AuthError):
     """API Key认证错误"""
-    pass
 
 class JWTAuthError(AuthError):
     """JWT认证错误"""
-    pass
 
 def _extract_bearer_token(auth_header: str) -> Optional[str]:
     """从Authorization头部提取Bearer token"""

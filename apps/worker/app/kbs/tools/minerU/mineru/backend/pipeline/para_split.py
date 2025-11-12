@@ -1,5 +1,4 @@
 import copy
-from loguru import logger
 from mineru.utils.enum_class import ContentType, BlockType, SplitFlag
 from mineru.utils.language import detect_lang
 

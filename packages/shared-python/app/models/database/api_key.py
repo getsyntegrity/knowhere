@@ -2,12 +2,14 @@
 API Key 数据模型
 """
 from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, JSON, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
+from typing import List, Optional
 from uuid import uuid4
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 

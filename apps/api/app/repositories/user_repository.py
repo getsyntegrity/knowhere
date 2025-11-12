@@ -1,13 +1,12 @@
 from datetime import datetime
-from typing import Optional, List, Type
-
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from typing import List, Optional, Type
 
 from app.core.security import get_password_hash
-from app.models.database.user import User, Role
+from app.models.database.user import Role, User
 from app.models.schemas.user import UserCreate
 from app.repositories.base_repository import BaseRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 
 class UserRepository(BaseRepository[User, UserCreate, UserCreate]):

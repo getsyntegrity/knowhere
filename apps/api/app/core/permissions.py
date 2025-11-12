@@ -2,11 +2,12 @@
 FastAPI Users 权限管理模块
 """
 from uuid import UUID
+
+from app.core.jwt import auth_backend
+from app.core.users import get_user_manager
 from fastapi import Depends, HTTPException, status
 from fastapi_users import FastAPIUsers
 
-from app.core.users import get_user_manager
-from app.core.jwt import auth_backend
 
 # 延迟导入以避免循环依赖
 def get_fastapi_users():
@@ -23,7 +24,6 @@ current_user = fastapi_users.current_user()
 def require_user_type(user_type):
     """要求特定用户类型"""
     def permission_checker(user = Depends(current_user)):
-        from app.models.database.user import UserType
         if user.user_type != user_type.value:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

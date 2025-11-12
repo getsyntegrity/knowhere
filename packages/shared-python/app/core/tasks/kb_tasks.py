@@ -2,21 +2,17 @@
 知识库管理Celery任务
 """
 import asyncio
-import json
 import os
-import uuid
 from typing import Dict, Any, Optional
 from celery import Task
 from loguru import logger
 
 from app.core.celery_app import get_celery_app
-from app.core.state_machine.states import JobStatus  # 仅用于状态常量，不直接操作状态机
+from app.core.state_machine.states import JobStatus  # 仅用于状态常量，不直接操作状态机                                                                        
 # Worker 不再直接访问数据库，从 Redis 获取信息
-from app.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService
+from app.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService                                                                     
 from app.services.storage.file_upload_service import FileUploadService
-from app.core.database import get_db_context
 from app.core.config import settings
-from app.utils.json_utils import make_json_safe
 from app.services.messaging import get_message_publisher
 
 # 获取Celery应用
@@ -64,7 +60,7 @@ class KBBaseTask(Task):
                     operator_type="system",
                     async_mode=False
                 )
-                logger.info(f"任务重试消息已发布: job_id={job_id}, retry_count={self.request.retries}")
+                logger.info(f"任务重试消息已发布: job_id={job_id}, retry_count={self.request.retries}")                                                         
             except Exception as e:
                 logger.error(f"发布重试消息失败: {e}")
 
@@ -72,8 +68,8 @@ class KBBaseTask(Task):
 # 文件上传任务已移除 - 文件通过S3直传处理
 
 
-@celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.upload_url_file_task')
-def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None, job_type: str = None):
+@celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.upload_url_file_task')                                                               
+def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None, job_type: str = None):                                                        
     """URL文件下载并上传到S3任务"""
     try:
         loop = asyncio.get_event_loop()
@@ -96,7 +92,7 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None
             loop.close()
 
 
-async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job_type: str = None):
+async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job_type: str = None):                                                             
     """异步URL文件下载并上传到S3"""
     message_publisher = get_message_publisher()
     
@@ -145,7 +141,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         
         if not file_extension or file_extension not in all_supported_extensions:
             supported_formats = ", ".join(sorted(all_supported_extensions))
-            raise ValueError(f"不支持的文件类型 {file_extension}。仅支持以下格式：{supported_formats}")
+            raise ValueError(f"不支持的文件类型 {file_extension}。仅支持以下格式：{supported_formats}")                                                         
         
         logger.info(f"URL文件类型验证通过: {file_extension}")
         
@@ -159,7 +155,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         
         # 步骤2：下载文件到临时目录
         upload_service = FileUploadService()
-        temp_file_path = await upload_service._download_file_from_url(source_url)
+        temp_file_path = await upload_service._download_file_from_url(source_url)                                                                               
         
         try:
             # 发布进度更新消息：验证文件大小
@@ -174,7 +170,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
             file_size = os.path.getsize(temp_file_path)
             MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB限制
             if file_size > MAX_FILE_SIZE:
-                raise ValueError(f"文件大小超过限制：{file_size / 1024 / 1024:.2f}MB > {MAX_FILE_SIZE / 1024 / 1024}MB")
+                raise ValueError(f"文件大小超过限制：{file_size / 1024 / 1024:.2f}MB > {MAX_FILE_SIZE / 1024 / 1024}MB")                                        
             
             logger.info(f"文件大小验证通过: {file_size / 1024 / 1024:.2f}MB")
             
@@ -187,7 +183,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
             )
             
             # 步骤4：上传到S3（使用job中预设的s3_key）
-            await upload_service._upload_to_s3(temp_file_path, s3_key, upload_service.uploads_bucket)
+            await upload_service._upload_to_s3(temp_file_path, s3_key, upload_service.uploads_bucket)                                                           
             
             logger.info(f"文件上传S3成功: {s3_key}")
             
@@ -218,7 +214,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
             async_mode=False
         )
         
-        logger.info(f"URL文件上传完成，等待S3 webhook触发: {job_id} -> {s3_key}")
+        logger.info(f"URL文件上传完成，等待S3 webhook触发: {job_id} -> {s3_key}")                                                                               
         
         return {
             "status": "success",
@@ -241,8 +237,8 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         raise
 
 
-@celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.parse_and_vectorize_task')
-def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):
+@celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.parse_and_vectorize_task')                                                           
+def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):                                                          
     """解析并向量化任务（文件已通过S3直传）"""
     try:
         if not job_id:
@@ -341,7 +337,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         # 下载文件到本地临时目录
         from app.services.storage.file_upload_service import FileUploadService
         upload_service = FileUploadService()
-        file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)
+        file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)                                                         
         file_url = file_url_response["download_url"]  # 提取实际的URL字符串
         
         # 准备解析参数 - 从job_metadata获取
@@ -349,21 +345,21 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         logger.debug(f"filename: {filename}")
         
         # 调用修改后的解析逻辑（传入user_config）
-        from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse
+        from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse                                                                     
         
-        logger.debug(f"开始解析文件: {filename}, 类型: {JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')}")
+        logger.debug(f"开始解析文件: {filename}, 类型: {JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')}")                                
         
         add_dir = await checkerboard_inject_parse(
             file_full_path=file_url,
             filename=filename,
             user_config=user_config,  # 传入用户配置
-            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),
-            doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),
-            smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
-            summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
-            summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
-            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),
-            add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
+            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),                                                                     
+            doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
+            smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
+            summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             
+            summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),                                                             
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
+            add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
         )
         
         if not add_dir:
@@ -398,8 +394,8 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         from app.services.knowledge.kb_encoder_service import load_new_data
         add_contents_df = load_new_data(add_dir)
         if add_contents_df is not None:
-            logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")
-            success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)
+            logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")                                                                    
+            success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)                                                              
             if success:
                 logger.info(f"DataFrame已保存为chunks到Redis: job_id={job_id}")
             else:
@@ -419,7 +415,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         # 从Redis获取chunks数据（用于生成ZIP包）
         chunks = await chunks_redis_service.get_chunks(job_id)
         if chunks:
-            logger.info(f"从Redis获取chunks数据成功: job_id={job_id}, count={len(chunks)}")
+            logger.info(f"从Redis获取chunks数据成功: job_id={job_id}, count={len(chunks)}")                                                                     
         else:
             logger.warning(f"从Redis获取chunks数据失败: job_id={job_id}")
             chunks = []
@@ -428,7 +424,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         from app.services.common.global_manager_service import global_df_manager
         user_key = f"{user_config['user']}_all_contents_df"
         all_contents_df = global_df_manager.get_dataframe(user_key)
-        logger.debug(f"user_key: {user_key}, all_contents_df length: {len(all_contents_df) if all_contents_df is not None else 'None'}")
+        logger.debug(f"user_key: {user_key}, all_contents_df length: {len(all_contents_df) if all_contents_df is not None else 'None'}")                        
         
         # 准备知识库记录数据（转换为字典格式，用于消息传递）
         kb_records = []
@@ -452,7 +448,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 kb_records.append(kb_record_dict)
         
         # 从job_metadata获取信息
-        source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")
+        source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")             
         if isinstance(source_file_name, str) and "/" in source_file_name:
             source_file_name = os.path.basename(source_file_name)
         
@@ -470,7 +466,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         # 生成 ZIP 包（业务逻辑处理）
         from app.services.storage.zip_result_service import ZipResultService
         zip_service = ZipResultService()
-        zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(
+        zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(                                                                       
             job_id=job_id,
             chunks=chunks,
             add_dir=add_dir,
@@ -488,7 +484,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         )
         
         # 上传 ZIP 包到 S3（业务逻辑处理）
-        result_s3_key = await upload_service.upload_zip_result(job_id, zip_file_path)
+        result_s3_key = await upload_service.upload_zip_result(job_id, zip_file_path)                                                                           
         
         # 安全地获取kb_records的长度
         stored_count = len(kb_records) if kb_records is not None else 0
@@ -516,7 +512,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             async_mode=False
         )
         
-        logger.info(f"Worker处理完成，结果消息已发布: job_id={job_id}, stored_count={stored_count}, result_s3_key={result_s3_key}")
+        logger.info(f"Worker处理完成，结果消息已发布: job_id={job_id}, stored_count={stored_count}, result_s3_key={result_s3_key}")                             
         
         return {
             "status": "success",
@@ -546,9 +542,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
 
 # store_to_db_task 已移除，逻辑已合并到 parse_and_vectorize_task 中
 
-
-
-
 # Webhook和邮件发送已迁移到API服务处理
 # Worker只负责业务逻辑处理，完成后通过消息通知API服务
 # API服务根据数据库查询信息处理Webhook和邮件发送
+

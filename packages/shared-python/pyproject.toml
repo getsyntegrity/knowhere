@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "knowhere-shared"
 version = "0.1.0"
-description = "Knowhere Shared Python Package - Models, Repositories, Core Config, Database, State Machine, Redis Services, and Utils"
+description = "Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Messaging, Storage Adapters, and Utils"
 requires-python = ">=3.12"
 dependencies = [
     # 数据库相关

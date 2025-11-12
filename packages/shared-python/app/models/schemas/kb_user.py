@@ -3,6 +3,7 @@
 代码上方为基础bean
 """
 from typing import List
+
 from pydantic import BaseModel, Field
 
 

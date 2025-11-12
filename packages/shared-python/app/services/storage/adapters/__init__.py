@@ -2,6 +2,7 @@
 存储适配器实现
 """
 from .s3_adapter import S3StorageAdapter
+
 # OSSStorageAdapter延迟导入，只在需要时导入（避免oss2未安装时出错）
 
 __all__ = ['S3StorageAdapter']

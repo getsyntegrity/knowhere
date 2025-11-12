@@ -1,9 +1,11 @@
 import json
 import time
+
 import httpx
+
+from app.core.config import settings
 from app.core.dependencies import get_redis_service
 from app.services.redis import RedisService
-from app.core.config import settings
 
 
 class DeepSeekRedisStreamClient:
