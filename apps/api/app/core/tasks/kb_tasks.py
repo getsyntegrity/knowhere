@@ -292,27 +292,20 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             from app.services.redis import RedisServiceFactory
             import json
             
-            logger.debug("正在获取Redis服务实例...")
             redis_service = RedisServiceFactory.get_service()
             user_redis_service = UserRedisService(redis_service)
-            logger.debug("Redis服务实例获取成功")
             
             # 尝试从Redis获取用户配置
             user_id_str = str(job.user_id)  # 确保user_id是字符串
-            logger.debug(f"正在从Redis获取用户 {user_id_str} 的配置...")
             user_config = await user_redis_service.get_user_config(user_id_str)
-            logger.debug(f"Redis查询完成，配置{'存在' if user_config else '不存在'}")
             
             if not user_config:
                 # 如果Redis中没有，则初始化用户配置
                 logger.info(f"Redis中未找到用户 {user_id_str} 配置，正在初始化...")
-                logger.debug("开始调用 UserConfigService.init_user()...")
                 user_config_str = UserConfigService.init_user(user_id_str)
-                logger.debug(f"init_user() 完成，返回类型: {type(user_config_str)}")
                 user_config = json.loads(user_config_str) if isinstance(user_config_str, str) else user_config_str
                 
                 # 保存到Redis
-                logger.debug(f"正在保存用户配置到Redis...")
                 await user_redis_service.save_user_config(user_id_str, user_config)
                 logger.info(f"用户 {user_id_str} 配置初始化并保存到Redis成功")
             
@@ -320,29 +313,23 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 raise ValueError("用户配置为空")
             
             # 从job_metadata直接获取user_config（创建时已初始化）
-            logger.debug(f"正在从job_metadata获取用户配置...")
             from app.services.redis import RedisServiceFactory
             from app.models.schemas.job_metadata import JobMetadataHelper
             
             redis_service = RedisServiceFactory.get_service()
-            logger.debug("正在获取job_metadata...")
             job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
-            logger.debug(f"job_metadata获取成功，大小: {len(str(job_metadata)) if job_metadata else 0} bytes")
             user_config = JobMetadataHelper.get_user_config(job_metadata)
-            logger.debug(f"从job_metadata提取user_config完成")
             
             if not user_config:
                 raise ValueError("Job metadata中缺少用户配置")
             
             # 检查当前状态，如果是failed，先转换到pending
-            logger.debug(f"当前Job状态: {job.status}")
             if job.status == JobStatus.FAILED.value:
                 logger.info(f"Job状态为FAILED，正在转换到PENDING...")
                 await state_machine.transition(
                     db, job_id, JobStatus.PENDING.value,
                     "retry_from_failed", None, "system"
                 )
-                logger.debug("状态转换完成: FAILED -> PENDING")
             
             # 更新状态：开始处理
             logger.info(f"正在更新Job状态到RUNNING...")
@@ -350,10 +337,8 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 db, job_id, JobStatus.RUNNING.value,
                 "start_processing", None, "system"
             )
-            logger.info(f"Job状态已更新为RUNNING")
             
             # 更新进度信息：开始解析
-            logger.debug("正在更新任务进度...")
             from app.services.redis import RedisServiceFactory
             from app.services.redis.task_redis_service import TaskRedisService
             redis_service = RedisServiceFactory.get_service()
@@ -361,7 +346,6 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             await task_service.update_task_progress(
                 job_id, 10, "正在解析文档..."
             )
-            logger.debug("任务进度已更新: 10%")
             
             # 获取S3键和文件信息
             s3_key = job.s3_key

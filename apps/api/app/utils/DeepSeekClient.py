@@ -63,10 +63,7 @@ class DeepSeekRedisStreamClient:
         """
         非流式聊天补全
         """
-        from loguru import logger
-        logger.debug(f"chat_completion 开始: conversation_id={conversation_id}, model={model}")
         conversation_state = await self.get_conversation_state(conversation_id)
-        logger.debug(f"获取会话状态完成，历史消息数: {len(conversation_state.get('messages', []))}")
 
         # 统一处理消息格式，兼容字符串与列表输入
         if isinstance(messages, list):
@@ -76,7 +73,6 @@ class DeepSeekRedisStreamClient:
 
         previous_messages = conversation_state.get("messages", []) or []
         all_messages = previous_messages + incoming_messages
-        logger.debug(f"总消息数: {len(all_messages)}，本次新增: {len(incoming_messages)}")
 
         headers = {
             "Authorization": f"Bearer {settings.DS_KEY}",
@@ -89,33 +85,22 @@ class DeepSeekRedisStreamClient:
             "temperature": temperature,
             "max_tokens": max_tokens
         }
-        logger.debug(f"准备请求DeepSeek API: model={model}, temperature={temperature}, max_tokens={max_tokens}")
 
         try:
             from app.core.constants import APIConstants
-            import time
-            logger.info(f"🌐 开始HTTP请求到 {settings.DS_URL} (超时: {APIConstants.DEEPSEEK_TIMEOUT}s)...")
-            request_start = time.time()
             async with httpx.AsyncClient(timeout=APIConstants.DEEPSEEK_TIMEOUT) as client:
                 response = await client.post(settings.DS_URL, headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
-            request_elapsed = time.time() - request_start
-            logger.info(f"✅ HTTP请求完成，耗时: {request_elapsed:.2f}秒")
-            logger.debug(f"API响应状态码: {response.status_code}")
 
             choices = data.get("choices", [])
             if not choices:
-                logger.error("❌ AI返回结果为空")
                 raise Exception("AI返回结果为空")
 
             message = choices[0].get("message", {})
             content = message.get("content", "")
             if content is None:
                 content = ""
-            
-            logger.info(f"✅ AI生成内容长度: {len(content)} 字符")
-            logger.debug(f"内容预览: {content[:100]}..." if len(content) > 100 else f"完整内容: {content}")
 
             # 更新会话状态
             if message:
@@ -123,12 +108,10 @@ class DeepSeekRedisStreamClient:
             else:
                 assistant_message = {"role": "assistant", "content": content}
 
-            logger.debug("更新会话状态...")
             conversation_state["messages"] = all_messages + [assistant_message]
             conversation_state["progress"] = len(content)
             conversation_state["status"] = "completed"
             await self.update_conversation_state(conversation_state)
-            logger.debug("会话状态更新完成")
 
             return content
 
