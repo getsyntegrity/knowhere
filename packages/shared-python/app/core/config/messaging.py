@@ -40,13 +40,31 @@ class MessagingConfig(BaseModel):
     PUBLISH_RETRY_COUNT: int = Field(default=3, description="消息发布重试次数")
     PUBLISH_RETRY_DELAY: float = Field(default=1.0, description="消息发布重试延迟（秒）")
     
+    # 队列优先级配置
+    QUEUE_MAX_PRIORITY: int = Field(default=10, description="队列最大优先级")
+    
+    # 消息类型优先级配置
+    MESSAGE_PRIORITIES: Dict[str, int] = Field(default={
+        'job_failure': 10,  # 最高优先级
+        'job_result': 7,
+        'job_status_update': 5,
+        'job_progress_update': 3,  # 最低优先级
+    }, description="消息类型优先级配置")
+    
     def get_queue_config(self, queue_name: str) -> Dict[str, Any]:
         """获取队列配置"""
         return {
             "durable": self.QUEUE_DURABLE,
             "auto_delete": self.QUEUE_AUTO_DELETE,
             "exclusive": self.QUEUE_EXCLUSIVE,
+            "queue_arguments": {
+                "x-max-priority": self.QUEUE_MAX_PRIORITY
+            }
         }
+    
+    def get_message_priority(self, message_type: str) -> int:
+        """获取消息类型的优先级"""
+        return self.MESSAGE_PRIORITIES.get(message_type, 5)
     
     def get_message_properties(self) -> Dict[str, Any]:
         """获取消息属性"""

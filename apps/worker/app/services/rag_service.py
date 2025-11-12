@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from app.core.config import settings
-from app.core.dependencies import get_redis_service
+from app.services.redis import RedisServiceFactory
 # ARQ依赖已移除，使用Celery替代
 from app.services.ai import ai_query_service
 from app.services.ai.prompt_service import build_prompt
@@ -218,7 +218,7 @@ async def rerank_(rerank_txt, msg, paths4rank, keep_one=False):
         logger.debug(f"生成任务ID: {ctx_task_id}")
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
-        redis_service = await get_redis_service()
+        redis_service = RedisServiceFactory.get_service()
         await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
         logger.debug("任务状态已设置为处理中")
 

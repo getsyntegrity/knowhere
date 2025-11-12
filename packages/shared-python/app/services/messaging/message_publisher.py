@@ -7,6 +7,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from kombu import Exchange, Producer, Queue
+from kombu.exceptions import ChannelError
 from loguru import logger
 
 # 增加整数字符串转换限制（用于处理大数字，如时间戳）
@@ -45,7 +46,8 @@ class MessagePublisher:
         self,
         message: BaseMessage,
         routing_key: str,
-        queue_name: str
+        queue_name: str,
+        priority: Optional[int] = None
     ) -> bool:
         """
         同步发布消息
@@ -54,11 +56,16 @@ class MessagePublisher:
             message: 消息对象
             routing_key: 路由键
             queue_name: 队列名称
+            priority: 消息优先级（如果为None，则根据消息类型自动设置）
             
         Returns:
             bool: 是否发布成功
         """
         try:
+            # 如果没有指定优先级，根据消息类型自动设置
+            if priority is None:
+                priority = messaging_config.get_message_priority(message.message_type)
+            
             # 确保队列存在
             queue = Queue(
                 queue_name,
@@ -71,7 +78,25 @@ class MessagePublisher:
             from kombu import Connection
             with Connection(self.broker_url) as conn:
                 # 绑定队列到交换器
-                queue.bind(conn).declare()
+                try:
+                    queue.bind(conn).declare()
+                except ChannelError as e:
+                    # 如果队列已存在但参数不匹配（如缺少 x-max-priority）
+                    error_str = str(e)
+                    if "PRECONDITION_FAILED" in error_str or "inequivalent arg" in error_str:
+                        logger.warning(
+                            f"队列 '{queue_name}' 已存在但参数不匹配: {e}。"
+                            f"将使用现有队列（优先级功能可能不可用）。"
+                        )
+                        # 使用被动模式声明队列（只检查是否存在，不修改参数）
+                        try:
+                            queue.bind(conn).declare(passive=True)
+                        except Exception as passive_e:
+                            logger.error(f"无法使用被动模式声明队列 '{queue_name}': {passive_e}")
+                            raise
+                    else:
+                        # 其他类型的 ChannelError，重新抛出
+                        raise
                 
                 # 创建生产者
                 producer = Producer(
@@ -85,12 +110,12 @@ class MessagePublisher:
                 message_dict = message.model_dump(mode='json')
                 # timestamp已经在model_dump中序列化为ISO格式字符串
                 
-                # 发布消息
-                # 简化：只使用必要的参数，避免kombu内部类型转换问题
+                # 发布消息，包含优先级
                 producer.publish(
                     message_dict,
                     routing_key=routing_key,
                     delivery_mode=2,  # 直接使用固定值，避免类型问题
+                    priority=priority,
                 )
                 
                 logger.debug(f"消息发布成功: {message.message_type}, job_id={message.job_id}, routing_key={routing_key}")
@@ -120,7 +145,8 @@ class MessagePublisher:
         self,
         message: BaseMessage,
         routing_key: str,
-        queue_name: str
+        queue_name: str,
+        priority: Optional[int] = None
     ) -> bool:
         """
         异步发布消息
@@ -129,6 +155,7 @@ class MessagePublisher:
             message: 消息对象
             routing_key: 路由键
             queue_name: 队列名称
+            priority: 消息优先级（如果为None，则根据消息类型自动设置）
             
         Returns:
             bool: 是否发布成功
@@ -140,7 +167,8 @@ class MessagePublisher:
             self._publish_sync,
             message,
             routing_key,
-            queue_name
+            queue_name,
+            priority
         )
     
     def publish_status_update(
@@ -183,13 +211,15 @@ class MessagePublisher:
         if async_mode:
             try:
                 loop = asyncio.get_event_loop()
+                priority = messaging_config.get_message_priority('job_status_update')
                 if loop.is_running():
                     # 如果事件循环正在运行，使用run_in_executor
                     return asyncio.run_coroutine_threadsafe(
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_STATUS_UPDATE,
-                            messaging_config.QUEUE_STATUS_UPDATES
+                            messaging_config.QUEUE_STATUS_UPDATES,
+                            priority
                         ),
                         loop
                     ).result(timeout=5)
@@ -198,7 +228,8 @@ class MessagePublisher:
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_STATUS_UPDATE,
-                            messaging_config.QUEUE_STATUS_UPDATES
+                            messaging_config.QUEUE_STATUS_UPDATES,
+                            priority
                         )
                     )
             except Exception as e:
@@ -207,13 +238,15 @@ class MessagePublisher:
                 return self._publish_sync(
                     message,
                     messaging_config.ROUTING_KEY_STATUS_UPDATE,
-                    messaging_config.QUEUE_STATUS_UPDATES
+                    messaging_config.QUEUE_STATUS_UPDATES,
+                    messaging_config.get_message_priority('job_status_update')
                 )
         else:
             return self._publish_sync(
                 message,
                 messaging_config.ROUTING_KEY_STATUS_UPDATE,
-                messaging_config.QUEUE_STATUS_UPDATES
+                messaging_config.QUEUE_STATUS_UPDATES,
+                messaging_config.get_message_priority('job_status_update')
             )
     
     def publish_progress_update(
@@ -247,12 +280,14 @@ class MessagePublisher:
         if async_mode:
             try:
                 loop = asyncio.get_event_loop()
+                priority = messaging_config.get_message_priority('job_progress_update')
                 if loop.is_running():
                     return asyncio.run_coroutine_threadsafe(
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
-                            messaging_config.QUEUE_PROGRESS_UPDATES
+                            messaging_config.QUEUE_PROGRESS_UPDATES,
+                            priority
                         ),
                         loop
                     ).result(timeout=5)
@@ -261,7 +296,8 @@ class MessagePublisher:
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
-                            messaging_config.QUEUE_PROGRESS_UPDATES
+                            messaging_config.QUEUE_PROGRESS_UPDATES,
+                            priority
                         )
                     )
             except Exception as e:
@@ -269,13 +305,15 @@ class MessagePublisher:
                 return self._publish_sync(
                     message,
                     messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
-                    messaging_config.QUEUE_PROGRESS_UPDATES
+                    messaging_config.QUEUE_PROGRESS_UPDATES,
+                    messaging_config.get_message_priority('job_progress_update')
                 )
         else:
             return self._publish_sync(
                 message,
                 messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
-                messaging_config.QUEUE_PROGRESS_UPDATES
+                messaging_config.QUEUE_PROGRESS_UPDATES,
+                messaging_config.get_message_priority('job_progress_update')
             )
     
     def publish_result(
@@ -327,12 +365,14 @@ class MessagePublisher:
         if async_mode:
             try:
                 loop = asyncio.get_event_loop()
+                priority = messaging_config.get_message_priority('job_result')
                 if loop.is_running():
                     return asyncio.run_coroutine_threadsafe(
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_RESULT,
-                            messaging_config.QUEUE_RESULTS
+                            messaging_config.QUEUE_RESULTS,
+                            priority
                         ),
                         loop
                     ).result(timeout=10)  # 结果消息可能较大，增加超时
@@ -341,7 +381,8 @@ class MessagePublisher:
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_RESULT,
-                            messaging_config.QUEUE_RESULTS
+                            messaging_config.QUEUE_RESULTS,
+                            priority
                         )
                     )
             except Exception as e:
@@ -349,13 +390,15 @@ class MessagePublisher:
                 return self._publish_sync(
                     message,
                     messaging_config.ROUTING_KEY_RESULT,
-                    messaging_config.QUEUE_RESULTS
+                    messaging_config.QUEUE_RESULTS,
+                    messaging_config.get_message_priority('job_result')
                 )
         else:
             return self._publish_sync(
                 message,
                 messaging_config.ROUTING_KEY_RESULT,
-                messaging_config.QUEUE_RESULTS
+                messaging_config.QUEUE_RESULTS,
+                messaging_config.get_message_priority('job_result')
             )
     
     def publish_failure(
@@ -392,12 +435,14 @@ class MessagePublisher:
         if async_mode:
             try:
                 loop = asyncio.get_event_loop()
+                priority = messaging_config.get_message_priority('job_failure')
                 if loop.is_running():
                     return asyncio.run_coroutine_threadsafe(
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_FAILURE,
-                            messaging_config.QUEUE_FAILURES
+                            messaging_config.QUEUE_FAILURES,
+                            priority
                         ),
                         loop
                     ).result(timeout=5)
@@ -406,7 +451,8 @@ class MessagePublisher:
                         self._publish_async(
                             message,
                             messaging_config.ROUTING_KEY_FAILURE,
-                            messaging_config.QUEUE_FAILURES
+                            messaging_config.QUEUE_FAILURES,
+                            priority
                         )
                     )
             except Exception as e:
@@ -414,13 +460,15 @@ class MessagePublisher:
                 return self._publish_sync(
                     message,
                     messaging_config.ROUTING_KEY_FAILURE,
-                    messaging_config.QUEUE_FAILURES
+                    messaging_config.QUEUE_FAILURES,
+                    messaging_config.get_message_priority('job_failure')
                 )
         else:
             return self._publish_sync(
                 message,
                 messaging_config.ROUTING_KEY_FAILURE,
-                messaging_config.QUEUE_FAILURES
+                messaging_config.QUEUE_FAILURES,
+                messaging_config.get_message_priority('job_failure')
             )
 
 

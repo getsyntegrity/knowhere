@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime
 
-from app.core.tasks.message_handlers import (
+from app.services.messaging.message_handlers import (
     handle_job_status_update,
     handle_job_progress_update,
     handle_job_result,
@@ -27,8 +27,8 @@ class TestMessageHandlers:
     """消息处理器测试类"""
     
     @pytest.mark.asyncio
-    @patch('app.core.tasks.message_handlers.get_db_context')
-    @patch('app.core.tasks.message_handlers.JobStateMachine')
+    @patch('app.services.messaging.message_handlers.get_db_context')
+    @patch('app.services.messaging.message_handlers.JobStateMachine')
     async def test_handle_status_update_success(self, mock_state_machine, mock_db_context):
         """测试处理状态更新消息成功"""
         # 模拟数据库上下文
@@ -57,8 +57,8 @@ class TestMessageHandlers:
         mock_sm.transition.assert_called_once()
     
     @pytest.mark.asyncio
-    @patch('app.core.tasks.message_handlers.RedisServiceFactory')
-    @patch('app.core.tasks.message_handlers.TaskRedisService')
+    @patch('app.services.messaging.message_handlers.RedisServiceFactory')
+    @patch('app.services.messaging.message_handlers.TaskRedisService')
     async def test_handle_progress_update_success(self, mock_task_service, mock_redis_factory):
         """测试处理进度更新消息成功"""
         # 模拟Redis服务
@@ -88,12 +88,12 @@ class TestMessageHandlers:
         )
     
     @pytest.mark.asyncio
-    @patch('app.core.tasks.message_handlers.get_db_context')
-    @patch('app.core.tasks.message_handlers.create_update_kb')
-    @patch('app.core.tasks.message_handlers.JobResultRepository')
-    @patch('app.core.tasks.message_handlers.JobStateMachine')
-    @patch('app.core.tasks.message_handlers.RedisServiceFactory')
-    @patch('app.core.tasks.message_handlers.ChunksRedisService')
+    @patch('app.services.messaging.message_handlers.get_db_context')
+    @patch('app.services.messaging.message_handlers.create_update_kb')
+    @patch('app.services.messaging.message_handlers.JobResultRepository')
+    @patch('app.services.messaging.message_handlers.JobStateMachine')
+    @patch('app.services.messaging.message_handlers.RedisServiceFactory')
+    @patch('app.services.messaging.message_handlers.ChunksRedisService')
     async def test_handle_result_success(
         self,
         mock_chunks_service,
@@ -156,8 +156,8 @@ class TestMessageHandlers:
         mock_sm.mark_completed.assert_called_once()
     
     @pytest.mark.asyncio
-    @patch('app.core.tasks.message_handlers.get_db_context')
-    @patch('app.core.tasks.message_handlers.JobStateMachine')
+    @patch('app.services.messaging.message_handlers.get_db_context')
+    @patch('app.services.messaging.message_handlers.JobStateMachine')
     async def test_handle_failure_success(self, mock_state_machine, mock_db_context):
         """测试处理失败消息成功"""
         # 模拟数据库上下文

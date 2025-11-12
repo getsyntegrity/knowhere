@@ -124,6 +124,14 @@ if __name__ == "__main__":
         logger.warning(f"无法导入 kb_tasks 模块: {e}")
         logger.warning("kb_tasks 相关任务将不可用")
     
+    # 检查必要的依赖
+    try:
+        import numpy
+        logger.debug("numpy 依赖检查通过")
+    except ImportError:
+        logger.error("numpy 未安装！请运行: pip install numpy==2.2.6")
+        logger.error("或安装所有依赖: pip install -r requirements.txt")
+    
     # 获取日志级别设置
     log_level = os.getenv("LOG_LEVEL", "INFO").lower()
     

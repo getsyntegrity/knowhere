@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime
 
 from app.services.messaging import MessagePublisher
-from app.core.tasks.message_handlers import (
+from app.services.messaging.message_handlers import (
     handle_job_status_update,
     handle_job_progress_update,
     handle_job_result,
@@ -28,8 +28,8 @@ class TestMessageFlow:
     @patch('app.services.messaging.message_publisher.connections')
     @patch('app.services.messaging.message_publisher.Producer')
     @patch('app.services.messaging.message_publisher.Queue')
-    @patch('app.core.tasks.message_handlers.get_db_context')
-    @patch('app.core.tasks.message_handlers.JobStateMachine')
+    @patch('app.services.messaging.message_handlers.get_db_context')
+    @patch('app.services.messaging.message_handlers.JobStateMachine')
     async def test_status_update_flow(
         self,
         mock_state_machine,
@@ -79,21 +79,17 @@ class TestMessageFlow:
             "message_type": "job_status_update"
         }
         
-        # 3. API服务处理消息
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = handle_job_status_update.apply(args=[message_data])
-            # 注意：实际测试中需要等待任务完成
-        finally:
-            loop.close()
+        # 3. API服务处理消息（直接调用异步函数）
+        result = await handle_job_status_update(message_data)
+        assert result['status'] == 'success'
+        assert result['job_id'] == "test_job_123"
     
     @pytest.mark.asyncio
     @patch('app.services.messaging.message_publisher.connections')
     @patch('app.services.messaging.message_publisher.Producer')
     @patch('app.services.messaging.message_publisher.Queue')
-    @patch('app.core.tasks.message_handlers.RedisServiceFactory')
-    @patch('app.core.tasks.message_handlers.TaskRedisService')
+    @patch('app.services.messaging.message_handlers.RedisServiceFactory')
+    @patch('app.services.messaging.message_handlers.TaskRedisService')
     async def test_progress_update_flow(
         self,
         mock_task_service,
@@ -141,13 +137,10 @@ class TestMessageFlow:
             "message_type": "job_progress_update"
         }
         
-        # 3. API服务处理消息
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = handle_job_progress_update.apply(args=[message_data])
-        finally:
-            loop.close()
+        # 3. API服务处理消息（直接调用异步函数）
+        result = await handle_job_progress_update(message_data)
+        assert result['status'] == 'success'
+        assert result['progress'] == 50
 
 
 if __name__ == "__main__":

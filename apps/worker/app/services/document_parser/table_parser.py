@@ -190,8 +190,8 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
             ctx_task_id = gen_str_codes((str(uuid.uuid4()) + tb_small_str))
             
             # 使用Redis直接追踪任务状态，无需数据库持久化
-            from app.core.dependencies import get_redis_service
-            redis_service = await get_redis_service()
+            from app.services.redis import RedisServiceFactory
+            redis_service = RedisServiceFactory.get_service()
             await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
             
             # 使用统一的AI查询服务
@@ -392,8 +392,8 @@ async def table_scope_analyze(query, tb_path, paras, num_row=7):
     ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
     
     # 使用Redis直接追踪任务状态，无需数据库持久化
-    from app.core.dependencies import get_redis_service
-    redis_service = await get_redis_service()
+    from app.services.redis import RedisServiceFactory
+    redis_service = RedisServiceFactory.get_service()
     await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
     
     # 使用统一的AI查询服务

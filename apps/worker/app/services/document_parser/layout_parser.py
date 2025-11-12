@@ -418,8 +418,8 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
         ctx_task_id = str(uuid.uuid4())
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
-        from app.core.dependencies import get_redis_service
-        redis_service = await get_redis_service()
+        from app.services.redis import RedisServiceFactory
+        redis_service = RedisServiceFactory.get_service()
         await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
         
         # 使用统一的AI查询服务

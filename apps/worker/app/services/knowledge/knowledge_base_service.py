@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 from app.core.config import settings
 from app.core.context import get_current_user
-from app.core.dependencies import get_redis_service
 from app.models.database.user import User
+from app.services.redis import RedisServiceFactory
 from app.services.ai import ai_query_service
 from app.services.ai.prompt_service import build_prompt
 from app.services.ai.response_process_service import eval_response
@@ -327,7 +327,7 @@ async def talk2kb(query, context, paras):
     ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
     
     # 使用Redis直接追踪任务状态，无需数据库持久化
-    redis_service = await get_redis_service()
+    redis_service = RedisServiceFactory.get_service()
     await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
     
     # 使用统一的AI查询服务
@@ -403,7 +403,7 @@ async def talk2kb_mm(query, context, paras):
         ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
-        redis_service = await get_redis_service()
+        redis_service = RedisServiceFactory.get_service()
         await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
         
         # 使用统一的AI查询服务
@@ -481,7 +481,7 @@ async def checkerboard_inject_parse(
     # 如果没有传入user_config，则从上下文获取（兼容旧调用方式）
     if user_config is None:
         user_context: User | None = get_current_user()
-        redis_service = await get_redis_service()
+        redis_service = RedisServiceFactory.get_service()
         from app.services.redis.user_redis_service import UserRedisService
         user_redis_service = UserRedisService(redis_service)
         

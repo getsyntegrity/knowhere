@@ -68,15 +68,39 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 # 创建一个App上下文管理器，用于在无法传入db参数时执行数据库操作
 @asynccontextmanager
 async def get_db_context():
-    async with AsyncSessionFactory() as session:
+    session = None
+    try:
+        session = AsyncSessionFactory()
+        yield session
         try:
-            yield session
             await session.commit()
-        except Exception:
+        except Exception as commit_error:
+            # 提交失败时回滚
+            try:
+                if session.is_active:
+                    await session.rollback()
+            except Exception as rollback_error:
+                # 回滚失败时只记录日志，避免在不同事件循环中操作连接
+                logger.warning(f"Database session rollback failed: {rollback_error}")
+            raise commit_error
+    except Exception as e:
+        # 如果会话存在且活跃，尝试回滚
+        if session:
+            try:
+                if session.is_active:
             await session.rollback()
+            except Exception as rollback_error:
+                # 回滚失败时只记录日志，避免在不同事件循环中操作连接
+                logger.warning(f"Database session rollback failed during exception handling: {rollback_error}")
             raise
         finally:
+        # 安全地关闭会话
+        if session:
+            try:
             await session.close()
+            except Exception as close_error:
+                # 关闭失败时只记录日志，避免在不同事件循环中操作连接
+                logger.warning(f"Database session close failed: {close_error}")
 # 添加一个辅助函数，用于在无法传入db参数时执行数据库操作
 T = TypeVar('T')
 async def db_operation(operation: Callable[[AsyncSession], Awaitable[T]]) -> T:

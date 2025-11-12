@@ -97,7 +97,13 @@ class StateMachineService:
                 
             except Exception as e:
                 logger.error(f"Job {job_id} 状态转换失败: {e}")
+                try:
+                    # 安全地回滚事务，避免在不同事件循环中操作连接
+                    if db.is_active:
                 await db.rollback()
+                except Exception as rollback_error:
+                    # 如果回滚失败（可能是连接已关闭或在不同事件循环中），只记录日志
+                    logger.warning(f"Job {job_id} 回滚事务失败: {rollback_error}")
                 return False
         
         return False
@@ -225,7 +231,13 @@ class StateMachineService:
             
         except Exception as e:
             logger.error(f"处理Job {job_id} 重试时出错: {e}")
+            try:
+                # 安全地回滚事务，避免在不同事件循环中操作连接
+                if db.is_active:
             await db.rollback()
+            except Exception as rollback_error:
+                # 如果回滚失败（可能是连接已关闭或在不同事件循环中），只记录日志
+                logger.warning(f"Job {job_id} 回滚事务失败: {rollback_error}")
             return False
     
     async def check_timeout_tasks(self, db: AsyncSession) -> List[str]:

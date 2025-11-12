@@ -92,7 +92,7 @@ extend_module_path(app.services.messaging, "services/messaging")
 
 # 现在可以安全地从共享包导入
 from app.core.config import redis_pool_manager, settings
-from app.core.database import engine, Base
+from app.core.database import engine, Base, safe_dispose_engine
 
 # 注意：image_cli是API专用的，需要从本地API项目的app.core导入
 # 由于共享包的app.core已经在sys.modules中，我们需要直接导入本地模块
@@ -124,9 +124,9 @@ from app.core.exception_handlers import setup_exception_handlers
 
 # 动态导入 API 服务特定的 Celery 任务模块
 # 这些模块不在共享包中，而是在 API 服务本地
+# 注意：message_handlers 不再是 Celery 任务，由 MessageConsumer 直接调用
 try:
     import app.core.tasks.state_machine_tasks
-    import app.services.messaging.message_handlers  # 注意：实际路径是 services.messaging
     import app.core.tasks.webhook_tasks
     logger.info("成功导入 API 服务特定的 Celery 任务模块")
 except ImportError as e:
@@ -203,7 +203,7 @@ async def lifespan(app: FastAPI):
     
     # 应用关闭时的清理工作
     logger.info("开始关闭服务...")
-    await engine.dispose()
+    await safe_dispose_engine(engine)
     logger.info("数据库引擎连接池已关闭。")
     logger.info("服务关闭完成。")
 
