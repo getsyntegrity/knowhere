@@ -185,7 +185,7 @@ async def lifespan(app: FastAPI):
     # 启动消息消费者（仅在API服务中运行）
     try:
         from app.services.messaging_service import messaging_service
-        messaging_service.start()
+        await messaging_service.start()
         logger.info("消息消费者已启动")
     except Exception as e:
         logger.error(f"启动消息消费者失败: {e}")
@@ -197,7 +197,7 @@ async def lifespan(app: FastAPI):
     # 停止消息消费者
     try:
         from app.services.messaging_service import messaging_service
-        messaging_service.stop()
+        await messaging_service.stop()
     except Exception as e:
         logger.error(f"停止消息消费者失败: {e}")
     

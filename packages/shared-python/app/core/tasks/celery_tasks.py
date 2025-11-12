@@ -15,6 +15,7 @@ from app.core.celery_router import (
 )
 from app.core.state_machine.states import JobStatus  # 仅用于状态常量
 from app.services.messaging import get_message_publisher
+from app.services.messaging.message_publisher import run_async_publish
 from app.services.redis import RedisServiceFactory, TaskRedisService
 
 # 获取Celery应用
@@ -100,12 +101,11 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
         
         # 通过消息通知状态更新（如果需要状态机管理，由API服务处理）
         # 注意：这里使用 user_id 作为 job_id，因为这是AI查询任务
-        message_publisher.publish_status_update(
+        await message_publisher.publish_status_update(
             job_id=context.user_id,
             status=JobStatus.RUNNING.value,
             trigger="ai_query_start",
-            operator_type="system",
-            async_mode=False
+            operator_type="system"
         )
         
         result = await ai_client.chat_completion(
@@ -125,12 +125,11 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
         await task_service.set_task_status(context.user_id, "complete")
         
         # 通知任务完成
-        message_publisher.publish_status_update(
+        await message_publisher.publish_status_update(
             job_id=context.user_id,
             status=JobStatus.DONE.value,
             trigger="ai_query_complete",
             operator_type="system",
-            async_mode=False
         )
         
         return {'status': 'success', 'result': result}
@@ -139,13 +138,12 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
         await task_service.mark_task_failed(context.user_id, str(e))
         
         # 通知任务失败
-        message_publisher.publish_status_update(
+        await message_publisher.publish_status_update(
             job_id=context.user_id,
             status=JobStatus.FAILED.value,
             trigger="ai_query_failed",
             operator_type="system",
             metadata={"error": str(e)},
-            async_mode=False
         )
         raise
 

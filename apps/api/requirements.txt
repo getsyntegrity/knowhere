@@ -31,6 +31,8 @@ flower==2.0.1
 
 # RabbitMQ消息队列
 amqp==5.3.1
+# 异步RabbitMQ客户端
+aio-pika==9.3.0
 
 # 认证相关依赖
 fastapi-users[sqlalchemy,jwt,oauth]==14.0.1

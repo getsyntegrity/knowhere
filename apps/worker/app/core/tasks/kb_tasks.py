@@ -14,6 +14,7 @@ from app.services.redis import RedisServiceFactory, JobInfoRedisService, JobMeta
 from app.services.storage.file_upload_service import FileUploadService
 from app.core.config import settings
 from app.services.messaging import get_message_publisher
+from app.services.messaging.message_publisher import run_async_publish
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -48,17 +49,18 @@ class KBBaseTask(Task):
             # 发布重试消息（通过消息通知API服务处理重试状态）
             try:
                 message_publisher = get_message_publisher()
-                message_publisher.publish_status_update(
-                    job_id=job_id,
-                    status=JobStatus.RUNNING.value,  # 重试时保持running状态
-                    trigger="task_retry",
-                    metadata={
-                        "retry_count": self.request.retries,
-                        "error_message": str(exc),
-                        "task_id": task_id
-                    },
-                    operator_type="system",
-                    async_mode=False
+                run_async_publish(
+                    message_publisher.publish_status_update(
+                        job_id=job_id,
+                        status=JobStatus.RUNNING.value,  # 重试时保持running状态
+                        trigger="task_retry",
+                        metadata={
+                            "retry_count": self.request.retries,
+                            "error_message": str(exc),
+                            "task_id": task_id
+                        },
+                        operator_type="system"
+                    )
                 )
                 logger.info(f"任务重试消息已发布: job_id={job_id}, retry_count={self.request.retries}")                                                         
             except Exception as e:
@@ -119,11 +121,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
                 raise ValueError(f"Job信息中缺少s3_key: job_id={job_id}")
         
         # 发布进度更新消息：验证文件类型
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=3,
-            message_text="正在验证URL文件类型...",
-            async_mode=False
+            message_text="正在验证URL文件类型..."
         )
         
         # 步骤1：验证URL文件类型（在下载前，防止下载不安全的文件）
@@ -146,11 +147,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         logger.info(f"URL文件类型验证通过: {file_extension}")
         
         # 发布进度更新消息：开始下载
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=10,
             message_text="正在从URL下载文件...",
-            async_mode=False
         )
         
         # 步骤2：下载文件到临时目录
@@ -159,11 +159,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         
         try:
             # 发布进度更新消息：验证文件大小
-            message_publisher.publish_progress_update(
+            await message_publisher.publish_progress_update(
                 job_id=job_id,
                 progress=30,
-                message_text="正在验证文件大小...",
-                async_mode=False
+                message_text="正在验证文件大小..."
             )
             
             # 步骤3：验证文件大小（在上传S3前）
@@ -175,11 +174,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
             logger.info(f"文件大小验证通过: {file_size / 1024 / 1024:.2f}MB")
             
             # 发布进度更新消息：上传到S3
-            message_publisher.publish_progress_update(
+            await message_publisher.publish_progress_update(
                 job_id=job_id,
                 progress=50,
-                message_text="正在上传文件到S3...",
-                async_mode=False
+                message_text="正在上传文件到S3..."
             )
             
             # 步骤4：上传到S3（使用job中预设的s3_key）
@@ -194,11 +192,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
                 logger.debug(f"临时文件已清理: {temp_file_path}")
         
         # 发布进度更新消息：验证上传结果
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=80,
             message_text="正在验证上传结果...",
-            async_mode=False
         )
         
         # 步骤5：验证S3文件存在
@@ -207,11 +204,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
             raise ValueError("S3文件验证失败")
         
         # 发布进度更新消息：完成
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=100,
             message_text="URL文件上传完成，等待处理...",
-            async_mode=False
         )
         
         logger.info(f"URL文件上传完成，等待S3 webhook触发: {job_id} -> {s3_key}")                                                                               
@@ -227,12 +223,11 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         logger.error(f"URL文件上传失败: {e}")
         import traceback
         # 发布失败消息
-        message_publisher.publish_failure(
+        await message_publisher.publish_failure(
             job_id=job_id,
             error_message=str(e),
             error_type=type(e).__name__,
             stack_trace=traceback.format_exc(),
-            async_mode=False
         )
         raise
 
@@ -240,114 +235,153 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.parse_and_vectorize_task')                                                           
 def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):                                                          
     """解析并向量化任务（文件已通过S3直传）"""
+    logger.info(f"任务开始执行: task_id={self.request.id}, job_id={job_id}, user_id={user_id}, job_type={job_type}")
     try:
         if not job_id:
+            logger.error(f"缺少job_id参数: task_id={self.request.id}")
             raise ValueError("缺少job_id参数")
         
         # 使用更安全的方式处理异步操作
+        logger.info(f"开始处理事件循环: task_id={self.request.id}, job_id={job_id}")
         try:
             # 尝试获取当前事件循环
             loop = asyncio.get_event_loop()
             if loop.is_closed():
+                logger.warning(f"事件循环已关闭，将创建新循环: task_id={self.request.id}, job_id={job_id}")
                 raise RuntimeError("Event loop is closed")
+            logger.info(f"获取到现有事件循环: task_id={self.request.id}, job_id={job_id}")
         except RuntimeError:
             # 如果没有事件循环或循环已关闭，创建新的
+            logger.info(f"创建新事件循环: task_id={self.request.id}, job_id={job_id}")
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
         try:
+            logger.info(f"开始执行异步函数: task_id={self.request.id}, job_id={job_id}")
             result = loop.run_until_complete(_parse_and_vectorize_async(
                 job_id, user_id
             ))
+            logger.info(f"异步函数执行完成: task_id={self.request.id}, job_id={job_id}, result keys={list(result.keys()) if isinstance(result, dict) else None}")
             return result
         finally:
             # 只有在创建了新循环时才关闭
             if loop != asyncio.get_event_loop():
+                logger.info(f"关闭事件循环: task_id={self.request.id}, job_id={job_id}")
                 loop.close()
             
     except Exception as e:
-        logger.error(f"解析并向量化任务失败: {e}")
+        logger.error(f"解析并向量化任务失败: task_id={self.request.id}, job_id={job_id}, error={e}", exc_info=True)
         raise self.retry(exc=e, countdown=120, max_retries=2)
 
 
 async def _parse_and_vectorize_async(job_id: str, user_id: str):
     """异步解析并向量化（文件已通过S3直传）"""
+    logger.info(f"异步函数开始执行: job_id={job_id}, user_id={user_id}")
     message_publisher = get_message_publisher()
+    logger.info(f"消息发布器获取成功: job_id={job_id}")
     
     try:
         # 从Redis获取Job信息
+        logger.info(f"开始获取Redis服务: job_id={job_id}")
         redis_service = RedisServiceFactory.get_service()
+        logger.info(f"Redis服务获取成功: job_id={job_id}")
         job_info_service = JobInfoRedisService(redis_service)
+        logger.info(f"JobInfoRedisService创建成功，开始获取job_info: job_id={job_id}")
         job_info = await job_info_service.get_job_info(job_id)
+        logger.info(f"job_info获取完成: job_id={job_id}, job_info存在={job_info is not None}")
         
         if not job_info:
+            logger.error(f"Job信息不存在: job_id={job_id}")
             raise ValueError(f"Job信息不存在: job_id={job_id}")
         
         s3_key = job_info.get("s3_key")
+        logger.info(f"s3_key提取完成: job_id={job_id}, s3_key={s3_key}")
         if not s3_key:
+            logger.error(f"Job信息中缺少s3_key: job_id={job_id}, job_info keys={list(job_info.keys()) if job_info else None}")
             raise ValueError(f"Job信息中缺少s3_key: job_id={job_id}")
         
         job_user_id = job_info.get("user_id")
         if not job_user_id:
             job_user_id = user_id  # 回退到参数中的user_id
+        logger.info(f"user_id确定: job_id={job_id}, job_user_id={job_user_id}")
         
         # 验证S3文件存在性
+        logger.info(f"开始验证S3文件存在性: job_id={job_id}, s3_key={s3_key}")
         from app.services.storage.file_upload_service import FileUploadService
         upload_service = FileUploadService()
+        logger.info(f"FileUploadService创建成功，开始验证文件: job_id={job_id}")
         file_info = await upload_service.verify_s3_file_exists(s3_key)
+        logger.info(f"S3文件验证完成: job_id={job_id}, exists={file_info.get('exists')}")
         if not file_info.get("exists"):
+            logger.error(f"S3文件不存在: job_id={job_id}, s3_key={s3_key}")
             raise ValueError(f"S3文件不存在: {s3_key}")
         
         logger.info(f"S3文件验证成功: {s3_key}")
         
         # 从job_metadata获取user_config（创建时已初始化）
+        logger.info(f"开始获取job_metadata: job_id={job_id}")
         from app.models.schemas.job_metadata import JobMetadataHelper
         
         metadata_service = JobMetadataService(redis_service)
+        logger.info(f"metadata_service创建成功，开始获取metadata: job_id={job_id}")
         job_metadata = await metadata_service.get_metadata(job_id)
+        logger.info(f"job_metadata获取完成: job_id={job_id}, metadata存在={job_metadata is not None}")
         if not job_metadata:
+            logger.error(f"Job metadata不存在: job_id={job_id}")
             raise ValueError(f"Job metadata不存在: job_id={job_id}")
         
+        logger.info(f"开始从job_metadata提取user_config: job_id={job_id}")
         user_config = JobMetadataHelper.get_user_config(job_metadata)
+        logger.info(f"user_config提取完成: job_id={job_id}, user_config存在={user_config is not None}")
         
         if not user_config:
+            logger.error(f"Job metadata中缺少用户配置: job_id={job_id}")
             raise ValueError("Job metadata中缺少用户配置")
         
         # 发布状态更新消息：开始处理
+        logger.info(f"开始发布状态更新消息: job_id={job_id}, status={JobStatus.RUNNING.value}")
         # 注意：状态检查由API服务处理，Worker只负责发布状态更新消息
-        message_publisher.publish_status_update(
+        await message_publisher.publish_status_update(
             job_id=job_id,
             status=JobStatus.RUNNING.value,
             trigger="start_processing",
             previous_status=None,  # 由API服务确定之前的状态
             operator_type="system",
-            async_mode=False
         )
+        logger.info(f"状态更新消息发布成功: job_id={job_id}")
         
         # 发布进度更新消息：开始解析
-        message_publisher.publish_progress_update(
+        logger.info(f"开始发布进度更新消息: job_id={job_id}, progress=10")
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=10,
             message_text="正在解析文档...",
-            async_mode=False
         )
+        logger.info(f"进度更新消息发布成功: job_id={job_id}")
         
-        logger.debug(f"开始下载文件: S3键={s3_key}")
+        logger.info(f"开始下载文件: S3键={s3_key}, bucket={settings.S3_BUCKET_NAME}")
         
         # 下载文件到本地临时目录
         from app.services.storage.file_upload_service import FileUploadService
         upload_service = FileUploadService()
+        logger.info(f"FileUploadService创建成功，开始生成下载URL: s3_key={s3_key}")
         file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)                                                         
+        logger.info(f"下载URL生成成功: job_id={job_id}")
         file_url = file_url_response["download_url"]  # 提取实际的URL字符串
+        logger.info(f"提取下载URL完成: job_id={job_id}, url长度={len(file_url) if file_url else 0}")
         
         # 准备解析参数 - 从job_metadata获取
+        logger.info(f"开始准备解析参数: job_id={job_id}")
         filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
-        logger.debug(f"filename: {filename}")
+        logger.info(f"filename提取完成: job_id={job_id}, filename={filename}")
         
         # 调用修改后的解析逻辑（传入user_config）
+        logger.info(f"开始导入解析服务: job_id={job_id}")
         from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse                                                                     
+        logger.info(f"解析服务导入成功: job_id={job_id}")
         
-        logger.debug(f"开始解析文件: {filename}, 类型: {JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')}")                                
+        doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
+        logger.info(f"开始解析文件: job_id={job_id}, filename={filename}, 类型={doc_type}, file_url={file_url[:100] if file_url else None}...")
         
         add_dir = await checkerboard_inject_parse(
             file_full_path=file_url,
@@ -361,29 +395,35 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
             add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
         )
+        logger.info(f"文件解析调用完成: job_id={job_id}, add_dir={add_dir}")
         
         if not add_dir:
-            logger.error(f"文件解析失败，未返回解析目录: {filename}")
+            logger.error(f"文件解析失败，未返回解析目录: job_id={job_id}, filename={filename}")
             raise ValueError("文件解析失败，未返回解析目录")
         
-        logger.info(f"文件解析成功: {add_dir}")
+        logger.info(f"文件解析成功: job_id={job_id}, add_dir={add_dir}")
         
         # 保存add_dir到Redis job_metadata（用于后续ZIP生成和调试）
+        logger.info(f"开始保存add_dir到Redis: job_id={job_id}, add_dir={add_dir}")
         await metadata_service.update_metadata(job_id, {"add_dir": add_dir})
-        logger.debug(f"add_dir已保存到Redis job_metadata: {add_dir}")
+        logger.info(f"add_dir已保存到Redis job_metadata: job_id={job_id}, add_dir={add_dir}")
         
         # 发布进度更新消息：解析完成，开始向量化
-        message_publisher.publish_progress_update(
+        logger.info(f"开始发布进度更新消息（向量化）: job_id={job_id}, progress=30")
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=30,
             message_text="解析完成，正在向量化...",
-            async_mode=False
         )
+        logger.info(f"进度更新消息发布成功（向量化）: job_id={job_id}")
         
         # 调用旧方案的向量化逻辑
+        logger.info(f"开始导入向量化服务: job_id={job_id}")
         from app.services.knowledge.kb_encoder_service import encode_kb
+        logger.info(f"向量化服务导入成功，开始向量化: job_id={job_id}, add_dir={add_dir}")
         
         user_info = await encode_kb(user_config, add_dir=add_dir, mode="add")
+        logger.info(f"向量化完成: job_id={job_id}, user_info keys={list(user_info.keys()) if user_info else None}")
         
         # 保存DataFrame为chunks到Redis
         from app.services.redis.chunks_redis_service import ChunksRedisService
@@ -405,11 +445,10 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             await chunks_redis_service.save_chunks(job_id, [])
         
         # 发布进度更新消息：向量化完成，开始生成ZIP
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=70,
             message_text="向量化完成，正在生成结果包...",
-            async_mode=False
         )
         
         # 从Redis获取chunks数据（用于生成ZIP包）
@@ -456,11 +495,10 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
         
         # 发布进度更新消息：生成ZIP包
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=80,
             message_text="正在生成ZIP包...",
-            async_mode=False
         )
         
         # 生成 ZIP 包（业务逻辑处理）
@@ -476,11 +514,10 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         )
         
         # 发布进度更新消息：上传ZIP到S3
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=90,
             message_text="正在上传结果到S3...",
-            async_mode=False
         )
         
         # 上传 ZIP 包到 S3（业务逻辑处理）
@@ -490,15 +527,14 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         stored_count = len(kb_records) if kb_records is not None else 0
         
         # 发布进度更新消息：任务完成
-        message_publisher.publish_progress_update(
+        await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=100,
             message_text="任务完成！",
-            async_mode=False
         )
         
         # 发布结果消息（包含所有需要存储的数据）
-        message_publisher.publish_result(
+        await message_publisher.publish_result(
             job_id=job_id,
             chunks_job_id=job_id,  # chunks数据通过job_id从Redis读取
             result_s3_key=result_s3_key,
@@ -509,7 +545,6 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             statistics=statistics,
             delivery_mode="url",
             add_dir=add_dir,
-            async_mode=False
         )
         
         logger.info(f"Worker处理完成，结果消息已发布: job_id={job_id}, stored_count={stored_count}, result_s3_key={result_s3_key}")                             
@@ -526,17 +561,20 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         }
             
     except Exception as e:
-        logger.error(f"解析并向量化失败: {e}")
         import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"解析并向量化失败: job_id={job_id}, error={e}, error_type={type(e).__name__}")
+        logger.error(f"异常堆栈跟踪: job_id={job_id}\n{error_trace}")
         # 发布失败消息
+        logger.info(f"开始发布失败消息: job_id={job_id}")
         message_publisher = get_message_publisher()
-        message_publisher.publish_failure(
+        await message_publisher.publish_failure(
             job_id=job_id,
             error_message=str(e),
             error_type=type(e).__name__,
-            stack_trace=traceback.format_exc(),
-            async_mode=False
+            stack_trace=error_trace,
         )
+        logger.info(f"失败消息发布完成: job_id={job_id}")
         raise
 
 

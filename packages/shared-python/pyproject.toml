@@ -27,6 +27,9 @@ dependencies = [
     "vine==5.1.0",
     "amqp==5.3.1",
     
+    # 异步RabbitMQ客户端
+    "aio-pika==9.3.0",
+    
     # 数据验证
     "pydantic==2.11.7",
     "pydantic-settings==2.10.1",

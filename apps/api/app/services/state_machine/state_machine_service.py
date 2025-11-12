@@ -100,7 +100,7 @@ class StateMachineService:
                 try:
                     # 安全地回滚事务，避免在不同事件循环中操作连接
                     if db.is_active:
-                await db.rollback()
+                        await db.rollback()
                 except Exception as rollback_error:
                     # 如果回滚失败（可能是连接已关闭或在不同事件循环中），只记录日志
                     logger.warning(f"Job {job_id} 回滚事务失败: {rollback_error}")
@@ -234,7 +234,7 @@ class StateMachineService:
             try:
                 # 安全地回滚事务，避免在不同事件循环中操作连接
                 if db.is_active:
-            await db.rollback()
+                    await db.rollback()
             except Exception as rollback_error:
                 # 如果回滚失败（可能是连接已关闭或在不同事件循环中），只记录日志
                 logger.warning(f"Job {job_id} 回滚事务失败: {rollback_error}")

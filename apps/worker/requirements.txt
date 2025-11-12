@@ -4,6 +4,9 @@
 # Celery任务队列（共享包已包含，但Worker需要完整配置）
 # celery==5.4.0  # 已在共享包中
 
+# 异步RabbitMQ客户端（共享包依赖，Worker需要）
+aio-pika==9.3.0
+
 # 机器学习和AI（Worker需要）
 numpy==2.2.6
 pandas==2.3.1

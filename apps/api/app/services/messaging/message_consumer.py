@@ -1,30 +1,32 @@
 """
-消息消费者服务
-监听RabbitMQ队列并直接处理消息
+异步消息消费者服务
+使用aio-pika监听RabbitMQ队列并处理消息
 """
 import asyncio
 import json
-import socket
-import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
-from kombu import Connection, Consumer, Exchange, Queue
-from kombu.exceptions import TimeoutError as KombuTimeoutError, ChannelError
+import aio_pika
+from aio_pika import IncomingMessage
 from loguru import logger
 
-from app.core.config import app_config
-from app.core.config.messaging import messaging_config
+from app.services.messaging.async_config import (
+    get_exchange_config,
+    get_queue_config,
+    get_queue_name,
+    get_routing_key,
+)
+from app.services.messaging.async_connection import get_connection_manager
 from app.services.messaging.message_handlers import (
-    handle_job_status_update,
+    handle_job_failure,
     handle_job_progress_update,
     handle_job_result,
-    handle_job_failure,
+    handle_job_status_update,
 )
 
 
 class MessageConsumer:
-    """消息消费者 - 监听RabbitMQ队列并直接处理消息"""
+    """异步消息消费者 - 使用aio-pika监听RabbitMQ队列"""
     
     # 重试配置
     MAX_RETRIES = {
@@ -50,387 +52,238 @@ class MessageConsumer:
     
     def __init__(self):
         """初始化消息消费者"""
-        self.broker_url = app_config.get_rabbitmq_url()
-        self.exchange = Exchange(
-            messaging_config.EXCHANGE_NAME,
-            type=messaging_config.EXCHANGE_TYPE,
-            durable=True
-        )
-        self._consumers = []
+        self._connection_manager = get_connection_manager()
+        self._consumers = []  # 存储消费者任务
         self._running = False
-        # 创建线程池用于执行异步处理函数
-        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="msg_handler")
+        self._stop_event = asyncio.Event()
     
-    def _parse_message_body(self, body):
-        """解析消息体（可能是字符串或字典）"""
-        if isinstance(body, str):
-            try:
-                return json.loads(body)
-            except json.JSONDecodeError:
-                logger.error(f"无法解析消息体为JSON: {body}")
-                return None
-        elif isinstance(body, dict):
-            return body
-        else:
-            logger.error(f"未知的消息体类型: {type(body)}")
-            return None
-    
-    def _run_async_with_retry(self, handler_func, message_data: Dict[str, Any], message_type: str):
-        """
-        运行异步处理函数，支持重试和超时
-        
-        Args:
-            handler_func: 异步处理函数
-            message_data: 消息数据
-            message_type: 消息类型
-            
-        Returns:
-            处理结果
-        """
-        max_retries = self.MAX_RETRIES.get(message_type, 0)
-        retry_delay = self.RETRY_DELAYS.get(message_type, 60)
-        timeout = self.TIMEOUTS.get(message_type, 30 * 60)
-        
-        last_exception = None
-        
-        for attempt in range(max_retries + 1):
-            loop = None
-            try:
-                # 创建新的事件循环（因为在线程中运行）
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
-                try:
-                    # 使用超时控制
-                    result = loop.run_until_complete(
-                        asyncio.wait_for(
-                            handler_func(message_data),
-                            timeout=timeout
-                        )
-                    )
-                    return result
-                finally:
-                    # 确保所有待处理的任务完成后再关闭事件循环
-                    try:
-                        # 获取所有待处理的任务（排除当前任务）
-                        try:
-                            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-                            if pending:
-                                # 给任务一些时间完成
-                                try:
-                                    loop.run_until_complete(
-                                        asyncio.wait_for(
-                                            asyncio.gather(*pending, return_exceptions=True),
-                                            timeout=2.0
-                                        )
-                                    )
-                                except asyncio.TimeoutError:
-                                    # 超时后取消所有未完成的任务
-                                    for task in pending:
-                                        if not task.done():
-                                            task.cancel()
-                                    # 等待取消完成
-                                    loop.run_until_complete(
-                                        asyncio.gather(*pending, return_exceptions=True)
-                                    )
-                        except RuntimeError:
-                            # 如果事件循环已关闭，忽略错误
-                            pass
-                    except Exception as cleanup_error:
-                        logger.warning(f"清理事件循环任务时出错: {cleanup_error}")
-                    finally:
-                        # 关闭事件循环
-                        try:
-                            if loop and not loop.is_closed():
-                    loop.close()
-                        except Exception as close_error:
-                            logger.warning(f"关闭事件循环时出错: {close_error}")
-                    
-            except asyncio.TimeoutError:
-                last_exception = TimeoutError(f"处理{message_type}超时（{timeout}秒）")
-                logger.error(f"处理{message_type}超时: job_id={message_data.get('job_id')}, attempt={attempt + 1}/{max_retries + 1}")
-                
-            except Exception as e:
-                last_exception = e
-                logger.error(f"处理{message_type}失败: job_id={message_data.get('job_id')}, attempt={attempt + 1}/{max_retries + 1}, error={e}")
-            
-            # 如果不是最后一次尝试，等待后重试
-            if attempt < max_retries:
-                wait_time = retry_delay * (2 ** attempt)  # 指数退避
-                logger.info(f"等待{wait_time}秒后重试: job_id={message_data.get('job_id')}")
-                time.sleep(wait_time)
-        
-        # 所有重试都失败
-        if last_exception:
-            raise last_exception
-        return {"status": "failed", "error": "处理失败"}
-    
-    def _process_message_async(self, handler_func, message_data: Dict[str, Any], message_type: str, message):
-        """
-        异步处理消息（在线程池中执行，不阻塞消息消费）
-        
-        Args:
-            handler_func: 异步处理函数
-            message_data: 消息数据
-            message_type: 消息类型
-            message: RabbitMQ消息对象
-        """
-        def _handle_result(future):
-            """处理完成回调"""
-            try:
-                result = future.result()
-                logger.debug(f"消息处理成功: {message_type}, job_id={message_data.get('job_id')}")
-                message.ack()
-            except Exception as e:
-                logger.error(f"消息处理失败: {message_type}, job_id={message_data.get('job_id')}, error={e}")
-                # 根据消息类型决定是否重新入队
-                if message_type == 'job_progress_update':
-                    # 进度更新失败不重试
-                    message.ack()
-                else:
-                    message.reject(requeue=True)
-        
-        try:
-            # 在线程池中执行处理，不阻塞消息消费
-            # 使用add_done_callback确保非阻塞
-            future = self._executor.submit(
-                self._run_async_with_retry,
-                handler_func,
-                message_data,
-                message_type
-            )
-            future.add_done_callback(_handle_result)
-                    
-        except Exception as e:
-            logger.error(f"提交消息处理任务失败: {message_type}, job_id={message_data.get('job_id')}, error={e}")
-            message.reject(requeue=True)
-    
-    def _on_status_update_message(self, body, message):
-        """处理状态更新消息"""
-        try:
-            message_data = self._parse_message_body(body)
-            if not message_data:
-                message.reject(requeue=False)
-                return
-            
-            logger.debug(f"收到状态更新消息: job_id={message_data.get('job_id')}")
-            # 直接处理消息（异步执行，不阻塞）
-            self._process_message_async(
-                handle_job_status_update,
-                message_data,
-                'job_status_update',
-                message
-            )
-        except Exception as e:
-            logger.error(f"处理状态更新消息失败: {e}")
-            message.reject(requeue=True)
-    
-    def _on_progress_update_message(self, body, message):
-        """处理进度更新消息"""
-        try:
-            message_data = self._parse_message_body(body)
-            if not message_data:
-                message.reject(requeue=False)
-                return
-            
-            logger.debug(f"收到进度更新消息: job_id={message_data.get('job_id')}, progress={message_data.get('progress')}")
-            # 直接处理消息（异步执行，不阻塞）
-            self._process_message_async(
-                handle_job_progress_update,
-                message_data,
-                'job_progress_update',
-                message
-            )
-        except Exception as e:
-            logger.error(f"处理进度更新消息失败: {e}")
-            message.reject(requeue=True)
-    
-    def _on_result_message(self, body, message):
-        """处理结果数据消息"""
-        try:
-            message_data = self._parse_message_body(body)
-            if not message_data:
-                message.reject(requeue=False)
-                return
-            
-            logger.debug(f"收到结果消息: job_id={message_data.get('job_id')}")
-            # 直接处理消息（异步执行，不阻塞）
-            self._process_message_async(
-                handle_job_result,
-                message_data,
-                'job_result',
-                message
-            )
-        except Exception as e:
-            logger.error(f"处理结果消息失败: {e}")
-            message.reject(requeue=True)
-    
-    def _on_failure_message(self, body, message):
-        """处理失败消息"""
-        try:
-            message_data = self._parse_message_body(body)
-            if not message_data:
-                message.reject(requeue=False)
-                return
-            
-            logger.debug(f"收到失败消息: job_id={message_data.get('job_id')}")
-            # 直接处理消息（异步执行，不阻塞）
-            self._process_message_async(
-                handle_job_failure,
-                message_data,
-                'job_failure',
-                message
-            )
-        except Exception as e:
-            logger.error(f"处理失败消息失败: {e}")
-            message.reject(requeue=True)
-    
-    def start_consuming(self):
-        """开始消费消息"""
+    async def start_consuming(self):
+        """异步启动消费"""
         if self._running:
             logger.warning("消息消费者已在运行")
             return
         
         self._running = True
-        logger.info("启动消息消费者...")
+        self._stop_event.clear()
+        logger.info("启动异步消息消费者...")
         
         try:
-            # 直接使用Connection而不是连接池（与message_publisher保持一致）
-            with Connection(self.broker_url) as conn:
-                # 创建队列
-                queues = {
-                    'status': Queue(
-                        messaging_config.QUEUE_STATUS_UPDATES,
-                        exchange=self.exchange,
-                        routing_key=messaging_config.ROUTING_KEY_STATUS_UPDATE,
-                        **messaging_config.get_queue_config(messaging_config.QUEUE_STATUS_UPDATES)
-                    ),
-                    'progress': Queue(
-                        messaging_config.QUEUE_PROGRESS_UPDATES,
-                        exchange=self.exchange,
-                        routing_key=messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
-                        **messaging_config.get_queue_config(messaging_config.QUEUE_PROGRESS_UPDATES)
-                    ),
-                    'result': Queue(
-                        messaging_config.QUEUE_RESULTS,
-                        exchange=self.exchange,
-                        routing_key=messaging_config.ROUTING_KEY_RESULT,
-                        **messaging_config.get_queue_config(messaging_config.QUEUE_RESULTS)
-                    ),
-                    'failure': Queue(
-                        messaging_config.QUEUE_FAILURES,
-                        exchange=self.exchange,
-                        routing_key=messaging_config.ROUTING_KEY_FAILURE,
-                        **messaging_config.get_queue_config(messaging_config.QUEUE_FAILURES)
-                    ),
-                }
+            # 建立连接和通道
+            await self._connection_manager.connect()
+            channel = await self._connection_manager.get_channel()
+            
+            # 声明交换器
+            exchange_config = get_exchange_config()
+            exchange = await channel.declare_exchange(
+                exchange_config["name"],
+                exchange_config["type"],
+                durable=exchange_config["durable"],
+                auto_delete=exchange_config["auto_delete"],
+            )
+            
+            # 创建并启动消费者
+            message_handlers = {
+                'job_status_update': handle_job_status_update,
+                'job_progress_update': handle_job_progress_update,
+                'job_result': handle_job_result,
+                'job_failure': handle_job_failure,
+            }
+            
+            for message_type, handler_func in message_handlers.items():
+                queue_name = get_queue_name(message_type)
+                routing_key = get_routing_key(message_type)
                 
-                # 声明交换器和队列
-                self.exchange.declare(channel=conn.default_channel)
-                for queue in queues.values():
-                    try:
-                        queue.declare(channel=conn.default_channel)
-                    except ChannelError as e:
-                        # 如果队列已存在但参数不匹配（如缺少 x-max-priority）
-                        error_str = str(e)
-                        if "PRECONDITION_FAILED" in error_str or "inequivalent arg" in error_str:
-                            logger.warning(
-                                f"队列 '{queue.name}' 已存在但参数不匹配: {e}。"
-                                f"将使用现有队列（优先级功能可能不可用）。"
-                                f"如需启用优先级，请手动删除队列后重启服务。"
-                            )
-                            # 使用被动模式声明队列（只检查是否存在，不修改参数）
-                            try:
-                                queue.declare(channel=conn.default_channel, passive=True)
-                                logger.info(f"队列 '{queue.name}' 已存在，继续使用")
-                            except Exception as passive_e:
-                                logger.error(f"无法使用被动模式声明队列 '{queue.name}': {passive_e}")
-                                raise
-                        else:
-                            # 其他类型的 ChannelError，重新抛出
-                            raise
+                # 声明队列
+                queue_config = get_queue_config(queue_name)
+                queue = await channel.declare_queue(
+                    queue_name,
+                    durable=queue_config["durable"],
+                    auto_delete=queue_config["auto_delete"],
+                    exclusive=queue_config["exclusive"],
+                    arguments=queue_config["arguments"],
+                )
                 
-                # 创建消费者
-                consumers = [
-                    Consumer(
-                        conn,
-                        queues['status'],
-                        callbacks=[self._on_status_update_message],
-                        accept=['json']
-                    ),
-                    Consumer(
-                        conn,
-                        queues['progress'],
-                        callbacks=[self._on_progress_update_message],
-                        accept=['json']
-                    ),
-                    Consumer(
-                        conn,
-                        queues['result'],
-                        callbacks=[self._on_result_message],
-                        accept=['json']
-                    ),
-                    Consumer(
-                        conn,
-                        queues['failure'],
-                        callbacks=[self._on_failure_message],
-                        accept=['json']
-                    ),
-                ]
+                # 绑定队列到交换器
+                await queue.bind(exchange, routing_key=routing_key)
                 
-                self._consumers = consumers
-                
-                # 开始消费
-                logger.info("消息消费者已启动，开始监听消息...")
-                for consumer in consumers:
-                    consumer.consume()
-                
-                # 持续监听
-                while self._running:
-                    try:
-                        conn.drain_events(timeout=1)
-                    except (socket.timeout, KombuTimeoutError, TimeoutError) as e:
-                        # 超时是正常行为，当没有消息到达时会超时
-                        # 不需要记录错误，继续循环即可
-                        continue
-                    except Exception as e:
-                        # 真正的错误才记录
-                        if self._running:
-                            logger.error(f"消费消息时出错: {e}", exc_info=True)
-                            # 短暂等待后继续，避免快速重试导致日志刷屏
-                            time.sleep(1)
-                        
-        except KeyboardInterrupt:
-            logger.info("收到停止信号，正在关闭消息消费者...")
-            self.stop_consuming()
+                # 创建消费者任务
+                consumer_task = asyncio.create_task(
+                    self._consume_queue(queue, handler_func, message_type)
+                )
+                self._consumers.append(consumer_task)
+                logger.info(f"已启动消费者: {message_type} -> {queue_name}")
+            
+            logger.info("所有消息消费者已启动，开始监听消息...")
+            
+            # 等待停止信号
+            await self._stop_event.wait()
+            
         except Exception as e:
-            logger.error(f"消息消费者运行出错: {e}")
+            logger.error(f"消息消费者启动失败: {e}", exc_info=True)
             self._running = False
             raise
     
-    def stop_consuming(self):
-        """停止消费消息"""
+    async def stop_consuming(self):
+        """优雅停止消费"""
+        if not self._running:
+            return
+        
         logger.info("正在停止消息消费者...")
         self._running = False
+        self._stop_event.set()
         
-        for consumer in self._consumers:
-            try:
-                consumer.cancel()
-            except Exception as e:
-                logger.error(f"取消消费者时出错: {e}")
+        # 等待所有消费者任务完成
+        if self._consumers:
+            logger.info(f"等待 {len(self._consumers)} 个消费者任务完成...")
+            await asyncio.gather(*self._consumers, return_exceptions=True)
+            self._consumers = []
         
-        self._consumers = []
+        # 关闭连接
+        await self._connection_manager.close()
         
-        # 关闭线程池
-        if self._executor:
-            self._executor.shutdown(wait=True)
-            logger.info("消息处理线程池已关闭")
-        
-        # 连接会在with语句中自动关闭，这里不需要额外操作
         logger.info("消息消费者已停止")
+    
+    async def _consume_queue(
+        self,
+        queue: aio_pika.Queue,
+        handler_func,
+        message_type: str
+    ):
+        """消费队列消息"""
+        try:
+            async with queue.iterator() as queue_iter:
+                async for message in queue_iter:
+                    if not self._running:
+                        break
+                    
+                    # 手动处理消息确认，不使用message.process()的自动确认
+                    # 这样可以更好地控制重试逻辑
+                    try:
+                        await self._process_message(message, handler_func, message_type)
+                        # 处理成功，确认消息
+                        await message.ack()
+                    except Exception as e:
+                        logger.error(f"处理消息时出错: {e}", exc_info=True)
+                        # 消息处理失败，根据消息类型决定是否重新入队
+                        try:
+                            if message_type == 'job_progress_update':
+                                # 进度更新失败不重试，直接确认
+                                await message.ack()
+                            else:
+                                # 其他消息失败时拒绝并重新入队
+                                await message.nack(requeue=True)
+                        except Exception as ack_error:
+                            logger.error(f"确认/拒绝消息时出错: {ack_error}")
+        except asyncio.CancelledError:
+            logger.info(f"消费者任务 {message_type} 已取消")
+        except Exception as e:
+            logger.error(f"消费队列 {queue.name} 时出错: {e}", exc_info=True)
+    
+    async def _process_message(
+        self,
+        message: IncomingMessage,
+        handler_func,
+        message_type: str
+    ):
+        """处理单个消息"""
+        # 解析消息体
+        message_data = await self._parse_message_body(message.body)
+        if not message_data:
+            logger.warning(f"无法解析消息体: {message_type}")
+            # 无法解析的消息抛出异常，让外层确认
+            raise ValueError(f"无法解析消息体: {message_type}")
+        
+        job_id = message_data.get('job_id', 'unknown')
+        logger.debug(f"收到消息: {message_type}, job_id={job_id}")
+        
+        # 处理消息（带重试）
+        result = await self._process_with_retry(
+            handler_func,
+            message_data,
+            message_type
+        )
+        
+        if result:
+            logger.debug(f"消息处理成功: {message_type}, job_id={job_id}")
+        else:
+            logger.warning(f"消息处理失败: {message_type}, job_id={job_id}")
+            # 处理失败时抛出异常，让外层处理确认/拒绝
+            raise Exception(f"消息处理失败: {message_type}, job_id={job_id}")
+    
+    async def _process_with_retry(
+        self,
+        handler_func,
+        message_data: Dict[str, Any],
+        message_type: str
+    ) -> bool:
+        """
+        带重试的消息处理
+        
+        Args:
+            handler_func: 消息处理函数
+            message_data: 消息数据
+            message_type: 消息类型
+            
+        Returns:
+            是否处理成功
+        """
+        max_retries = self.MAX_RETRIES.get(message_type, 0)
+        retry_delay = self.RETRY_DELAYS.get(message_type, 60)
+        timeout = self.TIMEOUTS.get(message_type, 30 * 60)
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # 使用超时控制
+                result = await asyncio.wait_for(
+                    handler_func(message_data),
+                    timeout=timeout
+                )
+                return result.get('status') == 'success' if result else False
+                
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"处理{message_type}超时: job_id={message_data.get('job_id')}, "
+                    f"attempt={attempt + 1}/{max_retries + 1}, timeout={timeout}秒"
+                )
+                if attempt < max_retries:
+                    wait_time = retry_delay * (2 ** attempt)
+                    logger.info(f"等待{wait_time}秒后重试...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    return False
+                    
+            except Exception as e:
+                logger.error(
+                    f"处理{message_type}失败: job_id={message_data.get('job_id')}, "
+                    f"attempt={attempt + 1}/{max_retries + 1}, error={e}"
+                )
+                if attempt < max_retries:
+                    wait_time = retry_delay * (2 ** attempt)
+                    logger.info(f"等待{wait_time}秒后重试...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    return False
+        
+        return False
+    
+    async def _parse_message_body(self, body: bytes) -> Optional[Dict[str, Any]]:
+        """解析消息体"""
+        try:
+            if isinstance(body, bytes):
+                body_str = body.decode('utf-8')
+            else:
+                body_str = str(body)
+            
+            return json.loads(body_str)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"无法解析消息体为JSON: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"解析消息体失败: {e}")
+            return None
 
 
 def get_message_consumer() -> MessageConsumer:
     """获取消息消费者实例"""
     return MessageConsumer()
-

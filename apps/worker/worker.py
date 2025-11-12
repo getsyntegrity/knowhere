@@ -85,6 +85,20 @@ from app.core.config import redis_pool_manager
 from app.core.logging import setup_logging
 from loguru import logger
 
+# 扩展 app.services 以支持从API服务导入ai模块
+# 需要在worker中也能访问API服务的ai模块
+api_root = project_root.parent / "api"
+api_services_path = api_root / "app" / "services"
+if api_services_path.exists():
+    api_services_path_str = str(api_services_path)
+    if hasattr(app.services, '__path__') and api_services_path_str not in app.services.__path__:
+        app.services.__path__.append(api_services_path_str)
+        logger.info(f"已添加API服务路径到app.services: {api_services_path_str}")
+
+# 显式导入 kb_tasks 模块以注册任务
+# 注意：必须在导入 celery_app 之后导入，确保任务装饰器能够正确注册
+import app.core.tasks.kb_tasks
+
 async def init_redis():
     """初始化Redis连接池"""
     try:
@@ -114,23 +128,6 @@ if __name__ == "__main__":
     hostname = socket.gethostname()
     pid = os.getpid()
     node_name = f"celery@{hostname}-{pid}"
-
-    # 动态导入 kb_tasks（仅在 Worker 服务中使用）
-    # 注意：kb_tasks 不在共享包中，而是在 worker 本地路径中
-    try:
-        import app.core.tasks.kb_tasks
-        logger.info("成功导入 kb_tasks 模块")
-    except ImportError as e:
-        logger.warning(f"无法导入 kb_tasks 模块: {e}")
-        logger.warning("kb_tasks 相关任务将不可用")
-    
-    # 检查必要的依赖
-    try:
-        import numpy
-        logger.debug("numpy 依赖检查通过")
-    except ImportError:
-        logger.error("numpy 未安装！请运行: pip install numpy==2.2.6")
-        logger.error("或安装所有依赖: pip install -r requirements.txt")
     
     # 获取日志级别设置
     log_level = os.getenv("LOG_LEVEL", "INFO").lower()

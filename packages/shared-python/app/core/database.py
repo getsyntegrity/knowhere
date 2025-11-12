@@ -88,16 +88,16 @@ async def get_db_context():
         if session:
             try:
                 if session.is_active:
-            await session.rollback()
+                    await session.rollback()
             except Exception as rollback_error:
                 # 回滚失败时只记录日志，避免在不同事件循环中操作连接
                 logger.warning(f"Database session rollback failed during exception handling: {rollback_error}")
             raise
-        finally:
+    finally:
         # 安全地关闭会话
         if session:
             try:
-            await session.close()
+                await session.close()
             except Exception as close_error:
                 # 关闭失败时只记录日志，避免在不同事件循环中操作连接
                 logger.warning(f"Database session close failed: {close_error}")
@@ -380,3 +380,20 @@ db_performance_monitor = DatabasePerformanceMonitor()
 async def get_database_performance() -> dict:
     """获取数据库性能统计"""
     return db_performance_monitor.get_performance_stats()
+
+
+async def safe_dispose_engine(db_engine):
+    """
+    安全地关闭数据库引擎
+    
+    Args:
+        db_engine: SQLAlchemy异步引擎实例
+    """
+    try:
+        if db_engine:
+            # dispose() 是同步方法，但可能涉及IO操作，使用run_in_executor避免阻塞
+            await asyncio.to_thread(db_engine.dispose)
+            logger.info("数据库引擎已安全关闭")
+    except Exception as e:
+        logger.error(f"关闭数据库引擎时出错: {e}")
+        # 即使关闭失败也不抛出异常，避免影响应用关闭流程
