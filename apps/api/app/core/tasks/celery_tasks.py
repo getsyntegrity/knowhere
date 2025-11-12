@@ -96,19 +96,19 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
     
     # 执行AI查询
     try:
+        logger.debug(f'process_ai_query_async prompt: {prompt}')
+        logger.debug(f'process_ai_query_async temperature: {temperature}')
+        logger.debug(f'process_ai_query_async conversation_id: {conversation_id}')
+
         # 更新状态为处理中
         await state_machine.set_task_timeout(context.user_id, JobStatus.RUNNING.value)
-        
-        logger.info("[Celery Worker Async] 🤖 开始调用AI客户端...")
-        import time as time_module
-        start_time = time_module.time()
+
         result = await ai_client.chat_completion(
             messages=prompt,
             temperature=temperature,
             conversation_id=conversation_id,
         )
-        elapsed = time_module.time() - start_time
-        logger.info(f"✅ [Celery Worker Async] AI客户端调用完成，总耗时: {elapsed:.2f}秒")
+        logger.debug(f'process_ai_query_async result: {result}')
         
         # 保存结果
         await task_service.save_task_result(context.user_id, {

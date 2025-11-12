@@ -360,7 +360,6 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             # 下载文件到本地临时目录
             from app.services.storage.file_upload_service import FileUploadService
             upload_service = FileUploadService()
-            logger.debug("正在生成下载URL...")
             file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)
             file_url = file_url_response["download_url"]  # 提取实际的URL字符串
             logger.info(f"文件下载URL生成成功: {file_url[:100]}...")
@@ -372,10 +371,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             # 调用修改后的解析逻辑（传入user_config）
             from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse
             
-            doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
-            logger.info(f"开始解析文件: {filename}, 文档类型: {doc_type}")
-            logger.debug(f"解析参数: kb_dir={JobMetadataHelper.get_parsing_param(job_metadata, 'kb_dir', '默认目录')}, "
-                        f"smart_title_parse={JobMetadataHelper.get_parsing_param(job_metadata, 'smart_title_parse', True)}")
+            logger.debug(f"开始解析文件: {filename}, 类型: {JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')}")
             
             add_dir = await checkerboard_inject_parse(
                 file_full_path=file_url,
@@ -397,21 +393,16 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             logger.info(f"文件解析成功: {add_dir}")
             
             # 更新进度信息：解析完成，开始向量化
-            logger.debug("正在更新任务进度到30%...")
             await task_service.update_task_progress(
                 job_id, 30, "解析完成，正在向量化..."
             )
-            logger.info(f"文件解析完成，开始向量化: {add_dir}")
             
             # 调用旧方案的向量化逻辑
             from app.services.knowledge.kb_encoder_service import encode_kb
-            
-            logger.info("开始调用 encode_kb 进行向量化...")
+
             user_info = await encode_kb(user_config, add_dir=add_dir, mode="add")
-            logger.info(f"向量化完成，生成 {len(user_info.get('all_vec', []))} 个向量")
             
             # 保存DataFrame为chunks到Redis
-            logger.debug("准备保存chunks到Redis...")
             from app.services.redis.chunks_redis_service import ChunksRedisService
             from app.services.redis import RedisServiceFactory
             
@@ -434,21 +425,17 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 await chunks_redis_service.save_chunks(job_id, [])
             
             # 更新进度信息：向量化完成
-            logger.debug("正在更新任务进度到70%...")
             await task_service.update_task_progress(
                 job_id, 70, "向量化完成，正在存储到数据库..."
             )
-            logger.info(f"✅ 解析和向量化阶段完成: job_id={job_id}")
             
-            result = {
+            return {
                 "status": "success",
                 "job_id": job_id,
                 "add_dir": add_dir,
                 "vectors_count": len(user_info.get("all_vec", [])),
                 "contents_count": len(user_info.get("all_contents_df", []))
             }
-            logger.info(f"返回结果: vectors={result['vectors_count']}, contents={result['contents_count']}")
-            return result
             
     except Exception as e:
         logger.info(traceback.format_exc())
