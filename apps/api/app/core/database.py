@@ -97,12 +97,12 @@ async def create_tables():
 # 连接池监控和健康检查
 class DatabaseHealthChecker:
     """数据库健康检查器"""
-
+    
     def __init__(self, engine):
         self.engine = engine
         self.last_check = None
         self.is_healthy = False
-
+    
     async def check_health(self) -> dict:
         """检查数据库连接健康状态"""
         try:
@@ -111,14 +111,14 @@ class DatabaseHealthChecker:
                 # 执行简单查询测试连接
                 result = await conn.execute(text("SELECT 1 as health_check"))
                 row = result.fetchone()
-
+                
                 if row and row[0] == 1:
                     self.is_healthy = True
                     self.last_check = datetime.now()
-
+                    
                     # 获取连接池状态
                     pool_status = self.get_pool_status()
-
+                    
                     return {
                         "status": "healthy",
                         "response_time_ms": round((time.time() - start_time) * 1000, 2),
@@ -140,7 +140,7 @@ class DatabaseHealthChecker:
                 "error": str(e),
                 "last_check": self.last_check.isoformat() if self.last_check else None
             }
-
+    
     def get_pool_status(self) -> dict:
         """获取连接池状态信息"""
         pool = self.engine.pool
@@ -156,7 +156,7 @@ class DatabaseHealthChecker:
         else:
             status["invalid"] = 0
         return status
-
+    
     async def get_database_info(self) -> dict:
         """获取数据库信息"""
         try:
@@ -164,7 +164,7 @@ class DatabaseHealthChecker:
                 # 获取数据库版本
                 version_result = await conn.execute(text("SELECT version()"))
                 version = version_result.fetchone()[0]
-
+                
                 # 获取当前连接数
                 connections_result = await conn.execute(text("""
                     SELECT count(*) as active_connections 
@@ -172,13 +172,13 @@ class DatabaseHealthChecker:
                     WHERE state = 'active'
                 """))
                 active_connections = connections_result.fetchone()[0]
-
+                
                 # 获取数据库大小
                 size_result = await conn.execute(text("""
                     SELECT pg_size_pretty(pg_database_size(current_database())) as db_size
                 """))
                 db_size = size_result.fetchone()[0]
-
+                
                 return {
                     "version": version,
                     "active_connections": active_connections,
@@ -203,23 +203,23 @@ async def get_database_info() -> dict:
 # 数据库连接重试机制
 class DatabaseRetryManager:
     """数据库重试管理器"""
-
+    
     def __init__(self, max_retries=3, retry_delay=1.0, backoff_factor=2.0):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.backoff_factor = backoff_factor
-
+    
     async def execute_with_retry(self, operation, *args, **kwargs):
         """执行数据库操作，支持重试机制"""
         last_exception = None
-
+        
         for attempt in range(self.max_retries + 1):
             try:
                 return await operation(*args, **kwargs)
             except Exception as e:
                 last_exception = e
                 logger.warning(f"Database operation failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}")
-
+                
                 if attempt < self.max_retries:
                     delay = self.retry_delay * (self.backoff_factor ** attempt)
                     logger.info(f"Retrying in {delay} seconds...")
@@ -227,7 +227,7 @@ class DatabaseRetryManager:
                 else:
                     logger.error(f"All retry attempts failed for database operation")
                     raise last_exception
-
+        
         raise last_exception
 
 # 创建重试管理器实例
@@ -240,22 +240,22 @@ async def safe_db_operation(operation, *args, **kwargs):
 # 连接池事件监听器
 def setup_pool_event_listeners():
     """设置连接池事件监听器"""
-
+    
     @event.listens_for(engine.sync_engine, "connect")
     def on_connect(dbapi_connection, connection_record):
         """连接建立时的回调"""
         logger.info("New database connection established")
-
+    
     @event.listens_for(engine.sync_engine, "checkout")
     def on_checkout(dbapi_connection, connection_record, connection_proxy):
         """从连接池获取连接时的回调"""
         logger.debug("Connection checked out from pool")
-
+    
     @event.listens_for(engine.sync_engine, "checkin")
     def on_checkin(dbapi_connection, connection_record):
         """连接归还到连接池时的回调"""
         logger.debug("Connection checked in to pool")
-
+    
     @event.listens_for(engine.sync_engine, "invalidate")
     def on_invalidate(dbapi_connection, connection_record, exception):
         """连接失效时的回调"""
@@ -270,20 +270,20 @@ async def prewarm_connection_pool():
     """预热连接池，提前建立连接"""
     if not ProcessingConstants.DB_POOL_PREWARM:
         return
-
+    
     logger.info("Starting connection pool prewarming...")
     try:
         # 预热基础连接池
         connections_to_warm = min(ProcessingConstants.DB_POOL_SIZE, 5)
         tasks = []
-
+        
         for _ in range(connections_to_warm):
             task = asyncio.create_task(_warm_connection())
             tasks.append(task)
-
+        
         await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"Connection pool prewarming completed. Warmed {connections_to_warm} connections.")
-
+        
     except Exception as e:
         logger.warning(f"Connection pool prewarming failed: {e}")
 
@@ -298,19 +298,19 @@ async def _warm_connection():
 # 数据库性能监控
 class DatabasePerformanceMonitor:
     """数据库性能监控器"""
-
+    
     def __init__(self):
         self.query_times = []
         self.connection_usage = []
         self.error_count = 0
-
+    
     def record_query_time(self, query_time_ms: float):
         """记录查询时间"""
         self.query_times.append(query_time_ms)
         # 只保留最近1000次查询的记录
         if len(self.query_times) > 1000:
             self.query_times = self.query_times[-1000:]
-
+    
     def record_connection_usage(self, pool_status: dict):
         """记录连接池使用情况"""
         self.connection_usage.append({
@@ -322,16 +322,16 @@ class DatabasePerformanceMonitor:
         # 只保留最近100条记录
         if len(self.connection_usage) > 100:
             self.connection_usage = self.connection_usage[-100:]
-
+    
     def record_error(self):
         """记录错误"""
         self.error_count += 1
-
+    
     def get_performance_stats(self) -> dict:
         """获取性能统计"""
         if not self.query_times:
             return {"error": "No query data available"}
-
+        
         return {
             "query_stats": {
                 "count": len(self.query_times),
