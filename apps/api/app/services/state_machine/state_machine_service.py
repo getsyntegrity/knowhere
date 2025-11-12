@@ -6,13 +6,13 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.core.state_machine.states import (JobStatus, get_state_timeout,
+from shared.core.state_machine.states import (JobStatus, get_state_timeout,
                                            is_terminal_state)
-from app.models.database.job import Job
-from app.models.database.job_state_audit_log import JobStateAuditLog
-from app.services.redis import RedisServiceFactory
-from app.utils.json_utils import make_json_safe
-from app.utils.redis_key_builder import RedisKeyType, redis_key_builder
+from shared.models.database.job import Job
+from shared.models.database.job_state_audit_log import JobStateAuditLog
+from shared.services.redis import RedisServiceFactory
+from shared.utils.json_utils import make_json_safe
+from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession

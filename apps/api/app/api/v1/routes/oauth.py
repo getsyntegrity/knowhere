@@ -3,11 +3,11 @@ OAuth 认证 API
 """
 from uuid import UUID
 
-from app.core.database import get_db
+from shared.core.database import get_db
 from app.core.jwt import auth_backend
 from app.core.users import get_user_manager
-from app.models.database.user import User
-from app.models.schemas.oauth import (AppleLoginRequest, GitHubLoginRequest,
+from shared.models.database.user import User
+from shared.models.schemas.oauth import (AppleLoginRequest, GitHubLoginRequest,
                                       GoogleLoginRequest, OAuthLoginResponse)
 from app.services.auth.apple_auth_service import AppleAuthService
 from app.services.auth.github_auth_service import GitHubAuthService

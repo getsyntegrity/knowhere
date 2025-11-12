@@ -5,7 +5,7 @@ Webhook Celery任务
 import asyncio
 from typing import Any, Dict
 
-from app.core.celery_app import get_celery_app
+from shared.core.celery_app import get_celery_app
 from celery import Task
 from loguru import logger
 

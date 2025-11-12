@@ -3,7 +3,7 @@ API Key 数据访问层
 """
 from typing import List, Optional
 
-from app.models.database.api_key import APIKey
+from shared.models.database.api_key import APIKey
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession

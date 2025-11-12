@@ -2,7 +2,7 @@ import os
 from huggingface_hub import snapshot_download as hf_snapshot_download
 from modelscope import snapshot_download as ms_snapshot_download
 
-from app.core.config import settings
+from shared.core.config import settings
 from app.tools.minerU.mineru.utils.config_reader import get_local_models_dir
 from app.tools.minerU.mineru.utils.enum_class import ModelPath
 

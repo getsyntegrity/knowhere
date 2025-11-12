@@ -5,9 +5,9 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.models.database.job import Job
-from app.services.redis import RedisServiceFactory
-from app.utils.redis_key_builder import RedisKeyType, redis_key_builder
+from shared.models.database.job import Job
+from shared.services.redis import RedisServiceFactory
+from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

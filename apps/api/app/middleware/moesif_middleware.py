@@ -5,7 +5,7 @@ import json
 import time
 from typing import Any, Dict, Optional
 
-from app.core.config import settings
+from shared.core.config import settings
 from fastapi import Request, Response
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware

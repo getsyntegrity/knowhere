@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from app.repositories.webhook_repository import WebhookRepository
-from app.services.storage.file_upload_service import FileUploadService
+from shared.services.storage.file_upload_service import FileUploadService
 from loguru import logger
 
 
@@ -78,7 +78,7 @@ class WebhookHandlerService:
             
             # 第一次失败，创建Celery任务进行异步重试
             logger.info(f"Job完成Webhook第一次尝试失败，创建异步重试任务: job_id={job_id}")
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             retry_task = celery_app.signature(
@@ -158,7 +158,7 @@ class WebhookHandlerService:
             
             # 第一次失败，创建Celery任务进行异步重试
             logger.info(f"Job失败Webhook第一次尝试失败，创建异步重试任务: job_id={job_id}")
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             retry_task = celery_app.signature(

@@ -7,8 +7,8 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime
 
-from app.services.messaging import MessagePublisher
-from app.services.messaging.message_handlers import (
+from shared.services.messaging import MessagePublisher
+from shared.services.messaging.message_handlers import (
     handle_job_status_update,
     handle_job_progress_update,
     handle_job_result,

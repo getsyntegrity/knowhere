@@ -5,18 +5,18 @@ API服务的消息处理器
 import time
 from typing import Any, Dict
 
-from app.core.database import get_db_context
-from app.models.database.knowledge_base import KBPydantic
-from app.models.schemas.messages import (JobFailureMessage,
+from shared.core.database import get_db_context
+from shared.models.database.knowledge_base import KBPydantic
+from shared.models.schemas.messages import (JobFailureMessage,
                                          JobProgressUpdateMessage,
                                          JobResultMessage,
                                          JobStatusUpdateMessage)
 from app.repositories.job_result_repository import JobResultRepository
 from app.repositories.knowledge_base_repository import create_update_kb
-from app.services.messaging.monitoring import message_monitoring
-from app.services.redis import RedisServiceFactory
-from app.services.redis.chunks_redis_service import ChunksRedisService
-from app.services.redis.task_redis_service import TaskRedisService
+from shared.services.messaging.monitoring import message_monitoring
+from shared.services.redis import RedisServiceFactory
+from shared.services.redis.chunks_redis_service import ChunksRedisService
+from shared.services.redis.task_redis_service import TaskRedisService
 from app.services.state_machine import JobStateMachine
 from loguru import logger
 
@@ -379,10 +379,10 @@ async def _handle_failure_async(message: JobFailureMessage):
 async def _handle_job_completion_notifications(db, job_id: str, job_result: Any):
     """处理Job完成的通知（Webhook和邮件）"""
     try:
-        from app.models.schemas.job_metadata import JobMetadataHelper
+        from shared.models.schemas.job_metadata import JobMetadataHelper
         from app.repositories.job_repository import JobRepository
         from app.services.email.job_email_service import JobEmailService
-        from app.services.redis import JobMetadataService, RedisServiceFactory
+        from shared.services.redis import JobMetadataService, RedisServiceFactory
         from app.services.webhook.webhook_handler_service import \
             WebhookHandlerService
         
@@ -420,7 +420,7 @@ async def _handle_job_completion_notifications(db, job_id: str, job_result: Any)
         
         # 发送邮件（如果需要）
         try:
-            from app.models.database.user import User
+            from shared.models.database.user import User
             from sqlalchemy import select
             result = await db.execute(select(User).where(User.id == job.user_id))
             user = result.scalar_one_or_none()
@@ -472,7 +472,7 @@ async def _handle_job_failure_notifications(db, job_id: str, error_message: str,
         
         # 发送邮件（如果需要）
         try:
-            from app.models.database.user import User
+            from shared.models.database.user import User
             from sqlalchemy import select
             result = await db.execute(select(User).where(User.id == job.user_id))
             user = result.scalar_one_or_none()

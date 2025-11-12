@@ -4,7 +4,7 @@ Job邮件服务（API服务专用）
 """
 from typing import Any, Dict, Optional
 
-from app.services.storage.file_upload_service import FileUploadService
+from shared.services.storage.file_upload_service import FileUploadService
 from loguru import logger
 
 
@@ -45,7 +45,7 @@ class JobEmailService:
                 download_url = result_url_info.get("download_url")
             
             # 发送邮件
-            from app.services.email.email_service import EmailService
+            from app.services.email import EmailService
             email_service = EmailService()
             
             result = await email_service.send_job_completion_email(
@@ -88,7 +88,7 @@ class JobEmailService:
         """
         try:
             # 构建邮件内容
-            from app.services.email.email_service import EmailService
+            from app.services.email import EmailService
             email_service = EmailService()
             
             subject = f"任务失败 - {job_type.replace('_', ' ').title()}"

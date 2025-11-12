@@ -7,16 +7,16 @@ import uuid
 from typing import Optional
 from urllib.parse import urlparse
 
-from app.core.constants.system import SystemConstants
+from shared.core.constants.system import SystemConstants
 from app.core.dependencies import get_current_user_dual_auth, get_db
-from app.core.state_machine.states import JobStatus
-from app.models.database.user import User
-from app.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
+from shared.core.state_machine.states import JobStatus
+from shared.models.database.user import User
+from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
                                     JobResponse, JobResult)
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
-from app.services.storage.file_upload_service import FileUploadService
+from shared.services.storage.file_upload_service import FileUploadService
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -223,8 +223,8 @@ async def create_job(
         # 1. 获取用户配置（1天缓存）
         import json
 
-        from app.services.redis import RedisServiceFactory
-        from app.services.redis.user_redis_service import UserRedisService
+        from shared.services.redis import RedisServiceFactory
+        from shared.services.redis.user_redis_service import UserRedisService
         from app.services.user.user_config_service import UserConfigService
         
         redis_service = RedisServiceFactory.get_service()
@@ -239,7 +239,7 @@ async def create_job(
         logger.debug(f"user_config: {user_config}")
         
         # 2. 构建job_metadata（包含user_config）
-        from app.models.schemas.job_metadata import JobMetadataHelper
+        from shared.models.schemas.job_metadata import JobMetadataHelper
         job_metadata = JobMetadataHelper.create_from_request(request, user_config)
 
         if request.source_type == "file":
@@ -279,7 +279,7 @@ async def create_job(
             await job_repo.update_job_s3_key(db, job_id, s3_key)
 
             # 3. 保存job_metadata到Redis（2小时缓存）
-            from app.services.redis.job_metadata_service import \
+            from shared.services.redis.job_metadata_service import \
                 JobMetadataService
             metadata_service = JobMetadataService(redis_service)
             await metadata_service.save_metadata(job_id, job_metadata)
@@ -287,7 +287,7 @@ async def create_job(
             # 4. 保存Job基本信息到Redis（2小时缓存）
             from datetime import datetime
 
-            from app.services.redis import JobInfoRedisService
+            from shared.services.redis import JobInfoRedisService
             job_info_service = JobInfoRedisService(redis_service)
             job_info = {
                 "job_id": job_id,
@@ -362,7 +362,7 @@ async def create_job(
                     )
 
                 # 保存job_metadata到Redis（2小时缓存）
-                from app.services.redis.job_metadata_service import \
+                from shared.services.redis.job_metadata_service import \
                     JobMetadataService
                 metadata_service = JobMetadataService(redis_service)
                 await metadata_service.save_metadata(job_id, job_metadata)
@@ -370,7 +370,7 @@ async def create_job(
                 # 保存Job基本信息到Redis（2小时缓存）
                 from datetime import datetime
 
-                from app.services.redis import JobInfoRedisService
+                from shared.services.redis import JobInfoRedisService
                 job_info_service = JobInfoRedisService(redis_service)
                 job_info = {
                     "job_id": job_id,
@@ -384,7 +384,7 @@ async def create_job(
                 await job_info_service.save_job_info(job_id, job_info)
 
                 # 异步启动URL文件下载和上传任务（任务已迁移到 Worker，通过名称引用）
-                from app.core.celery_app import get_celery_app
+                from shared.core.celery_app import get_celery_app
                 celery_app = get_celery_app()
                 upload_url_file_task = celery_app.signature('app.core.tasks.kb_tasks.upload_url_file_task')
                 upload_url_file_task.apply_async(
@@ -459,8 +459,8 @@ async def list_jobs(
         # 构建响应
         job_responses = []
         upload_service = FileUploadService()
-        from app.models.schemas.job_metadata import JobMetadataHelper
-        from app.services.redis import RedisServiceFactory
+        from shared.models.schemas.job_metadata import JobMetadataHelper
+        from shared.services.redis import RedisServiceFactory
         
         redis_service = RedisServiceFactory.get_service()
         for job in jobs:
@@ -532,8 +532,8 @@ async def get_job_result(
     """
     try:
         # 速率限制检查
-        from app.services.redis import RedisServiceFactory
-        from app.services.redis.rate_limit_service import RateLimitService
+        from shared.services.redis import RedisServiceFactory
+        from shared.services.redis.rate_limit_service import RateLimitService
 
         redis_service = RedisServiceFactory.get_service()
         rate_limit_service = RateLimitService(redis_service)
@@ -566,17 +566,17 @@ async def get_job_result(
         progress = None
         if status_for_api == "running":
             # TODO：从Redis获取详细进度信息，并转换为progress格式
-            # from app.services.redis import RedisServiceFactory
+            # from shared.services.redis import RedisServiceFactory
             # redis_service = RedisServiceFactory.get_service()
-            # from app.utils.redis_key_builder import redis_key_builder
+            # from shared.utils.redis_key_builder import redis_key_builder
 
             # progress_key = redis_key_builder.task_progress(job_id)
             # progress = await redis_service.hgetall(progress_key)
             progress = {"total_pages": 10, "processed_pages": 5}
 
         # 使用统一接口获取job_metadata
-        from app.models.schemas.job_metadata import JobMetadataHelper
-        from app.services.redis import RedisServiceFactory
+        from shared.models.schemas.job_metadata import JobMetadataHelper
+        from shared.services.redis import RedisServiceFactory
         
         redis_service = RedisServiceFactory.get_service()
         job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)

@@ -4,7 +4,7 @@
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
-from app.models.database.usage_log import UsageLog
+from shared.models.database.usage_log import UsageLog
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession

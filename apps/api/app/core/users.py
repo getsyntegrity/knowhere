@@ -3,8 +3,8 @@ FastAPI Users 用户管理器配置
 """
 from typing import Optional
 
-from app.core.config import settings
-from app.core.database import get_db
+from shared.core.config import settings
+from shared.core.database import get_db
 from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, UUIDIDMixin
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -23,7 +23,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
         request: Optional[Request] = None
     ):
         """重写认证方法以支持email登录"""
-        from app.models.database.user import User
+        from shared.models.database.user import User
         from loguru import logger
         from sqlalchemy import or_, select
         
@@ -96,8 +96,8 @@ class UserManager(UUIDIDMixin, BaseUserManager):
     async def _setup_new_user_subscription(self, user):
         """为新用户设置Free订阅和初始Credits"""
         try:
-            from app.core.config import settings
-            from app.core.database import get_db_context
+            from shared.core.config import settings
+            from shared.core.database import get_db_context
             from app.repositories.credits_repository import CreditsRepository
             from app.repositories.subscription_repository import \
                 SubscriptionRepository
@@ -171,7 +171,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
 
 async def get_user_db(session: AsyncSession = Depends(get_db)):
     """获取用户数据库会话"""
-    from app.models.database.user import User
+    from shared.models.database.user import User
     yield SQLAlchemyUserDatabase(session, User)
 
 async def get_user_manager(user_db=Depends(get_user_db)):

@@ -5,14 +5,14 @@ import uuid
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from app.core.config import settings
-from app.services.redis import RedisServiceFactory
+from shared.core.config import settings
+from shared.services.redis import RedisServiceFactory
 # ARQ依赖已移除，使用Celery替代
-from app.services.ai import ai_query_service
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
-from app.utils.gc_utils import gc_collect as _gc
-from app.utils.text_utils import tokenize2stw_remove
+from shared.services.ai import ai_query_service
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
+from shared.utils.gc_utils import gc_collect as _gc
+from shared.utils.text_utils import tokenize2stw_remove
 from loguru import logger
 from pylab import mpl
 from rank_bm25 import BM25Okapi

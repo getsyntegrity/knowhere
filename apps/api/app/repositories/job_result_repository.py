@@ -4,7 +4,7 @@ Job结果仓储
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from app.models.database.job_result import JobChunk, JobResult
+from shared.models.database.job_result import JobChunk, JobResult
 from loguru import logger
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -6,7 +6,7 @@ import random
 import time
 from typing import Any, Dict, Optional
 
-from app.services.redis import RedisServiceFactory
+from shared.services.redis import RedisServiceFactory
 from loguru import logger
 
 

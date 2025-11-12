@@ -3,7 +3,7 @@ FastAPI Users JWT 认证配置
 """
 from datetime import timedelta
 
-from app.core.config import settings
+from shared.core.config import settings
 from fastapi_users.authentication import (AuthenticationBackend,
                                           BearerTransport, JWTStrategy)
 

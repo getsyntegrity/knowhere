@@ -1,10 +1,10 @@
 from typing import List, Optional
 
-from app.core.database import get_db_context
-from app.models.database.knowledge_base import (ContentBase, FileDirectory,
+from shared.core.database import get_db_context
+from shared.models.database.knowledge_base import (ContentBase, FileDirectory,
                                                 KBPydantic, PathBase,
                                                 PathPydantic)
-from app.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryUpdateDto)
+from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryUpdateDto)
 from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession

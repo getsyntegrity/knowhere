@@ -4,8 +4,8 @@ OAuth 服务基类
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
-from app.models.database.oauth_provider import OAuthProvider
-from app.models.database.user import User
+from shared.models.database.oauth_provider import OAuthProvider
+from shared.models.database.user import User
 from app.repositories.oauth_repository import OAuthRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 

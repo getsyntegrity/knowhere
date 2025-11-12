@@ -3,7 +3,7 @@
 """
 from typing import List, Optional
 
-from app.models.database.subscription import Subscription
+from shared.models.database.subscription import Subscription
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession

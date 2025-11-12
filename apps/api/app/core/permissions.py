@@ -11,7 +11,7 @@ from fastapi_users import FastAPIUsers
 
 # 延迟导入以避免循环依赖
 def get_fastapi_users():
-    from app.models.database.user import User
+    from shared.models.database.user import User
     return FastAPIUsers[User, UUID](get_user_manager, [auth_backend])
 
 # 创建 FastAPI Users 实例
@@ -34,11 +34,11 @@ def require_user_type(user_type):
 
 # 常用权限依赖
 def get_require_admin():
-    from app.models.database.user import UserType
+    from shared.models.database.user import UserType
     return require_user_type(UserType.ADMIN)
 
 def get_require_superuser():
-    from app.models.database.user import UserType
+    from shared.models.database.user import UserType
     return require_user_type(UserType.SUPERUSER)
 
 require_admin = get_require_admin()

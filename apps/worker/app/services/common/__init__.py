@@ -3,13 +3,13 @@
 包含知识库工具函数等通用服务
 """
 
-from app.utils.device_utils import check_internet
-from app.utils.file_utils import clean_file, path_handle
-from app.utils.gc_utils import gc_collect as _gc
+from shared.utils.device_utils import check_internet
+from shared.utils.file_utils import clean_file, path_handle
+from shared.utils.gc_utils import gc_collect as _gc
 # 以下函数已移到 shared-python，从 utils 导入
-from app.utils.llm_utils import use_llm_api
-from app.utils.math_utils import min_max_normalize
-from app.utils.text_utils import (merge_non_chinese_until_chinese,
+from shared.utils.llm_utils import use_llm_api
+from shared.utils.math_utils import min_max_normalize
+from shared.utils.text_utils import (merge_non_chinese_until_chinese,
                                   remove_duplicates_orderkept,
                                   tokenize2stw_remove)
 

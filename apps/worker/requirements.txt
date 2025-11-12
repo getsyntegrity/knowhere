@@ -1,6 +1,9 @@
 # Worker服务依赖
 # 共享包的依赖在共享包中定义，这里只包含Worker专用依赖
 
+# 共享包（可编辑安装）
+-e ../../packages/shared-python
+
 # Celery任务队列（共享包已包含，但Worker需要完整配置）
 # celery==5.4.0  # 已在共享包中
 

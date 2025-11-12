@@ -5,8 +5,8 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 
-from app.services.messaging import MessagePublisher
-from app.models.schemas.messages import (
+from shared.services.messaging import MessagePublisher
+from shared.models.schemas.messages import (
     JobStatusUpdateMessage,
     JobProgressUpdateMessage,
     JobResultMessage,

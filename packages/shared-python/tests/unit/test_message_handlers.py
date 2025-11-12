@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime
 
-from app.services.messaging.message_handlers import (
+from shared.services.messaging.message_handlers import (
     handle_job_status_update,
     handle_job_progress_update,
     handle_job_result,
@@ -15,7 +15,7 @@ from app.services.messaging.message_handlers import (
     _handle_result_async,
     _handle_failure_async,
 )
-from app.models.schemas.messages import (
+from shared.models.schemas.messages import (
     JobStatusUpdateMessage,
     JobProgressUpdateMessage,
     JobResultMessage,

@@ -3,7 +3,7 @@
 """
 from typing import Optional
 
-from app.core.celery_router import task_router
+from shared.core.celery_router import task_router
 # 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
 from loguru import logger
 
@@ -40,9 +40,9 @@ class KBOrchestrator:
         try:
             # 如果source_type是url但没有提供file_url，尝试从job_metadata中获取
             if source_type == "url" and not file_url:
-                from app.models.schemas.job_metadata import JobMetadataHelper
+                from shared.models.schemas.job_metadata import JobMetadataHelper
                 from app.repositories.job_repository import JobRepository
-                from app.services.redis import RedisServiceFactory
+                from shared.services.redis import RedisServiceFactory
                 
                 job_repo = JobRepository()
                 redis_service = RedisServiceFactory.get_service()
@@ -109,7 +109,7 @@ class KBOrchestrator:
             dict: 工作流状态信息
         """
         try:
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             result = celery_app.AsyncResult(workflow_id)
@@ -140,7 +140,7 @@ class KBOrchestrator:
             bool: 是否成功取消
         """
         try:
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             result = celery_app.AsyncResult(workflow_id)

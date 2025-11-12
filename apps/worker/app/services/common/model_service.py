@@ -26,7 +26,7 @@ class LocalModelSetting:
         """初始化本地大语言模型"""
         if user_info['USER_SETTINGS']['USE_LOCAL_LLM']:
             try:
-                from app.services.ai.Local_API.call_locals import (
+                from shared.services.ai.Local_API.call_locals import (
                     call_local_llm, call_local_stream)
                 self.local_llm_path = os.path.join(
                     user_info['USER_SETTINGS']['LOCAL_MODELS_DIR'], 
@@ -153,6 +153,6 @@ class ModelService:
         Returns:
             设备信息字典
         """
-        from app.utils.device_utils import \
+        from shared.utils.device_utils import \
             check_device_capabilities as _check_device_capabilities
         return _check_device_capabilities()

@@ -2,13 +2,13 @@ import os
 import re
 import subprocess
 
-from app.core.config import settings
+from shared.core.config import settings
 from app.services.common.kb_utils import find_images
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
-from app.utils.CommonHelper import load_file_bytes
-from app.utils.file_utils import path_handle
-from app.utils.FileDownUpUtils import s3_upload_file
+from shared.utils.CommonHelper import load_file_bytes
+from shared.utils.file_utils import path_handle
+from shared.utils.FileDownUpUtils import s3_upload_file
 from fastapi import UploadFile
 from markitdown import MarkItDown
 from pptx import Presentation
@@ -83,7 +83,7 @@ def pptx2md_lines(pptx_path, kb_dir):
 
 def pptx_to_pdf(pptx_path, outdir="."):
     soffice_path = settings.LIBER_OFFICE or "/usr/bin/libreoffice"
-    from app.core.constants import ProcessingConstants
+    from shared.core.constants import ProcessingConstants
     filter_opts = f"Quality={ProcessingConstants.IMG_QUALITY};ReduceImageResolution=false;UseTaggedPDF=true,ExportNotes=true"
     subprocess.run([
         soffice_path, "--headless",

@@ -4,8 +4,8 @@
 import asyncio
 from typing import Any, Dict
 
-from app.core.celery_app import get_celery_app
-from app.core.database import get_db_context
+from shared.core.celery_app import get_celery_app
+from shared.core.database import get_db_context
 from app.services.state_machine import JobStateMachine
 from celery import Task
 from loguru import logger

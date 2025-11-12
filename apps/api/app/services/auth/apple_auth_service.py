@@ -5,8 +5,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 import jwt
-from app.core.config import settings
-from app.models.database.user import User
+from shared.core.config import settings
+from shared.models.database.user import User
 from app.services.auth.oauth_service import OAuthService
 from sqlalchemy.ext.asyncio import AsyncSession
 

@@ -5,9 +5,9 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from app.models.database.job import Job
-from app.models.database.job_state_audit_log import JobStateAuditLog
-from app.services.redis import RedisServiceFactory
+from shared.models.database.job import Job
+from shared.models.database.job_state_audit_log import JobStateAuditLog
+from shared.services.redis import RedisServiceFactory
 from loguru import logger
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession

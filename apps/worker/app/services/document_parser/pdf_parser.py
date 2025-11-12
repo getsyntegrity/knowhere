@@ -1,9 +1,9 @@
 import os
 
 import requests
-from app.core.config import settings
+from shared.core.config import settings
 from app.services.document_parser.md_parser import parse_md
-from app.utils.FileDownUpUtils import s3_download_extract_zip
+from shared.utils.FileDownUpUtils import s3_download_extract_zip
 from loguru import logger
 
 

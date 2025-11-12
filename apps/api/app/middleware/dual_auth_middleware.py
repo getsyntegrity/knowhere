@@ -4,9 +4,9 @@
 """
 from typing import Optional
 
-from app.core.database import get_db
+from shared.core.database import get_db
 from app.core.jwt import jwt_strategy
-from app.models.database.user import User
+from shared.models.database.user import User
 from app.services.auth.api_key_service import APIKeyService
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer

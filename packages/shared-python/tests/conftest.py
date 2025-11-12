@@ -42,7 +42,7 @@ mock_database()
 # Mock get_db_context
 original_get_db_context = None
 try:
-    from app.core.database import get_db_context
+    from shared.core.database import get_db_context
     original_get_db_context = get_db_context
 except ImportError:
     pass

@@ -4,7 +4,7 @@ Stripe 支付服务
 from typing import Any, Dict
 
 import stripe
-from app.core.config import settings
+from shared.core.config import settings
 from app.repositories.credits_repository import CreditsRepository
 from app.repositories.subscription_repository import SubscriptionRepository
 
@@ -100,7 +100,7 @@ class StripeService:
         # 创建订阅记录
         from datetime import datetime
 
-        from app.models.database.subscription import Subscription
+        from shared.models.database.subscription import Subscription
         
         subscription = Subscription(
             user_id=user_id,

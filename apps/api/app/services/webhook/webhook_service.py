@@ -11,8 +11,8 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import aiohttp
-from app.core.config import settings
-from app.core.database import get_db_context
+from shared.core.config import settings
+from shared.core.database import get_db_context
 from app.repositories.webhook_repository import WebhookRepository
 from loguru import logger
 

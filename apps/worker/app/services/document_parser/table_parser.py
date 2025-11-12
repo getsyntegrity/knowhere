@@ -9,19 +9,19 @@ from typing import List, Union
 
 import numpy as np
 import pandas as pd
-from app.core.config import settings
+from shared.core.config import settings
 # ARQ依赖已移除，使用Celery替代
-from app.services.ai import ai_query_service
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
+from shared.services.ai import ai_query_service
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (flatten_dic2paths, gen_str_codes,
                                           get_str_time, process_dup_paths_df,
                                           remove_duplicates_orderkept,
-                                          remove_spaces,
-                                          tokenize2stw_remove)
+                                          remove_spaces)
+from shared.utils.text_utils import tokenize2stw_remove
 # TaskRedis依赖已移除，使用Redis直接追踪
 from app.services.document_parser.txt_parser import extract_summary_keywords
-from app.utils.CommonHelper import load_file_bytes
+from shared.utils.CommonHelper import load_file_bytes
 from bs4 import BeautifulSoup
 from docx.table import Table as DocxTable
 from pandasql import sqldf
@@ -190,7 +190,7 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
             ctx_task_id = gen_str_codes((str(uuid.uuid4()) + tb_small_str))
             
             # 使用Redis直接追踪任务状态，无需数据库持久化
-            from app.services.redis import RedisServiceFactory
+            from shared.services.redis import RedisServiceFactory
             redis_service = RedisServiceFactory.get_service()
             await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
             
@@ -392,7 +392,7 @@ async def table_scope_analyze(query, tb_path, paras, num_row=7):
     ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
     
     # 使用Redis直接追踪任务状态，无需数据库持久化
-    from app.services.redis import RedisServiceFactory
+    from shared.services.redis import RedisServiceFactory
     redis_service = RedisServiceFactory.get_service()
     await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
     

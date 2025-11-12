@@ -4,7 +4,7 @@
 import json
 from typing import Any, Dict, List, Optional
 
-from app.services.redis import RedisServiceFactory
+from shared.services.redis import RedisServiceFactory
 from app.services.state_machine.redis_keyspace_notifications import \
     RedisKeyspaceNotificationHandler
 from loguru import logger

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-from app.core.config import settings
+from shared.core.config import settings
 
 # 从 .env 文件加载环境变量
 load_dotenv()

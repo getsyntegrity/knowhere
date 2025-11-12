@@ -3,13 +3,13 @@ import re
 import uuid
 
 import pandas as pd
-from app.core.config import settings
+from shared.core.config import settings
 # ARQ依赖已移除，使用Celery替代
-from app.services.ai import ai_query_service
+from shared.services.ai import ai_query_service
 # TaskRedis依赖已移除，使用Redis直接追踪
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
-from app.utils.CommonHelper import load_file_bytes
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
+from shared.utils.CommonHelper import load_file_bytes
 from bs4 import BeautifulSoup
 from loguru import logger
 
@@ -82,7 +82,7 @@ async def parse_texts(file_path=None, fragment_content=None, baseurl=""): #base_
     return txt_lines
 
 def divide_long_contents(texts, max_threshold=None, min_threshold=None):
-    from app.core.constants import ProcessingConstants
+    from shared.core.constants import ProcessingConstants
     if max_threshold is None:
         max_threshold = ProcessingConstants.MAX_THRESHOLD
     if min_threshold is None:
@@ -111,7 +111,7 @@ def divide_long_contents(texts, max_threshold=None, min_threshold=None):
     return sublists, len(sublists)
 
 async def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_num=None):
-    from app.core.constants import ProcessingConstants
+    from shared.core.constants import ProcessingConstants
     if summary_len is None:
         summary_len = ProcessingConstants.SUMMARY_LEN
     if keywords_num is None:
@@ -130,7 +130,7 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
         ctx_task_id = str(uuid.uuid4())
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
-        from app.services.redis import RedisServiceFactory
+        from shared.services.redis import RedisServiceFactory
         redis_service = RedisServiceFactory.get_service()
         await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
 
@@ -153,7 +153,7 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
         return ""
 
 async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key='content', summary_len=None):
-    from app.core.constants import ProcessingConstants
+    from shared.core.constants import ProcessingConstants
     if summary_len is None:
         summary_len = ProcessingConstants.POSTPROCESS_SUMMARY_LEN
     '''

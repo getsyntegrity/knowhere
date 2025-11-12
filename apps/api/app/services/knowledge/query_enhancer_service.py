@@ -5,10 +5,10 @@ from math import exp, log2
 
 import jieba
 import numpy as np
-from app.services.storage.file_encryptor_service import encryptor
-from app.utils.llm_utils import use_llm_api
-from app.utils.math_utils import min_max_normalize
-from app.utils.text_utils import tokenize2stw_remove
+from shared.services.storage.file_encryptor_service import encryptor
+from shared.utils.llm_utils import use_llm_api
+from shared.utils.math_utils import min_max_normalize
+from shared.utils.text_utils import tokenize2stw_remove
 from joblib import Parallel, delayed
 
 

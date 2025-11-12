@@ -2,7 +2,7 @@
 API Key 认证中间件
 """
 
-from app.core.database import get_db
+from shared.core.database import get_db
 from app.services.auth.api_key_service import APIKeyService
 from fastapi import HTTPException, Request, status
 

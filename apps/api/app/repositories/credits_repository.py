@@ -4,8 +4,8 @@ Credits 数据访问层
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
-from app.models.database.credits_transaction import CreditsTransaction
-from app.models.database.user import User
+from shared.models.database.credits_transaction import CreditsTransaction
+from shared.models.database.user import User
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

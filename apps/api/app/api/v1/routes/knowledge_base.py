@@ -3,8 +3,8 @@
 """
 
 from app.core.dependencies import get_current_user, get_redis_service
-from app.models.database.user import User
-from app.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDto,
+from shared.models.database.user import User
+from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDto,
                                       FileDirectoryListDto,
                                       FileDirectoryUpdateDto)
 from app.repositories.knowledge_base_repository import (create_directory,
@@ -25,7 +25,7 @@ async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: User 
     """
     try:
         request_data.user_id = current_user.id
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await create_directory(db, request_data):
                 return {"message": "创建目录成功"}
@@ -42,7 +42,7 @@ async def delete_sql_path(request_data: FileDirectoryDto, current_user: User = D
     """
     try:
         request_data.user_id = current_user.id
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await delete_directory(db, request_data.id):
                 return {"message": "删除目录成功"}
@@ -59,7 +59,7 @@ async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: Us
     """
     try:
         request_data.user_id = current_user.id
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await update_directory(db, request_data):
                 return {"message": "更新目录成功"}
@@ -75,8 +75,8 @@ async def get_sql_path(current_user: User = Depends(get_current_user)):
     获取用户知识库目录树，如果用户没有目录则自动创建默认目录
     """
     try:
-        from app.core.database import get_db_context
-        from app.models.schemas.files import FileDirectoryCreateDto
+        from shared.core.database import get_db_context
+        from shared.models.schemas.files import FileDirectoryCreateDto
         from app.repositories.knowledge_base_repository import (
             create_directory, get_directories, get_directories_by_user)
         
@@ -112,7 +112,7 @@ async def list_directory(request_data: FileDirectoryListDto, current_user: User 
     模拟知识库知识片段增加的时候，增加目录树
     """
     try:
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         from app.repositories.knowledge_base_repository import \
             get_directory_contents
         async with get_db_context() as db:
@@ -130,8 +130,8 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
     添加知识库路径
     """
     try:
-        from app.core.database import get_db_context
-        from app.models.schemas.files import FileDirectoryCreateDto
+        from shared.core.database import get_db_context
+        from shared.models.schemas.files import FileDirectoryCreateDto
         from app.repositories.knowledge_base_repository import create_directory
 
         # 构建目录创建请求
@@ -178,7 +178,7 @@ async def delete_knowledge_content(
     根据ID类型自动判断是删除内容还是目录
     """
     try:
-        from app.core.database import get_db_context
+        from shared.core.database import get_db_context
         from app.repositories.knowledge_base_repository import (
             delete_directory, delete_kb_content)
         from sqlalchemy import text

@@ -2,10 +2,10 @@
 API Key 管理 API
 """
 
-from app.core.database import get_db
+from shared.core.database import get_db
 from app.core.permissions import current_user
-from app.models.database.user import User
-from app.models.schemas.api_key import (APIKeyListResponse, APIKeyResponse,
+from shared.models.database.user import User
+from shared.models.schemas.api_key import (APIKeyListResponse, APIKeyResponse,
                                         CreateAPIKeyRequest,
                                         CreateAPIKeyResponse,
                                         RegenerateAPIKeyRequest,

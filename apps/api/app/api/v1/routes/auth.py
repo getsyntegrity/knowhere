@@ -7,8 +7,8 @@ from app.core.dependencies import get_current_user_dual_auth
 from app.core.jwt import auth_backend
 from app.core.permissions import require_admin
 from app.core.users import get_user_manager
-from app.models.database.user import User
-from app.models.schemas.user import UserCreate, UserRead, UserUpdate
+from shared.models.database.user import User
+from shared.models.schemas.user import UserCreate, UserRead, UserUpdate
 from fastapi import APIRouter, Depends, Request
 from fastapi_users import FastAPIUsers
 

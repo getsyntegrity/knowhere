@@ -4,8 +4,8 @@ Webhook配置管理API路由
 from typing import Optional
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.database.user import User
-from app.models.schemas.webhook import (WebhookConfigCreate,
+from shared.models.database.user import User
+from shared.models.schemas.webhook import (WebhookConfigCreate,
                                         WebhookConfigResponse, WebhookLogList,
                                         WebhookLogResponse,
                                         WebhookStatsResponse,

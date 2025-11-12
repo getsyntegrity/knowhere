@@ -34,7 +34,7 @@ class MagicModel:
             layout_dets.remove(need_remove)
 
     def __fix_by_remove_low_confidence(self):
-        from app.core.config import settings
+        from shared.core.config import settings
         need_remove_list = []
         layout_dets = self.__page_model_info['layout_dets']
         for layout_det in layout_dets:
@@ -46,7 +46,7 @@ class MagicModel:
             layout_dets.remove(need_remove)
 
     def __fix_by_remove_high_iou_and_low_confidence(self):
-        from app.core.config import settings
+        from shared.core.config import settings
         need_remove_list = []
         layout_dets = self.__page_model_info['layout_dets']
         for layout_det1 in layout_dets:

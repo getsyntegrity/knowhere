@@ -3,7 +3,7 @@
 """
 from typing import Optional
 
-from app.core.celery_router import task_router
+from shared.core.celery_router import task_router
 from app.core.tasks.kb_tasks import \
     parse_and_vectorize_task  # store_to_db_task 已移除，逻辑已合并到 parse_and_vectorize_task 中; send_webhook_task 已移除，Webhook发送已迁移到API服务; 解析、向量化、生成ZIP并上传S3任务（已合并）
 from loguru import logger
@@ -41,9 +41,9 @@ class KBOrchestrator:
         try:
             # 如果source_type是url但没有提供file_url，尝试从job_metadata中获取
             if source_type == "url" and not file_url:
-                from app.models.schemas.job_metadata import JobMetadataHelper
+                from shared.models.schemas.job_metadata import JobMetadataHelper
                 from app.repositories.job_repository import JobRepository
-                from app.services.redis import RedisServiceFactory
+                from shared.services.redis import RedisServiceFactory
                 
                 job_repo = JobRepository()
                 redis_service = RedisServiceFactory.get_service()
@@ -106,7 +106,7 @@ class KBOrchestrator:
             dict: 工作流状态信息
         """
         try:
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             result = celery_app.AsyncResult(workflow_id)
@@ -137,7 +137,7 @@ class KBOrchestrator:
             bool: 是否成功取消
         """
         try:
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             result = celery_app.AsyncResult(workflow_id)

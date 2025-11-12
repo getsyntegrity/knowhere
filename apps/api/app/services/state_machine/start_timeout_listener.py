@@ -6,7 +6,7 @@ import signal
 import sys
 from typing import Any, Dict
 
-from app.core.database import get_db_context
+from shared.core.database import get_db_context
 from app.services.state_machine.manager import JobStateMachine
 from loguru import logger
 

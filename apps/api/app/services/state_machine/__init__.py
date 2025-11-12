@@ -3,7 +3,7 @@
 提供Job状态机管理功能
 """
 # 从 shared 包导入状态定义
-from app.core.state_machine.states import JobStatus
+from shared.core.state_machine.states import JobStatus
 
 from .concurrency_control_service import ConcurrencyControlService
 from .manager import JobStateMachine

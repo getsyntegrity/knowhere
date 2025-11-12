@@ -16,12 +16,12 @@ except ImportError:
     class MarkItDown:
         def convert(self, content):
             return content
-from app.core.config import settings
+from shared.core.config import settings
 # ARQ依赖已移除，使用Celery替代
-from app.services.ai import ai_query_service
+from shared.services.ai import ai_query_service
 # TaskRedis依赖已移除，使用Redis直接追踪
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
 from loguru import logger
 
 
@@ -418,7 +418,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
         ctx_task_id = str(uuid.uuid4())
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
-        from app.services.redis import RedisServiceFactory
+        from shared.services.redis import RedisServiceFactory
         redis_service = RedisServiceFactory.get_service()
         await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
         

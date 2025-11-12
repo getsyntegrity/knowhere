@@ -3,7 +3,7 @@ import json
 import os
 import torch
 from loguru import logger
-from app.core.config import settings
+from shared.core.config import settings
 
 # 定义配置文件名常量
 CONFIG_FILE_NAME = settings.MINERU_CONFIG #os.getenv('MINERU_TOOLS_CONFIG_JSON', 'mineru.json')

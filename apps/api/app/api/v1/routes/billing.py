@@ -2,10 +2,10 @@
 计费相关 API
 """
 
-from app.core.database import get_db
+from shared.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.models.database.user import User
-from app.models.schemas.billing import (BuyCreditsRequest,
+from shared.models.database.user import User
+from shared.models.schemas.billing import (BuyCreditsRequest,
                                         CheckoutSessionResponse,
                                         CreditsBalanceResponse,
                                         PaymentIntentResponse,
@@ -256,7 +256,7 @@ async def stripe_webhook(
 async def _send_purchase_confirmation_email(user_id: str, plan_type: str, amount: float, db: AsyncSession):
     """发送购买确认邮件"""
     try:
-        from app.models.database.user import User
+        from shared.models.database.user import User
         from app.services.email import EmailService
         from sqlalchemy import select
 

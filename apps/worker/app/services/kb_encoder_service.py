@@ -8,13 +8,13 @@ import uuid
 
 import numpy as np
 import pandas as pd
-from app.core.config import settings
-from app.core.context import get_current_user
-from app.models.database.user import User
-from app.services.redis import RedisServiceFactory
-from app.services.ai import ai_query_service
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
+from shared.core.config import settings
+from shared.core.context import get_current_user
+from shared.models.database.user import User
+from shared.services.redis import RedisServiceFactory
+from shared.services.ai import ai_query_service
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
 from app.services.common.global_manager_service import (global_df_manager,
                                                         global_dict_manager,
@@ -25,7 +25,7 @@ from app.services.common.kb_utils import (build_tree_from_paths,
 from app.services.document_parser.txt_parser import extract_summary_keywords
 from app.services.knowledge.knowledge_base_service import build_sim_matrix
 from app.services.knowledge.rag_service import vectorize_texts
-from app.services.storage.file_encryptor_service import encryptor
+from shared.services.storage.file_encryptor_service import encryptor
 from loguru import logger
 from openai import OpenAI
 from tqdm import tqdm
@@ -335,7 +335,7 @@ def remove_from_kb(user_info, remove_node, all_vec, all_path_vec, all_contents_d
 async def build_forest(source_node=None, k=5, cut_len=2000, threshold=0.8):
     user_context: User | None = get_current_user()
     redis_service = RedisServiceFactory.get_service()
-    from app.services.redis.user_redis_service import UserRedisService
+    from shared.services.redis.user_redis_service import UserRedisService
     user_redis_service = UserRedisService(redis_service)
     user = await user_redis_service.get_user_config(str(user_context.id))
     # 载入/定义关系dic
@@ -411,7 +411,7 @@ async def build_forest(source_node=None, k=5, cut_len=2000, threshold=0.8):
 async def build_tree(root_node, smart_summary, cut_len=2000, summary_term="包括以下部分"):
     user_context: User | None = get_current_user()
     redis_service = RedisServiceFactory.get_service()
-    from app.services.redis.user_redis_service import UserRedisService
+    from shared.services.redis.user_redis_service import UserRedisService
     user_redis_service = UserRedisService(redis_service)
     user = await user_redis_service.get_user_config(str(user_context.id))
     all_contents_df = global_df_manager.get_dataframe(user['user'] + '_all_contents_df')

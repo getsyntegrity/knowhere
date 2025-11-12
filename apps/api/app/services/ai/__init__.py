@@ -1,10 +1,10 @@
 """
-AI服务模块
+AI服务模块（API专用）
+所有AI服务现在都在共享包中，这里仅用于向后兼容
 """
-from .ai_query_service import (AIQueryService, ai_query_service,
-                               ai_query_service_arq)
-from .prompt_service import build_prompt
-from .response_process_service import eval_response, process_llm_history
+from shared.services.ai import (AIQueryService, ai_query_service,
+                                ai_query_service_arq, build_prompt,
+                                eval_response, process_llm_history)
 
 __all__ = [
     'build_prompt',

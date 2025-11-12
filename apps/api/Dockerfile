@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制共享包代码（保持目录结构）
-COPY packages/shared-python/app /app/shared/app
+# 复制共享包代码（用于可编辑安装）
+COPY packages/shared-python /app/packages/shared-python
 
 # 复制API服务依赖
 COPY apps/api/requirements.txt .
@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制API服务代码
 COPY apps/api/ .
 
-# 设置PYTHONPATH：共享包路径 + 服务路径
-ENV PYTHONPATH=/app:/app/shared
+# 设置PYTHONPATH
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # 创建非root用户

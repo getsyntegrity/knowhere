@@ -3,8 +3,8 @@ Credits 管理服务
 """
 from typing import Any, Dict, List, Optional
 
-from app.core.config import settings
-from app.core.logging import logger
+from shared.core.config import settings
+from shared.core.logging import logger
 from app.repositories.credits_repository import CreditsRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +42,7 @@ class CreditsService:
         
         if success:
             # 3. 记录交易
-            from app.models.database.credits_transaction import \
+            from shared.models.database.credits_transaction import \
                 CreditsTransaction
             transaction = CreditsTransaction(
                 user_id=user_id,
@@ -74,7 +74,7 @@ class CreditsService:
         
         if success:
             # 2. 记录交易
-            from app.models.database.credits_transaction import \
+            from shared.models.database.credits_transaction import \
                 CreditsTransaction
             transaction = CreditsTransaction(
                 user_id=user_id,

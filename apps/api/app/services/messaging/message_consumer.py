@@ -10,13 +10,13 @@ import aio_pika
 from aio_pika import IncomingMessage
 from loguru import logger
 
-from app.services.messaging.async_config import (
+from shared.services.messaging.async_config import (
     get_exchange_config,
     get_queue_config,
     get_queue_name,
     get_routing_key,
 )
-from app.services.messaging.async_connection import get_connection_manager
+from shared.services.messaging.async_connection import get_connection_manager
 from app.services.messaging.message_handlers import (
     handle_job_failure,
     handle_job_progress_update,

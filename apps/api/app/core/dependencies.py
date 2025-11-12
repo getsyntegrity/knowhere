@@ -1,11 +1,11 @@
 from typing import Any, Dict, Optional, Tuple
 
-from app.core.database import get_db
+from shared.core.database import get_db
 from app.core.jwt import auth_backend
 from app.core.permissions import current_user
 from app.core.users import UserManager
-from app.models.database.user import User
-from app.models.schemas.user import UserResponse
+from shared.models.database.user import User
+from shared.models.schemas.user import UserResponse
 from app.services.auth.api_key_service import APIKeyService
 from fastapi import Depends, HTTPException, Request, status
 from loguru import logger
@@ -51,7 +51,7 @@ async def get_redis_service():
     依赖函数：获取Redis服务实例
     """
     # Redis服务已在共享包中
-    from app.services.redis import RedisServiceFactory
+    from shared.services.redis import RedisServiceFactory
     return RedisServiceFactory.get_service()
 
 async def get_redis_service_factory():
@@ -59,7 +59,7 @@ async def get_redis_service_factory():
     依赖函数：获取Redis服务工厂实例
     """
     # Redis服务已在共享包中
-    from app.services.redis import RedisServiceFactory
+    from shared.services.redis import RedisServiceFactory
     return RedisServiceFactory
 
 # ============================================================================

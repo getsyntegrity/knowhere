@@ -7,7 +7,7 @@ from loguru import logger
 from mineru.utils.config_reader import get_device
 from mineru.utils.model_utils import get_vram
 
-from app.core.config import settings
+from shared.core.config import settings
 from ..version import __version__
 from .common import do_parse, read_fn, pdf_suffixes, image_suffixes
 

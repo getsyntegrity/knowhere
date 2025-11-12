@@ -7,14 +7,14 @@ from typing import Dict, Any, Optional
 from celery import Task
 from loguru import logger
 
-from app.core.celery_app import get_celery_app
-from app.core.state_machine.states import JobStatus  # 仅用于状态常量，不直接操作状态机                                                                        
+from shared.core.celery_app import get_celery_app
+from shared.core.state_machine.states import JobStatus  # 仅用于状态常量，不直接操作状态机                                                                        
 # Worker 不再直接访问数据库，从 Redis 获取信息
-from app.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService                                                                     
-from app.services.storage.file_upload_service import FileUploadService
-from app.core.config import settings
-from app.services.messaging import get_message_publisher
-from app.services.messaging.message_publisher import run_async_publish
+from shared.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService                                                                     
+from shared.services.storage.file_upload_service import FileUploadService
+from shared.core.config import settings
+from shared.services.messaging import get_message_publisher
+from shared.services.messaging.message_publisher import run_async_publish
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -135,7 +135,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         file_extension = os.path.splitext(url_path)[1].lower()
         
         # 获取支持的文件扩展名
-        from app.core.constants.system import SystemConstants
+        from shared.core.constants.system import SystemConstants
         all_supported_extensions = []
         for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
             all_supported_extensions.extend(category)
@@ -307,7 +307,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         
         # 验证S3文件存在性
         logger.info(f"开始验证S3文件存在性: job_id={job_id}, s3_key={s3_key}")
-        from app.services.storage.file_upload_service import FileUploadService
+        from shared.services.storage.file_upload_service import FileUploadService
         upload_service = FileUploadService()
         logger.info(f"FileUploadService创建成功，开始验证文件: job_id={job_id}")
         file_info = await upload_service.verify_s3_file_exists(s3_key)
@@ -320,7 +320,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         
         # 从job_metadata获取user_config（创建时已初始化）
         logger.info(f"开始获取job_metadata: job_id={job_id}")
-        from app.models.schemas.job_metadata import JobMetadataHelper
+        from shared.models.schemas.job_metadata import JobMetadataHelper
         
         metadata_service = JobMetadataService(redis_service)
         logger.info(f"metadata_service创建成功，开始获取metadata: job_id={job_id}")
@@ -337,6 +337,64 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         if not user_config:
             logger.error(f"Job metadata中缺少用户配置: job_id={job_id}")
             raise ValueError("Job metadata中缺少用户配置")
+        
+        # 强制使用配置的绝对路径
+        parent_path = settings.USERS_DATA_PATH
+        if not parent_path:
+            raise ValueError("USERS_DATA_PATH 未配置，必须设置用户数据目录的绝对路径")
+        
+        if not os.path.isabs(parent_path):
+            raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {parent_path}")
+        
+        # 验证路径是否存在或可创建
+        try:
+            os.makedirs(parent_path, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            raise ValueError(f"USERS_DATA_PATH 目录无法创建或访问: {parent_path}, 错误: {e}")
+        
+        # 更新 user_config 中的 parent 路径
+        if 'parent' in user_config:
+            old_parent = user_config.get('parent', '')
+            user_config['parent'] = parent_path
+            if old_parent != parent_path:
+                logger.info(f"路径修复: job_id={job_id}, 旧路径={old_parent}, 新路径={parent_path}")
+        
+        # 重新计算 KB_PATH 和 KB_VECS_PATH
+        if 'KB' in user_config:
+            user_config['KB_PATH'] = os.path.join(parent_path, user_config['KB'])
+        if 'kb_vec_term' in user_config and 'user' in user_config:
+            user_config['KB_VECS_PATH'] = os.path.join(
+                parent_path,
+                f"{user_config['kb_vec_term']}_{user_config['user']}"
+            )
+        
+        # 更新 USER_SETTINGS 中的路径（只更新在 parse_and_vectorize_task 流程中实际使用的路径）
+        if 'USER_SETTINGS' in user_config:
+            user_settings = user_config['USER_SETTINGS']
+            kb_vecs_path = user_config.get('KB_VECS_PATH', parent_path)
+            
+            # 更新在 encode_kb 和 load_existing_kb 中使用的路径
+            if 'KB_VEC_PATH' in user_settings:
+                user_settings['KB_VEC_PATH'] = os.path.join(
+                    kb_vecs_path,
+                    'all_vec.npy'
+                )
+            if 'KB_PATH_VEC_PATH' in user_settings:
+                user_settings['KB_PATH_VEC_PATH'] = os.path.join(
+                    kb_vecs_path,
+                    'all_path_vec.npy'
+                )
+            if 'KB_CONTENT_PATH' in user_settings:
+                user_settings['KB_CONTENT_PATH'] = os.path.join(
+                    kb_vecs_path,
+                    'all_contents.csv'
+                )
+            # 修复：更新 RESOURCE_PATH（在 gen_img_tb_records 中使用）
+            if 'RESOURCE_PATH' in user_settings:
+                user_settings['RESOURCE_PATH'] = os.path.join(
+                    kb_vecs_path,
+                    'resources.json'
+                )
         
         # 发布状态更新消息：开始处理
         logger.info(f"开始发布状态更新消息: job_id={job_id}, status={JobStatus.RUNNING.value}")
@@ -362,7 +420,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         logger.info(f"开始下载文件: S3键={s3_key}, bucket={settings.S3_BUCKET_NAME}")
         
         # 下载文件到本地临时目录
-        from app.services.storage.file_upload_service import FileUploadService
+        from shared.services.storage.file_upload_service import FileUploadService
         upload_service = FileUploadService()
         logger.info(f"FileUploadService创建成功，开始生成下载URL: s3_key={s3_key}")
         file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)                                                         
@@ -426,7 +484,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         logger.info(f"向量化完成: job_id={job_id}, user_info keys={list(user_info.keys()) if user_info else None}")
         
         # 保存DataFrame为chunks到Redis
-        from app.services.redis.chunks_redis_service import ChunksRedisService
+        from shared.services.redis.chunks_redis_service import ChunksRedisService
         
         chunks_redis_service = ChunksRedisService(redis_service)
         
@@ -468,7 +526,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         # 准备知识库记录数据（转换为字典格式，用于消息传递）
         kb_records = []
         if all_contents_df is not None and len(all_contents_df) > 0:
-            from app.models.database.knowledge_base import KBPydantic
+            from shared.models.database.knowledge_base import KBPydantic
             
             # 转换DataFrame为字典（只处理新增的内容）
             contents_count = len(all_contents_df)
@@ -502,7 +560,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         )
         
         # 生成 ZIP 包（业务逻辑处理）
-        from app.services.storage.zip_result_service import ZipResultService
+        from shared.services.storage.zip_result_service import ZipResultService
         zip_service = ZipResultService()
         zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(                                                                       
             job_id=job_id,
@@ -512,6 +570,9 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             data_id=data_id,
             job_metadata=job_metadata,
         )
+        
+        # 提取 checksum 的字符串值（ZipResultService 返回的是字典格式）
+        checksum_value = checksum.get("value") if isinstance(checksum, dict) else checksum
         
         # 发布进度更新消息：上传ZIP到S3
         await message_publisher.publish_progress_update(
@@ -538,7 +599,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             job_id=job_id,
             chunks_job_id=job_id,  # chunks数据通过job_id从Redis读取
             result_s3_key=result_s3_key,
-            checksum=checksum,
+            checksum=checksum_value,  # 使用提取的字符串值
             zip_size=zip_size,
             stored_count=stored_count,
             kb_records=kb_records,  # 知识库记录数据

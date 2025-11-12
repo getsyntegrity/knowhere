@@ -7,9 +7,9 @@ import time
 import asyncio
 from kombu import Connection, Exchange, Queue, Consumer
 
-from app.services.messaging import get_message_publisher
-from app.core.config import app_config
-from app.core.config.messaging import messaging_config
+from shared.services.messaging import get_message_publisher
+from shared.core.config import app_config
+from shared.core.config.messaging import messaging_config
 
 
 @pytest.fixture(scope="module")

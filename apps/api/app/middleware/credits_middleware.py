@@ -4,8 +4,8 @@ Credits 扣费中间件
 import time
 from typing import Callable
 
-from app.core.config import settings
-from app.core.database import get_db
+from shared.core.config import settings
+from shared.core.database import get_db
 from app.services.billing.credits_service import CreditsService
 from fastapi import HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,7 +103,7 @@ class CreditsMiddleware:
         try:
             from datetime import datetime
 
-            from app.models.database.usage_log import UsageLog
+            from shared.models.database.usage_log import UsageLog
             
             usage_log = UsageLog(
                 user_id=str(user.id),

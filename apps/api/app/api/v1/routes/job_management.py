@@ -5,7 +5,7 @@
 from typing import Optional
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.database.user import User
+from shared.models.database.user import User
 from app.repositories.job_repository import JobRepository
 from app.services.state_machine import JobStateMachine
 from fastapi import APIRouter, Depends, HTTPException, Query, status

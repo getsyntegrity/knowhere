@@ -1,130 +1,34 @@
 import asyncio
-import sys
-import os
 from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-# 设置PYTHONPATH以包含共享包路径（必须在所有导入之前）
-project_root = Path(__file__).parent.resolve()
-shared_python_path = project_root.parent.parent / "packages" / "shared-python"
-shared_python_path = shared_python_path.resolve()
+# 从共享包导入
+from shared.core.config import redis_pool_manager, settings
+from shared.core.database import engine, Base, safe_dispose_engine
+from shared.core.logging import setup_logging
+from shared.models.database.user import User
+from shared.models.schemas.user import UserCreate, UserUpdate, UserRead
 
-# 关键：需要同时支持共享包和服务自己的app模块
-# 策略：共享包路径优先（用于共享代码），服务路径其次（用于服务专用代码）
-shared_path_str = str(shared_python_path)
-project_path_str = str(project_root)
-
-# 清除可能已缓存的app模块（如果之前从错误的位置导入了）
-if 'app' in sys.modules:
-    del sys.modules['app']
-    # 同时清除app的子模块
-    modules_to_remove = [key for key in sys.modules.keys() if key.startswith('app.')]
-    for key in modules_to_remove:
-        del sys.modules[key]
-
-# 移除可能存在的路径，避免重复
-if shared_path_str in sys.path:
-    sys.path.remove(shared_path_str)
-if project_path_str in sys.path:
-    sys.path.remove(project_path_str)
-
-# 按优先级顺序插入：共享包优先，然后是项目根目录
-# 这样：共享包的app.core会被优先找到，但服务自己的app.api也能被找到
-if shared_python_path.exists():
-    sys.path.insert(0, shared_path_str)
-if project_root.exists():
-    sys.path.insert(1 if shared_python_path.exists() else 0, project_path_str)
-
-# 设置环境变量（共享包路径优先）
-current_pythonpath = os.environ.get('PYTHONPATH', '')
-if shared_path_str not in current_pythonpath:
-    os.environ['PYTHONPATH'] = f"{shared_path_str}:{project_path_str}:{current_pythonpath}" if current_pythonpath else f"{shared_path_str}:{project_path_str}"
-
-def extend_module_path(module, relative_path: str):
-    """
-    扩展模块的 __path__ 以包含 API 服务的路径
-    
-    Args:
-        module: 要扩展的模块对象
-        relative_path: 相对于 app/ 的路径，例如 "core", "services/messaging"
-    """
-    api_path = project_root / "app" / relative_path
-    shared_path = shared_python_path / "app" / relative_path
-    
-    if api_path.exists() and hasattr(module, '__path__'):
-        # 确保共享包路径在最前面（优先查找共享代码）
-        shared_path_str = str(shared_path)
-        api_path_str = str(api_path)
-        
-        if shared_path_str in module.__path__:
-            module.__path__.remove(shared_path_str)
-        module.__path__.insert(0, shared_path_str)
-        
-        # API服务的路径在后面（用于查找服务专用模块）
-        if api_path_str not in module.__path__:
-            module.__path__.append(api_path_str)
-
-# 扩展各个模块的 __path__ 以支持共享包和服务专用代码
-# 注意：共享包的路径应该在前面（优先），API服务的路径在后面（用于查找服务专用模块）
-
-# 扩展 app.__path__
-import app
-extend_module_path(app, "")
-
-# 扩展 app.core.__path__
-import app.core
-extend_module_path(app.core, "core")
-
-# 扩展 app.core.tasks.__path__
-import app.core.tasks
-extend_module_path(app.core.tasks, "core/tasks")
-
-# 扩展 app.services.__path__
-import app.services
-extend_module_path(app.services, "services")
-
-# 扩展 app.services.messaging.__path__
-import app.services.messaging
-extend_module_path(app.services.messaging, "services/messaging")
-
-# 现在可以安全地从共享包导入
-from app.core.config import redis_pool_manager, settings
-from app.core.database import engine, Base, safe_dispose_engine
-
-# 注意：image_cli是API专用的，需要从本地API项目的app.core导入
-# 由于共享包的app.core已经在sys.modules中，我们需要直接导入本地模块
-import importlib.util
-image_cli_path = project_root / "app" / "core" / "image_cli.py"
-if image_cli_path.exists():
-    spec = importlib.util.spec_from_file_location("app.core.image_cli", image_cli_path)
-    image_cli_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(image_cli_module)
-    ImageCli = image_cli_module
-else:
-    raise ImportError(f"无法找到image_cli模块: {image_cli_path}")
+# 从本地 API 项目导入
 from loguru import logger
-from app.core.logging import setup_logging
 from contextlib import asynccontextmanager
-# ARQ依赖已移除，使用Celery替代
 from app.api.api_router import api_router
 from app.services.user.user_config_service import UserConfigService
 from app.core.middleware import setup_cors, LoggingMiddleware
 from app.core.users import get_user_manager
 from app.core.jwt import auth_backend
-from app.models.database.user import User
-from app.models.schemas.user import UserCreate, UserUpdate, UserRead
-from fastapi_users import FastAPIUsers
-from uuid import UUID
+from app.core.image_cli import ImageCli
 from app.middleware.api_key_auth_middleware import api_key_auth_middleware
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
+from fastapi_users import FastAPIUsers
+from uuid import UUID
 
 # 动态导入 API 服务特定的 Celery 任务模块
 # 这些模块不在共享包中，而是在 API 服务本地
-# 注意：message_handlers 不再是 Celery 任务，由 MessageConsumer 直接调用
 try:
     import app.core.tasks.state_machine_tasks
     import app.core.tasks.webhook_tasks
@@ -134,6 +38,7 @@ except ImportError as e:
     logger.warning("部分 Celery 任务可能不可用")
 
 setup_logging()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -168,10 +73,10 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     
     # 导入所有模型以确保它们被注册
-    from app.models.database import user
+    from shared.models.database import user
     
     # 预热数据库连接池
-    from app.core.database import prewarm_connection_pool
+    from shared.core.database import prewarm_connection_pool
     await prewarm_connection_pool()
     logger.info("数据库连接池预热完成。")
     

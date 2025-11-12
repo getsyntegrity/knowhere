@@ -9,10 +9,10 @@ import Levenshtein
 import numpy as np
 import pandas as pd
 import requests
-from app.core.config import settings
-from app.utils.file_utils import path_handle
+from shared.core.config import settings
+from shared.utils.file_utils import path_handle
 # 通用工具函数从 shared-python 导入
-from app.utils.text_utils import remove_duplicates_orderkept
+from shared.utils.text_utils import remove_duplicates_orderkept
 from bs4 import BeautifulSoup
 from loguru import logger
 
@@ -49,7 +49,7 @@ def clean_contents(contents):
 
 def check_internet(url='http://www.baidu.com'):
     try:
-        from app.core.constants import APIConstants
+        from shared.core.constants import APIConstants
         response = requests.get(url, timeout=APIConstants.REQUEST_TIMEOUT)
         response.raise_for_status()
         return True

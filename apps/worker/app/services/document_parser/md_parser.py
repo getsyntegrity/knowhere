@@ -3,7 +3,7 @@ import re
 import uuid
 
 import pandas as pd
-from app.core.config import settings
+from shared.core.config import settings
 from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
                                           get_str_time, process_dup_paths_df)
 from app.services.document_parser.image_parser import (MD_IMAGE_PATTERN,
@@ -15,8 +15,8 @@ from app.services.document_parser.table_parser import (extract_tables_by_forms,
                                                        identify_tables)
 from app.services.document_parser.txt_parser import (detect_tocs_in_texts,
                                                      extract_summary_keywords)
-from app.utils.file_utils import path_handle
-from app.utils.text_utils import tokenize2stw_remove
+from shared.utils.file_utils import path_handle
+from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
 from loguru import logger
 from tqdm import tqdm

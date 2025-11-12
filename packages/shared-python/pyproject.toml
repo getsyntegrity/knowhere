@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "knowhere-shared"
 version = "0.1.0"
 description = "Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Messaging, Storage Adapters, and Utils"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     # 数据库相关
     "sqlalchemy==2.0.42",
@@ -70,11 +70,11 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*"]
+include = ["shared*"]
 
 [tool.black]
 line-length = 88
-target-version = ['py312']
+target-version = ['py311']
 
 [tool.isort]
 profile = "black"

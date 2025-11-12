@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Any, Callable, Dict, Optional
 
-from app.services.redis import RedisServiceFactory
+from shared.services.redis import RedisServiceFactory
 from loguru import logger
 
 
@@ -134,7 +134,7 @@ class RedisKeyspaceNotificationHandler:
     async def set_task_timeout(self, job_id: str, state: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
         """设置任务超时 - 使用Keyspace Notifications"""
         try:
-            from app.core.state_machine.states import get_state_timeout
+            from shared.core.state_machine.states import get_state_timeout
             
             timeout = get_state_timeout(state)
             if timeout <= 0:

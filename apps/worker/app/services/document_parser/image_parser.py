@@ -7,13 +7,13 @@ import uuid
 from pathlib import Path
 
 import pandas as pd
-from app.core.config import settings
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
+from shared.core.config import settings
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (gen_str_codes, get_str_time,
                                           process_dup_paths_df)
-from app.utils.CommonHelper import is_remote, load_file_bytes
-from app.utils.file_utils import path_handle
+from shared.utils.CommonHelper import is_remote, load_file_bytes
+from shared.utils.file_utils import path_handle
 from loguru import logger
 from openai import OpenAI
 from PIL import Image
@@ -32,7 +32,7 @@ def image_bytes_to_base64(img_data: bytes, ext: str):
     return f"data:{mime_type};base64,{img_data}"
 
 def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
-    from app.core.constants import ProcessingConstants
+    from shared.core.constants import ProcessingConstants
     if min_size is None:
         min_size = ProcessingConstants.IMG_MIN_SIZE
     if max_size is None:
@@ -69,7 +69,7 @@ def process_img_path4read(paths_, kb_dir, cut):
     return urls
 
 async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
-    from app.core.constants import ProcessingConstants
+    from shared.core.constants import ProcessingConstants
     if max_tokens is None:
         max_tokens = ProcessingConstants.IMG_MAX_TOKENS
     urls_ = process_img_path4read(paths_, kb_dir, size_cut)
@@ -157,7 +157,7 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
 
         ## 判断图像类别和任务
         img_task = "summary-images"
-        from app.core.constants import ProcessingConstants
+        from shared.core.constants import ProcessingConstants
         img_max_tokens = ProcessingConstants.IMG_MAX_TOKENS
         img_context = f"{filename}\n{base_llm_paras['frag_desc']}"
         type_resp = await ask_image(client, kb_dir, paths_=[filename], title_text=img_context, task="judge-image-type", size_cut=False)

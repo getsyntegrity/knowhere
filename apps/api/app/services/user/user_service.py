@@ -3,9 +3,9 @@
 """
 from typing import Optional
 
-from app.core.logging import get_logger
-from app.models.database.user import User
-from app.models.schemas.user import UserUpdateRequest
+from shared.core.logging import get_logger
+from shared.models.database.user import User
+from shared.models.schemas.user import UserUpdateRequest
 from app.repositories.user_repository import UserRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 

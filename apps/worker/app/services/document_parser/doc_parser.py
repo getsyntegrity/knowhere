@@ -5,18 +5,18 @@ import uuid
 import zipfile
 
 import pandas as pd
-from app.core.config import settings
+from shared.core.config import settings
 from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
                                           get_str_time, process_dup_paths_df,
-                                          process_path_texts, remove_spaces,
-                                          tokenize2stw_remove)
+                                          process_path_texts, remove_spaces)
+from shared.utils.text_utils import tokenize2stw_remove
 from app.services.document_parser.image_parser import ask_image
 from app.services.document_parser.layout_parser import pred_titles
 from app.services.document_parser.table_parser import (extract_tb_keywords,
                                                        table2html)
 from app.services.document_parser.txt_parser import (extract_summary_keywords,
                                                      postprocess_leaf_dics)
-from app.utils.CommonHelper import load_file_bytes
+from shared.utils.CommonHelper import load_file_bytes
 from bs4 import BeautifulSoup
 from docx import Document
 from docx.oxml.table import CT_Tbl

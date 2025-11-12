@@ -4,7 +4,7 @@
 import time
 from typing import Any, Dict, List, Optional
 
-from app.services.redis import RedisServiceFactory
+from shared.services.redis import RedisServiceFactory
 from app.services.state_machine.state_machine_service import \
     StateMachineService
 from app.services.state_machine.state_sync_service import StateSyncService

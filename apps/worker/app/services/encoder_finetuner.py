@@ -16,7 +16,7 @@ from app.kbs.finetune_encoder.LM_Cocktail import mix_models
 from app.kbs.finetune_encoder.modeling import BiEncoderModel
 from app.kbs.finetune_encoder.trainer import BiTrainer
 from app.services.common.kb_utils import extract_know, process_path_texts
-from app.utils.llm_utils import use_llm_api
+from shared.utils.llm_utils import use_llm_api
 from transformers import AutoConfig, AutoTokenizer, HfArgumentParser, set_seed
 
 

@@ -4,7 +4,7 @@ OAuth 数据访问层
 from datetime import datetime
 from typing import List, Optional
 
-from app.models.database.oauth_provider import OAuthProvider
+from shared.models.database.oauth_provider import OAuthProvider
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession

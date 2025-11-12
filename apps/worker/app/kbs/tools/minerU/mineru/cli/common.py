@@ -17,7 +17,7 @@ from app.tools.minerU.mineru.data.data_reader_writer import FileBasedDataWriter
 from app.tools.minerU.mineru.utils.draw_bbox import draw_layout_bbox, draw_span_bbox
 from app.tools.minerU.mineru.utils.enum_class import MakeMode
 from app.tools.minerU.mineru.utils.pdf_image_tools import images_bytes_to_pdf_bytes
-from app.utils.CommonHelper import is_remote
+from shared.utils.CommonHelper import is_remote
 
 pdf_suffixes = [".pdf"]
 image_suffixes = [".png", ".jpeg", ".jpg"]

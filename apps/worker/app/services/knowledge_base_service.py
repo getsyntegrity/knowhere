@@ -5,13 +5,13 @@ import uuid
 
 import numpy as np
 import pandas as pd
-from app.core.config import settings
-from app.core.context import get_current_user
-from app.models.database.user import User
-from app.services.redis import RedisServiceFactory
-from app.services.ai import ai_query_service
-from app.services.ai.prompt_service import build_prompt
-from app.services.ai.response_process_service import eval_response
+from shared.core.config import settings
+from shared.core.context import get_current_user
+from shared.models.database.user import User
+from shared.services.redis import RedisServiceFactory
+from shared.services.ai import ai_query_service
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
 # ARQ依赖已移除，使用Celery替代
 from app.services.common.global_manager_service import (global_df_manager,
                                                         global_dict_manager,
@@ -36,11 +36,11 @@ from app.services.knowledge.query_enhancer_service import label_queries
 # 延迟导入PDF解析器
 from app.services.knowledge.rag_service import (find_closest, merge_paths_soft,
                                                 rerank_, vectorize_texts)
-from app.services.storage.file_encryptor_service import encryptor
-from app.utils.CommonHelper import is_remote
-from app.utils.file_utils import path_handle
-from app.utils.llm_utils import use_llm_api
-from app.utils.text_utils import remove_duplicates_orderkept
+from shared.services.storage.file_encryptor_service import encryptor
+from shared.utils.CommonHelper import is_remote
+from shared.utils.file_utils import path_handle
+from shared.utils.llm_utils import use_llm_api
+from shared.utils.text_utils import remove_duplicates_orderkept
 from loguru import logger
 from openai import OpenAI
 
@@ -481,7 +481,7 @@ async def checkerboard_inject_parse(
     if user_config is None:
         user_context: User | None = get_current_user()
         redis_service = RedisServiceFactory.get_service()
-        from app.services.redis.user_redis_service import UserRedisService
+        from shared.services.redis.user_redis_service import UserRedisService
         user_redis_service = UserRedisService(redis_service)
         
         if not user_context:

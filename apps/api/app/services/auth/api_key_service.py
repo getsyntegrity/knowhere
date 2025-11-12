@@ -6,8 +6,8 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from app.models.database.api_key import APIKey
-from app.models.database.user import User
+from shared.models.database.api_key import APIKey
+from shared.models.database.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 
