@@ -1,15 +1,13 @@
 """
 消息服务模块
 提供消息发布和订阅功能
+注意：message_consumer 已迁移到 API 服务
 """
-from .message_consumer import MessageConsumer, get_message_consumer
 from .message_publisher import MessagePublisher, get_message_publisher
 
 __all__ = [
     "MessagePublisher",
     "get_message_publisher",
-    "MessageConsumer",
-    "get_message_consumer",
 ]
 
 # 创建全局消息发布器实例（延迟初始化）

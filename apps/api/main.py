@@ -43,46 +43,52 @@ current_pythonpath = os.environ.get('PYTHONPATH', '')
 if shared_path_str not in current_pythonpath:
     os.environ['PYTHONPATH'] = f"{shared_path_str}:{project_path_str}:{current_pythonpath}" if current_pythonpath else f"{shared_path_str}:{project_path_str}"
 
-# 关键修复：导入app后，扩展app.__path__以包含API服务的app路径
+def extend_module_path(module, relative_path: str):
+    """
+    扩展模块的 __path__ 以包含 API 服务的路径
+    
+    Args:
+        module: 要扩展的模块对象
+        relative_path: 相对于 app/ 的路径，例如 "core", "services/messaging"
+    """
+    api_path = project_root / "app" / relative_path
+    shared_path = shared_python_path / "app" / relative_path
+    
+    if api_path.exists() and hasattr(module, '__path__'):
+        # 确保共享包路径在最前面（优先查找共享代码）
+        shared_path_str = str(shared_path)
+        api_path_str = str(api_path)
+        
+        if shared_path_str in module.__path__:
+            module.__path__.remove(shared_path_str)
+        module.__path__.insert(0, shared_path_str)
+        
+        # API服务的路径在后面（用于查找服务专用模块）
+        if api_path_str not in module.__path__:
+            module.__path__.append(api_path_str)
+
+# 扩展各个模块的 __path__ 以支持共享包和服务专用代码
 # 注意：共享包的路径应该在前面（优先），API服务的路径在后面（用于查找服务专用模块）
+
+# 扩展 app.__path__
 import app
-api_app_path = project_root / "app"
-shared_app_path = shared_python_path / "app"
-if api_app_path.exists():
-    # 确保共享包的app路径在最前面（优先查找共享代码）
-    if str(shared_app_path) in app.__path__:
-        app.__path__.remove(str(shared_app_path))
-    app.__path__.insert(0, str(shared_app_path))
-    # API服务的app路径在后面（用于查找服务专用模块如app.api）
-    if str(api_app_path) not in app.__path__:
-        app.__path__.append(str(api_app_path))
+extend_module_path(app, "")
 
-# 同样需要扩展app.core和app.services的__path__，以便能找到API服务专用的模块
-# 扩展app.core.__path__
+# 扩展 app.core.__path__
 import app.core
-api_core_path = project_root / "app" / "core"
-shared_core_path = shared_python_path / "app" / "core"
-if api_core_path.exists() and hasattr(app.core, '__path__'):
-    # 确保共享包的core路径在最前面
-    if str(shared_core_path) in app.core.__path__:
-        app.core.__path__.remove(str(shared_core_path))
-    app.core.__path__.insert(0, str(shared_core_path))
-    # API服务的core路径在后面（用于查找服务专用模块如users.py）
-    if str(api_core_path) not in app.core.__path__:
-        app.core.__path__.append(str(api_core_path))
+extend_module_path(app.core, "core")
 
-# 扩展app.services.__path__
+# 扩展 app.core.tasks.__path__
+import app.core.tasks
+extend_module_path(app.core.tasks, "core/tasks")
+
+# 扩展 app.services.__path__
 import app.services
-api_services_path = project_root / "app" / "services"
-shared_services_path = shared_python_path / "app" / "services"
-if api_services_path.exists() and hasattr(app.services, '__path__'):
-    # 确保共享包的services路径在最前面
-    if str(shared_services_path) in app.services.__path__:
-        app.services.__path__.remove(str(shared_services_path))
-    app.services.__path__.insert(0, str(shared_services_path))
-    # API服务的services路径在后面（用于查找服务专用模块）
-    if str(api_services_path) not in app.services.__path__:
-        app.services.__path__.append(str(api_services_path))
+extend_module_path(app.services, "services")
+
+# 扩展 app.services.messaging.__path__
+import app.services.messaging
+extend_module_path(app.services.messaging, "services/messaging")
 
 # 现在可以安全地从共享包导入
 from app.core.config import redis_pool_manager, settings

@@ -4,7 +4,7 @@ API服务的消息消费者服务
 """
 import threading
 
-from app.services.messaging import get_message_consumer
+from app.services.messaging.message_consumer import get_message_consumer
 from loguru import logger
 
 
