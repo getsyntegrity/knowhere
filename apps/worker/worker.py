@@ -37,6 +37,49 @@ if shared_python_path.exists():
 if project_root.exists():
     sys.path.insert(1 if shared_python_path.exists() else 0, project_path_str)
 
+def extend_module_path(module, relative_path: str):
+    """
+    扩展模块的 __path__ 以包含 Worker 服务的路径
+    
+    Args:
+        module: 要扩展的模块对象
+        relative_path: 相对于 app/ 的路径，例如 "core", "core/tasks"
+    """
+    worker_path = project_root / "app" / relative_path
+    shared_path = shared_python_path / "app" / relative_path
+    
+    if worker_path.exists() and hasattr(module, '__path__'):
+        # 确保共享包路径在最前面（优先查找共享代码）
+        shared_path_str = str(shared_path)
+        worker_path_str = str(worker_path)
+        
+        if shared_path_str in module.__path__:
+            module.__path__.remove(shared_path_str)
+        module.__path__.insert(0, shared_path_str)
+        
+        # Worker服务的路径在后面（用于查找服务专用模块）
+        if worker_path_str not in module.__path__:
+            module.__path__.append(worker_path_str)
+
+# 扩展各个模块的 __path__ 以支持共享包和服务专用代码
+# 注意：共享包的路径应该在前面（优先），Worker服务的路径在后面（用于查找服务专用模块）
+
+# 扩展 app.__path__
+import app
+extend_module_path(app, "")
+
+# 扩展 app.core.__path__
+import app.core
+extend_module_path(app.core, "core")
+
+# 扩展 app.services.__path__（用于查找共享包中的服务模块如redis、storage、messaging）
+import app.services
+extend_module_path(app.services, "services")
+
+# 扩展 app.core.tasks.__path__（用于查找已迁移的kb_tasks）
+import app.core.tasks
+extend_module_path(app.core.tasks, "core/tasks")
+
 from app.core.celery_app import celery_app
 from app.core.config import redis_pool_manager
 from app.core.logging import setup_logging
