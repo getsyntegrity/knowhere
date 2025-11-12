@@ -163,15 +163,34 @@ class ZipResultService:
         table_files_map: Dict[str, Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """将 chunks 数据转换为 ZIP 规范格式"""
+        
+        def safe_parse_rels(type_val, connects):
+            """安全解析关系字段"""
+            rels = []
+            # 从type字段提取关系（多行格式）
+            if type_val and isinstance(type_val, str):
+                if "\n" in type_val:
+                    rels.extend([line.strip() for line in type_val.split("\n")[1:-1] if line.strip()])
+            # 从connectto字段提取关系
+            if connects:
+                if isinstance(connects, list):
+                    rels.extend([str(c).strip() for c in connects if c])
+                elif isinstance(connects, str):
+                    if "\n" in connects:
+                        rels.extend([line.strip() for line in connects.split("\n") if line.strip()])
+                    else:
+                        rels.append(connects.strip())
+            return rels if rels else []
+        
         formatted = []
         for chunk in chunks:
             chunk_id = str(chunk.get("chunk_id") or chunk.get("know_id"))
             chunk_type_str = chunk.get("type", "")
             
             # 确定 chunk type
-            if "IMAGE" in chunk_type_str:
+            if "IMAGE" in chunk_type_str.upper() or chunk_type_str == "image":
                 chunk_type = "image"
-            elif "TABLE" in chunk_type_str:
+            elif "TABLE" in chunk_type_str.upper() or chunk_type_str == "table":
                 chunk_type = "table"
             else:
                 chunk_type = "text"
@@ -182,40 +201,69 @@ class ZipResultService:
             # 清理 path（移除文件系统路径，只保留逻辑路径）
             path = self._clean_path(chunk.get("path", ""))
 
-            # 构建 metadata
+            # 获取或构建基础 metadata
+            existing_metadata = chunk.get("metadata", {})
             metadata = {
-                "length": len(content),
-                "summary": chunk.get("summary"),
+                "length": existing_metadata.get("length") or len(content),
+                "summary": existing_metadata.get("summary") or chunk.get("summary", ""),
             }
 
             # 根据类型添加特定字段
             if chunk_type == "text":
-                metadata["tokens"] = chunk.get("tokens")
-                metadata["keywords"] = chunk.get("keywords", [])
-                # relationships 需要从其他 chunks 中提取，暂时为空
-                metadata["relationships"] = None
+                metadata["tokens"] = existing_metadata.get("tokens") or chunk.get("tokens", 0)
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
+                
+                # 尝试从metadata或原始字段提取relationships
+                relationships = existing_metadata.get("relationships")
+                if not relationships:
+                    # 尝试从type和connectto字段解析
+                    type_val = chunk.get("type_raw") or chunk_type_str
+                    connects = chunk.get("connectto")
+                    relationships = safe_parse_rels(type_val, connects)
+                
+                metadata["relationships"] = relationships if relationships else []
+                
             elif chunk_type == "image":
-                # 从 image_files_map 获取图片信息
-                img_info = image_files_map.get(chunk_id)
-                if img_info:
-                    metadata["file_path"] = img_info["file_path"]
-                    metadata["original_name"] = img_info["original_name"]
-                else:
-                    # 如果没有找到，使用默认值
-                    metadata["file_path"] = f"images/{chunk_id}.jpg"
-                    metadata["original_name"] = f"image_{chunk_id}.jpg"
-                metadata["alt_text"] = chunk.get("summary")
+                # 从 existing_metadata 或 image_files_map 获取图片信息
+                file_path = existing_metadata.get("file_path")
+                original_name = existing_metadata.get("original_name")
+                
+                if not file_path:
+                    # 从 image_files_map 获取图片信息
+                    img_info = image_files_map.get(chunk_id)
+                    if img_info:
+                        file_path = img_info["file_path"]
+                        original_name = img_info["original_name"]
+                    else:
+                        # 从path提取或使用默认值
+                        img_name = path.split("-->")[-1] if "-->" in path else f"image_{chunk_id}.jpg"
+                        file_path = f"images/{img_name}"
+                        original_name = img_name
+                
+                metadata["file_path"] = file_path
+                metadata["original_name"] = original_name
+                metadata["alt_text"] = metadata["summary"]
+                
             elif chunk_type == "table":
-                # 从 table_files_map 获取表格信息
-                tb_info = table_files_map.get(chunk_id)
-                if tb_info:
-                    metadata["file_path"] = tb_info["file_path"]
-                    metadata["original_name"] = tb_info["original_name"]
-                else:
-                    # 如果没有找到，使用默认值
-                    metadata["file_path"] = f"tables/{chunk_id}.html"
-                    metadata["original_name"] = f"table_{chunk_id}.html"
-                metadata["table_type"] = None
+                # 从 existing_metadata 或 table_files_map 获取表格信息
+                file_path = existing_metadata.get("file_path")
+                original_name = existing_metadata.get("original_name")
+                
+                if not file_path:
+                    # 从 table_files_map 获取表格信息
+                    tb_info = table_files_map.get(chunk_id)
+                    if tb_info:
+                        file_path = tb_info["file_path"]
+                        original_name = tb_info["original_name"]
+                    else:
+                        # 从path提取或使用默认值
+                        tbl_name = path.split("-->")[-1] if "-->" in path else f"table_{chunk_id}.html"
+                        file_path = f"tables/{tbl_name}"
+                        original_name = tbl_name
+                
+                metadata["file_path"] = file_path
+                metadata["original_name"] = original_name
+                metadata["table_type"] = existing_metadata.get("table_type")
 
             formatted_chunk = {
                 "chunk_id": chunk_id,
@@ -278,7 +326,8 @@ class ZipResultService:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
             
-            if "IMAGE" not in chunk_type:
+            # 支持标准化后的类型："image" 或旧格式 "IMAGE_xxx"
+            if chunk_type != "image" and "IMAGE" not in chunk_type:
                 continue
 
             # 尝试从 chunk 的 path 字段获取原始文件名
@@ -369,7 +418,8 @@ class ZipResultService:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
             
-            if "TABLE" not in chunk_type:
+            # 支持标准化后的类型："table" 或旧格式 "TABLE_xxx"
+            if chunk_type != "table" and "TABLE" not in chunk_type:
                 continue
 
             # 尝试从 chunk 的 path 字段获取原始文件名

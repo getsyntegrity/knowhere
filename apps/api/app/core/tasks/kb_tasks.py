@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import traceback
 import uuid
 from typing import Dict, Any, Optional
 from celery import Task
@@ -285,56 +286,74 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             logger.info(f"S3文件验证成功: {job.s3_key}")
             
             # 动态获取用户配置
+            logger.info(f"开始获取用户配置: job_id={job_id}, user_id={job.user_id}")
             from app.services.redis.user_redis_service import UserRedisService
             from app.services.user.user_config_service import UserConfigService
             from app.services.redis import RedisServiceFactory
             import json
             
+            logger.debug("正在获取Redis服务实例...")
             redis_service = RedisServiceFactory.get_service()
             user_redis_service = UserRedisService(redis_service)
+            logger.debug("Redis服务实例获取成功")
             
             # 尝试从Redis获取用户配置
             user_id_str = str(job.user_id)  # 确保user_id是字符串
+            logger.debug(f"正在从Redis获取用户 {user_id_str} 的配置...")
             user_config = await user_redis_service.get_user_config(user_id_str)
+            logger.debug(f"Redis查询完成，配置{'存在' if user_config else '不存在'}")
             
             if not user_config:
                 # 如果Redis中没有，则初始化用户配置
                 logger.info(f"Redis中未找到用户 {user_id_str} 配置，正在初始化...")
+                logger.debug("开始调用 UserConfigService.init_user()...")
                 user_config_str = UserConfigService.init_user(user_id_str)
+                logger.debug(f"init_user() 完成，返回类型: {type(user_config_str)}")
                 user_config = json.loads(user_config_str) if isinstance(user_config_str, str) else user_config_str
                 
                 # 保存到Redis
+                logger.debug(f"正在保存用户配置到Redis...")
                 await user_redis_service.save_user_config(user_id_str, user_config)
-                logger.info(f"用户 {user_id_str} 配置初始化并保存到Redis")
+                logger.info(f"用户 {user_id_str} 配置初始化并保存到Redis成功")
             
             if not user_config:
                 raise ValueError("用户配置为空")
             
             # 从job_metadata直接获取user_config（创建时已初始化）
+            logger.debug(f"正在从job_metadata获取用户配置...")
             from app.services.redis import RedisServiceFactory
             from app.models.schemas.job_metadata import JobMetadataHelper
             
             redis_service = RedisServiceFactory.get_service()
+            logger.debug("正在获取job_metadata...")
             job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
+            logger.debug(f"job_metadata获取成功，大小: {len(str(job_metadata)) if job_metadata else 0} bytes")
             user_config = JobMetadataHelper.get_user_config(job_metadata)
+            logger.debug(f"从job_metadata提取user_config完成")
             
             if not user_config:
                 raise ValueError("Job metadata中缺少用户配置")
             
             # 检查当前状态，如果是failed，先转换到pending
+            logger.debug(f"当前Job状态: {job.status}")
             if job.status == JobStatus.FAILED.value:
+                logger.info(f"Job状态为FAILED，正在转换到PENDING...")
                 await state_machine.transition(
                     db, job_id, JobStatus.PENDING.value,
                     "retry_from_failed", None, "system"
                 )
+                logger.debug("状态转换完成: FAILED -> PENDING")
             
             # 更新状态：开始处理
+            logger.info(f"正在更新Job状态到RUNNING...")
             await state_machine.transition(
                 db, job_id, JobStatus.RUNNING.value,
                 "start_processing", None, "system"
             )
+            logger.info(f"Job状态已更新为RUNNING")
             
             # 更新进度信息：开始解析
+            logger.debug("正在更新任务进度...")
             from app.services.redis import RedisServiceFactory
             from app.services.redis.task_redis_service import TaskRedisService
             redis_service = RedisServiceFactory.get_service()
@@ -342,6 +361,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             await task_service.update_task_progress(
                 job_id, 10, "正在解析文档..."
             )
+            logger.debug("任务进度已更新: 10%")
             
             # 获取S3键和文件信息
             s3_key = job.s3_key
@@ -351,22 +371,27 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 logger.error(f"Job {job_id} 缺少S3键信息")
                 raise ValueError("Job缺少S3键信息")
             
-            logger.debug(f"开始下载文件: S3键={s3_key}")
+            logger.info(f"准备下载文件: S3键={s3_key}")
             
             # 下载文件到本地临时目录
             from app.services.storage.file_upload_service import FileUploadService
             upload_service = FileUploadService()
+            logger.debug("正在生成下载URL...")
             file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)
             file_url = file_url_response["download_url"]  # 提取实际的URL字符串
+            logger.info(f"文件下载URL生成成功: {file_url[:100]}...")
             
             # 准备解析参数 - 从job_metadata获取
             filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
-            logger.debug(f"filename: {filename}")
+            logger.info(f"准备解析文件: {filename}")
             
             # 调用修改后的解析逻辑（传入user_config）
             from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse
             
-            logger.debug(f"开始解析文件: {filename}, 类型: {JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')}")
+            doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
+            logger.info(f"开始解析文件: {filename}, 文档类型: {doc_type}")
+            logger.debug(f"解析参数: kb_dir={JobMetadataHelper.get_parsing_param(job_metadata, 'kb_dir', '默认目录')}, "
+                        f"smart_title_parse={JobMetadataHelper.get_parsing_param(job_metadata, 'smart_title_parse', True)}")
             
             add_dir = await checkerboard_inject_parse(
                 file_full_path=file_url,
@@ -388,16 +413,21 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             logger.info(f"文件解析成功: {add_dir}")
             
             # 更新进度信息：解析完成，开始向量化
+            logger.debug("正在更新任务进度到30%...")
             await task_service.update_task_progress(
                 job_id, 30, "解析完成，正在向量化..."
             )
+            logger.info(f"文件解析完成，开始向量化: {add_dir}")
             
             # 调用旧方案的向量化逻辑
             from app.services.knowledge.kb_encoder_service import encode_kb
             
+            logger.info("开始调用 encode_kb 进行向量化...")
             user_info = await encode_kb(user_config, add_dir=add_dir, mode="add")
+            logger.info(f"向量化完成，生成 {len(user_info.get('all_vec', []))} 个向量")
             
             # 保存DataFrame为chunks到Redis
+            logger.debug("准备保存chunks到Redis...")
             from app.services.redis.chunks_redis_service import ChunksRedisService
             from app.services.redis import RedisServiceFactory
             
@@ -406,32 +436,38 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             
             # 单独处理当前文件解析的chunks
             from app.services.knowledge.kb_encoder_service import load_new_data
+            logger.debug(f"正在从 {add_dir} 加载新数据...")
             add_contents_df = load_new_data(add_dir)
             if add_contents_df is not None:
-                logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")
+                logger.info(f"数据加载成功，准备保存 {len(add_contents_df)} 条记录到Redis")
                 success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)
                 if success:
-                    logger.info(f"DataFrame已保存为chunks到Redis: job_id={job_id}")
+                    logger.info(f"✅ chunks数据已成功保存到Redis: job_id={job_id}")
                 else:
-                    logger.error(f"保存DataFrame为chunks失败: job_id={job_id}")
+                    logger.error(f"❌ 保存chunks到Redis失败: job_id={job_id}")
             else:
-                logger.warning("add_contents_df为空，保存空chunks到Redis")
+                logger.warning("⚠️ 数据为空，保存空chunks到Redis")
                 await chunks_redis_service.save_chunks(job_id, [])
             
             # 更新进度信息：向量化完成
+            logger.debug("正在更新任务进度到70%...")
             await task_service.update_task_progress(
                 job_id, 70, "向量化完成，正在存储到数据库..."
             )
+            logger.info(f"✅ 解析和向量化阶段完成: job_id={job_id}")
             
-            return {
+            result = {
                 "status": "success",
                 "job_id": job_id,
                 "add_dir": add_dir,
                 "vectors_count": len(user_info.get("all_vec", [])),
                 "contents_count": len(user_info.get("all_contents_df", []))
             }
+            logger.info(f"返回结果: vectors={result['vectors_count']}, contents={result['contents_count']}")
+            return result
             
     except Exception as e:
+        logger.info(traceback.format_exc())
         logger.error(f"解析并向量化失败: {e}")
         async with get_db_context() as db:
             await state_machine.mark_failed(db, job_id, str(e))
@@ -538,8 +574,8 @@ async def _store_to_db_async(prev_result: dict, user_id: str):
                 
                 # 转换DataFrame为数据库记录（只存新增的内容）
                 contents_count = len(all_contents_df)
+                logger.debug(f"准备存储 {contents_count} 条知识片段到数据库")
                 for _, row in all_contents_df.tail(contents_count).iterrows():
-                    logger.debug(f"row: {row}")
                     kb_record = KBPydantic(
                         content=row.get('content'),
                         path=row.get('path'),

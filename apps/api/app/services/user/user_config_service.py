@@ -230,10 +230,12 @@ class UserConfigService:
         meta_dic['OCR_TIMEOUT'] = float(meta_dic.get('OCR_TIMEOUT', 30.0))
         
         # 检查GPU和网络
+        logger.debug("检查设备能力（GPU/网络）...")
         device_info = ModelService.check_device_capabilities()
         if not device_info['has_internet']:
             meta_dic['USE_LOCAL_LLM'] = True
         meta_dic['device'] = device_info['device']
+        logger.debug(f"设备检查完成: device={meta_dic['device']}, has_internet={device_info['has_internet']}")
         
         if meta_dic['device'] == "cpu":
             meta_dic['USE_LOCAL_LLM'] = False
@@ -295,10 +297,13 @@ class UserConfigService:
             (user_info['kb_vec_term'] + "_" + user_info['user'])
         )
         
+        logger.debug(f"准备检查/创建用户目录: KB_PATH={user_info['KB_PATH']}, KB_VECS_PATH={user_info['KB_VECS_PATH']}")
         UserConfigService.check_create_user(user_info['KB_PATH'], user_info['KB_VECS_PATH'])
-        logger.info("创建或分析基础路径完成")
+        logger.info("✅ 用户目录结构创建/检查完成")
         
+        logger.debug("开始加载元数据设置...")
         user_info = UserConfigService.load_meta_settings(user_info)
+        logger.debug("✅ 元数据设置加载完成")
         
         # 设置各种路径 - 使用统一的路径映射
         path_mapping = {
@@ -360,6 +365,7 @@ class UserConfigService:
         
         # 加载停用词
         if user_info['USER_SETTINGS']['USE_STOPWORDS']:
+            logger.debug("开始加载停用词...")
             stw_path = os.path.join(
                 user_info['USER_SETTINGS']['LOCAL_MODELS_DIR'], 
                 user_info['USER_SETTINGS']['STOP_WORDS']
@@ -367,15 +373,18 @@ class UserConfigService:
             try:
                 with open(stw_path, 'r', encoding='utf-8') as file:
                     user_info['stopwords'] = set(line.strip() for line in file)
+                logger.debug(f"停用词加载成功，共 {len(user_info['stopwords'])} 个词")
             except Exception as e:
                 logger.warning(f"加载停用词失败: {str(e)}")
                 user_info['stopwords'] = None
         else:
+            logger.debug("跳过停用词加载（USE_STOPWORDS=False）")
             user_info['stopwords'] = None
         
         # 清理临时文件
+        logger.debug("清理临时文件...")
         clean_file(user_info['USER_SETTINGS']['MATCH_DF'], mode='clean')
-        logger.info(f"用户配置初始化完成: {user_info['user']}")
+        logger.info(f"✅ 用户配置初始化完成: {user_info['user']}")
         
         return user_info
     

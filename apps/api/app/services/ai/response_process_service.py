@@ -6,9 +6,10 @@ from loguru import logger
 def process_llm_history(paras, his_k=10): # under development, if we need to parse the history
     his_record = ''
     try:
-        histories = paras['histories']
+        logger.debug(f"process_llm_history 开始，paras keys: {list(paras.keys()) if paras else 'None'}")
+        histories = paras.get('histories', [])
         try:
-            use_his = paras['use_his']
+            use_his = paras.get('use_his', False)
         except:
             use_his = False
             
