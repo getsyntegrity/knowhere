@@ -57,6 +57,6 @@ if __name__ == "__main__":
     celery_app.worker_main([
         "worker", 
         f"--loglevel={log_level}", 
-        "--concurrency=2",
+        "--concurrency=8",
         f"--hostname={node_name}"
     ])
