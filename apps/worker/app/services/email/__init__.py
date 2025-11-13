@@ -1,6 +1,6 @@
 """
 邮件服务模块
 """
-from .email_service import EmailService
+# EmailService 已移除，只在 API 服务中使用
 
-__all__ = ["EmailService"]
+__all__ = []
