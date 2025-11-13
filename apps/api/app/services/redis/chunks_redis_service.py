@@ -1,7 +1,6 @@
 """
 Chunks数据Redis服务
 """
-
 import uuid
 from typing import List, Dict, Any, Optional
 from loguru import logger
@@ -21,7 +20,7 @@ class ChunksRedisService:
 
     def _dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
         """
-        将DataFrame转换为chunks格式，兼容标准格式
+        将DataFrame转换为chunks格式
 
         Args:
             df: pandas DataFrame，包含文档解析结果
@@ -151,17 +150,19 @@ class ChunksRedisService:
             chunks = self._dataframe_to_chunks(df)
             return await self.save_chunks(job_id, chunks)
         except Exception as e:
-            error_msg = f"保存DataFrame为chunks失败: job_id={job_id}"
-            logger.error(f"{error_msg}, error={e}")
+            logger.error(f"保存DataFrame为chunks失败: job_id={job_id}, error={e}")
             return False
 
     async def save_chunks(self, job_id: str, chunks: List[Dict[str, Any]]) -> bool:
         """保存chunks数据到Redis"""
         try:
             chunks_key = f"job_chunks:{job_id}"
-            await self.redis.set(chunks_key, chunks, ttl=3600)  # 1小时过期
-            msg = f"Chunks数据保存成功: job_id={job_id}"
-            logger.debug(f"{msg}, count={len(chunks)}")
+            await self.redis.set(
+                chunks_key,
+                chunks,
+                ttl=3600  # 1小时过期
+            )
+            logger.debug(f"Chunks数据保存成功: job_id={job_id}, count={len(chunks)}")
             return True
         except Exception as e:
             logger.error(f"保存chunks数据失败: job_id={job_id}, error={e}")
@@ -173,8 +174,7 @@ class ChunksRedisService:
             chunks_key = f"job_chunks:{job_id}"
             chunks = await self.redis.get(chunks_key)
             if chunks:
-                msg = f"Chunks数据获取成功: job_id={job_id}"
-                logger.debug(f"{msg}, count={len(chunks)}")
+                logger.debug(f"Chunks数据获取成功: job_id={job_id}, count={len(chunks)}")
             else:
                 logger.warning(f"Chunks数据不存在: job_id={job_id}")
             return chunks

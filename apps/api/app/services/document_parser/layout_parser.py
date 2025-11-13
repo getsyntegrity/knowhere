@@ -358,12 +358,9 @@ async def pred_titles(infos, doc_type, prompt_limt=4000, enable_regx=True, smart
 
     # 2. parse smart/not smart
     # raw_preds.to_csv(f"./test_naive_1.csv", index=False, encoding='utf-8-sig')
-    logger.debug("使用非LLM方法进行初步层级解析...")
     heading_preds = est_hierarchies_naive(raw_preds, smart_parse)
-    logger.debug(f"初步解析完成，识别 {len(heading_preds)} 个潜在标题")
 
     if smart_parse:
-        logger.info("⏳ 启用智能解析模式，准备调用AI服务（这可能需要1-3分钟）...")
         heading_preds = await est_hierarchies_llm(heading_preds, prompt_limt)
         logger.info("✅ 智能解析完成")
 
@@ -416,13 +413,11 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
     basic_df = level_dfs[0]
     try:
         logger.debug("🚀smart parse => interpreting hierarchy patterns...")
-        logger.debug(f"正在将DataFrame转换为HTML，DataFrame大小: {len(basic_df)} 行")
         level_html = df2html(basic_df.drop(columns=["reason"]))
         logger.debug(f"HTML转换完成，长度: {len(level_html)} 字符")
         ot_limit = int(len(level_html)*1.2)  # min(int(len(level_html)*1.2), 8192) #int(len(level_html)*1.2)
 
         paras = {"max_tokens": ot_limit, "max_depth": max_depth}
-        logger.debug(f"准备构建提示词，参数: max_tokens={ot_limit}, max_depth={max_depth}")
         prompt, temperature, top_p, max_tokens = build_prompt(task="eval-headings", texts=level_html, query="", paras=paras)
         logger.debug(f"✅ 提示词构建完成，长度: {len(prompt)} 字符，max_tokens={max_tokens}")
         messages = [
@@ -431,17 +426,13 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
         ]
 
         ctx_task_id = str(uuid.uuid4())
-        logger.debug(f"生成任务ID: {ctx_task_id}")
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
-        logger.debug("准备调用Redis服务保存任务状态...")
         from app.core.dependencies import get_redis_service
         redis_service = await get_redis_service()
         await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
-        logger.debug(f"任务状态已保存到Redis: task_id={ctx_task_id}")
         
         # 使用统一的AI查询服务
-        logger.info(f"🤖 准备调用AI服务解析文档层级结构 (max_tokens={max_tokens}, 这可能需要1-3分钟)...")
         layout_res = await ai_query_service.query_ai(
             messages=messages,
             user_id=ctx_task_id,
@@ -454,11 +445,9 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
         logger.info(f"✅ AI服务调用完成，正在处理响应数据...")
 
         base_preds = pd.DataFrame(eval_response(layout_res))
-        logger.debug(f"AI响应解析完成，获得 {len(base_preds)} 个层级预测")
         base_preds.insert(1, "heading", basic_df["heading"].values)  # insert original heading back
         base_preds["reason"] = basic_df["reason"].values
         # base_preds.to_csv(f"./test_llm_base.csv", index=False, encoding='utf-8-sig')
-        logger.debug("开始构建层级映射...")
         base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
         logger.debug(f"层级映射构建完成: {lvl_mapping}")
 
@@ -467,12 +456,9 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
             for l, level_df in tqdm(enumerate(level_dfs), total=len(level_dfs), desc=f"mapping and post-processing..."):
                 level_df = execute_level_mapping(level_df, lvl_mapping) # record origin level for debug
                 full_preds.append(level_df)
-            logger.debug("多层级处理完成")
         else:
-            logger.debug("单层级数据，直接使用base_preds")
             full_preds.append(base_preds)
 
-        logger.debug("合并所有预测结果...")
         full_preds = pd.concat(full_preds, ignore_index=True)
         full_preds['heading'] = raw_headings
         # full_preds.to_csv(f"./test_llm_full.csv", index=False, encoding='utf-8-sig')

@@ -164,6 +164,7 @@ async def main():
     #     file_path='../data/测试文档.docx',
     #     file_url=doc_url,  # 需要从metadata获取
     #     user_id=str('aaa')
+    #  部署 ssh -i deploy/aliyun-ecs/scripts/id_rsa root@8.134.142.218 "sudo -u appuser /opt/knowhere/deploy/aliyun-ecs/scripts/deploy-app.sh"
     # )
     result_aa = await _parse_and_vectorize_async(job_id, user_id)
     result_bb = await _store_to_db_async(result_aa, user_id)
