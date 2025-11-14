@@ -1,11 +1,11 @@
-# ECS服务定义
+# ECS服务定义 - 多环境支持
 
 # 后端服务
 resource "aws_ecs_service" "backend" {
-  name            = "${var.project_name}-backend-service"
+  name            = "${var.project_name}-${var.environment}-backend-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.backend.arn
-  desired_count   = 1
+  desired_count   = var.environment == "prod" ? 2 : 1
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -23,16 +23,18 @@ resource "aws_ecs_service" "backend" {
   depends_on = [aws_lb_listener.https]
 
   tags = {
-    Name = "${var.project_name}-backend-service"
+    Name        = "${var.project_name}-${var.environment}-backend-service"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }
 
 # 前端服务
 resource "aws_ecs_service" "frontend" {
-  name            = "${var.project_name}-frontend-service"
+  name            = "${var.project_name}-${var.environment}-frontend-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.frontend.arn
-  desired_count   = 1
+  desired_count   = var.environment == "prod" ? 2 : 1
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -50,32 +52,36 @@ resource "aws_ecs_service" "frontend" {
   depends_on = [aws_lb_listener.https]
 
   tags = {
-    Name = "${var.project_name}-frontend-service"
+    Name        = "${var.project_name}-${var.environment}-frontend-service"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }
 
 # Worker服务
 resource "aws_ecs_service" "worker" {
-  name            = "${var.project_name}-worker-service"
+  name            = "${var.project_name}-${var.environment}-worker-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.worker.arn
-  desired_count   = 1
+  desired_count   = var.environment == "prod" ? 2 : 1
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = aws_subnet.public[*].id
+    subnets          = aws_subnet.private[*].id
     security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   tags = {
-    Name = "${var.project_name}-worker-service"
+    Name        = "${var.project_name}-${var.environment}-worker-service"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }
 
-# ECS任务定义
+# ECS任务定义 - 多环境支持
 resource "aws_ecs_task_definition" "backend" {
-  family                   = "${var.project_name}-backend"
+  family                   = "${var.project_name}-${var.environment}-backend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "1024"
@@ -86,7 +92,7 @@ resource "aws_ecs_task_definition" "backend" {
   container_definitions = jsonencode([
     {
       name  = "knowhere-backend"
-      image = "${aws_ecr_repository.backend.repository_url}:latest"
+      image = "${aws_ecr_repository.backend.repository_url}:${var.environment}-latest"
       portMappings = [
         {
           containerPort = 5005
@@ -111,39 +117,47 @@ resource "aws_ecs_task_definition" "backend" {
       secrets = [
         {
           name      = "DATABASE_URL"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/database-url"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/database-url"
         },
         {
           name      = "REDIS_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/redis-host"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-host"
         },
         {
           name      = "REDIS_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/redis-password"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-password"
         },
         {
           name      = "RABBITMQ_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/rabbitmq-host"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-host"
         },
         {
           name      = "RABBITMQ_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/rabbitmq-password"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-password"
+        },
+        {
+          name      = "S3_BUCKET_NAME"
+          value     = aws_s3_bucket.main.bucket
         },
         {
           name      = "S3_ACCESS_KEY_ID"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/s3-access-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-access-key"
         },
         {
           name      = "S3_SECRET_ACCESS_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/s3-secret-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-secret-key"
+        },
+        {
+          name      = "SNS_TOPIC_ARN"
+          value     = aws_sns_topic.s3_events.arn
         },
         {
           name      = "SECRET_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/secret-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/secret-key"
         },
         {
           name      = "STRIPE_SECRET_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/stripe-secret-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/stripe-secret-key"
         }
       ]
       logConfiguration = {
@@ -165,12 +179,14 @@ resource "aws_ecs_task_definition" "backend" {
   ])
 
   tags = {
-    Name = "${var.project_name}-backend"
+    Name        = "${var.project_name}-${var.environment}-backend"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }
 
 resource "aws_ecs_task_definition" "frontend" {
-  family                   = "${var.project_name}-frontend"
+  family                   = "${var.project_name}-${var.environment}-frontend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "512"
@@ -181,7 +197,7 @@ resource "aws_ecs_task_definition" "frontend" {
   container_definitions = jsonencode([
     {
       name  = "knowhere-frontend"
-      image = "${aws_ecr_repository.frontend.repository_url}:latest"
+      image = "${aws_ecr_repository.frontend.repository_url}:${var.environment}-latest"
       portMappings = [
         {
           containerPort = 3000
@@ -206,15 +222,15 @@ resource "aws_ecs_task_definition" "frontend" {
       secrets = [
         {
           name      = "NEXT_PUBLIC_API_URL"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/api-url"
+          value     = var.environment == "prod" ? "https://api.${var.domain_name}" : "https://${var.environment}-api.${var.domain_name}"
         },
         {
           name      = "NEXT_PUBLIC_POSTHOG_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/posthog-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/posthog-key"
         },
         {
           name      = "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/stripe-publishable-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/stripe-publishable-key"
         }
       ]
       logConfiguration = {
@@ -236,12 +252,14 @@ resource "aws_ecs_task_definition" "frontend" {
   ])
 
   tags = {
-    Name = "${var.project_name}-frontend"
+    Name        = "${var.project_name}-${var.environment}-frontend"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }
 
 resource "aws_ecs_task_definition" "worker" {
-  family                   = "${var.project_name}-worker"
+  family                   = "${var.project_name}-${var.environment}-worker"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "1024"
@@ -249,15 +267,48 @@ resource "aws_ecs_task_definition" "worker" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
+  # EFS挂载配置 - 模型缓存
+  volume {
+    name = "model-cache"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.model_cache.id
+      root_directory     = "/"
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        iam = "ENABLED"
+      }
+    }
+  }
+
   container_definitions = jsonencode([
     {
       name      = "knowhere-worker"
-      image     = "${aws_ecr_repository.worker.repository_url}:latest"
+      image     = "${aws_ecr_repository.worker.repository_url}:${var.environment}-latest"
       essential = true
+      
+      # EFS挂载点
+      mountPoints = [
+        {
+          sourceVolume  = "model-cache"
+          containerPath = "/mnt/models/huggingface"
+          readOnly      = false
+        }
+      ]
+      
       environment = [
         {
           name  = "ENVIRONMENT"
-          value = "production"
+          value = var.environment
+        },
+        {
+          name  = "HF_HOME"
+          value = "/mnt/models/huggingface"
+        },
+        {
+          name  = "TRANSFORMERS_CACHE"
+          value = "/mnt/models/huggingface"
         },
         {
           name  = "DEBUG"
@@ -271,35 +322,43 @@ resource "aws_ecs_task_definition" "worker" {
       secrets = [
         {
           name      = "DATABASE_URL"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/database-url"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/database-url"
         },
         {
           name      = "REDIS_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/redis-host"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-host"
         },
         {
           name      = "REDIS_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/redis-password"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-password"
         },
         {
           name      = "RABBITMQ_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/rabbitmq-host"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-host"
         },
         {
           name      = "RABBITMQ_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/rabbitmq-password"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-password"
+        },
+        {
+          name      = "S3_BUCKET_NAME"
+          value     = aws_s3_bucket.main.bucket
         },
         {
           name      = "S3_ACCESS_KEY_ID"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/s3-access-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-access-key"
         },
         {
           name      = "S3_SECRET_ACCESS_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/s3-secret-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-secret-key"
+        },
+        {
+          name      = "SNS_TOPIC_ARN"
+          value     = aws_sns_topic.s3_events.arn
         },
         {
           name      = "SECRET_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/secret-key"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/secret-key"
         }
       ]
       logConfiguration = {
@@ -321,6 +380,8 @@ resource "aws_ecs_task_definition" "worker" {
   ])
 
   tags = {
-    Name = "${var.project_name}-worker"
+    Name        = "${var.project_name}-${var.environment}-worker"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }

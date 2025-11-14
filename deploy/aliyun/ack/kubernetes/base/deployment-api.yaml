@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowhere-api
+  namespace: knowhere
+  labels:
+    app: knowhere-api
+    environment: ${ENVIRONMENT}
+spec:
+  replicas: ${API_REPLICAS}
+  selector:
+    matchLabels:
+      app: knowhere-api
+  template:
+    metadata:
+      labels:
+        app: knowhere-api
+        environment: ${ENVIRONMENT}
+    spec:
+      containers:
+      - name: api
+        image: ${REGISTRY}/knowhere-backend:${ENVIRONMENT}-latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5005
+          name: http
+        envFrom:
+        - configMapRef:
+            name: knowhere-config
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: database-url
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: redis-host
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: redis-password
+        - name: RABBITMQ_HOST
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: rabbitmq-host
+        - name: RABBITMQ_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: rabbitmq-password
+        - name: S3_BUCKET_NAME
+          value: ${OSS_BUCKET_NAME}
+        - name: S3_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: oss-access-key-id
+        - name: S3_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: oss-secret-access-key
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: secret-key
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5005
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5005
+          initialDelaySeconds: 10
+          periodSeconds: 5
+

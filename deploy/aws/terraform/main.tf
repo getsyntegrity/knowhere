@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -21,9 +25,20 @@ variable "aws_region" {
 }
 
 variable "environment" {
-  description = "环境名称"
+  description = "环境名称 (dev/test/prod)"
   type        = string
-  default     = "production"
+  default     = "dev"
+  
+  validation {
+    condition     = contains(["dev", "test", "prod"], var.environment)
+    error_message = "Environment must be one of: dev, test, prod"
+  }
+}
+
+variable "api_webhook_endpoint" {
+  description = "API webhook endpoint for S3 events (SNS subscription)"
+  type        = string
+  default     = ""
 }
 
 variable "project_name" {
