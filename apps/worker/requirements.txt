@@ -11,14 +11,18 @@
 aio-pika==9.3.0
 
 # 机器学习和AI（Worker需要）
+# 先安装基础依赖（从PyPI）
 numpy==2.2.6
 pandas==2.3.1
-torch==2.2.2
-torchvision==0.17.2
-sentence-transformers==2.7.0
-transformers==4.39.3
 scikit-learn==1.5.2
 scipy==1.16.1
+# 使用CPU版本的PyTorch（减少约1.8GB的CUDA库）
+# 注意：--index-url必须在torch行之前，且只影响torch相关包
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+torchvision==0.17.2+cpu
+sentence-transformers==2.7.0
+transformers==4.39.3
 
 # 文本处理
 jieba==0.42.1
@@ -90,7 +94,6 @@ threadpoolctl==3.2.0
 # 时区数据
 tzdata==2025.2
 
-# 图像处理相关
-opencv-python==4.8.1.78
+# 图像处理相关（容器环境只需headless版本，减少约60MB）
 opencv-python-headless==4.8.1.78
 
