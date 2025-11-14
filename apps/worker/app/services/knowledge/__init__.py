@@ -1,6 +1,6 @@
 """
 知识库服务模块
 """
-from .kb_orchestrator import KBOrchestrator
+# KBOrchestrator 已移除，只在 API 服务中使用
 
-__all__ = ["KBOrchestrator"]
+__all__ = []

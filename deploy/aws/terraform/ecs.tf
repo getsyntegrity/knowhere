@@ -1,6 +1,6 @@
-# ECS集群
+# ECS集群 - 多环境支持
 resource "aws_ecs_cluster" "main" {
-  name = "${var.project_name}-cluster"
+  name = "${var.project_name}-${var.environment}-cluster"
 
   setting {
     name  = "containerInsights"
@@ -8,13 +8,40 @@ resource "aws_ecs_cluster" "main" {
   }
 
   tags = {
-    Name = "${var.project_name}-cluster"
+    Name        = "${var.project_name}-${var.environment}-cluster"
+    Environment = var.environment
+    Project     = var.project_name
   }
+}
+
+# EFS访问策略
+resource "aws_iam_policy" "efs_access" {
+  name = "${var.project_name}-${var.environment}-efs-access"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticfilesystem:ClientMount",
+          "elasticfilesystem:ClientWrite",
+          "elasticfilesystem:ClientRootAccess"
+        ]
+        Resource = aws_efs_file_system.model_cache.arn
+        Condition = {
+          StringEquals = {
+            "elasticfilesystem:AccessPointArn" = aws_efs_file_system.model_cache.arn
+          }
+        }
+      }
+    ]
+  })
 }
 
 # ECS任务执行角色
 resource "aws_iam_role" "ecs_task_execution_role" {
-  name = "${var.project_name}-ecs-task-execution-role"
+  name = "${var.project_name}-${var.environment}-ecs-task-execution-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -35,9 +62,65 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_efs" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = aws_iam_policy.efs_access.arn
+}
+
+# Secrets Manager访问策略 - 显式授权ECS任务执行角色访问所有必需的secrets
+resource "aws_iam_role_policy" "secrets_manager_access" {
+  name = "${var.project_name}-${var.environment}-secrets-manager-access"
+  role = aws_iam_role.ecs_task_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = [
+          aws_secretsmanager_secret.database_url.arn,
+          aws_secretsmanager_secret.redis_host.arn,
+          aws_secretsmanager_secret.redis_port.arn,
+          aws_secretsmanager_secret.redis_password.arn,
+          aws_secretsmanager_secret.rabbitmq_host.arn,
+          aws_secretsmanager_secret.rabbitmq_username.arn,
+          aws_secretsmanager_secret.rabbitmq_password.arn,
+          aws_secretsmanager_secret.s3_access_key.arn,
+          aws_secretsmanager_secret.s3_secret_key.arn,
+          aws_secretsmanager_secret.secret_key.arn,
+          aws_secretsmanager_secret.stripe_secret_key.arn,
+          aws_secretsmanager_secret.stripe_publishable_key.arn,
+          aws_secretsmanager_secret.posthog_key.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = [
+          aws_kms_key.secrets.arn,
+          aws_kms_key.rds.arn
+        ]
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = [
+              "secretsmanager.${var.aws_region}.amazonaws.com"
+            ]
+          }
+        }
+      }
+    ]
+  })
+}
+
 # ECS任务角色
 resource "aws_iam_role" "ecs_task_role" {
-  name = "${var.project_name}-ecs-task-role"
+  name = "${var.project_name}-${var.environment}-ecs-task-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -55,7 +138,7 @@ resource "aws_iam_role" "ecs_task_role" {
 
 # S3访问策略
 resource "aws_iam_policy" "s3_access" {
-  name = "${var.project_name}-s3-access"
+  name = "${var.project_name}-${var.environment}-s3-access"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -82,35 +165,38 @@ resource "aws_iam_role_policy_attachment" "ecs_task_role_s3" {
   policy_arn = aws_iam_policy.s3_access.arn
 }
 
-# CloudWatch日志组
+# CloudWatch日志组 - 多环境支持
 resource "aws_cloudwatch_log_group" "backend" {
-  name              = "/ecs/${var.project_name}-backend"
-  retention_in_days = 7
+  name              = "/ecs/${var.project_name}-${var.environment}-backend"
+  retention_in_days = var.environment == "prod" ? 30 : 7
 
   tags = {
-    Name = "${var.project_name}-backend-logs"
+    Name        = "${var.project_name}-${var.environment}-backend-logs"
+    Environment = var.environment
   }
 }
 
 resource "aws_cloudwatch_log_group" "frontend" {
-  name              = "/ecs/${var.project_name}-frontend"
-  retention_in_days = 7
+  name              = "/ecs/${var.project_name}-${var.environment}-frontend"
+  retention_in_days = var.environment == "prod" ? 30 : 7
 
   tags = {
-    Name = "${var.project_name}-frontend-logs"
+    Name        = "${var.project_name}-${var.environment}-frontend-logs"
+    Environment = var.environment
   }
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
-  name              = "/ecs/${var.project_name}-worker"
-  retention_in_days = 7
+  name              = "/ecs/${var.project_name}-${var.environment}-worker"
+  retention_in_days = var.environment == "prod" ? 30 : 7
 
   tags = {
-    Name = "${var.project_name}-worker-logs"
+    Name        = "${var.project_name}-${var.environment}-worker-logs"
+    Environment = var.environment
   }
 }
 
-# ECR仓库
+# ECR仓库 - 多环境共享（使用标签区分）
 resource "aws_ecr_repository" "backend" {
   name                 = "${var.project_name}-backend"
   image_tag_mutability = "MUTABLE"
@@ -120,7 +206,9 @@ resource "aws_ecr_repository" "backend" {
   }
 
   tags = {
-    Name = "${var.project_name}-backend"
+    Name        = "${var.project_name}-backend"
+    Environment = "shared"
+    Project     = var.project_name
   }
 }
 
@@ -133,7 +221,9 @@ resource "aws_ecr_repository" "frontend" {
   }
 
   tags = {
-    Name = "${var.project_name}-frontend"
+    Name        = "${var.project_name}-frontend"
+    Environment = "shared"
+    Project     = var.project_name
   }
 }
 
@@ -146,7 +236,9 @@ resource "aws_ecr_repository" "worker" {
   }
 
   tags = {
-    Name = "${var.project_name}-worker"
+    Name        = "${var.project_name}-worker"
+    Environment = "shared"
+    Project     = var.project_name
   }
 }
 

@@ -123,8 +123,13 @@ class MessageConsumer:
             self._running = False
             raise
     
-    async def stop_consuming(self):
-        """优雅停止消费"""
+    async def stop_consuming(self, timeout: float = 10.0):
+        """
+        优雅停止消费
+        
+        Args:
+            timeout: 等待消费者任务完成的最大超时时间（秒）
+        """
         if not self._running:
             return
         
@@ -132,14 +137,39 @@ class MessageConsumer:
         self._running = False
         self._stop_event.set()
         
-        # 等待所有消费者任务完成
+        # 取消所有消费者任务
         if self._consumers:
-            logger.info(f"等待 {len(self._consumers)} 个消费者任务完成...")
-            await asyncio.gather(*self._consumers, return_exceptions=True)
+            logger.info(f"取消 {len(self._consumers)} 个消费者任务...")
+            for consumer_task in self._consumers:
+                if not consumer_task.done():
+                    consumer_task.cancel()
+            
+            # 等待所有消费者任务完成，设置超时
+            logger.info(f"等待消费者任务完成（超时: {timeout}秒）...")
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self._consumers, return_exceptions=True),
+                    timeout=timeout
+                )
+                logger.info("所有消费者任务已正常完成")
+            except asyncio.TimeoutError:
+                logger.warning(f"等待消费者任务超时（{timeout}秒），强制关闭")
+                # 超时后，强制取消所有未完成的任务
+                for consumer_task in self._consumers:
+                    if not consumer_task.done():
+                        try:
+                            consumer_task.cancel()
+                        except Exception as e:
+                            logger.warning(f"取消消费者任务时出错: {e}")
+            
             self._consumers = []
         
         # 关闭连接
-        await self._connection_manager.close()
+        try:
+            await self._connection_manager.close()
+            logger.info("RabbitMQ连接已关闭")
+        except Exception as e:
+            logger.warning(f"关闭RabbitMQ连接时出错: {e}")
         
         logger.info("消息消费者已停止")
     
@@ -149,35 +179,127 @@ class MessageConsumer:
         handler_func,
         message_type: str
     ):
-        """消费队列消息"""
+        """
+        消费队列消息
+        
+        使用 asyncio.wait 同时等待消息和停止事件，确保：
+        1. 有消息时立即处理，不影响业务性能
+        2. 停止时立即响应，不会阻塞
+        """
+        logger.info(f"开始消费队列: {queue.name}, 消息类型: {message_type}")
         try:
             async with queue.iterator() as queue_iter:
-                async for message in queue_iter:
-                    if not self._running:
-                        break
-                    
-                    # 手动处理消息确认，不使用message.process()的自动确认
-                    # 这样可以更好地控制重试逻辑
+                logger.info(f"队列迭代器已创建，等待消息: {queue.name}")
+                
+                # 创建消息接收任务
+                message_task = None
+                
+                while self._running:
                     try:
-                        await self._process_message(message, handler_func, message_type)
-                        # 处理成功，确认消息
-                        await message.ack()
-                    except Exception as e:
-                        logger.error(f"处理消息时出错: {e}", exc_info=True)
-                        # 消息处理失败，根据消息类型决定是否重新入队
-                        try:
-                            if message_type == 'job_progress_update':
-                                # 进度更新失败不重试，直接确认
-                                await message.ack()
-                            else:
-                                # 其他消息失败时拒绝并重新入队
-                                await message.nack(requeue=True)
-                        except Exception as ack_error:
-                            logger.error(f"确认/拒绝消息时出错: {ack_error}")
+                        # 如果消息任务已完成或不存在，创建新的消息接收任务
+                        if message_task is None or message_task.done():
+                            if message_task and message_task.done():
+                                # 如果任务已完成，检查是否有异常
+                                try:
+                                    message_task.result()
+                                except StopAsyncIteration:
+                                    logger.info(f"队列迭代器已结束: {message_type}")
+                                    break
+                                except Exception as e:
+                                    logger.error(f"消息接收任务异常: {e}")
+                                    break
+                            
+                            # 创建新的消息接收任务
+                            message_task = asyncio.create_task(queue_iter.__anext__())
+                        
+                        # 同时等待消息和停止事件
+                        # 使用 asyncio.wait 可以同时等待多个协程，哪个先完成就处理哪个
+                        done, pending = await asyncio.wait(
+                            [
+                                message_task,
+                                asyncio.create_task(self._stop_event.wait())
+                            ],
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        
+                        # 取消未完成的任务
+                        for task in pending:
+                            task.cancel()
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                pass
+                        
+                        # 检查是否收到停止信号
+                        if self._stop_event.is_set() or not self._running:
+                            logger.info(f"消费者已停止，退出消息循环: {message_type}")
+                            # 如果消息任务已完成，需要处理消息
+                            if message_task.done():
+                                try:
+                                    message = message_task.result()
+                                    # 拒绝并重新入队
+                                    try:
+                                        await message.nack(requeue=True)
+                                        logger.info(f"消息已重新入队: {message_type}")
+                                    except Exception as e:
+                                        logger.warning(f"重新入队消息时出错: {e}")
+                                except (StopAsyncIteration, asyncio.CancelledError):
+                                    pass
+                                except Exception as e:
+                                    logger.warning(f"获取消息结果时出错: {e}")
+                            break
+                        
+                        # 处理收到的消息
+                        if message_task in done:
+                            try:
+                                message = message_task.result()
+                                message_task = None  # 重置任务，下次循环创建新任务
+                                
+                                logger.info(f"收到新消息，开始处理: {message_type}, queue={queue.name}")
+                                # 手动处理消息确认，不使用message.process()的自动确认
+                                # 这样可以更好地控制重试逻辑
+                                try:
+                                    await self._process_message(message, handler_func, message_type)
+                                    # 处理成功，确认消息
+                                    await message.ack()
+                                    logger.info(f"消息已确认: {message_type}, queue={queue.name}")
+                                except Exception as e:
+                                    logger.error(f"处理消息时出错: {message_type}, queue={queue.name}, error={e}", exc_info=True)
+                                    # 消息处理失败，根据消息类型决定是否重新入队
+                                    try:
+                                        if message_type == 'job_progress_update':
+                                            # 进度更新失败不重试，直接确认
+                                            await message.ack()
+                                            logger.warning(f"进度更新消息处理失败，已确认: {message_type}")
+                                        else:
+                                            # 其他消息失败时拒绝并重新入队
+                                            await message.nack(requeue=True)
+                                            logger.warning(f"消息处理失败，已重新入队: {message_type}")
+                                    except Exception as ack_error:
+                                        logger.error(f"确认/拒绝消息时出错: {message_type}, error={ack_error}", exc_info=True)
+                            except StopAsyncIteration:
+                                logger.info(f"队列迭代器已结束: {message_type}")
+                                break
+                            except asyncio.CancelledError:
+                                logger.info(f"消息接收任务被取消: {message_type}")
+                                raise
+                            except Exception as e:
+                                logger.error(f"获取消息时出错: {message_type}, error={e}", exc_info=True)
+                                message_task = None  # 重置任务，继续循环
+                    
+                    except asyncio.CancelledError:
+                        # 任务被取消，重新抛出异常以便上层处理
+                        logger.info(f"消费者任务被取消: {message_type}")
+                        raise
+                
+                logger.info(f"消费者循环已退出: {message_type}")
+                
         except asyncio.CancelledError:
             logger.info(f"消费者任务 {message_type} 已取消")
+            raise
         except Exception as e:
             logger.error(f"消费队列 {queue.name} 时出错: {e}", exc_info=True)
+            raise
     
     async def _process_message(
         self,
@@ -194,7 +316,7 @@ class MessageConsumer:
             raise ValueError(f"无法解析消息体: {message_type}")
         
         job_id = message_data.get('job_id', 'unknown')
-        logger.debug(f"收到消息: {message_type}, job_id={job_id}")
+        logger.info(f"收到消息: {message_type}, job_id={job_id}")
         
         # 处理消息（带重试）
         result = await self._process_with_retry(
@@ -204,7 +326,7 @@ class MessageConsumer:
         )
         
         if result:
-            logger.debug(f"消息处理成功: {message_type}, job_id={job_id}")
+            logger.info(f"消息处理成功: {message_type}, job_id={job_id}")
         else:
             logger.warning(f"消息处理失败: {message_type}, job_id={job_id}")
             # 处理失败时抛出异常，让外层处理确认/拒绝
@@ -250,18 +372,21 @@ class MessageConsumer:
                     logger.info(f"等待{wait_time}秒后重试...")
                     await asyncio.sleep(wait_time)
                 else:
+                    logger.error(f"处理{message_type}超时，已达到最大重试次数")
                     return False
                     
             except Exception as e:
                 logger.error(
                     f"处理{message_type}失败: job_id={message_data.get('job_id')}, "
-                    f"attempt={attempt + 1}/{max_retries + 1}, error={e}"
+                    f"attempt={attempt + 1}/{max_retries + 1}, error={e}",
+                    exc_info=True
                 )
                 if attempt < max_retries:
                     wait_time = retry_delay * (2 ** attempt)
                     logger.info(f"等待{wait_time}秒后重试...")
                     await asyncio.sleep(wait_time)
                 else:
+                    logger.error(f"处理{message_type}失败，已达到最大重试次数")
                     return False
         
         return False

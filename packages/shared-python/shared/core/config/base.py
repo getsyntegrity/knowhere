@@ -18,7 +18,7 @@ class BaseConfig(BaseSettings):
     
     # 应用基础配置
     APP_TITLE: str = Field(default="Konwhere AI知识库管理系统", description="应用标题")
-    APP_VERSION: str = Field(default="1.0.0", description="应用版本")
+    APP_VERSION: str = Field(default_factory=lambda: os.getenv("APP_VERSION", "1.0.0"), description="应用版本（从环境变量APP_VERSION读取，如v1.0.0）")
     APP_DESCRIPTION: str = Field(default="基于AI的知识库管理和智能问答系统", description="应用描述")
     
     # 安全配置

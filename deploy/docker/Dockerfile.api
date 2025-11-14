@@ -1,0 +1,106 @@
+# API服务Dockerfile - 多阶段构建优化
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制共享包代码（用于可编辑安装）
+COPY packages/shared-python /app/packages/shared-python
+
+# 复制API服务依赖
+COPY apps/api/requirements.txt /app/requirements.txt
+
+# 创建虚拟环境并安装依赖
+# 先安装共享包，再安装其他依赖（排除requirements.txt中的共享包行）
+RUN python -m venv /app/venv && \
+    /app/venv/bin/pip install --upgrade pip && \
+    /app/venv/bin/pip install --no-cache-dir -e /app/packages/shared-python && \
+    grep -v "^-e.*shared-python" /app/requirements.txt > /app/requirements-filtered.txt && \
+    /app/venv/bin/pip install --no-cache-dir -r /app/requirements-filtered.txt
+
+# 运行阶段
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 只安装运行时依赖
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 从构建阶段复制虚拟环境
+COPY --from=builder /app/venv /app/venv
+
+# 复制共享包代码
+COPY packages/shared-python /app/packages/shared-python
+
+# 复制API服务代码（只复制必要的文件，排除venv、logs等）
+COPY apps/api/main.py /app/
+COPY apps/api/alembic.ini /app/
+COPY apps/api/requirements.txt /app/
+COPY apps/api/app /app/app
+COPY apps/api/alembic /app/alembic
+COPY apps/api/scripts /app/scripts
+# 排除不需要的文件：venv, logs, tests, __pycache__, .pytest_cache等
+
+# 构建参数 - 版本信息
+ARG ENVIRONMENT=dev
+ARG APP_VERSION=dev
+ARG BUILD_TIME=""
+ARG GIT_COMMIT=""
+
+# 设置环境变量
+ENV PATH="/app/venv/bin:$PATH"
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV ENVIRONMENT=${ENVIRONMENT}
+ENV APP_VERSION=${APP_VERSION}
+ENV BUILD_TIME=${BUILD_TIME}
+ENV GIT_COMMIT=${GIT_COMMIT}
+
+# 创建非root用户
+RUN useradd --create-home --shell /bin/bash appuser && \
+    chown -R appuser:appuser /app
+
+# 创建必要的目录并设置权限（在切换到appuser之前）
+RUN mkdir -p /tmp/users /tmp/aismart_bid && \
+    chmod -R 777 /tmp/users /tmp/aismart_bid
+
+# 创建启动脚本（内联创建，避免.dockerignore问题）
+# 使用su命令切换用户（Debian自带）
+RUN echo '#!/bin/sh\n\
+# API服务启动脚本 - 处理volume权限并启动服务\n\
+\n\
+# 确保目录存在（volume挂载后）\n\
+mkdir -p /tmp/users /tmp/aismart_bid\n\
+\n\
+# 尝试设置权限（如果以root运行）\n\
+if [ "$(id -u)" = "0" ]; then\n\
+    chown -R appuser:appuser /tmp/users /tmp/aismart_bid 2>/dev/null || true\n\
+    chmod -R 777 /tmp/users /tmp/aismart_bid 2>/dev/null || true\n\
+    # 切换到appuser并运行\n\
+    exec su -s /bin/sh appuser -c "python main.py"\n\
+else\n\
+    # 已经是appuser，直接运行\n\
+    exec python main.py\n\
+fi' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# 注意：不在这里切换用户，让entrypoint.sh处理
+# USER appuser
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5005/health || exit 1
+
+# 暴露端口
+EXPOSE 5005
+
+# 使用启动脚本
+ENTRYPOINT ["/entrypoint.sh"]
+
