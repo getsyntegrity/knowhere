@@ -67,6 +67,57 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_efs" {
   policy_arn = aws_iam_policy.efs_access.arn
 }
 
+# Secrets Manager访问策略 - 显式授权ECS任务执行角色访问所有必需的secrets
+resource "aws_iam_role_policy" "secrets_manager_access" {
+  name = "${var.project_name}-${var.environment}-secrets-manager-access"
+  role = aws_iam_role.ecs_task_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = [
+          aws_secretsmanager_secret.database_url.arn,
+          aws_secretsmanager_secret.redis_host.arn,
+          aws_secretsmanager_secret.redis_port.arn,
+          aws_secretsmanager_secret.redis_password.arn,
+          aws_secretsmanager_secret.rabbitmq_host.arn,
+          aws_secretsmanager_secret.rabbitmq_username.arn,
+          aws_secretsmanager_secret.rabbitmq_password.arn,
+          aws_secretsmanager_secret.s3_access_key.arn,
+          aws_secretsmanager_secret.s3_secret_key.arn,
+          aws_secretsmanager_secret.secret_key.arn,
+          aws_secretsmanager_secret.stripe_secret_key.arn,
+          aws_secretsmanager_secret.stripe_publishable_key.arn,
+          aws_secretsmanager_secret.posthog_key.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = [
+          aws_kms_key.secrets.arn,
+          aws_kms_key.rds.arn
+        ]
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = [
+              "secretsmanager.${var.aws_region}.amazonaws.com"
+            ]
+          }
+        }
+      }
+    ]
+  })
+}
+
 # ECS任务角色
 resource "aws_iam_role" "ecs_task_role" {
   name = "${var.project_name}-${var.environment}-ecs-task-role"

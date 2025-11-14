@@ -49,11 +49,22 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: rabbitmq-host
+        - name: RABBITMQ_USER
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: rabbitmq-username
         - name: RABBITMQ_PASSWORD
           valueFrom:
             secretKeyRef:
               name: knowhere-secrets
               key: rabbitmq-password
+        - name: RABBITMQ_PORT
+          value: "5672"
+        - name: RABBITMQ_VHOST
+          value: "/"
+        - name: APP_VERSION
+          value: ${APP_VERSION}
         - name: S3_BUCKET_NAME
           value: ${OSS_BUCKET_NAME}
         - name: S3_ACCESS_KEY_ID

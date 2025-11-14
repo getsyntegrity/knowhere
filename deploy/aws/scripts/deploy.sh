@@ -8,7 +8,31 @@ set -e
 AWS_REGION=${AWS_REGION:-us-east-1}
 AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID}
 PROJECT_NAME=${PROJECT_NAME:-knowhere}
+ENVIRONMENT=${ENVIRONMENT:-dev}
 TERRAFORM_DIR="deploy/aws/terraform"
+
+# 版本管理 - 从Git Tag获取版本号
+get_version() {
+    # 尝试获取最新的Git Tag
+    if git describe --tags --exact-match HEAD 2>/dev/null; then
+        # 如果有精确匹配的Tag，使用Tag（保留v前缀）
+        VERSION=$(git describe --tags --exact-match HEAD)
+    elif git describe --tags HEAD 2>/dev/null; then
+        # 如果有Tag（可能不是精确匹配），使用Tag和commit hash
+        VERSION=$(git describe --tags HEAD)
+        COMMIT=$(git rev-parse --short HEAD)
+        VERSION="${VERSION}-${COMMIT}"
+    else
+        # 如果没有Tag，使用commit hash
+        COMMIT=$(git rev-parse --short HEAD)
+        VERSION="dev-${COMMIT}"
+    fi
+    echo "$VERSION"
+}
+
+APP_VERSION=${APP_VERSION:-$(get_version)}
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # 颜色输出
 RED='\033[0;31m'
@@ -64,16 +88,24 @@ init_terraform() {
 # 规划Terraform
 plan_terraform() {
     log "规划Terraform变更..."
+    log "使用版本号: $APP_VERSION"
     cd $TERRAFORM_DIR
-    terraform plan -out=tfplan
+    terraform plan \
+        -var="app_version=$APP_VERSION" \
+        -var="environment=$ENVIRONMENT" \
+        -out=tfplan
     cd - > /dev/null
 }
 
 # 应用Terraform
 apply_terraform() {
     log "应用Terraform配置..."
+    log "使用版本号: $APP_VERSION"
     cd $TERRAFORM_DIR
-    terraform apply tfplan
+    terraform apply \
+        -var="app_version=$APP_VERSION" \
+        -var="environment=$ENVIRONMENT" \
+        tfplan
     cd - > /dev/null
 }
 

@@ -40,6 +40,8 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: stripe-publishable-key
+        - name: APP_VERSION
+          value: ${APP_VERSION}
         resources:
           requests:
             cpu: 250m

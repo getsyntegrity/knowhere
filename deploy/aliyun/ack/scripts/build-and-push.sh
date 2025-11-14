@@ -14,6 +14,29 @@ BACKEND_IMAGE=${PROJECT_NAME}-backend
 FRONTEND_IMAGE=${PROJECT_NAME}-frontend
 WORKER_IMAGE=${PROJECT_NAME}-worker
 
+# 版本管理 - 从Git Tag获取版本号
+get_version() {
+    # 尝试获取最新的Git Tag
+    if git describe --tags --exact-match HEAD 2>/dev/null; then
+        # 如果有精确匹配的Tag，使用Tag（保留v前缀）
+        VERSION=$(git describe --tags --exact-match HEAD)
+    elif git describe --tags HEAD 2>/dev/null; then
+        # 如果有Tag（可能不是精确匹配），使用Tag和commit hash
+        VERSION=$(git describe --tags HEAD)
+        COMMIT=$(git rev-parse --short HEAD)
+        VERSION="${VERSION}-${COMMIT}"
+    else
+        # 如果没有Tag，使用commit hash
+        COMMIT=$(git rev-parse --short HEAD)
+        VERSION="dev-${COMMIT}"
+    fi
+    echo "$VERSION"
+}
+
+APP_VERSION=${APP_VERSION:-$(get_version)}
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
 # 验证环境参数
 if [[ ! "$ENVIRONMENT" =~ ^(dev|test|prod)$ ]]; then
     echo "ERROR: ENVIRONMENT must be one of: dev, test, prod"
@@ -64,22 +87,25 @@ login_registry() {
 build_backend() {
     log "构建后端镜像 (环境: $ENVIRONMENT)..."
     
-    # 获取Git commit hash
-    GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    
     # 构建镜像（从项目根目录，使用新的Dockerfile路径）
     docker build -t $BACKEND_IMAGE:$ENVIRONMENT-latest \
         -f deploy/docker/Dockerfile.api \
         --build-arg ENVIRONMENT=$ENVIRONMENT \
+        --build-arg APP_VERSION=$APP_VERSION \
+        --build-arg BUILD_TIME=$BUILD_TIME \
+        --build-arg GIT_COMMIT=$GIT_COMMIT \
         .
     
-    # 标记镜像
+    # 标记镜像 - 使用版本号作为标签
     docker tag $BACKEND_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$BACKEND_IMAGE:$ENVIRONMENT-latest
+    docker tag $BACKEND_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$BACKEND_IMAGE:$APP_VERSION
     docker tag $BACKEND_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$BACKEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 推送镜像
     log "推送后端镜像到容器镜像服务..."
+    log "版本号: $APP_VERSION"
     docker push $REGISTRY/$NAMESPACE/$BACKEND_IMAGE:$ENVIRONMENT-latest
+    docker push $REGISTRY/$NAMESPACE/$BACKEND_IMAGE:$APP_VERSION
     docker push $REGISTRY/$NAMESPACE/$BACKEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 显示镜像大小
@@ -92,22 +118,25 @@ build_backend() {
 build_frontend() {
     log "构建前端镜像 (环境: $ENVIRONMENT)..."
     
-    # 获取Git commit hash
-    GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    
     # 构建镜像（从项目根目录，使用新的Dockerfile路径）
     docker build -t $FRONTEND_IMAGE:$ENVIRONMENT-latest \
         -f deploy/docker/Dockerfile.web \
         --build-arg ENVIRONMENT=$ENVIRONMENT \
+        --build-arg APP_VERSION=$APP_VERSION \
+        --build-arg BUILD_TIME=$BUILD_TIME \
+        --build-arg GIT_COMMIT=$GIT_COMMIT \
         .
     
-    # 标记镜像
+    # 标记镜像 - 使用版本号作为标签
     docker tag $FRONTEND_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$FRONTEND_IMAGE:$ENVIRONMENT-latest
+    docker tag $FRONTEND_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$FRONTEND_IMAGE:$APP_VERSION
     docker tag $FRONTEND_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$FRONTEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 推送镜像
     log "推送前端镜像到容器镜像服务..."
+    log "版本号: $APP_VERSION"
     docker push $REGISTRY/$NAMESPACE/$FRONTEND_IMAGE:$ENVIRONMENT-latest
+    docker push $REGISTRY/$NAMESPACE/$FRONTEND_IMAGE:$APP_VERSION
     docker push $REGISTRY/$NAMESPACE/$FRONTEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 显示镜像大小
@@ -120,22 +149,25 @@ build_frontend() {
 build_worker() {
     log "构建Worker镜像 (环境: $ENVIRONMENT)..."
     
-    # 获取Git commit hash
-    GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    
     # 构建镜像（从项目根目录，使用新的Dockerfile路径）
     docker build -t $WORKER_IMAGE:$ENVIRONMENT-latest \
         -f deploy/docker/Dockerfile.worker \
         --build-arg ENVIRONMENT=$ENVIRONMENT \
+        --build-arg APP_VERSION=$APP_VERSION \
+        --build-arg BUILD_TIME=$BUILD_TIME \
+        --build-arg GIT_COMMIT=$GIT_COMMIT \
         .
     
-    # 标记镜像
+    # 标记镜像 - 使用版本号作为标签
     docker tag $WORKER_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$WORKER_IMAGE:$ENVIRONMENT-latest
+    docker tag $WORKER_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$WORKER_IMAGE:$APP_VERSION
     docker tag $WORKER_IMAGE:$ENVIRONMENT-latest $REGISTRY/$NAMESPACE/$WORKER_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 推送镜像
     log "推送Worker镜像到容器镜像服务..."
+    log "版本号: $APP_VERSION"
     docker push $REGISTRY/$NAMESPACE/$WORKER_IMAGE:$ENVIRONMENT-latest
+    docker push $REGISTRY/$NAMESPACE/$WORKER_IMAGE:$APP_VERSION
     docker push $REGISTRY/$NAMESPACE/$WORKER_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 显示镜像大小

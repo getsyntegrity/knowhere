@@ -47,6 +47,12 @@ variable "project_name" {
   default     = "knowhere"
 }
 
+variable "app_version" {
+  description = "应用版本号（从Git Tag或commit hash获取）"
+  type        = string
+  default     = "dev"
+}
+
 # 数据源
 data "aws_availability_zones" "available" {
   state = "available"

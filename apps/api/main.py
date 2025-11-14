@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 import httpx
 import uvicorn
@@ -144,7 +145,12 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["Health"])
     async def health_check():
         """简单的健康检查端点"""
-        return {"status": "healthy", "service": "knowhere-api"}
+        version = os.getenv("APP_VERSION", app_config.APP_VERSION)
+        return {
+            "status": "healthy",
+            "service": "knowhere-api",
+            "version": version
+        }
     
     # 注册其他 API 路由
     app.include_router(api_router)

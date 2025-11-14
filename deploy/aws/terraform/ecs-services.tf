@@ -112,28 +112,48 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "LOG_LEVEL"
           value = "INFO"
+        },
+        {
+          name  = "RABBITMQ_PORT"
+          value = "5671"
+        },
+        {
+          name  = "RABBITMQ_VHOST"
+          value = "/"
+        },
+        {
+          name  = "APP_VERSION"
+          value = var.app_version
         }
       ]
       secrets = [
         {
           name      = "DATABASE_URL"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/database-url"
+          valueFrom = aws_secretsmanager_secret.database_url.arn
         },
         {
           name      = "REDIS_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-host"
+          valueFrom = aws_secretsmanager_secret.redis_host.arn
+        },
+        {
+          name      = "REDIS_PORT"
+          valueFrom = aws_secretsmanager_secret.redis_port.arn
         },
         {
           name      = "REDIS_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-password"
+          valueFrom = aws_secretsmanager_secret.redis_password.arn
         },
         {
           name      = "RABBITMQ_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-host"
+          valueFrom = aws_secretsmanager_secret.rabbitmq_host.arn
+        },
+        {
+          name      = "RABBITMQ_USER"
+          valueFrom = aws_secretsmanager_secret.rabbitmq_username.arn
         },
         {
           name      = "RABBITMQ_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-password"
+          valueFrom = aws_secretsmanager_secret.rabbitmq_password.arn
         },
         {
           name      = "S3_BUCKET_NAME"
@@ -141,11 +161,11 @@ resource "aws_ecs_task_definition" "backend" {
         },
         {
           name      = "S3_ACCESS_KEY_ID"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-access-key"
+          valueFrom = aws_secretsmanager_secret.s3_access_key.arn
         },
         {
           name      = "S3_SECRET_ACCESS_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-secret-key"
+          valueFrom = aws_secretsmanager_secret.s3_secret_key.arn
         },
         {
           name      = "SNS_TOPIC_ARN"
@@ -153,11 +173,11 @@ resource "aws_ecs_task_definition" "backend" {
         },
         {
           name      = "SECRET_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/secret-key"
+          valueFrom = aws_secretsmanager_secret.secret_key.arn
         },
         {
           name      = "STRIPE_SECRET_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/stripe-secret-key"
+          valueFrom = aws_secretsmanager_secret.stripe_secret_key.arn
         }
       ]
       logConfiguration = {
@@ -226,11 +246,11 @@ resource "aws_ecs_task_definition" "frontend" {
         },
         {
           name      = "NEXT_PUBLIC_POSTHOG_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/posthog-key"
+          valueFrom = aws_secretsmanager_secret.posthog_key.arn
         },
         {
           name      = "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/stripe-publishable-key"
+          valueFrom = aws_secretsmanager_secret.stripe_publishable_key.arn
         }
       ]
       logConfiguration = {
@@ -317,28 +337,48 @@ resource "aws_ecs_task_definition" "worker" {
         {
           name  = "LOG_LEVEL"
           value = "INFO"
+        },
+        {
+          name  = "RABBITMQ_PORT"
+          value = "5671"
+        },
+        {
+          name  = "RABBITMQ_VHOST"
+          value = "/"
+        },
+        {
+          name  = "APP_VERSION"
+          value = var.app_version
         }
       ]
       secrets = [
         {
           name      = "DATABASE_URL"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/database-url"
+          valueFrom = aws_secretsmanager_secret.database_url.arn
         },
         {
           name      = "REDIS_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-host"
+          valueFrom = aws_secretsmanager_secret.redis_host.arn
+        },
+        {
+          name      = "REDIS_PORT"
+          valueFrom = aws_secretsmanager_secret.redis_port.arn
         },
         {
           name      = "REDIS_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/redis-password"
+          valueFrom = aws_secretsmanager_secret.redis_password.arn
         },
         {
           name      = "RABBITMQ_HOST"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-host"
+          valueFrom = aws_secretsmanager_secret.rabbitmq_host.arn
+        },
+        {
+          name      = "RABBITMQ_USER"
+          valueFrom = aws_secretsmanager_secret.rabbitmq_username.arn
         },
         {
           name      = "RABBITMQ_PASSWORD"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/rabbitmq-password"
+          valueFrom = aws_secretsmanager_secret.rabbitmq_password.arn
         },
         {
           name      = "S3_BUCKET_NAME"
@@ -346,11 +386,11 @@ resource "aws_ecs_task_definition" "worker" {
         },
         {
           name      = "S3_ACCESS_KEY_ID"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-access-key"
+          valueFrom = aws_secretsmanager_secret.s3_access_key.arn
         },
         {
           name      = "S3_SECRET_ACCESS_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/s3-secret-key"
+          valueFrom = aws_secretsmanager_secret.s3_secret_key.arn
         },
         {
           name      = "SNS_TOPIC_ARN"
@@ -358,7 +398,7 @@ resource "aws_ecs_task_definition" "worker" {
         },
         {
           name      = "SECRET_KEY"
-          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:knowhere/${var.environment}/secret-key"
+          valueFrom = aws_secretsmanager_secret.secret_key.arn
         }
       ]
       logConfiguration = {

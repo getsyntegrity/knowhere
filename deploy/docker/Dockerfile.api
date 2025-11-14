@@ -49,10 +49,20 @@ COPY apps/api/alembic /app/alembic
 COPY apps/api/scripts /app/scripts
 # 排除不需要的文件：venv, logs, tests, __pycache__, .pytest_cache等
 
+# 构建参数 - 版本信息
+ARG ENVIRONMENT=dev
+ARG APP_VERSION=dev
+ARG BUILD_TIME=""
+ARG GIT_COMMIT=""
+
 # 设置环境变量
 ENV PATH="/app/venv/bin:$PATH"
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV ENVIRONMENT=${ENVIRONMENT}
+ENV APP_VERSION=${APP_VERSION}
+ENV BUILD_TIME=${BUILD_TIME}
+ENV GIT_COMMIT=${GIT_COMMIT}
 
 # 创建非root用户
 RUN useradd --create-home --shell /bin/bash appuser && \

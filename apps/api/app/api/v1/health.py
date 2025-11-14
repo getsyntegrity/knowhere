@@ -1,9 +1,11 @@
 """
 数据库健康检查API端点
 """
+import os
 from shared.core.database import (get_database_health, get_database_info,
                                get_database_performance,
                                prewarm_connection_pool)
+from shared.core.config import app_config
 from fastapi import APIRouter
 
 router = APIRouter()
