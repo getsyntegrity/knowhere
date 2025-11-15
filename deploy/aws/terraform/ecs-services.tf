@@ -124,6 +124,14 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "APP_VERSION"
           value = var.app_version
+        },
+        {
+          name  = "S3_BUCKET_NAME"
+          value = aws_s3_bucket.main.bucket
+        },
+        {
+          name  = "SNS_TOPIC_ARN"
+          value = aws_sns_topic.s3_events.arn
         }
       ]
       secrets = [
@@ -156,20 +164,12 @@ resource "aws_ecs_task_definition" "backend" {
           valueFrom = aws_secretsmanager_secret.rabbitmq_password.arn
         },
         {
-          name      = "S3_BUCKET_NAME"
-          value     = aws_s3_bucket.main.bucket
-        },
-        {
           name      = "S3_ACCESS_KEY_ID"
           valueFrom = aws_secretsmanager_secret.s3_access_key.arn
         },
         {
           name      = "S3_SECRET_ACCESS_KEY"
           valueFrom = aws_secretsmanager_secret.s3_secret_key.arn
-        },
-        {
-          name      = "SNS_TOPIC_ARN"
-          value     = aws_sns_topic.s3_events.arn
         },
         {
           name      = "SECRET_KEY"
@@ -242,7 +242,7 @@ resource "aws_ecs_task_definition" "frontend" {
       secrets = [
         {
           name      = "NEXT_PUBLIC_API_URL"
-          value     = var.environment == "prod" ? "https://api.${var.domain_name}" : "https://${var.environment}-api.${var.domain_name}"
+          value     = var.environment == "prod" ? "https://api.${var.domain_name}" : (var.environment == "dev" ? "https://apidev.${var.domain_name}" : (var.environment == "test" ? "https://apitest.${var.domain_name}" : "https://${var.environment}-api.${var.domain_name}"))
         },
         {
           name      = "NEXT_PUBLIC_POSTHOG_KEY"
@@ -349,6 +349,14 @@ resource "aws_ecs_task_definition" "worker" {
         {
           name  = "APP_VERSION"
           value = var.app_version
+        },
+        {
+          name  = "S3_BUCKET_NAME"
+          value = aws_s3_bucket.main.bucket
+        },
+        {
+          name  = "SNS_TOPIC_ARN"
+          value = aws_sns_topic.s3_events.arn
         }
       ]
       secrets = [
@@ -381,20 +389,12 @@ resource "aws_ecs_task_definition" "worker" {
           valueFrom = aws_secretsmanager_secret.rabbitmq_password.arn
         },
         {
-          name      = "S3_BUCKET_NAME"
-          value     = aws_s3_bucket.main.bucket
-        },
-        {
           name      = "S3_ACCESS_KEY_ID"
           valueFrom = aws_secretsmanager_secret.s3_access_key.arn
         },
         {
           name      = "S3_SECRET_ACCESS_KEY"
           valueFrom = aws_secretsmanager_secret.s3_secret_key.arn
-        },
-        {
-          name      = "SNS_TOPIC_ARN"
-          value     = aws_sns_topic.s3_events.arn
         },
         {
           name      = "SECRET_KEY"

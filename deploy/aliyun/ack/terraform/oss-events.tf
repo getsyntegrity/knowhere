@@ -16,7 +16,7 @@ output "oss_event_config" {
       "oss:ObjectCreated:CompleteMultipartUpload"
     ]
     filter_prefix = "uploads/"
-    callback_url  = var.api_webhook_endpoint != "" ? var.api_webhook_endpoint : "https://${var.environment == "prod" ? "api" : "${var.environment}-api"}.${var.domain_name}/v1/internal/s3-events"
+    callback_url  = var.api_webhook_endpoint != "" ? var.api_webhook_endpoint : "https://${var.environment == "prod" ? "api" : (var.environment == "dev" ? "apidev" : (var.environment == "test" ? "apitest" : "${var.environment}-api"))}.${var.domain_name}/v1/internal/oss-events"
   }
 }
 

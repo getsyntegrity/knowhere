@@ -13,58 +13,23 @@ terraform {
   }
 }
 
+# 默认 provider（使用 RAM 用户凭证）
 provider "alicloud" {
   region     = var.region
   access_key = var.access_key
   secret_key = var.secret_key
 }
 
-# 变量定义
-variable "region" {
-  description = "阿里云区域"
-  type        = string
-  default     = "cn-hangzhou"
+# 主账号 provider（用于需要高权限的资源，如 ACK 集群）
+# 如果未提供主账号凭证，则使用默认 provider
+provider "alicloud" {
+  alias      = "master"
+  region     = var.region
+  access_key = var.master_access_key != "" ? var.master_access_key : var.access_key
+  secret_key = var.master_secret_key != "" ? var.master_secret_key : var.secret_key
 }
 
-variable "access_key" {
-  description = "阿里云AccessKey ID"
-  type        = string
-  sensitive   = true
-}
-
-variable "secret_key" {
-  description = "阿里云AccessKey Secret"
-  type        = string
-  sensitive   = true
-}
-
-variable "environment" {
-  description = "环境名称 (dev/test/prod)"
-  type        = string
-  default     = "dev"
-  
-  validation {
-    condition     = contains(["dev", "test", "prod"], var.environment)
-    error_message = "Environment must be one of: dev, test, prod"
-  }
-}
-
-variable "project_name" {
-  description = "项目名称"
-  type        = string
-  default     = "knowhere"
-}
-
-variable "domain_name" {
-  description = "域名"
-  type        = string
-}
-
-variable "api_webhook_endpoint" {
-  description = "API webhook endpoint for OSS events"
-  type        = string
-  default     = ""
-}
+# 变量定义在 variables.tf 中
 
 # 数据源
 data "alicloud_zones" "available" {

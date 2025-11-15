@@ -1,212 +1,168 @@
-# 容器化部署指南
+# Knowhere 部署指南
 
-本文档描述了Knowhere项目的完整容器化部署方案，支持AWS ECS Fargate和阿里云ACK（容器服务）。
+本文档提供 Knowhere 项目在 AWS 和阿里云平台的完整部署指南。
+
+## 📋 目录
+
+- [架构概述](#架构概述)
+- [快速开始](#快速开始)
+- [平台选择](#平台选择)
+- [部署方案](#部署方案)
+- [环境配置](#环境配置)
+- [版本管理](#版本管理)
+- [监控和日志](#监控和日志)
+- [故障排查](#故障排查)
+- [相关文档](#相关文档)
 
 ## 架构概述
 
-项目采用统一的容器化部署方式，使用Serverless基础设施服务：
+Knowhere 项目采用容器化部署架构，支持在 AWS 和阿里云两个云平台运行。
 
-- **计算**: AWS ECS Fargate / 阿里云ACK Kubernetes（容器化）
-- **数据库**: AWS RDS Serverless v2 / 阿里云RDS Serverless（PostgreSQL）
-- **缓存**: AWS ElastiCache Serverless / 阿里云Redis Serverless
-- **消息队列**: AWS Amazon MQ for RabbitMQ / 阿里云云消息队列RabbitMQ版Serverless
-- **存储**: AWS S3 / 阿里云OSS（已Serverless）
+### 核心组件
 
-## 目录结构
+- **Frontend**: Next.js 前端应用
+- **Backend**: FastAPI 后端服务
+- **Worker**: Celery 异步任务处理服务
 
-```
-deploy/
-├── docker/                    # 统一Dockerfile目录
-│   ├── Dockerfile.api         # API服务Dockerfile
-│   ├── Dockerfile.worker      # Worker服务Dockerfile
-│   ├── Dockerfile.web         # Web服务Dockerfile
-│   └── .dockerignore          # Docker忽略文件
-├── aws/                       # AWS部署配置
-│   ├── terraform/             # Terraform基础设施配置
-│   │   ├── main.tf            # 主配置
-│   │   ├── vpc.tf             # VPC配置
-│   │   ├── ecs.tf             # ECS配置
-│   │   ├── efs.tf             # EFS配置（模型缓存）
-│   │   ├── database.tf        # RDS Serverless v2配置
-│   │   ├── mq.tf              # Amazon MQ for RabbitMQ配置
-│   │   ├── s3.tf              # S3配置
-│   │   ├── sns.tf             # SNS配置（S3事件通知）
-│   │   ├── alb.tf             # ALB配置
-│   │   └── ecs-services.tf    # ECS服务配置
-│   └── scripts/                # 部署脚本
-│       └── build-and-push.sh  # 构建和推送镜像脚本
-├── aliyun/                    # 阿里云部署配置
-│   └── ack/                   # ACK容器服务配置
-│       ├── terraform/         # Terraform基础设施配置
-│       │   ├── database.tf    # RDS Serverless配置
-│       │   └── rabbitmq.tf   # 云消息队列RabbitMQ版Serverless配置
-│       ├── kubernetes/        # Kubernetes配置
-│       ├── nginx/             # Nginx配置（如需要）
-│       └── scripts/           # 部署脚本
-├── config/                    # 环境配置模板
-│   ├── aws/                   # AWS环境变量模板
-│   └── aliyun/                # 阿里云环境变量模板
-├── local-dev/                 # 本地开发环境
-└── docker-compose.prod.yml    # 生产环境Docker Compose配置
-```
+### 基础设施
+
+- **计算**: AWS ECS Fargate / 阿里云 ACK (Kubernetes)
+- **数据库**: AWS RDS Serverless v2 / 阿里云 RDS Serverless (PostgreSQL)
+- **缓存**: AWS ElastiCache Serverless / 阿里云 Redis Serverless
+- **消息队列**: AWS Amazon MQ for RabbitMQ / 阿里云云消息队列 RabbitMQ 版 Serverless
+- **存储**: AWS S3 / 阿里云 OSS
+- **负载均衡**: AWS ALB / 阿里云 SLB
+- **DNS**: AWS Route53 / 阿里云 DNS
 
 ## 快速开始
 
-### 1. 构建Docker镜像
+### 选择部署平台
 
-#### AWS
+根据你的需求选择部署平台：
+
+- **AWS 部署**: 适合海外用户，使用 ECS Fargate，本地构建镜像推送到 ECR
+- **阿里云部署**: 适合国内用户，使用 ACK (Kubernetes)，使用 ACR 构建服务自动构建镜像
+
+### 快速部署
+
+#### AWS 部署
+
 ```bash
-cd deploy/aws/scripts
-export AWS_ACCOUNT_ID=your-account-id
-export AWS_REGION=us-east-1
-export ENVIRONMENT=dev  # dev/test/prod
-./build-and-push.sh
-```
+# 1. 查看 AWS 部署指南
+cat deploy/DEPLOYMENT_AWS.md
 
-#### 阿里云
-```bash
-cd deploy/aliyun/ack/scripts
-export REGISTRY=registry.cn-hangzhou.aliyuncs.com
-export NAMESPACE=knowhere
-export ALIYUN_USERNAME=your-username
-export ALIYUN_PASSWORD=your-password
-export ENVIRONMENT=dev  # dev/test/prod
-./build-and-push.sh
-```
-
-### 2. 部署基础设施
-
-#### AWS
-```bash
+# 2. 进入 AWS 部署目录
 cd deploy/aws/terraform
-terraform init
-# 版本号会自动从Git Tag获取，或手动指定
-terraform plan \
-  -var="environment=dev" \
-  -var="domain_name=knowhere.ai" \
-  -var="app_version=$(git describe --tags --exact-match HEAD 2>/dev/null || echo 'dev')" \
-  -var="db_password=your-db-password" \
-  -var="mq_password=your-mq-password"
-terraform apply
+
+# 3. 按照 AWS 部署指南完成部署
 ```
 
-#### 阿里云
+详细步骤请参考：[AWS 部署指南](DEPLOYMENT_AWS.md)
+
+#### 阿里云部署
+
 ```bash
+# 1. 查看阿里云部署指南
+cat deploy/DEPLOYMENT_ALIYUN.md
+
+# 2. 进入阿里云部署目录
 cd deploy/aliyun/ack/terraform
-terraform init
-# 版本号会自动从Git Tag获取，或手动指定
-terraform plan \
-  -var="environment=dev" \
-  -var="domain_name=knowhere.ai" \
-  -var="db_password=your-db-password" \
-  -var="rabbitmq_password=your-rabbitmq-password"
-terraform apply
+
+# 3. 按照阿里云部署指南完成部署
 ```
 
-### 3. 初始化Secrets Manager
+详细步骤请参考：[阿里云部署指南](DEPLOYMENT_ALIYUN.md)
 
-#### AWS Secrets Manager
+## 平台选择
 
-所有敏感信息（数据库密码、API密钥等）都存储在AWS Secrets Manager中，由Terraform统一管理。
+### AWS 平台
 
-**首次部署前验证**：
-```bash
-cd deploy/aws/scripts
-export ENVIRONMENT=dev  # dev/test/prod
-export AWS_REGION=us-east-1
-./init-secrets.sh
+**适用场景**:
+- 面向海外用户
+- 需要 AWS 生态集成
+- 使用 ECS Fargate 无服务器容器
+
+**特点**:
+- ✅ 本地构建镜像，推送到 ECR
+- ✅ 使用 ECS Fargate，无需管理服务器
+- ✅ 使用 AWS Secrets Manager 管理密钥
+- ✅ 使用 CloudWatch 监控和日志
+
+**文档**: [AWS 部署指南](DEPLOYMENT_AWS.md)
+
+### 阿里云平台
+
+**适用场景**:
+- 面向国内用户
+- 需要阿里云生态集成
+- 使用 Kubernetes 容器编排
+
+**特点**:
+- ✅ 使用 ACR 构建服务，自动构建镜像（无需本地构建）
+- ✅ 使用 ACK (Kubernetes)，支持更灵活的编排
+- ✅ 使用 Kubernetes Secrets 管理密钥
+- ✅ 使用阿里云日志服务 SLS 监控和日志
+
+**文档**: [阿里云部署指南](DEPLOYMENT_ALIYUN.md)
+
+## 部署方案
+
+### 镜像构建方式对比
+
+| 平台 | 构建方式 | 说明 |
+|------|---------|------|
+| AWS | 本地构建 + ECR | 使用 `build-and-push.sh` 脚本在本地构建并推送到 ECR |
+| 阿里云 | ACR 构建服务 | 配置构建规则，代码推送自动触发构建，无需本地构建 |
+
+### 部署架构对比
+
+#### AWS 架构
+
+```
+Internet
+    ↓
+Route 53 (DNS)
+    ↓
+Application Load Balancer (ALB)
+    ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│   Frontend      │   Backend       │   Worker        │
+│   (Next.js)     │   (FastAPI)     │   (Celery)      │
+│   ECS Fargate   │   ECS Fargate   │   ECS Fargate   │
+└─────────────────┴─────────────────┴─────────────────┘
+    ↓                     ↓                     ↓
+    └─────────┬───────────┴─────────────────────┘
+              ↓
+    ┌─────────────────────────┐
+    │   RDS + ElastiCache     │
+    │   S3 + Amazon MQ        │
+    └─────────────────────────┘
 ```
 
-此脚本会：
-- 检查所有必需的secrets是否存在
-- 验证IAM权限是否正确配置
-- 提示缺失或空的secrets
+#### 阿里云架构
 
-**创建Secrets**：
-Terraform会自动创建所有必需的secrets。如果某些secrets的值需要手动设置，使用以下命令：
-
-```bash
-# 设置S3访问密钥
-aws secretsmanager update-secret \
-  --secret-id "knowhere/dev/s3-access-key" \
-  --secret-string "your-access-key-id" \
-  --region us-east-1
-
-# 设置应用密钥
-aws secretsmanager update-secret \
-  --secret-id "knowhere/dev/secret-key" \
-  --secret-string "your-jwt-secret-key" \
-  --region us-east-1
-
-# 设置Stripe密钥
-aws secretsmanager update-secret \
-  --secret-id "knowhere/dev/stripe-secret-key" \
-  --secret-string "sk_live_..." \
-  --region us-east-1
 ```
-
-**必需的Secrets列表**：
-- `knowhere/{environment}/database-url` - 数据库连接URL（自动生成）
-- `knowhere/{environment}/redis-host` - Redis主机（自动生成）
-- `knowhere/{environment}/redis-port` - Redis端口（自动生成）
-- `knowhere/{environment}/redis-password` - Redis密码（默认空）
-- `knowhere/{environment}/rabbitmq-host` - RabbitMQ主机（自动生成）
-- `knowhere/{environment}/rabbitmq-username` - RabbitMQ用户名（自动生成）
-- `knowhere/{environment}/rabbitmq-password` - RabbitMQ密码（从变量设置）
-- `knowhere/{environment}/s3-access-key` - S3访问密钥ID（需手动设置）
-- `knowhere/{environment}/s3-secret-key` - S3秘密访问密钥（需手动设置）
-- `knowhere/{environment}/secret-key` - 应用JWT密钥（需手动设置）
-- `knowhere/{environment}/stripe-secret-key` - Stripe密钥（可选）
-- `knowhere/{environment}/stripe-publishable-key` - Stripe发布密钥（可选）
-- `knowhere/{environment}/posthog-key` - PostHog密钥（可选）
-
-**IAM权限**：
-Terraform会自动配置ECS任务执行角色的Secrets Manager访问权限。确保运行`terraform apply`以应用IAM策略。
-
-#### 阿里云Kubernetes Secrets
-
-阿里云使用Kubernetes Secrets存储敏感信息。
-
-**创建Secrets**：
-```bash
-# 方式1：使用kubectl命令（推荐）
-kubectl create secret generic knowhere-secrets \
-  --from-literal=database-url='postgresql+asyncpg://user:password@host:5432/knowhere' \
-  --from-literal=redis-host='redis-endpoint' \
-  --from-literal=redis-port='6379' \
-  --from-literal=redis-password='' \
-  --from-literal=rabbitmq-host='rabbitmq-endpoint' \
-  --from-literal=rabbitmq-username='admin' \
-  --from-literal=rabbitmq-password='password' \
-  --from-literal=oss-access-key-id='your-access-key-id' \
-  --from-literal=oss-secret-access-key='your-secret-access-key' \
-  --from-literal=secret-key='your-secret-key' \
-  --namespace=knowhere
-
-# 方式2：使用YAML文件（参考 deploy/aliyun/ack/kubernetes/base/secrets.yaml）
-# 注意：需要先base64编码所有值
-echo -n 'your-value' | base64
-# 然后替换secrets.yaml中的占位符
-kubectl apply -f deploy/aliyun/ack/kubernetes/base/secrets.yaml
-```
-
-**安全建议**：
-- 生产环境建议使用阿里云Secrets Manager配合KMS加密
-- 不要将包含实际值的secrets.yaml提交到版本控制
-- 定期轮换密钥
-
-### 4. 配置S3/OSS事件通知
-
-#### AWS S3 + SNS
-Terraform会自动配置S3事件通知到SNS Topic，并订阅到API webhook endpoint。
-
-#### 阿里云 OSS
-运行配置脚本：
-```bash
-cd deploy/aliyun/ack/scripts
-export OSS_BUCKET_NAME=your-bucket-name
-export API_WEBHOOK_ENDPOINT=https://dev-api.knowhere.ai/v1/internal/s3-events
-./setup-oss-events.sh
+Internet
+    ↓
+阿里云 DNS
+    ↓
+SLB (负载均衡)
+    ↓
+ACK (Kubernetes)
+    ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│   Frontend      │   Backend       │   Worker        │
+│   (Next.js)     │   (FastAPI)     │   (Celery)      │
+│   Kubernetes    │   Kubernetes    │   Kubernetes    │
+│   Deployment    │   Deployment    │   Deployment    │
+└─────────────────┴─────────────────┴─────────────────┘
+    ↓                     ↓                     ↓
+    └─────────┬───────────┴─────────────────────┘
+              ↓
+    ┌─────────────────────────┐
+    │   RDS + Redis           │
+    │   OSS + RabbitMQ        │
+    └─────────────────────────┘
 ```
 
 ## 环境配置
@@ -214,70 +170,70 @@ export API_WEBHOOK_ENDPOINT=https://dev-api.knowhere.ai/v1/internal/s3-events
 ### 多环境支持
 
 项目支持三个环境：
-- `dev` - 开发环境
-- `test` - 测试环境
-- `prod` - 生产环境
 
-每个环境使用独立的：
-- 域名（dev-api.knowhere.ai, test-api.knowhere.ai, api.knowhere.ai）
-- 存储桶（knowhere-dev-storage-xxx, knowhere-test-storage-xxx, knowhere-prod-storage-xxx）
-- SNS Topic / OSS事件配置
-- EFS / NAS文件系统（模型缓存）
-- ECS集群 / ACK集群
-- 配置和密钥
+- **dev**: 开发环境
+- **test**: 测试环境
+- **prod**: 生产环境
+
+### 域名配置
+
+| 服务 | 环境 | 域名 | Git分支 |
+|------|------|------|---------|
+| **API** | prod | `api.knowhereto.com` | main |
+| **API** | test | `apitest.knowhereto.com` | test |
+| **API** | dev | `apidev.knowhereto.com` | dev |
+| **Web** | prod | `knowhereto.com` | main |
+| **Web** | test | `test.knowhereto.com` | test |
+| **Web** | dev | `dev.knowhereto.com` | dev |
+
+详细域名配置请参考：[域名配置说明](DOMAIN_CONFIG.md)
 
 ### 环境变量配置
 
-复制环境变量模板并填入实际值：
+#### AWS 环境变量
+
+配置文件位置：`deploy/config/aws/env.template`
 
 ```bash
-# AWS
+# 复制模板
 cp deploy/config/aws/env.template deploy/config/aws/.env.dev
-# 编辑 .env.dev 填入实际值
 
-# 阿里云
-cp deploy/config/aliyun/env.template deploy/config/aliyun/.env.dev
-# 编辑 .env.dev 填入实际值
+# 编辑配置文件，填入实际值
 ```
 
-## Serverless基础设施
+#### 阿里云环境变量
 
-### AWS平台
+配置文件位置：`deploy/config/aliyun/env.template`
 
-- **RDS Serverless v2**: Aurora PostgreSQL Serverless v2，自动扩缩容（0.5-16 ACU）
-- **ElastiCache Serverless**: Redis Serverless，按使用量计费
-- **Amazon MQ for RabbitMQ**: 完全托管的RabbitMQ服务（非严格Serverless，但无需管理服务器）
-- **S3**: 对象存储（已Serverless）
+```bash
+# 复制模板
+cp deploy/config/aliyun/env.template deploy/config/aliyun/.env.dev
 
-### 阿里云平台
-
-- **RDS Serverless**: PostgreSQL Serverless，自动启停和扩缩容
-- **Redis Serverless**: Redis云数据库Serverless版，自动扩缩容
-- **云消息队列RabbitMQ版Serverless**: Serverless实例，按量计费，自动弹性扩展
-- **OSS**: 对象存储（已Serverless）
+# 编辑配置文件，填入实际值
+```
 
 ## 版本管理
 
-### Git Tag版本管理
+### Git Tag 版本管理
 
 项目使用语义化版本（semver）进行版本管理：
 
-1. **创建版本Tag**:
+1. **创建版本 Tag**:
    ```bash
    git tag -a v1.0.0 -m "Release version 1.0.0"
    git push origin v1.0.0
    ```
 
 2. **版本号获取规则**:
-   - 如果有精确匹配的Git Tag，使用Tag（如 `v1.0.0`）
-   - 如果有Tag但不是精确匹配，使用Tag+commit hash（如 `v1.0.0-abc1234`）
-   - 如果没有Tag，使用commit hash（如 `dev-abc1234`）
+   - 如果有精确匹配的 Git Tag，使用 Tag（如 `v1.0.0`）
+   - 如果有 Tag 但不是精确匹配，使用 Tag+commit hash（如 `v1.0.0-abc1234`）
+   - 如果没有 Tag，使用 commit hash（如 `dev-abc1234`）
 
 3. **版本信息注入**:
-   - 构建时自动从Git Tag获取版本号
-   - 版本号注入到Docker镜像环境变量（`APP_VERSION`）
+   - 构建时自动从 Git Tag 获取版本号
+   - 版本号注入到 Docker 镜像环境变量（`APP_VERSION`）
    - 版本号包含在镜像标签中
-   - API端点 `/v1/version` 返回当前部署版本信息
+   - API 端点 `/v1/version` 返回当前部署版本信息
 
 ### 版本端点
 
@@ -294,128 +250,87 @@ cp deploy/config/aliyun/env.template deploy/config/aliyun/.env.dev
 
 - **GET /health**: 健康检查端点，包含版本信息
 
-## RabbitMQ配置
-
-### AWS平台（Amazon MQ）
-
-- **端口**: 5671 (AMQPS over TLS)
-- **管理端口**: 15671
-- **连接信息**: 存储在AWS Secrets Manager
-- **环境变量**: `RABBITMQ_HOST`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_PORT`, `RABBITMQ_VHOST`
-
-### 阿里云平台（云消息队列RabbitMQ版Serverless）
-
-- **端口**: 5672 (AMQP)
-- **管理端口**: 15672
-- **连接信息**: 存储在Kubernetes Secrets
-- **环境变量**: `RABBITMQ_HOST`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_PORT`, `RABBITMQ_VHOST`
-
-### 本地开发
-
-本地开发环境继续使用Docker Compose中的RabbitMQ服务，无需修改代码。
-
-## 镜像优化
-
-### 多阶段构建
-
-所有Dockerfile使用多阶段构建来减少镜像体积：
-
-- **API镜像**: ~300-400MB（从~500MB优化）
-- **Worker镜像**: ~1.5-2GB（从~3GB优化）
-- **Web镜像**: 已优化（使用standalone模式）
-
-### 模型缓存
-
-Worker服务使用共享存储（AWS EFS / 阿里云NAS）来缓存模型，避免重复下载：
-
-- 挂载点: `/mnt/models/huggingface`
-- 环境变量: `HF_HOME`, `TRANSFORMERS_CACHE`
-
-## 域名配置
-
-### AWS
-- 开发环境: `dev-api.knowhere.ai`, `dev.knowhere.ai`
-- 测试环境: `test-api.knowhere.ai`, `test.knowhere.ai`
-- 生产环境: `api.knowhere.ai`, `knowhere.ai`
-
-### 阿里云
-- 开发环境: `dev-api.knowhere.ai`, `dev.knowhere.ai`
-- 测试环境: `test-api.knowhere.ai`, `test.knowhere.ai`
-- 生产环境: `api.knowhere.ai`, `knowhere.ai`
-
 ## 监控和日志
 
-### AWS
-- CloudWatch日志组: `/ecs/knowhere-{environment}-{service}`
-- CloudWatch Container Insights: 已启用
-- 日志保留: dev/test 7天, prod 30天
+### AWS 监控
 
-### 阿里云
-- 日志服务SLS: 自动配置
-- 云监控: 已启用
-- ACK监控面板: 已启用
+- **CloudWatch 日志组**: `/ecs/knowhere-{environment}-{service}`
+- **CloudWatch Container Insights**: 已启用
+- **日志保留**: dev/test 7天, prod 30天
 
-## 安全最佳实践
+### 阿里云监控
 
-### Secrets Manager安全
-
-1. **加密存储**：
-   - AWS: 所有secrets使用KMS加密存储
-   - 阿里云: 使用Kubernetes Secrets + KMS（生产环境推荐）
-
-2. **访问控制**：
-   - AWS: IAM策略仅授予ECS任务执行角色必要的访问权限
-   - 阿里云: 使用RBAC控制Secret访问权限
-
-3. **密钥轮换**：
-   - 定期轮换数据库密码、API密钥等敏感信息
-   - AWS Secrets Manager支持自动轮换（需配置Lambda函数）
-   - 轮换后无需重新部署，ECS会自动获取新值
-
-4. **审计和监控**：
-   - AWS: CloudTrail记录所有Secrets Manager访问
-   - 定期审查访问日志，发现异常访问
-
-5. **最小权限原则**：
-   - 仅授予应用所需的最小权限
-   - 不同环境使用不同的secrets
-
-### 部署安全检查清单
-
-- [ ] 所有secrets已创建并设置了正确的值
-- [ ] IAM权限已正确配置
-- [ ] Terraform state文件安全存储（S3 + DynamoDB锁）
-- [ ] 生产环境启用了删除保护
-- [ ] 密钥已从版本控制中排除
-- [ ] 定期备份和恢复测试
+- **日志服务 SLS**: 自动配置
+- **云监控**: 已启用
+- **ACK 监控面板**: 已启用
 
 ## 故障排查
 
-### 镜像构建失败
-- 检查Dockerfile路径是否正确
-- 确认构建上下文包含所有必要文件
-- 检查.dockerignore配置
+### 通用问题
 
-### 部署失败
-- 检查环境变量是否正确设置
-- 确认Terraform变量配置正确
-- 查看CloudWatch/日志服务日志
-- **检查Secrets Manager权限**：运行`./deploy/aws/scripts/init-secrets.sh`验证
+#### 服务无法启动
 
-### Secrets Manager访问失败
-- 检查IAM角色是否有Secrets Manager访问权限
-- 验证secret是否存在：`aws secretsmanager describe-secret --secret-id knowhere/dev/database-url`
-- 检查KMS权限：确保ECS任务执行角色有KMS解密权限
-- 查看ECS任务日志中的错误信息
+1. 检查环境变量配置
+2. 查看日志输出
+3. 验证网络连接
+4. 检查资源配额
 
-### 模型加载失败
-- 检查EFS/NAS挂载是否正确
-- 确认Worker服务有正确的权限
-- 查看Worker日志
+#### 数据库连接失败
 
-## 更多信息
+1. 检查数据库安全组配置
+2. 验证数据库密码
+3. 确认子网配置
+4. 检查数据库状态
 
-- [AWS部署详细文档](aws/README.md)
-- [阿里云ACK部署详细文档](aliyun/ack/README.md)
-- [本地开发环境](local-dev/README.md)
+#### 镜像拉取失败
 
+1. 检查镜像仓库权限
+2. 验证镜像标签
+3. 确认网络连接
+4. 检查镜像是否存在
+
+### 平台特定问题
+
+#### AWS 特定问题
+
+- **ECS 服务无法启动**: 参考 [AWS 部署指南](DEPLOYMENT_AWS.md#故障排查)
+- **Secrets Manager 访问失败**: 检查 IAM 权限
+- **ALB 健康检查失败**: 检查安全组和路由配置
+
+#### 阿里云特定问题
+
+- **Pod 无法启动**: 参考 [阿里云部署指南](DEPLOYMENT_ALIYUN.md#故障排查)
+- **ACR 构建失败**: 检查构建规则配置和代码仓库权限
+- **Ingress 无法访问**: 检查 Ingress Controller 和 DNS 配置
+
+## 相关文档
+
+### 主要文档
+
+- [AWS 部署指南](DEPLOYMENT_AWS.md) - AWS 平台完整部署指南
+- [阿里云部署指南](DEPLOYMENT_ALIYUN.md) - 阿里云平台完整部署指南
+- [域名配置说明](DOMAIN_CONFIG.md) - 详细的域名配置说明
+- [文档索引](DOCUMENTATION_INDEX.md) - 所有部署相关文档的索引
+
+### 平台特定文档
+
+#### AWS
+
+- [AWS Terraform 配置指南](aws/terraform/README.md) - Terraform 多环境配置
+- [AWS Worker 部署指南](aws/WORKER_DEPLOYMENT_GUIDE.md) - Worker 服务部署说明
+
+#### 阿里云
+
+- [阿里云 Terraform 配置指南](aliyun/ack/terraform/README.md) - Terraform 多环境配置
+- [ACR 构建服务配置](aliyun/ack/ACR_BUILD_SERVICE_CONFIG.md) - ACR 自动构建配置
+- [Kubernetes 部署指南](aliyun/ack/kubernetes/README.md) - Kubernetes 资源部署
+
+### 本地开发
+
+- [本地开发环境](local-dev/README.md) - 本地开发环境配置
+- [Docker 快速开始](docker/QUICK_START.md) - Docker 容器快速开始
+
+---
+
+**最后更新**: 2024-01-01  
+**维护者**: DevOps Team

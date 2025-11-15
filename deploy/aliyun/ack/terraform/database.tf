@@ -7,10 +7,8 @@ resource "alicloud_db_instance" "postgres" {
   instance_type    = "pg.n2.serverless.1c"
   instance_storage = 20
   instance_name    = "${var.project_name}-${var.environment}-postgres"
+  db_instance_storage_type = "cloud_essd"
 
-  # Serverless配置
-  db_instance_class = "pg.n2.serverless.1c"
-  
   # 网络配置
   vpc_id     = alicloud_vpc.main.id
   vswitch_id = alicloud_vswitch.private[0].id
@@ -18,18 +16,8 @@ resource "alicloud_db_instance" "postgres" {
   # 安全组
   security_group_ids = [alicloud_security_group.rds.id]
 
-  # 数据库配置
-  db_name  = "knowhere"
-  db_user  = "postgres"
-  db_pass  = var.db_password
-
-  # 备份配置
-  backup_time      = "03:00Z-04:00Z"
-  backup_period    = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-  retention_period = 30
-
-  # 加密
-  encryption_key = alicloud_kms_key.rds.id
+  # 加密（暂时注释，等 KMS 授权后再启用）
+  # encryption_key = alicloud_kms_key.rds.id
 
   # 删除保护
   deletion_protection = var.environment == "prod" ? true : false
@@ -39,6 +27,15 @@ resource "alicloud_db_instance" "postgres" {
     Environment = var.environment
     Project     = var.project_name
   }
+
+  # 对于已导入的资源，忽略配置差异以避免更新错误
+  lifecycle {
+    ignore_changes = [
+      instance_charge_type,
+      db_instance_storage_type,
+      bursting_enabled
+    ]
+  }
 }
 
 # KMS密钥 - 用于RDS加密
@@ -46,8 +43,8 @@ resource "alicloud_kms_key" "rds" {
   description             = "KMS key for RDS encryption"
   pending_window_in_days  = 7
   status                  = "Enabled"
-  automatic_rotation      = "Enabled"
-  rotation_interval       = "365d"
+  # automatic_rotation 参数在当前版本不支持，移除
+  # rotation_interval   = "365d"
 
   tags = {
     Name        = "${var.project_name}-${var.environment}-rds-kms-key"
@@ -58,7 +55,7 @@ resource "alicloud_kms_key" "rds" {
 
 # RDS安全组
 resource "alicloud_security_group" "rds" {
-  name        = "${var.project_name}-${var.environment}-rds-sg"
+  security_group_name = "${var.project_name}-${var.environment}-rds-sg"
   vpc_id      = alicloud_vpc.main.id
   description = "Security group for RDS PostgreSQL"
 
@@ -82,31 +79,30 @@ resource "alicloud_security_group_rule" "rds_ingress" {
   description       = "Allow PostgreSQL access from ECS"
 }
 
-# 变量
-variable "db_password" {
-  description = "数据库密码"
-  type        = string
-  sensitive   = true
-}
+# 变量定义在 variables.tf 中
 
 # Redis Serverless配置
+# 查找支持 Redis 的可用区
+data "alicloud_kvstore_zones" "available" {
+  engine = "Redis"
+}
+
 resource "alicloud_kvstore_instance" "redis" {
-  instance_name     = "${var.project_name}-${var.environment}-redis-serverless"
+  db_instance_name     = "${var.project_name}-${var.environment}-redis-serverless"
   instance_class    = "redis.master.small.default"
   instance_type    = "Redis"
-  engine_version    = "7.0"
-  payment_type      = "PostPaid"
-  vpc_id            = alicloud_vpc.main.id
-  vswitch_id        = alicloud_vswitch.private[0].id
+  engine_version    = "5.0"  # 本地磁盘实例支持 5.0
+  payment_type      = "PostPaid"  # PostPaid 或 PrePaid
+  # 使用支持 Redis 的可用区（优先使用第一个支持 Redis 的可用区）
+  zone_id           = length(data.alicloud_kvstore_zones.available.zones) > 0 ? data.alicloud_kvstore_zones.available.zones[0].id : data.alicloud_zones.available.zones[0].id
+  # 使用该可用区对应的 vSwitch（如果 private[0] 在该可用区则使用，否则使用 private[1]）
+  vswitch_id        = (
+    length(data.alicloud_kvstore_zones.available.zones) > 0 && 
+    data.alicloud_kvstore_zones.available.zones[0].id == data.alicloud_zones.available.zones[0].id ? 
+    alicloud_vswitch.private[0].id : 
+    (length(alicloud_vswitch.private) > 1 ? alicloud_vswitch.private[1].id : alicloud_vswitch.private[0].id)
+  )
   security_group_id = alicloud_security_group.redis.id
-  
-  # Serverless配置（按量付费）
-  instance_charge_type = "PostPaid"
-  
-  # 自动备份
-  backup_time      = "03:00Z-04:00Z"
-  backup_period    = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-  backup_retention_period = 7
 
   tags = {
     Name        = "${var.project_name}-${var.environment}-redis-serverless"
@@ -117,7 +113,7 @@ resource "alicloud_kvstore_instance" "redis" {
 
 # Redis安全组
 resource "alicloud_security_group" "redis" {
-  name        = "${var.project_name}-${var.environment}-redis-sg"
+  security_group_name = "${var.project_name}-${var.environment}-redis-sg"
   vpc_id      = alicloud_vpc.main.id
   description = "Security group for Redis"
 

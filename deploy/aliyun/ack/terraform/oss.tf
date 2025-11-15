@@ -1,7 +1,6 @@
 # OSS对象存储 - 多环境支持
 resource "alicloud_oss_bucket" "main" {
   bucket = "${var.project_name}-${var.environment}-storage-${random_string.bucket_suffix.result}"
-  acl    = "private"
 
   # 版本控制
   versioning {
@@ -23,7 +22,7 @@ resource "alicloud_oss_bucket" "main" {
     }
 
     noncurrent_version_expiration {
-      noncurrent_days = var.environment == "prod" ? 30 : 7
+      days = var.environment == "prod" ? 30 : 7
     }
   }
 

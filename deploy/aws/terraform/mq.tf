@@ -40,7 +40,7 @@ resource "aws_security_group" "mq" {
 resource "aws_mq_broker" "rabbitmq" {
   broker_name         = "${var.project_name}-${var.environment}-rabbitmq"
   engine_type         = "RabbitMQ"
-  engine_version      = "3.12.20"
+  engine_version      = "3.13"  # 使用有效的RabbitMQ版本
   host_instance_type  = var.environment == "prod" ? "mq.m5.large" : "mq.t3.micro"
   deployment_mode     = var.environment == "prod" ? "ACTIVE_STANDBY_MULTI_AZ" : "SINGLE_INSTANCE"
   publicly_accessible = false
@@ -86,19 +86,7 @@ resource "aws_mq_broker" "rabbitmq" {
   }
 }
 
-# 变量
-variable "mq_username" {
-  description = "Amazon MQ RabbitMQ用户名"
-  type        = string
-  default     = "admin"
-  sensitive   = true
-}
-
-variable "mq_password" {
-  description = "Amazon MQ RabbitMQ密码"
-  type        = string
-  sensitive   = true
-}
+# 变量定义在 variables.tf 中
 
 # Secrets Manager - 存储RabbitMQ连接信息
 resource "aws_secretsmanager_secret" "rabbitmq_host" {
@@ -114,7 +102,7 @@ resource "aws_secretsmanager_secret" "rabbitmq_host" {
 
 resource "aws_secretsmanager_secret_version" "rabbitmq_host" {
   secret_id     = aws_secretsmanager_secret.rabbitmq_host.id
-  secret_string = replace(replace(aws_mq_broker.rabbitmq.amqp_endpoints[0], "amqps://", ""), ":5671", "")  # 直接存储host字符串
+  secret_string = replace(replace(aws_mq_broker.rabbitmq.instances[0].endpoints[0], "amqps://", ""), ":5671", "")  # 直接存储host字符串
 }
 
 resource "aws_secretsmanager_secret" "rabbitmq_password" {
@@ -152,7 +140,7 @@ resource "aws_secretsmanager_secret_version" "rabbitmq_username" {
 # 输出
 output "mq_broker_endpoint" {
   description = "Amazon MQ RabbitMQ AMQPS端点"
-  value       = aws_mq_broker.rabbitmq.amqp_endpoints[0]
+  value       = aws_mq_broker.rabbitmq.instances[0].endpoints[0]
 }
 
 output "mq_broker_management_url" {

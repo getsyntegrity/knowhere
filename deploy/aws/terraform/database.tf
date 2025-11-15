@@ -33,7 +33,7 @@ resource "aws_rds_cluster" "postgres" {
   cluster_identifier = "${var.project_name}-${var.environment}-postgres-cluster"
 
   engine         = "aurora-postgresql"
-  engine_version = "15.4"
+  engine_version = "15.4"  # Aurora PostgreSQL Serverless v2支持的版本（如果不可用，尝试15.5或16.1）
   engine_mode    = "provisioned"
 
   database_name   = "knowhere"
@@ -183,7 +183,7 @@ resource "aws_secretsmanager_secret" "redis_password" {
 
 resource "aws_secretsmanager_secret_version" "redis_password" {
   secret_id     = aws_secretsmanager_secret.redis_password.id
-  secret_string = ""  # ElastiCache Serverless默认不需要密码，但保留secret以备将来使用
+  secret_string = "default"  # ElastiCache Serverless默认不需要密码，但secret version不能为空，使用默认值
 }
 
 # RDS监控角色
@@ -209,9 +209,4 @@ resource "aws_iam_role_policy_attachment" "rds_monitoring" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
-# 变量
-variable "db_password" {
-  description = "数据库密码"
-  type        = string
-  sensitive   = true
-}
+# 变量定义在 variables.tf 中

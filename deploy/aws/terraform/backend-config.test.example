@@ -1,0 +1,10 @@
+# Terraform Backend 配置文件 - 测试环境
+# 使用方法：
+#   terraform init -backend-config=backend-config.test
+
+bucket         = "knowhere-terraform-state-test"
+key            = "terraform.tfstate"
+region         = "us-east-1"  # 根据实际环境设置
+dynamodb_table = "knowhere-terraform-locks-test"
+encrypt        = true
+

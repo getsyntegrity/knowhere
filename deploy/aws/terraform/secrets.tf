@@ -18,48 +18,7 @@ resource "aws_kms_alias" "secrets" {
   target_key_id = aws_kms_key.secrets.key_id
 }
 
-# 变量定义
-variable "s3_access_key_id" {
-  description = "S3访问密钥ID"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "s3_secret_access_key" {
-  description = "S3秘密访问密钥"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "app_secret_key" {
-  description = "应用JWT密钥（用于签名token）"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "stripe_secret_key" {
-  description = "Stripe密钥"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "stripe_publishable_key" {
-  description = "Stripe发布密钥"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "posthog_key" {
-  description = "PostHog密钥"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
+# 变量定义在 variables.tf 中
 
 # DATABASE_URL Secret
 resource "aws_secretsmanager_secret" "database_url" {
@@ -149,7 +108,7 @@ resource "aws_secretsmanager_secret" "stripe_secret_key" {
 
 resource "aws_secretsmanager_secret_version" "stripe_secret_key" {
   secret_id     = aws_secretsmanager_secret.stripe_secret_key.id
-  secret_string = var.stripe_secret_key != "" ? var.stripe_secret_key : ""  # 如果未提供，使用空字符串，需要后续手动设置
+  secret_string = var.stripe_secret_key != "" ? var.stripe_secret_key : "not-set"  # 如果未提供，使用默认值，需要后续手动设置
 }
 
 # Stripe Publishable Key Secret
@@ -167,7 +126,7 @@ resource "aws_secretsmanager_secret" "stripe_publishable_key" {
 
 resource "aws_secretsmanager_secret_version" "stripe_publishable_key" {
   secret_id     = aws_secretsmanager_secret.stripe_publishable_key.id
-  secret_string = var.stripe_publishable_key != "" ? var.stripe_publishable_key : ""  # 如果未提供，使用空字符串，需要后续手动设置
+  secret_string = var.stripe_publishable_key != "" ? var.stripe_publishable_key : "not-set"  # 如果未提供，使用默认值，需要后续手动设置
 }
 
 # PostHog Key Secret
@@ -185,6 +144,6 @@ resource "aws_secretsmanager_secret" "posthog_key" {
 
 resource "aws_secretsmanager_secret_version" "posthog_key" {
   secret_id     = aws_secretsmanager_secret.posthog_key.id
-  secret_string = var.posthog_key != "" ? var.posthog_key : ""  # 如果未提供，使用空字符串，需要后续手动设置
+  secret_string = var.posthog_key != "" ? var.posthog_key : "not-set"  # 如果未提供，使用默认值，需要后续手动设置
 }
 

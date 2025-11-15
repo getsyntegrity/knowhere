@@ -57,12 +57,9 @@ resource "aws_s3_bucket_notification" "main" {
   bucket = aws_s3_bucket.main.id
 
   topic {
-    topic_arn = aws_sns_topic.s3_events.arn
-    events    = ["s3:ObjectCreated:Put", "s3:ObjectCreated:Post", "s3:ObjectCreated:CompleteMultipartUpload"]
-
-    filter {
-      prefix = "uploads/"
-    }
+    topic_arn     = aws_sns_topic.s3_events.arn
+    events        = ["s3:ObjectCreated:Put", "s3:ObjectCreated:Post", "s3:ObjectCreated:CompleteMultipartUpload"]
+    filter_prefix = "uploads/"
   }
 }
 

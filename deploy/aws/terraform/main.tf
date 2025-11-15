@@ -17,42 +17,6 @@ provider "aws" {
   region = var.aws_region
 }
 
-# 变量定义
-variable "aws_region" {
-  description = "AWS区域"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "environment" {
-  description = "环境名称 (dev/test/prod)"
-  type        = string
-  default     = "dev"
-  
-  validation {
-    condition     = contains(["dev", "test", "prod"], var.environment)
-    error_message = "Environment must be one of: dev, test, prod"
-  }
-}
-
-variable "api_webhook_endpoint" {
-  description = "API webhook endpoint for S3 events (SNS subscription)"
-  type        = string
-  default     = ""
-}
-
-variable "project_name" {
-  description = "项目名称"
-  type        = string
-  default     = "knowhere"
-}
-
-variable "app_version" {
-  description = "应用版本号（从Git Tag或commit hash获取）"
-  type        = string
-  default     = "dev"
-}
-
 # 数据源
 data "aws_availability_zones" "available" {
   state = "available"

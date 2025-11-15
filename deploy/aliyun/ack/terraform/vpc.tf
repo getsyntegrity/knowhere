@@ -43,13 +43,16 @@ resource "alicloud_vswitch" "private" {
 }
 
 # NAT网关
+# 注意：暂时只创建 1 个 NAT 网关，避免 Enhanced 授权问题
+# 使用主账号 provider 以避免权限问题
 resource "alicloud_nat_gateway" "main" {
-  count = 2
+  provider = alicloud.master
+  count = 1  # 暂时改为 1，等 Enhanced 授权后再改为 2
 
   vpc_id           = alicloud_vpc.main.id
   nat_gateway_name = "${var.project_name}-${var.environment}-nat-${count.index + 1}"
   vswitch_id       = alicloud_vswitch.public[count.index].id
-  nat_type         = "Enhanced"
+  nat_type         = "Enhanced"  # 必须使用增强型，普通类型已不再提供
   payment_type     = "PayAsYouGo"
 
   tags = {
@@ -59,8 +62,10 @@ resource "alicloud_nat_gateway" "main" {
 }
 
 # EIP for NAT Gateway
+# 使用主账号 provider 以避免权限问题
 resource "alicloud_eip_address" "nat" {
-  count = 2
+  provider = alicloud.master
+  count = 1  # 与 NAT Gateway 数量一致
 
   bandwidth            = "100"
   internet_charge_type = "PayByBandwidth"
@@ -72,8 +77,11 @@ resource "alicloud_eip_address" "nat" {
   }
 }
 
+# EIP Association for NAT Gateway
+# 使用主账号 provider 以避免权限问题
 resource "alicloud_eip_association" "nat" {
-  count = 2
+  provider = alicloud.master
+  count = 1  # 与 NAT Gateway 数量一致
 
   allocation_id = alicloud_eip_address.nat[count.index].id
   instance_id   = alicloud_nat_gateway.main[count.index].id
@@ -119,7 +127,7 @@ resource "alicloud_route_table_attachment" "private" {
 
 # 安全组
 resource "alicloud_security_group" "main" {
-  name        = "${var.project_name}-${var.environment}-sg"
+  security_group_name = "${var.project_name}-${var.environment}-sg"
   vpc_id      = alicloud_vpc.main.id
   description = "Security group for ${var.project_name} ${var.environment} environment"
 

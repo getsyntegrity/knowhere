@@ -1,29 +1,23 @@
 # ACK集群配置 - 多环境支持
+# 使用主账号 provider 以避免权限问题
 resource "alicloud_cs_managed_kubernetes" "main" {
+  provider = alicloud.master
+
   name                 = "${var.project_name}-${var.environment}-cluster"
   cluster_spec          = "ack.pro.small"
   version               = "1.28.15-aliyun.1"
   new_nat_gateway       = false
   node_cidr_mask        = 25
   proxy_mode            = "ipvs"
-  service_network_cidr  = "172.21.0.0/20"
   pod_vswitch_ids       = alicloud_vswitch.private[*].id
-  worker_vswitch_ids    = alicloud_vswitch.private[*].id
+  vswitch_ids          = alicloud_vswitch.private[*].id
   slb_internet_enabled  = true
-  install_cloud_monitor = true
+  # 注意：worker_instance_types 和 worker_number 已移除
+  # 工作节点配置通过 ack-node-pool.tf 中的 node pool 管理
 
-  # 工作节点配置
-  worker_instance_types = var.environment == "prod" ? ["ecs.c7.xlarge"] : ["ecs.c7.large"]
-  worker_number        = var.environment == "prod" ? 3 : 2
-  worker_disk_size     = 40
-  worker_disk_category = "cloud_essd"
-  worker_data_disk_size = 100
-
-  # 网络配置
-  network_plugin    = "terway"
+  # 网络配置（使用新的参数格式）
   pod_cidr          = "172.20.0.0/16"
   service_cidr      = "172.21.0.0/20"
-  enable_ssh        = true
 
   # 标签
   tags = {

@@ -5,10 +5,12 @@
 set -e
 
 # 配置变量
-REGION=${REGION:-cn-hangzhou}
-REGISTRY=${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}
+REGION=${REGION:-cn-shenzhen}
+# 企业版容器镜像服务使用实例特定的endpoint
+REGISTRY=${REGISTRY:-knowhere-registry.cn-shenzhen.cr.aliyuncs.com}
 NAMESPACE=${NAMESPACE:-knowhere}
 PROJECT_NAME=${PROJECT_NAME:-knowhere}
+ACR_INSTANCE_ID=${ACR_INSTANCE_ID:-}  # 容器镜像服务企业版实例ID（可选，脚本会自动检测）
 ENVIRONMENT=${ENVIRONMENT:-dev}  # dev/test/prod
 BACKEND_IMAGE=${PROJECT_NAME}-backend
 FRONTEND_IMAGE=${PROJECT_NAME}-frontend
@@ -80,7 +82,77 @@ check_requirements() {
 # 登录容器镜像服务
 login_registry() {
     log "登录到阿里云容器镜像服务..."
-    docker login --username=$ALIYUN_USERNAME --password=$ALIYUN_PASSWORD $REGISTRY
+    
+    # 检查是否已经登录
+    if [ -f ~/.docker/config.json ] && grep -q "$REGISTRY" ~/.docker/config.json 2>/dev/null; then
+        log "检测到已保存的登录凭证，跳过登录"
+        return 0
+    fi
+    
+    # 优先使用阿里云 CLI 获取临时凭证（企业版需要实例ID）
+    if command -v aliyun &> /dev/null; then
+        log "尝试使用阿里云 CLI 获取临时凭证..."
+        
+        # 优先使用环境变量指定的实例ID
+        if [ -n "$ACR_INSTANCE_ID" ]; then
+            INSTANCE_ID="$ACR_INSTANCE_ID"
+            log "使用环境变量指定的实例ID: $INSTANCE_ID"
+        else
+            # 检查是否有容器镜像服务实例
+            INSTANCE_COUNT=$(aliyun cr GetInstanceCount --region ${REGION:-cn-shenzhen} 2>/dev/null | python3 -c "import sys, json; print(json.load(sys.stdin).get('Count', 0))" 2>/dev/null || echo "0")
+            
+            if [ "$INSTANCE_COUNT" != "0" ] && [ -n "$INSTANCE_COUNT" ]; then
+                # 有企业版实例，获取实例 ID
+                INSTANCE_INFO=$(aliyun cr ListInstance --region ${REGION:-cn-shenzhen} 2>/dev/null)
+                if [ $? -eq 0 ] && [ -n "$INSTANCE_INFO" ]; then
+                    # 尝试从列表获取第一个实例 ID
+                    INSTANCE_ID=$(echo "$INSTANCE_INFO" | python3 -c "import sys, json; data=json.load(sys.stdin); instances=data.get('instances', []); print(instances[0].get('instanceId', '') if instances else '')" 2>/dev/null)
+                fi
+            fi
+        fi
+        
+        # 如果找到了实例ID，尝试获取临时凭证
+        if [ -n "$INSTANCE_ID" ]; then
+            log "使用容器镜像服务实例: $INSTANCE_ID"
+            TOKEN_INFO=$(aliyun cr GetAuthorizationToken --InstanceId "$INSTANCE_ID" --region ${REGION:-cn-shenzhen} 2>/dev/null)
+            
+            if [ $? -eq 0 ] && [ -n "$TOKEN_INFO" ]; then
+                TEMP_USERNAME=$(echo "$TOKEN_INFO" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tempUsername', ''))" 2>/dev/null)
+                TEMP_PASSWORD=$(echo "$TOKEN_INFO" | python3 -c "import sys, json; print(json.load(sys.stdin).get('authorizationToken', ''))" 2>/dev/null)
+                
+                if [ -n "$TEMP_USERNAME" ] && [ -n "$TEMP_PASSWORD" ]; then
+                    log "使用临时凭证登录..."
+                    LOGIN_OUTPUT=$(echo "$TEMP_PASSWORD" | docker login --username=$TEMP_USERNAME --password-stdin $REGISTRY 2>&1)
+                    if [ $? -eq 0 ]; then
+                        log "登录成功"
+                        return 0
+                    else
+                        warn "临时凭证登录失败，错误信息: $LOGIN_OUTPUT"
+                        warn "企业版可能需要使用阿里云账号直接登录，或配置实例访问控制"
+                    fi
+                fi
+            else
+                log "获取临时凭证失败，尝试其他方式"
+            fi
+        else
+            log "未找到容器镜像服务实例（使用个人版或需要先创建实例）"
+        fi
+    fi
+    
+    # 回退到使用环境变量登录
+    if [ -n "$ALIYUN_USERNAME" ] && [ -n "$ALIYUN_PASSWORD" ]; then
+        log "使用环境变量登录..."
+        echo "$ALIYUN_PASSWORD" | docker login --username=$ALIYUN_USERNAME --password-stdin $REGISTRY
+        if [ $? -eq 0 ]; then
+            return 0
+        fi
+    fi
+    
+    # 如果都失败，提示手动登录
+    warn "无法自动登录，请先手动登录："
+    warn "  docker login $REGISTRY"
+    warn "然后重新运行此脚本"
+    error "需要先登录到容器镜像服务"
 }
 
 # 构建和推送后端镜像
@@ -179,6 +251,12 @@ build_worker() {
 # 主函数
 main() {
     log "开始构建和部署流程 (环境: $ENVIRONMENT)..."
+    
+    # 切换到项目根目录（脚本可能在子目录中运行）
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../../" && pwd)"
+    cd "$PROJECT_ROOT" || error "无法切换到项目根目录: $PROJECT_ROOT"
+    log "工作目录: $(pwd)"
     
     check_requirements
     login_registry

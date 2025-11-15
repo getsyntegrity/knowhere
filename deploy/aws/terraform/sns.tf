@@ -34,7 +34,10 @@ resource "aws_sns_topic_policy" "s3_events" {
 }
 
 # SNS订阅 - 订阅到API webhook endpoint
+# 注意：只有在api_webhook_endpoint不为空时才创建订阅
 resource "aws_sns_topic_subscription" "s3_events_webhook" {
+  count = var.api_webhook_endpoint != "" ? 1 : 0
+  
   topic_arn = aws_sns_topic.s3_events.arn
   protocol  = "https"
   endpoint  = var.api_webhook_endpoint
