@@ -54,7 +54,7 @@ ACK (Kubernetes)
 - **负载均衡**: SLB (Server Load Balancer)
 - **DNS**: 阿里云 DNS
 - **密钥管理**: Kubernetes Secrets
-- **镜像构建**: ACR 构建服务（自动构建，无需本地构建）
+- **镜像构建**: GitHub Actions + GitHub Container Registry (ghcr.io)
 
 ## 前置要求
 
@@ -69,7 +69,6 @@ ACK (Kubernetes)
   - RabbitMQ 管理权限
   - SLB 管理权限
   - DNS 管理权限
-  - ACR 管理权限
   - Terraform 相关权限
 
 ### 2. 本地工具
@@ -84,10 +83,10 @@ ACK (Kubernetes)
 - 一个已注册的域名
 - 域名在阿里云 DNS 中托管
 
-### 4. ACR 实例
+### 4. GitHub 仓库
 
-- 已创建容器镜像服务（ACR）实例
-- 已配置 Gitee 代码仓库连接
+- 代码已推送到 GitHub 仓库
+- 仓库已启用 GitHub Actions
 
 ## 部署流程
 
@@ -95,11 +94,11 @@ ACK (Kubernetes)
 
 ```mermaid
 graph TD
-    A[准备环境] --> B[配置 ACR 构建规则]
-    B --> C[配置 Terraform]
-    C --> D[初始化 Terraform Backend]
-    D --> E[部署基础设施]
-    E --> F[触发 ACR 构建]
+    A[准备环境] --> B[配置 Terraform]
+    B --> C[初始化 Terraform Backend]
+    C --> D[部署基础设施]
+    D --> E[推送代码触发 GitHub Actions 构建]
+    E --> F[镜像推送到 ghcr.io]
     F --> G[配置 Kubernetes Secrets]
     G --> H[部署 Kubernetes 资源]
     H --> I[配置 DNS]
@@ -123,152 +122,69 @@ cd deploy/aliyun/ack/terraform
 # 4. 按照后续步骤完成部署
 ```
 
-## 镜像构建（ACR 构建服务）
+## 镜像构建（GitHub Actions）
 
 ### 构建方式
 
-**重要**: 阿里云平台使用 **ACR 构建服务**，配置了构建规则，**不在本地进行构建推送**。
+**重要**: 项目使用 **GitHub Actions** 进行自动化构建，代码推送到 GitHub 仓库后会自动触发构建，构建完成后镜像自动推送到 GitHub Container Registry (ghcr.io)。
 
-代码推送到 Gitee 仓库后，ACR 会自动触发构建，构建完成后镜像自动推送到 ACR 仓库。
-
-### ACR 构建服务优势
+### GitHub Actions 构建优势
 
 - ✅ **零维护成本**: 无需维护构建机器或 Runner
-- ✅ **内网构建和存储**: 构建和镜像存储都在阿里云内网完成
+- ✅ **全球访问**: GitHub Actions 运行在海外，访问 Docker Hub 等资源速度快
 - ✅ **自动触发**: 代码推送自动触发构建
-- ✅ **成本低**: 通常有免费额度，超出部分按量计费
-- ✅ **与现有脚本兼容**: 可保留 `build-and-push.sh` 用于本地构建（备用）
+- ✅ **免费额度**: 公开仓库完全免费，私有仓库有充足的免费额度
+- ✅ **与 GitHub 深度集成**: 与代码仓库无缝集成
 
-### 配置 ACR 构建规则
+### 构建触发条件
 
-#### 1. 前置准备
+GitHub Actions 会在以下情况自动触发构建：
 
-1. **ACR 实例**: 已创建容器镜像服务实例
-2. **Gitee 仓库**: 确保有代码仓库的管理权限
-3. **镜像仓库**: 已创建命名空间和仓库（或通过构建规则自动创建）
+- **分支推送**: 推送到 `main`、`dev`、`test` 分支
+- **Tag 推送**: 推送以 `v` 开头的 tag（如 `v1.0.0`）
+- **手动触发**: 在 GitHub Actions 页面手动触发，可选择环境和服务
 
-#### 2. 配置 Gitee 仓库连接
+### 环境判断逻辑
 
-1. **登录 ACR 控制台**
-   - 访问：https://cr.console.aliyun.com
-   - 选择对应的地域（如：cn-shenzhen）
-   - 选择容器镜像服务实例
+- `main` 分支 → `prod` 环境
+- `test` 分支 → `test` 环境
+- `dev` 分支 → `dev` 环境
+- Tag 推送（v*） → `prod` 环境
 
-2. **进入构建服务**
-   - 左侧菜单：**构建** > **构建规则**
-   - 点击 **创建构建规则**
+### 镜像标签策略
 
-3. **配置代码源**
-   - **代码源类型**: 选择 **Gitee**
-   - **授权方式**: 选择 **OAuth 授权**（首次需要授权）
-   - 点击 **授权**，跳转到 Gitee 授权页面
-   - 确认授权后返回 ACR 控制台
+每个构建会生成以下标签：
 
-4. **选择仓库**
-   - **代码仓库**: 选择你的 Gitee 仓库
-   - **代码分支**: 选择要构建的分支（如：`main`, `develop`）
+- `${ENVIRONMENT}-latest` - 环境最新版本（如 `dev-latest`, `test-latest`, `prod-latest`）
+- `${VERSION}` - 版本号（tag 或 commit hash，如 `v1.0.0` 或 `dev-a1b2c3d`）
+- `${ENVIRONMENT}-${COMMIT_SHORT}` - 环境+提交hash（如 `dev-a1b2c3d`）
 
-#### 3. 创建构建规则
+### 镜像地址格式
 
-需要创建三个构建规则，分别对应 backend、frontend 和 worker。
+镜像推送到 GitHub Container Registry，地址格式为：
 
-##### Backend 构建规则
-
-- **规则名称**: `knowhere-backend-build`
-- **代码源**: Gitee 仓库（已授权）
-- **代码分支**: `main`, `develop`, `release/*`
-- **触发方式**: 代码变更自动触发
-- **Dockerfile 路径**: `deploy/docker/Dockerfile.api`
-- **构建目录**: `/`（项目根目录）
-- **命名空间**: `knowhere`
-- **镜像仓库**: `knowhere-backend`（如果不存在会自动创建）
-
-**镜像标签策略**:
-- `${ENVIRONMENT}-latest`（如 `dev-latest`, `test-latest`, `prod-latest`）
-- `${GIT_TAG}`（当推送 Tag 时，如 `v1.0.0`）
-- `${ENVIRONMENT}-${GIT_COMMIT_SHORT}`（如 `dev-a1b2c3d`）
-- `${GIT_BRANCH}`（可选，如 `main`, `develop`）
-
-**构建参数**:
-- `ENVIRONMENT`: 根据分支自动判断（`main` → `prod`, `release/*` → `test`, 其他 → `dev`）
-- `APP_VERSION`: `${GIT_TAG:-${GIT_COMMIT_SHORT}}`
-- `BUILD_TIME`: `${BUILD_TIME}`（ACR 自动提供）
-- `GIT_COMMIT`: `${GIT_COMMIT_SHORT}`
-
-##### Frontend 构建规则
-
-- **规则名称**: `knowhere-frontend-build`
-- **Dockerfile 路径**: `deploy/docker/Dockerfile.web`
-- **镜像仓库**: `knowhere-frontend`
-- 其他配置与 Backend 相同
-
-##### Worker 构建规则
-
-- **规则名称**: `knowhere-worker-build`
-- **Dockerfile 路径**: `deploy/docker/Dockerfile.worker`
-- **镜像仓库**: `knowhere-worker`
-- 其他配置与 Backend 相同
-
-#### 4. 验证构建规则
-
-1. **手动触发构建**
-   - 进入构建规则页面
-   - 点击 **立即构建**
-   - 选择测试分支（如 `develop`）
-   - 观察构建日志
-
-2. **测试自动触发**
-   ```bash
-   git checkout develop
-   git commit --allow-empty -m "test: trigger ACR build"
-   git push origin develop
-   ```
-
-3. **验证镜像**
-   - 进入 **镜像仓库** 页面
-   - 检查镜像是否已推送
-   - 检查镜像标签是否正确
-
-### 触发构建
-
-#### 自动触发
-
-代码推送到配置的分支时，ACR 会自动触发构建。
-
-#### 手动触发
-
-使用脚本触发构建：
-
-```bash
-cd deploy/aliyun/ack/scripts
-
-# 触发所有组件的构建
-./trigger-acr-build.sh
-
-# 查看构建状态
-./check-acr-build-status.sh status
-
-# 查看构建日志
-./check-acr-build-status.sh log backend <build_record_id>
+```
+ghcr.io/<github-username>/knowhere-{service}:{tag}
 ```
 
-### 构建状态检查
+例如：
+- `ghcr.io/your-username/knowhere-backend:dev-latest`
+- `ghcr.io/your-username/knowhere-frontend:prod-latest`
+- `ghcr.io/your-username/knowhere-worker:test-latest`
 
-```bash
-cd deploy/aliyun/ack/scripts
+### 查看构建状态
 
-# 查看所有组件的构建状态
-./check-acr-build-status.sh status
+1. **GitHub Actions 页面**
+   - 访问：`https://github.com/<username>/<repo>/actions`
+   - 查看构建历史和日志
 
-# 查看指定组件的构建状态
-./check-acr-build-status.sh status backend
-./check-acr-build-status.sh status frontend
-./check-acr-build-status.sh status worker
-```
+2. **构建日志**
+   - 点击具体的 workflow run
+   - 查看每个服务的构建日志
 
 ### 详细配置文档
 
-完整的 ACR 构建服务配置请参考：[ACR 构建服务配置指南](aliyun/ack/ACR_BUILD_SERVICE_CONFIG.md)
+完整的 GitHub Actions 构建配置请参考：[GitHub Actions 构建指南](GITHUB_ACTIONS_BUILD.md)
 
 ## 基础设施部署
 
@@ -441,8 +357,8 @@ export ENVIRONMENT=dev
 export API_DOMAIN=apidev.knowhereto.com
 export WEB_DOMAIN=dev.knowhereto.com
 export API_URL=https://apidev.knowhereto.com
-export REGISTRY=registry.cn-hangzhou.aliyuncs.com
-export NAMESPACE=knowhere
+export REGISTRY=ghcr.io
+export NAMESPACE=your-github-username  # 替换为实际的 GitHub 用户名
 export APP_VERSION=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "dev-$(git rev-parse --short HEAD)")
 
 # 获取 OSS bucket 名称
@@ -511,7 +427,6 @@ export API_WEBHOOK_ENDPOINT=https://apidev.knowhereto.com/v1/internal/oss-events
 - Terraform State（OSS Backend）
 - 资源（ACK 集群、RDS、OSS 等）
 - 域名和证书
-- ACR 构建规则（可选，可以为不同环境创建不同的构建规则）
 
 ### 环境差异
 
@@ -580,9 +495,10 @@ kubectl logs -n knowhere -l app=knowhere-api --tail=50
 
 3. 检查镜像是否存在
    ```bash
-   # 在 ACR 控制台检查镜像
-   # 或使用 aliyun CLI
-   aliyun cr GetRepository --region cn-shenzhen --RepoNamespace knowhere --RepoName knowhere-backend
+   # 在 GitHub Container Registry 检查镜像
+   # 访问：https://github.com/<username>/<repo>/pkgs/container/knowhere-backend
+   # 或使用 docker pull 测试
+   docker pull ghcr.io/<username>/knowhere-backend:dev-latest
    ```
 
 4. 验证 Secrets 是否正确
@@ -590,20 +506,21 @@ kubectl logs -n knowhere -l app=knowhere-api --tail=50
    kubectl get secret knowhere-secrets -n knowhere -o yaml
    ```
 
-#### 2. ACR 构建失败
+#### 2. GitHub Actions 构建失败
 
 **检查步骤**:
-1. 在 ACR 控制台查看构建日志
+1. 在 GitHub Actions 页面查看构建日志
 2. 检查 Dockerfile 路径是否正确
-3. 检查构建规则配置
-4. 验证 Gitee 仓库权限
+3. 检查 workflow 配置
+4. 验证 GitHub 仓库权限和 Actions 是否启用
 
 **常见错误**:
 - `Dockerfile not found`: 检查 Dockerfile 路径
-- `Build timeout`: 增加构建超时时间
-- `Permission denied`: 检查 Gitee 授权
+- `Build timeout`: 检查构建时间是否过长
+- `Permission denied`: 检查 GitHub Actions 权限设置
+- `Image push failed`: 检查 GitHub Container Registry 权限
 
-详细故障排查请参考：[ACR 构建服务配置指南](aliyun/ack/ACR_BUILD_SERVICE_CONFIG.md#故障排查)
+详细故障排查请参考：[GitHub Actions 构建指南](GITHUB_ACTIONS_BUILD.md#故障排查)
 
 #### 3. Ingress 无法访问
 
@@ -643,19 +560,20 @@ kubectl logs -n knowhere -l app=knowhere-api --tail=50
 #### 5. 镜像拉取失败
 
 **检查步骤**:
-1. 检查 ACR 权限
-   ```bash
-   aliyun cr GetAuthorizationToken --region cn-shenzhen
-   ```
+1. 检查 GitHub Container Registry 权限
+   - 如果仓库是私有的，需要配置 imagePullSecrets
+   - 参考 [GitHub Actions 构建指南](GITHUB_ACTIONS_BUILD.md#配置-kubernetes-镜像拉取)
 
 2. 验证镜像标签
    ```bash
-   aliyun cr GetRepoTags --region cn-shenzhen --RepoNamespace knowhere --RepoName knowhere-backend
+   # 在 GitHub 上查看镜像标签
+   # 访问：https://github.com/<username>/<repo>/pkgs/container/knowhere-backend
    ```
 
 3. 检查 Kubernetes Secret（imagePullSecrets）
    ```bash
    kubectl get secret -n knowhere
+   # 确保配置了 ghcr.io 的 imagePullSecrets
    ```
 
 ### 调试命令
@@ -684,9 +602,8 @@ kubectl exec -it -n knowhere <pod-name> -- /bin/bash
 
 - [主部署指南](README.md)
 - [阿里云 Terraform 配置指南](aliyun/ack/terraform/README.md)
-- [ACR 构建服务配置指南](aliyun/ack/ACR_BUILD_SERVICE_CONFIG.md)
+- [GitHub Actions 构建指南](GITHUB_ACTIONS_BUILD.md)
 - [Kubernetes 部署指南](aliyun/ack/kubernetes/README.md)
-- [ACR 构建脚本使用说明](aliyun/ack/scripts/ACR_BUILD_SCRIPTS_README.md)
 - [域名配置说明](DOMAIN_CONFIG.md)
 
 ---

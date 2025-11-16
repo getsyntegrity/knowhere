@@ -1,6 +1,6 @@
 # Worker服务Dockerfile - 多阶段构建优化
-# 使用阿里云容器镜像服务托管的 Python 镜像，避免 Docker Hub 网络问题
-FROM registry.cn-hangzhou.aliyuncs.com/acs/python:3.12-slim AS builder
+# 使用官方 Python 镜像
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -32,8 +32,8 @@ RUN python -m venv /app/venv && \
     find /app/venv -type f -name "*.pyo" -delete
 
 # 运行阶段
-# 使用阿里云容器镜像服务托管的 Python 镜像
-FROM registry.cn-hangzhou.aliyuncs.com/acs/python:3.12-slim
+# 使用官方 Python 镜像
+FROM python:3.12-slim
 
 WORKDIR /app
 
