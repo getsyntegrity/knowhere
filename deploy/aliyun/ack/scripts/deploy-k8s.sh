@@ -51,12 +51,36 @@ esac
 
 # 默认值
 REGISTRY=${REGISTRY:-registry.cn-shenzhen.aliyuncs.com}
+GITHUB_USERNAME=${GITHUB_USERNAME:-}
 NAMESPACE=${NAMESPACE:-knowhere}
 API_REPLICAS=${API_REPLICAS:-2}
 WEB_REPLICAS=${WEB_REPLICAS:-2}
 WORKER_REPLICAS=${WORKER_REPLICAS:-1}
 APP_VERSION=${APP_VERSION:-$(git describe --tags --exact-match HEAD 2>/dev/null || echo "${ENVIRONMENT}-$(git rev-parse --short HEAD)")}
 OSS_BUCKET_NAME=${OSS_BUCKET_NAME:-}
+
+# 如果使用 ghcr.io，自动设置镜像仓库地址
+if [[ "$REGISTRY" == "ghcr.io"* ]] || [[ -n "$GITHUB_USERNAME" ]]; then
+    if [[ -z "$GITHUB_USERNAME" ]]; then
+        # 从 REGISTRY 中提取用户名（格式：ghcr.io/username）
+        GITHUB_USERNAME=$(echo "$REGISTRY" | cut -d'/' -f2)
+        REGISTRY="ghcr.io/$GITHUB_USERNAME"
+    else
+        REGISTRY="ghcr.io/$GITHUB_USERNAME"
+    fi
+    # 检查是否存在 ghcr-secret
+    if kubectl get secret ghcr-secret -n "$NAMESPACE" &>/dev/null; then
+        IMAGE_PULL_SECRETS="imagePullSecrets:
+      - name: ghcr-secret"
+        log "检测到 ghcr-secret，将使用私有镜像仓库认证"
+    else
+        warn "使用 ghcr.io 但未找到 ghcr-secret，镜像拉取可能失败"
+        warn "请运行: ./create-ghcr-secret.sh $ENVIRONMENT"
+        IMAGE_PULL_SECRETS=""
+    fi
+else
+    IMAGE_PULL_SECRETS=""
+fi
 
 log "部署环境: $ENVIRONMENT"
 log "API域名: $API_DOMAIN"
@@ -90,6 +114,7 @@ export WEB_REPLICAS
 export WORKER_REPLICAS
 export APP_VERSION
 export OSS_BUCKET_NAME
+export IMAGE_PULL_SECRETS
 
 # 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

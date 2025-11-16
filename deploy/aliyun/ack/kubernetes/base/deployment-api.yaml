@@ -17,6 +17,7 @@ spec:
         app: knowhere-api
         environment: ${ENVIRONMENT}
     spec:
+      ${IMAGE_PULL_SECRETS}
       containers:
       - name: api
         image: ${REGISTRY}/knowhere-backend:${ENVIRONMENT}-latest

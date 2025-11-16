@@ -17,6 +17,7 @@ spec:
         app: knowhere-web
         environment: ${ENVIRONMENT}
     spec:
+      ${IMAGE_PULL_SECRETS}
       containers:
       - name: web
         image: ${REGISTRY}/knowhere-frontend:${ENVIRONMENT}-latest

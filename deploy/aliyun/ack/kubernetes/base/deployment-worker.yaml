@@ -17,6 +17,7 @@ spec:
         app: knowhere-worker
         environment: ${ENVIRONMENT}
     spec:
+      ${IMAGE_PULL_SECRETS}
       containers:
       - name: worker
         image: ${REGISTRY}/knowhere-worker:${ENVIRONMENT}-latest
