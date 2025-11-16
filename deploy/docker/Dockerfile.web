@@ -24,21 +24,31 @@ RUN corepack enable pnpm && \
 FROM base AS builder
 WORKDIR /app
 
-# 复制所有依赖（pnpm workspace 通常只在根目录有 node_modules）
-COPY --from=deps /app/node_modules ./node_modules
-
 # 复制 monorepo 配置文件
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY turbo.json ./
+
+# 复制所有 workspace 包的 package.json（用于依赖解析）
+COPY packages/shared-types/package.json ./packages/shared-types/
+COPY packages/sdk-typescript/package.json ./packages/sdk-typescript/
+COPY packages/openapi-specs/package.json ./packages/openapi-specs/
+COPY apps/web/package.json ./apps/web/
+COPY apps/docs/package.json ./apps/docs/
+
+# 从 deps 阶段复制已安装的依赖（避免重新下载）
+COPY --from=deps /app/node_modules ./node_modules
 
 # 复制所有源代码
 COPY packages ./packages
 COPY apps/web ./apps/web
 COPY apps/docs ./apps/docs
 
-# 构建应用（使用 pnpm filter 只构建 web 应用及其依赖）
+# 重新运行 pnpm install 来建立正确的 workspace 链接（使用 --prefer-offline 避免重新下载）
 RUN corepack enable pnpm && \
-    pnpm --filter @knowhere/web build
+    pnpm install --frozen-lockfile --prefer-offline
+
+# 构建应用（使用 pnpm filter 只构建 web 应用及其依赖）
+RUN pnpm --filter @knowhere/web build
 
 # 生产阶段
 FROM base AS runner
