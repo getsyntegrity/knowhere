@@ -72,7 +72,7 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
 # 复制构建产物（从 apps/web 目录）
-COPY --from=builder /app/apps/web/public ./public
+# 注意：public 目录的内容已经包含在 .next/standalone 中，无需单独复制
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./apps/web/.next/standalone
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
 
