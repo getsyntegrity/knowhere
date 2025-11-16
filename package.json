@@ -1,6 +1,7 @@
 {
   "name": "knowhere-monorepo",
   "private": true,
+  "packageManager": "pnpm@10.18.2",
   "scripts": {
     "dev": "turbo dev",
     "dev:api": "cd apps/api && source venv/bin/activate && pip install -e ../../packages/shared-python > /dev/null 2>&1 || true && export PYTHONPATH=\"$(pwd)\" && uvicorn main:app --host 0.0.0.0 --port 5005 --reload",
