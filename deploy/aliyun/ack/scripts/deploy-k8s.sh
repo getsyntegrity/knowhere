@@ -50,7 +50,9 @@ case "$ENVIRONMENT" in
 esac
 
 # 默认值
-REGISTRY=${REGISTRY:-registry.cn-shenzhen.aliyuncs.com}
+REGISTRY=${REGISTRY:-}
+ACR_REGISTRY=${ACR_REGISTRY:-}
+ACR_NAMESPACE=${ACR_NAMESPACE:-knowhere}
 GITHUB_USERNAME=${GITHUB_USERNAME:-}
 NAMESPACE=${NAMESPACE:-knowhere}
 API_REPLICAS=${API_REPLICAS:-2}
@@ -59,8 +61,15 @@ WORKER_REPLICAS=${WORKER_REPLICAS:-1}
 APP_VERSION=${APP_VERSION:-$(git describe --tags --exact-match HEAD 2>/dev/null || echo "${ENVIRONMENT}-$(git rev-parse --short HEAD)")}
 OSS_BUCKET_NAME=${OSS_BUCKET_NAME:-}
 
-# 如果使用 ghcr.io，自动设置镜像仓库地址
-if [[ "$REGISTRY" == "ghcr.io"* ]] || [[ -n "$GITHUB_USERNAME" ]]; then
+# 镜像仓库选择逻辑：优先使用 ACR，如果没有配置则使用 GHCR
+if [[ -n "$ACR_REGISTRY" ]]; then
+    # 使用 ACR 镜像仓库
+    REGISTRY="$ACR_REGISTRY/$ACR_NAMESPACE"
+    log "使用 ACR 镜像仓库: $REGISTRY"
+    # ACR 通常不需要 imagePullSecrets（如果配置了公网访问或使用 RAM 角色）
+    IMAGE_PULL_SECRETS=""
+elif [[ "$REGISTRY" == "ghcr.io"* ]] || [[ -n "$GITHUB_USERNAME" ]]; then
+    # 使用 GHCR 镜像仓库
     if [[ -z "$GITHUB_USERNAME" ]]; then
         # 从 REGISTRY 中提取用户名（格式：ghcr.io/username）
         GITHUB_USERNAME=$(echo "$REGISTRY" | cut -d'/' -f2)
@@ -79,10 +88,18 @@ if [[ "$REGISTRY" == "ghcr.io"* ]] || [[ -n "$GITHUB_USERNAME" ]]; then
         IMAGE_PULL_SECRETS=""
     fi
 else
+    # 默认使用 ACR（如果未指定）
+    if [[ -z "$REGISTRY" ]]; then
+        warn "未指定镜像仓库，尝试使用默认 ACR 配置"
+        # 尝试从环境变量或配置文件获取 ACR 配置
+        REGISTRY="registry.cn-guangzhou.aliyuncs.com/$ACR_NAMESPACE"
+        log "使用默认 ACR 镜像仓库: $REGISTRY"
+    fi
     IMAGE_PULL_SECRETS=""
 fi
 
 log "部署环境: $ENVIRONMENT"
+log "镜像仓库: $REGISTRY"
 log "API域名: $API_DOMAIN"
 log "Web域名: $WEB_DOMAIN"
 log "API URL: $API_URL"
@@ -147,17 +164,25 @@ kubectl apply -f "$TEMP_DIR/namespace.yaml" || true
 log "创建ConfigMap..."
 kubectl apply -f "$TEMP_DIR/configmap.yaml"
 
-# 应用Secrets（如果存在）
+# 应用Secrets（如果存在且Secret不存在）
 if [ -f "$TEMP_DIR/secrets.yaml" ]; then
-    warn "检测到secrets.yaml文件，请确保已正确设置所有敏感值"
-    log "应用Secrets..."
-    kubectl apply -f "$TEMP_DIR/secrets.yaml"
+    if kubectl get secret knowhere-secrets -n "$NAMESPACE" &>/dev/null; then
+        log "Secret 'knowhere-secrets' 已存在，跳过应用 secrets.yaml"
+    else
+        warn "检测到secrets.yaml文件，请确保已正确设置所有敏感值"
+        log "应用Secrets..."
+        kubectl apply -f "$TEMP_DIR/secrets.yaml"
+    fi
 fi
 
-# 应用PVC（如果存在）
+# 应用PVC（如果存在，失败时继续）
 if [ -f "$TEMP_DIR/pvc-model-cache.yaml" ]; then
     log "创建PVC..."
-    kubectl apply -f "$TEMP_DIR/pvc-model-cache.yaml"
+    if kubectl apply -f "$TEMP_DIR/pvc-model-cache.yaml" 2>&1; then
+        log "PVC 创建成功"
+    else
+        warn "PVC 创建失败，继续部署其他资源（Worker 服务可能需要 PVC）"
+    fi
 fi
 
 # 应用Service
