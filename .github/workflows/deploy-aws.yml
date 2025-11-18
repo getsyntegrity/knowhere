@@ -51,52 +51,25 @@ jobs:
         pnpm run type-check
         pnpm run lint
 
-  build-and-push:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-    
-    - name: Build and push backend image
-      run: |
-        cd apps/api
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY_BACKEND: knowhere-backend
-        IMAGE_TAG: ${{ github.sha }}
-    
-    - name: Build and push frontend image
-      run: |
-        cd apps/web
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY_FRONTEND: knowhere-frontend
-        IMAGE_TAG: ${{ github.sha }}
-
   deploy-main:
-    needs: build-and-push
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      checks: read
+      packages: read
     
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Wait for build images
+      uses: lewagon/wait-on-check-action@v1.3.2
+      with:
+        ref: ${{ github.ref }}
+        check-name: 'Build and Push Docker Images'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        wait-interval: 10
+        allowed-conclusions: success
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -154,12 +127,24 @@ jobs:
           --region ${{ env.AWS_REGION }}
 
   deploy-staging:
-    needs: build-and-push
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/staging'
+    permissions:
+      contents: read
+      checks: read
+      packages: read
     
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Wait for build images
+      uses: lewagon/wait-on-check-action@v1.3.2
+      with:
+        ref: ${{ github.ref }}
+        check-name: 'Build and Push Docker Images'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        wait-interval: 10
+        allowed-conclusions: success
     
     - name: Get image tag
       id: image-tag
