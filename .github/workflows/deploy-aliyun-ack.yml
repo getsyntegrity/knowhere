@@ -5,6 +5,10 @@ on:
     branches: [ main, staging ]
   pull_request:
     branches: [ main, staging ]
+  workflow_run:
+    workflows: ["Build and Push Docker Images"]
+    types:
+      - completed
 
 env:
   PROJECT_NAME: knowhere
@@ -12,7 +16,10 @@ env:
 jobs:
   deploy-main:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: |
+      github.event_name == 'workflow_run' && 
+      github.event.workflow_run.conclusion == 'success' && 
+      github.event.workflow_run.head_branch == 'main'
     permissions:
       contents: read
       checks: read
@@ -20,25 +27,13 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Wait for build images
-      uses: lewagon/wait-on-check-action@v1.3.2
       with:
-        ref: ${{ github.ref }}
-        check-name: 'Build and Push Docker Images'
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-        wait-interval: 10
-        allowed-conclusions: success
+        ref: ${{ github.event.workflow_run.head_sha }}
     
     - name: Get image tag
       id: image-tag
       run: |
-        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-          GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
-          IMAGE_TAG="${GIT_TAG}-main"
-        else
-          IMAGE_TAG="main-latest"
-        fi
+        IMAGE_TAG="main-latest"
         echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
     
     - name: Configure Aliyun credentials
@@ -84,7 +79,10 @@ jobs:
 
   deploy-staging:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/staging'
+    if: |
+      github.event_name == 'workflow_run' && 
+      github.event.workflow_run.conclusion == 'success' && 
+      github.event.workflow_run.head_branch == 'staging'
     permissions:
       contents: read
       checks: read
@@ -92,25 +90,13 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Wait for build images
-      uses: lewagon/wait-on-check-action@v1.3.2
       with:
-        ref: ${{ github.ref }}
-        check-name: 'Build and Push Docker Images'
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-        wait-interval: 10
-        allowed-conclusions: success
+        ref: ${{ github.event.workflow_run.head_sha }}
     
     - name: Get image tag
       id: image-tag
       run: |
-        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-          GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
-          IMAGE_TAG="${GIT_TAG}-staging"
-        else
-          IMAGE_TAG="staging-latest"
-        fi
+        IMAGE_TAG="staging-latest"
         echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
     
     - name: Setup SSH
