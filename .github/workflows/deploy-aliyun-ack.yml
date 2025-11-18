@@ -1,10 +1,6 @@
 name: Deploy to Aliyun
 
 on:
-  push:
-    branches: [ main, staging ]
-  pull_request:
-    branches: [ main, staging ]
   workflow_run:
     workflows: ["Build and Push Docker Images"]
     types:
@@ -17,7 +13,6 @@ jobs:
   deploy-main:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'workflow_run' && 
       github.event.workflow_run.conclusion == 'success' && 
       github.event.workflow_run.head_branch == 'main'
     permissions:
@@ -80,7 +75,6 @@ jobs:
   deploy-staging:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'workflow_run' && 
       github.event.workflow_run.conclusion == 'success' && 
       github.event.workflow_run.head_branch == 'staging'
     permissions:
