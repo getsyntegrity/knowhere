@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowhere-shared"
+version = "0.1.0"
+description = "Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Messaging, Storage Adapters, and Utils"
+requires-python = ">=3.11"
+dependencies = [
+    # 数据库相关
+    "sqlalchemy==2.0.42",
+    "sqlalchemy[asyncio]",
+    "asyncpg==0.29.0",
+    "psycopg2-binary==2.9.9",
+    "alembic==1.13.1",
+    "sqlalchemy-utils==0.41.1",
+    "pgvector==0.2.4",
+    
+    # Redis缓存相关
+    "redis==5.3.1",
+    
+    # Celery任务队列
+    "celery==5.4.0",
+    "kombu==5.4.0",
+    "billiard==4.2.0",
+    "vine==5.1.0",
+    "amqp==5.3.1",
+    
+    # 异步RabbitMQ客户端
+    "aio-pika==9.3.0",
+    
+    # 数据验证
+    "pydantic==2.11.7",
+    "pydantic-settings==2.10.1",
+    "python-dotenv==1.1.1",
+    "pydantic[email]==2.11.7",
+    
+    # 认证相关（User模型依赖）
+    "fastapi-users[sqlalchemy]==14.0.1",
+    "authlib==1.6.5",
+    "email-validator==2.2.0",
+    
+    # HTTP客户端
+    "httpx==0.28.1",
+    "requests==2.32.4",
+    "aiohttp==3.12.15",
+    
+    # 云存储
+    "boto3==1.38.46",
+    "botocore==1.38.46",
+    
+    # 日志
+    "loguru==0.7.3",
+    "psutil==5.9.8",
+    
+    # 工具库
+    "pytz==2025.2",
+    "PyYAML==6.0.2",
+    "typing-extensions==4.14.1",
+    
+    # 图像处理（ZipResultService需要）
+    "pillow==11.2.1",
+    
+    # 测试相关
+    "pytest==8.3.4",
+    "pytest-asyncio==0.24.0",
+    "pytest-mock==3.14.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shared*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+

@@ -1,24 +1,21 @@
 """
 S3事件Webhook路由
 """
+import base64
 import json
 import os
-import hmac
-import hashlib
-import base64
-import aiohttp
-from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, status, Request, Header
-from loguru import logger
+from typing import Any, Dict
 
-from app.models.schemas.s3_event import S3Event
-from app.models.schemas.oss_event import OSSEvent
+import aiohttp
+from shared.core.database import get_db_context
+from shared.core.state_machine.states import JobStatus
+from shared.models.schemas.oss_event import OSSEvent
+from shared.models.schemas.s3_event import S3Event
 from app.repositories.job_repository import JobRepository
-from app.core.config import settings
-from app.services.storage.file_upload_service import FileUploadService
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
-from app.core.state_machine import JobStatus
-from app.core.database import get_db_context
+from shared.services.storage.file_upload_service import FileUploadService
+from fastapi import APIRouter, Header, Request
+from loguru import logger
 
 router = APIRouter(tags=["Internal"])
 
@@ -73,8 +70,8 @@ def verify_oss_signature(request_body: bytes, headers: Dict[str, str]) -> bool:
         bool: 验证是否通过
     """
     try:
-        from app.core.config import settings
-        
+        from shared.core.config import settings
+
         # 如果禁用签名验证，直接返回True
         if not getattr(settings, 'OSS_EVENT_VERIFY_SIGNATURE', True):
             return True
@@ -256,7 +253,7 @@ async def handle_minio_event(body: bytes, auth_token: str):
     """
     try:
         # 验证认证token
-        from app.core.config import settings
+        from shared.core.config import settings
         expected_token = getattr(settings, 'S3_WEBHOOK_AUTH_TOKEN', '')
         
         if not verify_minio_signature(auth_token, expected_token):
@@ -397,8 +394,8 @@ def _convert_s3_format_to_oss(event_data: Dict[str, Any]) -> OSSEvent:
     Returns:
         OSSEvent: OSS事件对象
     """
-    from app.models.schemas.oss_event import OSSEventRecord
-    
+    from shared.models.schemas.oss_event import OSSEventRecord
+
     # 如果事件已经是S3格式，尝试转换为OSS格式
     records = event_data.get('Records', [])
     oss_records = []
@@ -467,7 +464,7 @@ async def process_upload_events(s3_event: S3Event):
                     continue
                 
                 # 更新job状态
-                from app.core.state_machine import JobStateMachine
+                from app.services.state_machine import JobStateMachine
                 state_machine = JobStateMachine()
                 
                 # 文件上传完成后，转换到pending状态

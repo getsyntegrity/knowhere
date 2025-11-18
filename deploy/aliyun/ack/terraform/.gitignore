@@ -1,0 +1,41 @@
+# Terraform 敏感配置文件
+terraform.tfvars.dev
+terraform.tfvars.test
+terraform.tfvars.prod
+backend-config.dev
+backend-config.test
+backend-config.prod
+backend.tf
+
+# Terraform 状态文件
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+
+# 覆盖文件
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# 崩溃日志
+crash.log
+crash.*.log
+
+# 排除所有 .tfvars 文件，除了示例文件
+*.tfvars
+!terraform.tfvars.example
+!*.tfvars.example
+
+# 排除所有 backend-config 文件，除了示例文件
+backend-config.*
+!backend-config.*.example
+
+# 临时文件
+*.tmp
+*.bak
+*~
+

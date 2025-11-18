@@ -1,8 +1,8 @@
 """
 API路由总入口
 """
-from fastapi import APIRouter
 from app.api.v1.api_v1 import api_router as v1_router
+from fastapi import APIRouter
 
 api_router = APIRouter()
 

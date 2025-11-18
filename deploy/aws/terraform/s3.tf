@@ -1,9 +1,11 @@
-# S3存储桶
+# S3存储桶 - 多环境支持
 resource "aws_s3_bucket" "main" {
-  bucket = "${var.project_name}-storage-${random_string.bucket_suffix.result}"
+  bucket = "${var.project_name}-${var.environment}-storage-${random_string.bucket_suffix.result}"
 
   tags = {
-    Name = "${var.project_name}-storage"
+    Name        = "${var.project_name}-${var.environment}-storage"
+    Environment = var.environment
+    Project     = var.project_name
   }
 }
 
@@ -47,6 +49,17 @@ resource "aws_s3_bucket_lifecycle_configuration" "main" {
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
+  }
+}
+
+# S3事件通知配置 - 发送到SNS
+resource "aws_s3_bucket_notification" "main" {
+  bucket = aws_s3_bucket.main.id
+
+  topic {
+    topic_arn     = aws_sns_topic.s3_events.arn
+    events        = ["s3:ObjectCreated:Put", "s3:ObjectCreated:Post", "s3:ObjectCreated:CompleteMultipartUpload"]
+    filter_prefix = "uploads/"
   }
 }
 

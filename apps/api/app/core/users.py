@@ -2,15 +2,14 @@
 FastAPI Users 用户管理器配置
 """
 from typing import Optional
-from uuid import UUID
 
+from shared.core.config import settings
+from shared.core.database import get_db
 from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, UUIDIDMixin
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
-from app.core.config import settings
 
 class UserManager(UUIDIDMixin, BaseUserManager):
     """用户管理器"""
@@ -24,10 +23,9 @@ class UserManager(UUIDIDMixin, BaseUserManager):
         request: Optional[Request] = None
     ):
         """重写认证方法以支持email登录"""
-        from sqlalchemy import select, or_
-        from app.models.database.user import User
+        from shared.models.database.user import User
         from loguru import logger
-        from sqlalchemy import select, or_
+        from sqlalchemy import or_, select
         
         try:
             # 获取用户名和密码 - credentials是OAuth2PasswordRequestForm对象
@@ -98,12 +96,13 @@ class UserManager(UUIDIDMixin, BaseUserManager):
     async def _setup_new_user_subscription(self, user):
         """为新用户设置Free订阅和初始Credits"""
         try:
-            from app.repositories.subscription_repository import SubscriptionRepository
+            from shared.core.config import settings
+            from shared.core.database import get_db_context
             from app.repositories.credits_repository import CreditsRepository
-            from app.core.config import settings
-            from app.core.database import get_db_context
+            from app.repositories.subscription_repository import \
+                SubscriptionRepository
             from loguru import logger
-            
+
             # 获取初始Credits数量
             initial_credits = getattr(settings, 'FREE_PLAN_INITIAL_CREDITS', 100)
             
@@ -172,7 +171,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
 
 async def get_user_db(session: AsyncSession = Depends(get_db)):
     """获取用户数据库会话"""
-    from app.models.database.user import User
+    from shared.models.database.user import User
     yield SQLAlchemyUserDatabase(session, User)
 
 async def get_user_manager(user_db=Depends(get_user_db)):

@@ -1,9 +1,10 @@
 """
 API v1 路由总入口
 """
-from fastapi import APIRouter
-from app.api.v1.routes import auth, knowledge_base, oauth, api_key, billing, user_management, webhook, jobs, s3_events
 from app.api.v1 import health
+from app.api.v1.routes import (api_key, auth, billing, jobs, knowledge_base,
+                               oauth, s3_events, user_management, version, webhook)
+from fastapi import APIRouter
 
 api_router = APIRouter()
 
@@ -43,6 +44,9 @@ api_router.include_router(webhook.router, prefix="/webhooks", tags=["Webhook管�
 
 # 注册健康检查路由
 api_router.include_router(health.router, prefix="/health", tags=["健康检查"])
+
+# 注册版本信息路由
+api_router.include_router(version.router, tags=["版本信息"])
 
 # Job管理路由已合并到统一Jobs路由中，避免冲突
 

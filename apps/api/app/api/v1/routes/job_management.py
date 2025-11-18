@@ -2,14 +2,14 @@
 统一Job管理API
 提供Job系统的统一管理接口
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
-from app.core.dependencies import get_db, get_current_user
-from app.models.database.user import User
+from app.core.dependencies import get_current_user, get_db
+from shared.models.database.user import User
 from app.repositories.job_repository import JobRepository
-from app.core.state_machine import JobStateMachine
+from app.services.state_machine import JobStateMachine
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["Job管理"])
 

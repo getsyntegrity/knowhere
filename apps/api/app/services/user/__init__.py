@@ -3,8 +3,8 @@
 包含用户管理、认证、配置等服务
 """
 
-from .user_service import UserService
 from .user_config_service import UserConfigService
+from .user_service import UserService
 
 __all__ = [
     "UserService", 

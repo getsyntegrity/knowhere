@@ -1,14 +1,13 @@
 """
 用户管理服务
 """
-from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from typing import Optional
 
-from app.models.database.user import User
-from app.models.schemas.user import UserUpdateRequest, UserResponse
+from shared.core.logging import get_logger
+from shared.models.database.user import User
+from shared.models.schemas.user import UserUpdateRequest
 from app.repositories.user_repository import UserRepository
-from app.core.logging import get_logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
 

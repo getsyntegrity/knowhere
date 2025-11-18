@@ -1,42 +1,22 @@
 """
 核心模块统一导入接口
 重构后的配置管理、Redis管理等功能
+注意：共享包内容需要从共享包导入
 """
 
-# 配置管理 - 使用新的配置结构
-from .config import app_config, redis_config_manager, redis_pool_manager
+# 从共享包导入
+from shared.core.config import app_config, redis_config_manager, redis_pool_manager
+from shared.core.constants import (APIConstants, BusinessConstants,
+                                   ProcessingConstants, SystemConstants)
+from shared.core.database import get_db
+from shared.core.logging import setup_logging
+from shared.core.security import get_password_hash, verify_password
 
-# 数据库管理
-from .database import get_db
-
-# 安全认证
-from .security import (
-    get_password_hash,
-    verify_password
-)
-
-# 依赖注入
-from .dependencies import (
-    get_current_user,
-    get_redis_service,
-    get_redis_service_factory
-)
-
-# 响应处理
-from .response import (
-    ResponseCode
-)
-
-# 常量定义
-from .constants import (
-    SystemConstants,
-    BusinessConstants,
-    APIConstants,
-    ProcessingConstants
-)
-
-# 日志配置
-from .logging import setup_logging
+# 依赖注入 - API专用，保留在API中
+from .dependencies import (get_current_user, get_redis_service,
+                           get_redis_service_factory)
+# 响应处理 - API专用，保留在API中
+from .response import ResponseCode
 
 # 向后兼容的别名
 settings = app_config

@@ -1,5 +1,4 @@
-import os
-import sys
+from pathlib import Path
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -7,13 +6,10 @@ from sqlalchemy import pool
 
 from alembic import context
 
-# 添加项目根目录到 Python 路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # 导入我们的数据库配置和模型
-from app.core.config import settings
-from app.core.database import Base
-from app.models.database import user, api_key, subscription, credits_transaction, usage_log, knowledge_base
+from shared.core.config import settings
+from shared.core.database import Base
+from shared.models.database import user, api_key, subscription, credits_transaction, usage_log, knowledge_base
 
 # 创建同步数据库URL（将asyncpg替换为psycopg2）
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")

@@ -2,13 +2,13 @@
 状态机相关定时任务
 """
 import asyncio
-from typing import Dict, Any
-from loguru import logger
-from celery import Task
+from typing import Any, Dict
 
-from app.core.celery_app import get_celery_app
-from app.core.state_machine import JobStateMachine
-from app.core.database import get_async_session
+from shared.core.celery_app import get_celery_app
+from shared.core.database import get_db_context
+from app.services.state_machine import JobStateMachine
+from celery import Task
+from loguru import logger
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -58,7 +58,7 @@ async def _check_timeout_tasks_async() -> Dict[str, Any]:
     """异步检查超时任务 - 已废弃"""
     try:
         # 获取数据库会话
-        async with get_async_session() as db:
+        async with get_db_context() as db:
             # 初始化状态机
             state_machine = JobStateMachine()
             
@@ -108,7 +108,7 @@ async def _sync_all_states_async() -> Dict[str, Any]:
     """异步同步所有状态"""
     try:
         # 获取数据库会话
-        async with get_async_session() as db:
+        async with get_db_context() as db:
             # 初始化状态机
             state_machine = JobStateMachine()
             
@@ -152,7 +152,7 @@ async def _state_machine_maintenance_async() -> Dict[str, Any]:
     """异步状态机维护"""
     try:
         # 获取数据库会话
-        async with get_async_session() as db:
+        async with get_db_context() as db:
             # 初始化状态机
             state_machine = JobStateMachine()
             
@@ -196,7 +196,7 @@ async def _health_check_async() -> Dict[str, Any]:
     """异步健康检查"""
     try:
         # 获取数据库会话
-        async with get_async_session() as db:
+        async with get_db_context() as db:
             # 初始化状态机
             state_machine = JobStateMachine()
             
@@ -212,3 +212,4 @@ async def _health_check_async() -> Dict[str, Any]:
             "status": "unhealthy",
             "error": str(e)
         }
+

@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowhere-api
+  namespace: knowhere
+  labels:
+    app: knowhere-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 5005
+    protocol: TCP
+    name: http
+  selector:
+    app: knowhere-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowhere-web
+  namespace: knowhere
+  labels:
+    app: knowhere-web
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 3000
+    protocol: TCP
+    name: http
+  selector:
+    app: knowhere-web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowhere-worker
+  namespace: knowhere
+  labels:
+    app: knowhere-worker
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: knowhere-worker
+

@@ -2,17 +2,17 @@
 用户配置服务
 处理用户配置相关的业务逻辑
 """
-import os
 import json
-import shutil
-import pandas as pd
 import math
-from typing import Dict, Any, Optional
-from loguru import logger
+import os
+import shutil
+from typing import Any, Dict, Optional
 
-from app.core.config import settings
-from app.services.common.kb_utils import clean_file, path_handle
-from app.services.common.model_service import ModelService
+import pandas as pd
+from shared.core.config import settings
+from shared.utils.device_utils import check_device_capabilities
+from shared.utils.file_utils import clean_file, path_handle
+from loguru import logger
 
 
 class UserConfigService:
@@ -32,9 +32,17 @@ class UserConfigService:
         """
         logger.info(f"初始化用户配置: {user_id}")
         
+        # 强制使用配置的绝对路径
+        parent_path = settings.USERS_DATA_PATH
+        if not parent_path:
+            raise ValueError("USERS_DATA_PATH 未配置，必须设置用户数据目录的绝对路径")
+        
+        if not os.path.isabs(parent_path):
+            raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {parent_path}")
+        
         basic_user_info = {
             "user": user_id,
-            "parent": os.path.join(".", root_dir),
+            "parent": parent_path,
             "kb_term": settings.KB_TERM,
             "kb_vec_term": settings.KB_VEC_TERM
         }
@@ -230,8 +238,7 @@ class UserConfigService:
         meta_dic['OCR_TIMEOUT'] = float(meta_dic.get('OCR_TIMEOUT', 30.0))
         
         # 检查GPU和网络
-        logger.debug("检查设备能力（GPU/网络）...")
-        device_info = ModelService.check_device_capabilities()
+        device_info = check_device_capabilities()
         if not device_info['has_internet']:
             meta_dic['USE_LOCAL_LLM'] = True
         meta_dic['device'] = device_info['device']
@@ -271,7 +278,7 @@ class UserConfigService:
     @staticmethod
     def _get_default_meta_settings() -> Dict[str, Any]:
         """获取默认元数据设置"""
-        from app.core.constants import BusinessConstants
+        from shared.core.constants import BusinessConstants
         return BusinessConstants.USER_DEFAULT_CONFIG.copy()
     
     @staticmethod

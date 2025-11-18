@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.api
+    image: knowhere-backend:latest
+    ports:
+      - "5005:5005"
+    environment:
+      - ENVIRONMENT=production
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env.production
+    volumes:
+      - ./apps/api:/app
+      - ./packages/shared-python:/app/packages/shared-python
+    networks:
+      - knowhere-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.web
+    image: knowhere-frontend:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+    env_file:
+      - .env.production
+    networks:
+      - knowhere-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.worker
+    image: knowhere-worker:latest
+    environment:
+      - ENVIRONMENT=production
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - HF_HOME=/mnt/models/huggingface
+      - TRANSFORMERS_CACHE=/mnt/models/huggingface
+    env_file:
+      - .env.production
+    volumes:
+      - ./apps/worker:/app
+      - ./packages/shared-python:/app/packages/shared-python
+      - model-cache:/mnt/models/huggingface
+    networks:
+      - knowhere-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from shared.core.celery_app import celery_app; celery_app.control.inspect().stats()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  model-cache:
+    driver: local
+
+networks:
+  knowhere-network:
+    driver: bridge
+
