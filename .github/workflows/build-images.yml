@@ -141,8 +141,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image_name }}
           tags: |
-            type=raw,value=${{ steps.tags.outputs.tags }},enable={{is_default_branch}}
-            type=sha,prefix={{branch}}-
+            type=raw,value=${{ steps.tags.outputs.tags }}
       
       - name: Extract metadata for ACR
         if: steps.should-build.outputs.should_build == 'true' && env.ACR_REGISTRY != ''
@@ -151,8 +150,7 @@ jobs:
         with:
           images: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ matrix.image_name }}
           tags: |
-            type=raw,value=${{ steps.tags.outputs.tags }},enable={{is_default_branch}}
-            type=sha,prefix={{branch}}-
+            type=raw,value=${{ steps.tags.outputs.tags }}
       
       - name: Build and push to GHCR and ACR
         if: steps.should-build.outputs.should_build == 'true'
