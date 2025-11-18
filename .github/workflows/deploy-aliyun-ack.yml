@@ -3,6 +3,7 @@ name: Deploy to Aliyun
 on:
   workflow_run:
     workflows: ["Build and Push Docker Images"]
+    branches: [ main, staging ]
     types:
       - completed
 
