@@ -2,11 +2,11 @@ name: Build and Push Docker Images
 
 on:
   push:
-    branches: [ main, dev, test ]
+    branches: [ main, staging ]
     tags:
       - 'v*'
   pull_request:
-    branches: [ main, dev, test ]
+    branches: [ main, staging ]
   workflow_dispatch:
     inputs:
       environment:
@@ -14,8 +14,7 @@ on:
         required: true
         type: choice
         options:
-          - dev
-          - test
+          - staging
           - prod
       service:
         description: 'Service to build (leave empty for all)'
@@ -62,41 +61,51 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Determine environment
+      - name: Determine environment and branch
         id: env
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            if [ "${{ github.event.inputs.environment }}" == "prod" ]; then
+              echo "branch=main" >> $GITHUB_OUTPUT
+            else
+              echo "branch=staging" >> $GITHUB_OUTPUT
+            fi
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "branch=main" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "environment=prod" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/test" ]]; then
-            echo "environment=test" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
-            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "branch=main" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "branch=staging" >> $GITHUB_OUTPUT
           else
-            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "branch=staging" >> $GITHUB_OUTPUT
           fi
       
       - name: Generate version tags
         id: tags
         run: |
           ENVIRONMENT="${{ steps.env.outputs.environment }}"
-          GIT_COMMIT_SHORT=$(git rev-parse --short HEAD)
+          BRANCH_NAME="${{ steps.env.outputs.branch }}"
           GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
           
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="$GIT_TAG"
-            TAGS="${ENVIRONMENT}-latest,${VERSION},${ENVIRONMENT}-${GIT_COMMIT_SHORT}"
+            # 如果有 TAG，使用 TAG-分支名称格式
+            VERSION="${GIT_TAG}-${BRANCH_NAME}"
+            TAGS="${GIT_TAG}-${BRANCH_NAME},${BRANCH_NAME}-latest"
           else
-            VERSION="dev-${GIT_COMMIT_SHORT}"
-            TAGS="${ENVIRONMENT}-latest,${VERSION},${ENVIRONMENT}-${GIT_COMMIT_SHORT}"
+            # 如果没有 TAG，使用分支名称-latest格式
+            VERSION="${BRANCH_NAME}-latest"
+            TAGS="${BRANCH_NAME}-latest"
           fi
           
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
       
       - name: Skip build for PR or filtered service
         id: should-build

@@ -1,0 +1,129 @@
+name: Deploy to Aliyun
+
+on:
+  push:
+    branches: [ main, staging ]
+  pull_request:
+    branches: [ main, staging ]
+
+env:
+  PROJECT_NAME: knowhere
+
+jobs:
+  deploy-main:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Wait for build images
+      uses: lewagon/wait-on-check-action@v1.3.2
+      with:
+        ref: ${{ github.ref }}
+        check-name: 'Build and Push Docker Images'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        wait-interval: 10
+        allowed-conclusions: success
+    
+    - name: Get image tag
+      id: image-tag
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
+          IMAGE_TAG="${GIT_TAG}-main"
+        else
+          IMAGE_TAG="main-latest"
+        fi
+        echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+    
+    - name: Configure Aliyun credentials
+      uses: aliyun/configure-aliyun-cli-credentials@v1
+      with:
+        access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+        access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        region: cn-guangzhou
+    
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+    
+    - name: Configure kubectl for ACK
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.ALIYUN_ACK_KUBECONFIG }}" | base64 -d > ~/.kube/config || echo "${{ secrets.ALIYUN_ACK_KUBECONFIG }}" > ~/.kube/config
+        chmod 600 ~/.kube/config
+    
+    - name: Deploy to ACK
+      run: |
+        export ENVIRONMENT=prod
+        export API_DOMAIN=api.knowhereto.com
+        export WEB_DOMAIN=knowhereto.com
+        export API_URL=https://api.knowhereto.com
+        export APP_VERSION="${{ steps.image-tag.outputs.tag }}"
+        export GITHUB_USERNAME="${{ github.repository_owner }}"
+        export REGISTRY="ghcr.io"
+        export ACR_REGISTRY="${{ secrets.ALIYUN_ACR_REGISTRY }}"
+        export ACR_NAMESPACE="${{ secrets.ALIYUN_ACR_NAMESPACE }}"
+        export NAMESPACE=knowhere
+        
+        # 使用 ACR 或 GHCR
+        if [ -n "$ACR_REGISTRY" ]; then
+          export REGISTRY="${ACR_REGISTRY}/${ACR_NAMESPACE}"
+        else
+          export REGISTRY="ghcr.io/${GITHUB_USERNAME}"
+        fi
+        
+        chmod +x deploy/aliyun/ack/scripts/deploy-k8s.sh
+        deploy/aliyun/ack/scripts/deploy-k8s.sh
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Wait for build images
+      uses: lewagon/wait-on-check-action@v1.3.2
+      with:
+        ref: ${{ github.ref }}
+        check-name: 'Build and Push Docker Images'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        wait-interval: 10
+        allowed-conclusions: success
+    
+    - name: Get image tag
+      id: image-tag
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
+          IMAGE_TAG="${GIT_TAG}-staging"
+        else
+          IMAGE_TAG="staging-latest"
+        fi
+        echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+    
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.ALIYUN_ECS_SSH_KEY }}
+    
+    - name: Deploy to ECS
+      run: |
+        chmod +x deploy/aliyun/scripts/deploy-to-ecs.sh
+        export IMAGE_TAG="${{ steps.image-tag.outputs.tag }}"
+        export ECS_HOST="${{ secrets.ALIYUN_ECS_HOST }}"
+        export ECS_USER="${{ secrets.ALIYUN_ECS_USER }}"
+        export GITHUB_USERNAME="${{ github.repository_owner }}"
+        
+        # ACR 配置（优先使用 ACR，如果没有配置则使用 GHCR）
+        export ACR_REGISTRY="${{ secrets.ALIYUN_ACR_REGISTRY }}"
+        export ACR_NAMESPACE="${{ secrets.ALIYUN_ACR_NAMESPACE }}"
+        export ALIYUN_ACR_USERNAME="${{ secrets.ALIYUN_ACR_USERNAME }}"
+        export ALIYUN_ACR_PASSWORD="${{ secrets.ALIYUN_ACR_PASSWORD }}"
+        
+        # 注意：如果使用 GHCR，GITHUB_TOKEN 需要在服务器上预先配置，或通过其他方式传递
+        deploy/aliyun/scripts/deploy-to-ecs.sh
+
