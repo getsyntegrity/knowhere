@@ -1,19 +1,20 @@
 """
-Webhook推送服务
+Webhook推送服务（API服务专用）
+负责发送Webhook请求并记录日志
 """
-import json
-import hmac
-import hashlib
-import uuid
 import asyncio
-import aiohttp
-from typing import Dict, Any, Optional
+import hashlib
+import hmac
+import json
+import uuid
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, Optional
 
-from app.core.config import settings
+import aiohttp
+from shared.core.config import settings
+from shared.core.database import get_db_context
 from app.repositories.webhook_repository import WebhookRepository
-from app.core.database import get_db_context
+from loguru import logger
 
 
 class WebhookService:
@@ -45,11 +46,10 @@ class WebhookService:
         Returns:
             Dict: 发送结果
         """
+        idempotency_key = str(uuid.uuid4())
+        signature = self._generate_signature(payload)
+        
         try:
-            # 生成幂等键和签名
-            idempotency_key = str(uuid.uuid4())
-            signature = self._generate_signature(payload)
-            
             # 构建请求头
             headers = {
                 'Content-Type': 'application/json',
@@ -117,48 +117,6 @@ class WebhookService:
             )
             return {"success": False, "error": error_msg, "attempt_number": attempt_number}
     
-    async def send_webhook_with_retry(
-        self, 
-        job_id: str, 
-        webhook_url: str, 
-        payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        带重试的Webhook发送
-        
-        Args:
-            job_id: 任务ID
-            webhook_url: Webhook URL
-            payload: 推送数据
-            
-        Returns:
-            Dict: 最终发送结果
-        """
-        last_result = None
-        
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                result = await self.send_webhook(job_id, webhook_url, payload, attempt)
-                last_result = result
-                
-                if result.get("success", False):
-                    logger.info(f"Webhook发送成功: job_id={job_id}, attempt={attempt}")
-                    return result
-                
-                # 如果不是最后一次尝试，等待后重试
-                if attempt < self.max_retries:
-                    delay = self._calculate_delay(attempt)
-                    logger.info(f"Webhook重试: job_id={job_id}, attempt={attempt}, delay={delay}s")
-                    await asyncio.sleep(delay)
-                
-            except Exception as e:
-                logger.error(f"Webhook重试异常: job_id={job_id}, attempt={attempt}, error={e}")
-                if attempt == self.max_retries:
-                    return {"success": False, "error": str(e), "attempt_number": attempt}
-        
-        logger.error(f"Webhook最终失败: job_id={job_id}, attempts={self.max_retries}")
-        return last_result or {"success": False, "error": "所有重试都失败了", "attempt_number": self.max_retries}
-    
     def _generate_signature(self, payload: Dict[str, Any]) -> str:
         """生成HMAC-SHA256签名"""
         payload_str = json.dumps(payload, sort_keys=True, separators=(',', ':'))
@@ -172,7 +130,7 @@ class WebhookService:
     def _calculate_delay(self, attempt: int) -> float:
         """计算重试延迟（指数退避 + 抖动）"""
         import random
-        
+
         # 指数退避
         delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
         
@@ -211,43 +169,4 @@ class WebhookService:
                 )
         except Exception as e:
             logger.error(f"记录Webhook日志失败: {e}")
-    
-    def build_job_completed_payload(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        """构建任务完成Webhook payload"""
-        payload: Dict[str, Any] = {
-            "event": "job.completed",
-            "job_id": job["job_id"],
-            "job_type": job["job_type"],
-            "status": job["status"],
-            "user_id": job["user_id"],
-            "created_at": job["created_at"].isoformat() if job.get("created_at") else None,
-            "completed_at": datetime.utcnow().isoformat(),
-            "delivery_mode": job.get("delivery_mode"),
-            "document_metadata": job.get("document_metadata", {}),
-            "metadata": job.get("metadata", {})
-        }
 
-        # 统一使用 url 模式，添加 result_url 和 result（checksum 和 statistics）
-        if job.get("download_url"):
-            payload["result_url"] = job.get("download_url")
-        if job.get("result") is not None:
-            payload["result"] = job.get("result")
-
-        return payload
-    
-    def build_job_failed_payload(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        """构建任务失败Webhook payload"""
-        return {
-            "event": "job.failed",
-            "job_id": job["job_id"],
-            "job_type": job["job_type"],
-            "status": job["status"],
-            "user_id": job["user_id"],
-            "created_at": job["created_at"].isoformat() if job.get("created_at") else None,
-            "failed_at": datetime.utcnow().isoformat(),
-            "error": {
-                "message": job.get("error_message"),
-                "code": "PROCESSING_ERROR"
-            },
-            "metadata": job.get("metadata", {})
-        }

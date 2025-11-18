@@ -6,30 +6,15 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "aws" {
   region = var.aws_region
-}
-
-# 变量定义
-variable "aws_region" {
-  description = "AWS区域"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "environment" {
-  description = "环境名称"
-  type        = string
-  default     = "production"
-}
-
-variable "project_name" {
-  description = "项目名称"
-  type        = string
-  default     = "knowhere"
 }
 
 # 数据源

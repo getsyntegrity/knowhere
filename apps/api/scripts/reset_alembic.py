@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import create_engine, text
-from app.core.config import settings
+from shared.core.config import settings
 
 def reset_alembic_version():
     """删除 alembic_version 表中的所有记录"""

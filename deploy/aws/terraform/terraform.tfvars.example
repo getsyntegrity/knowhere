@@ -1,15 +1,92 @@
 # Terraform变量示例文件
-# 复制此文件为 terraform.tfvars 并填入实际值
+# 复制此文件为 terraform.tfvars.{dev|test|prod} 并填入实际值
+# 
+# 使用方法：
+#   cp terraform.tfvars.example terraform.tfvars.dev
+#   编辑 terraform.tfvars.dev，填入开发环境的实际值
+#
+#   terraform apply -var-file=terraform.tfvars.dev
 
-# AWS配置
-aws_region = "us-east-1"
-
-# 项目配置
-project_name = "knowhere"
-environment  = "production"
+# ============================================================================
+# 必需变量（必须设置，无默认值）
+# ============================================================================
 
 # 域名配置
 domain_name = "knowhereto.ai"
 
 # 数据库配置
 db_password = "YourSecurePassword123!"
+
+# RabbitMQ配置
+mq_password = "YourRabbitMQPassword123!"
+
+# ============================================================================
+# 基础配置（有默认值，但建议明确设置）
+# ============================================================================
+
+# AWS配置
+aws_region = "us-east-1"  # AWS区域
+
+# 环境配置
+environment = "dev"  # 环境名称: dev, test, 或 prod
+# 注意：project_name 和 mq_username 使用默认值（在 variables.tf 中定义）
+# 如需覆盖，可以在此设置：
+# project_name = "knowhere"
+# mq_username = "admin"
+
+# 应用版本配置（建议通过命令行自动获取，不要在此文件中设置）
+# 版本号会自动从Git获取：
+#   - 如果有Tag（prod环境）：使用Tag（如 v1.0.0）
+#   - 如果没有Tag（dev/test环境）：使用环境名+commit hash（如 dev-abc1234）
+# 
+# 使用方法：
+#   terraform apply -var-file=terraform.tfvars.dev \
+#     -var="app_version=$(git describe --tags --exact-match HEAD 2>/dev/null || echo '${environment}-$(git rev-parse --short HEAD)')"
+#
+# 或者使用部署脚本（推荐），脚本会自动获取版本号：
+#   cd ../scripts && ./deploy.sh all
+
+# API Webhook端点（用于S3事件通知）
+# 不同环境的webhook端点应该不同，根据实际部署的API域名设置：
+#   - dev环境: https://apidev.{domain_name}/v1/internal/s3-events
+#   - test环境: https://apitest.{domain_name}/v1/internal/s3-events
+#   - prod环境: https://api.{domain_name}/v1/internal/s3-events
+# 如果不设置，S3事件通知将无法工作
+api_webhook_endpoint = ""
+
+# ============================================================================
+# Secrets Manager 配置（敏感信息）
+# 这些变量会存储到AWS Secrets Manager中，供应用使用
+# 如果留空，secret会被创建但值为空，需要后续手动设置
+# ============================================================================
+
+# S3存储配置
+# 注意：S3桶名会根据环境自动生成，格式为：{project_name}-{environment}-storage-{8位随机字符串}
+# 例如：
+#   - dev环境：knowhere-dev-storage-xxxxxxxx
+#   - test环境：knowhere-test-storage-xxxxxxxx
+#   - prod环境：knowhere-prod-storage-xxxxxxxx
+# 部署后可通过以下命令查看桶名：
+#   terraform output s3_bucket_name
+s3_access_key_id     = ""  # S3访问密钥ID（IAM用户Access Key）
+s3_secret_access_key = ""  # S3秘密访问密钥（IAM用户Secret Key）
+
+# 应用安全配置
+app_secret_key = ""  # 应用JWT密钥（用于签名token，必须设置，建议使用强随机字符串）
+
+# Stripe支付配置（可选，如果不需要支付功能可以留空）
+stripe_secret_key      = ""  # Stripe密钥（格式: sk_live_... 或 sk_test_...）
+stripe_publishable_key = ""  # Stripe发布密钥（格式: pk_live_... 或 pk_test_...）
+
+# PostHog分析配置（可选，如果不需要分析功能可以留空）
+posthog_key = ""  # PostHog密钥（格式: phc_xxx）
+
+# ============================================================================
+# 注意事项
+# ============================================================================
+# 1. 所有包含敏感信息的变量都会存储到AWS Secrets Manager
+# 2. 如果变量值为空字符串，secret会被创建但值为空，需要后续手动设置：
+#    aws secretsmanager update-secret --secret-id "knowhere/{environment}/secret-name" --secret-string "value"
+# 3. 生产环境建议使用强密码和密钥
+# 4. 不同环境应使用不同的密码和密钥
+# 5. 此文件已添加到 .gitignore，不会提交到版本控制

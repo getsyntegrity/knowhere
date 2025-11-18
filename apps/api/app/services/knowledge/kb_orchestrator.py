@@ -2,16 +2,10 @@
 知识库管理编排服务
 """
 from typing import Optional
-from celery import chain
-from loguru import logger
 
-from app.core.tasks.kb_tasks import (
-    parse_and_vectorize_task,  # 解析并向量化任务
-    store_to_db_task,          # 存储到数据库任务
-    send_webhook_task          # 发送Webhook任务
-)
-from app.core.state_machine import JobStatus
-from app.core.celery_router import task_router
+from shared.core.celery_router import task_router
+# 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
+from loguru import logger
 
 
 class KBOrchestrator:
@@ -46,9 +40,9 @@ class KBOrchestrator:
         try:
             # 如果source_type是url但没有提供file_url，尝试从job_metadata中获取
             if source_type == "url" and not file_url:
+                from shared.models.schemas.job_metadata import JobMetadataHelper
                 from app.repositories.job_repository import JobRepository
-                from app.services.redis import RedisServiceFactory
-                from app.models.schemas.job_metadata import JobMetadataHelper
+                from shared.services.redis import RedisServiceFactory
                 
                 job_repo = JobRepository()
                 redis_service = RedisServiceFactory.get_service()
@@ -58,32 +52,20 @@ class KBOrchestrator:
             # 获取队列名称
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
             
-            # 构建任务链（文件已通过S3直传）
-            workflow = chain(
-                # 步骤1: 解析并向量化
-                parse_and_vectorize_task.s(
-                    job_id=job_id,
-                    user_id=user_id,
-                    job_type="kb_management"
-                ).set(queue=queue_name),
-                
-                # 步骤2: 存储到数据库
-                store_to_db_task.s(
-                    user_id=user_id,
-                    job_type="kb_management"
-                ).set(queue=queue_name),
-                
-                # 步骤3: 发送Webhook（独立步骤，可选）
-                send_webhook_task.s(
-                    user_id=user_id,
-                    job_type="kb_management"
-                ).set(queue=queue_name)
-            )
+            # 启动单任务（文件已通过S3直传）
+            # 任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息
+            # Webhook和邮件发送已迁移到API服务，由消息处理器处理
+            from celery import signature
+            task_signature = signature(
+                'app.core.tasks.kb_tasks.parse_and_vectorize_task',
+                args=[job_id],
+                kwargs={'user_id': user_id, 'job_type': 'kb_management'}
+            ).set(queue=queue_name)
             
-            # 启动工作流
-            result = workflow.apply_async()
+            # 启动任务
+            result = task_signature.apply_async()
             
-            logger.info(f"知识库管理工作流已启动: job_id={job_id}, workflow_id={result.id}, queue={queue_name}")
+            logger.info(f"知识库管理任务已启动: job_id={job_id}, task_id={result.id}, queue={queue_name}")
             
             return result.id
             
@@ -93,7 +75,7 @@ class KBOrchestrator:
     
     def create_workflow_chain(self, job_id: str, user_id: str, queue_name: str = None):
         """
-        创建知识库管理工作流链（用于测试或手动执行）
+        创建知识库管理任务（用于测试或手动执行）
         
         Args:
             job_id: 任务ID
@@ -101,33 +83,20 @@ class KBOrchestrator:
             queue_name: 队列名称（可选）
             
         Returns:
-            chain: Celery任务链
+            signature: Celery任务签名
         """
         if not queue_name:
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
         
-        return chain(
-            # 步骤1: 解析并向量化（文件已通过S3直传）
-            parse_and_vectorize_task.s(
-                job_id=job_id,
-                user_id=user_id,
-                job_type="kb_management"
-            ).set(queue=queue_name),
-            
-            # 步骤2: 存储到数据库
-            store_to_db_task.s(
-                job_id=job_id,
-                user_id=user_id,
-                job_type="kb_management"
-            ).set(queue=queue_name),
-            
-            # 步骤3: 发送Webhook（独立步骤，可选）
-            send_webhook_task.s(
-                job_id=job_id,
-                user_id=user_id,
-                job_type="kb_management"
-            ).set(queue=queue_name)
-        )
+        from celery import signature
+
+        # 返回单任务签名（任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息）
+        # Webhook和邮件发送已迁移到API服务，由消息处理器处理
+        return signature(
+            'app.core.tasks.kb_tasks.parse_and_vectorize_task',
+            args=[job_id],
+            kwargs={'user_id': user_id, 'job_type': 'kb_management'}
+        ).set(queue=queue_name)
     
     def get_workflow_status(self, workflow_id: str) -> dict:
         """
@@ -140,7 +109,7 @@ class KBOrchestrator:
             dict: 工作流状态信息
         """
         try:
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             result = celery_app.AsyncResult(workflow_id)
@@ -171,7 +140,7 @@ class KBOrchestrator:
             bool: 是否成功取消
         """
         try:
-            from app.core.celery_app import get_celery_app
+            from shared.core.celery_app import get_celery_app
             celery_app = get_celery_app()
             
             result = celery_app.AsyncResult(workflow_id)

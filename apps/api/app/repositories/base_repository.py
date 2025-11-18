@@ -2,12 +2,13 @@
 基础Repository类
 提供通用的CRUD操作，其他Repository应该继承此类
 """
-from typing import Generic, TypeVar, Type, Optional, List, Any, Dict
+from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
+
+from pydantic import BaseModel
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import update, delete
-from pydantic import BaseModel
 
 # 定义泛型类型
 ModelType = TypeVar("ModelType", bound=DeclarativeBase)

@@ -4,6 +4,7 @@ CORS中间件
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+
 def setup_cors(app: FastAPI):
     """设置CORS中间件"""
     app.add_middleware(

@@ -8,9 +8,38 @@ set -e
 AWS_REGION=${AWS_REGION:-us-east-1}
 AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID}
 PROJECT_NAME=${PROJECT_NAME:-knowhere}
+ENVIRONMENT=${ENVIRONMENT:-dev}  # dev/test/prod
 BACKEND_IMAGE=${PROJECT_NAME}-backend
 FRONTEND_IMAGE=${PROJECT_NAME}-frontend
 WORKER_IMAGE=${PROJECT_NAME}-worker
+
+# 版本管理 - 从Git Tag获取版本号
+get_version() {
+    # 尝试获取最新的Git Tag
+    if git describe --tags --exact-match HEAD 2>/dev/null; then
+        # 如果有精确匹配的Tag，使用Tag（保留v前缀）
+        VERSION=$(git describe --tags --exact-match HEAD)
+    elif git describe --tags HEAD 2>/dev/null; then
+        # 如果有Tag（可能不是精确匹配），使用Tag和commit hash
+        VERSION=$(git describe --tags HEAD)
+        COMMIT=$(git rev-parse --short HEAD)
+        VERSION="${VERSION}-${COMMIT}"
+    else
+        # 如果没有Tag，使用commit hash
+        COMMIT=$(git rev-parse --short HEAD)
+        VERSION="dev-${COMMIT}"
+    fi
+    echo "$VERSION"
+}
+
+APP_VERSION=${APP_VERSION:-$(get_version)}
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# 验证环境参数
+if [[ ! "$ENVIRONMENT" =~ ^(dev|test|prod)$ ]]; then
+    error "ENVIRONMENT must be one of: dev, test, prod"
+fi
 
 # 颜色输出
 RED='\033[0;31m'
@@ -58,7 +87,7 @@ login_ecr() {
 
 # 构建和推送后端镜像
 build_backend() {
-    log "构建后端镜像..."
+    log "构建后端镜像 (环境: $ENVIRONMENT)..."
     
     # 检查ECR仓库是否存在
     if ! aws ecr describe-repositories --repository-names $BACKEND_IMAGE --region $AWS_REGION &> /dev/null; then
@@ -66,24 +95,37 @@ build_backend() {
         aws ecr create-repository --repository-name $BACKEND_IMAGE --region $AWS_REGION
     fi
     
-    # 构建镜像
-    docker build -t $BACKEND_IMAGE:latest -f apps/api/Dockerfile apps/api/
+    # 构建镜像（从项目根目录，使用新的Dockerfile路径）
+    # 传递版本信息作为构建参数
+    docker build -t $BACKEND_IMAGE:$ENVIRONMENT-latest \
+        -f deploy/docker/Dockerfile.api \
+        --build-arg ENVIRONMENT=$ENVIRONMENT \
+        --build-arg APP_VERSION=$APP_VERSION \
+        --build-arg BUILD_TIME=$BUILD_TIME \
+        --build-arg GIT_COMMIT=$GIT_COMMIT \
+        .
     
-    # 标记镜像
-    docker tag $BACKEND_IMAGE:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:latest
-    docker tag $BACKEND_IMAGE:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$(git rev-parse --short HEAD)
+    # 标记镜像 - 使用版本号作为标签
+    docker tag $BACKEND_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$ENVIRONMENT-latest
+    docker tag $BACKEND_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$APP_VERSION
+    docker tag $BACKEND_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 推送镜像
     log "推送后端镜像到ECR..."
-    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:latest
-    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$(git rev-parse --short HEAD)
+    log "版本号: $APP_VERSION"
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$ENVIRONMENT-latest
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$APP_VERSION
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
+    # 显示镜像大小
+    IMAGE_SIZE=$(docker images $BACKEND_IMAGE:$ENVIRONMENT-latest --format "{{.Size}}")
+    log "后端镜像大小: $IMAGE_SIZE"
     log "后端镜像推送完成"
 }
 
 # 构建和推送前端镜像
 build_frontend() {
-    log "构建前端镜像..."
+    log "构建前端镜像 (环境: $ENVIRONMENT)..."
     
     # 检查ECR仓库是否存在
     if ! aws ecr describe-repositories --repository-names $FRONTEND_IMAGE --region $AWS_REGION &> /dev/null; then
@@ -91,24 +133,36 @@ build_frontend() {
         aws ecr create-repository --repository-name $FRONTEND_IMAGE --region $AWS_REGION
     fi
     
-    # 构建镜像
-    docker build -t $FRONTEND_IMAGE:latest -f apps/web/Dockerfile apps/web/
+    # 构建镜像（从项目根目录，使用新的Dockerfile路径）
+    docker build -t $FRONTEND_IMAGE:$ENVIRONMENT-latest \
+        -f deploy/docker/Dockerfile.web \
+        --build-arg ENVIRONMENT=$ENVIRONMENT \
+        --build-arg APP_VERSION=$APP_VERSION \
+        --build-arg BUILD_TIME=$BUILD_TIME \
+        --build-arg GIT_COMMIT=$GIT_COMMIT \
+        .
     
-    # 标记镜像
-    docker tag $FRONTEND_IMAGE:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:latest
-    docker tag $FRONTEND_IMAGE:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$(git rev-parse --short HEAD)
+    # 标记镜像 - 使用版本号作为标签
+    docker tag $FRONTEND_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$ENVIRONMENT-latest
+    docker tag $FRONTEND_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$APP_VERSION
+    docker tag $FRONTEND_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 推送镜像
     log "推送前端镜像到ECR..."
-    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:latest
-    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$(git rev-parse --short HEAD)
+    log "版本号: $APP_VERSION"
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$ENVIRONMENT-latest
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$APP_VERSION
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
+    # 显示镜像大小
+    IMAGE_SIZE=$(docker images $FRONTEND_IMAGE:$ENVIRONMENT-latest --format "{{.Size}}")
+    log "前端镜像大小: $IMAGE_SIZE"
     log "前端镜像推送完成"
 }
 
 # 构建和推送Worker镜像
 build_worker() {
-    log "构建Worker镜像..."
+    log "构建Worker镜像 (环境: $ENVIRONMENT)..."
     
     # 检查ECR仓库是否存在
     if ! aws ecr describe-repositories --repository-names $WORKER_IMAGE --region $AWS_REGION &> /dev/null; then
@@ -116,36 +170,57 @@ build_worker() {
         aws ecr create-repository --repository-name $WORKER_IMAGE --region $AWS_REGION
     fi
     
-    # 构建镜像
-    docker build -t $WORKER_IMAGE:latest -f apps/api/Dockerfile.worker apps/api/
+    # 构建镜像（从项目根目录，使用新的Dockerfile路径）
+    docker build -t $WORKER_IMAGE:$ENVIRONMENT-latest \
+        -f deploy/docker/Dockerfile.worker \
+        --build-arg ENVIRONMENT=$ENVIRONMENT \
+        --build-arg APP_VERSION=$APP_VERSION \
+        --build-arg BUILD_TIME=$BUILD_TIME \
+        --build-arg GIT_COMMIT=$GIT_COMMIT \
+        .
     
-    # 标记镜像
-    docker tag $WORKER_IMAGE:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:latest
-    docker tag $WORKER_IMAGE:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$(git rev-parse --short HEAD)
+    # 标记镜像 - 使用版本号作为标签
+    docker tag $WORKER_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$ENVIRONMENT-latest
+    docker tag $WORKER_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$APP_VERSION
+    docker tag $WORKER_IMAGE:$ENVIRONMENT-latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
     # 推送镜像
     log "推送Worker镜像到ECR..."
-    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:latest
-    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$(git rev-parse --short HEAD)
+    log "版本号: $APP_VERSION"
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$ENVIRONMENT-latest
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$APP_VERSION
+    docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$ENVIRONMENT-$GIT_COMMIT
     
+    # 显示镜像大小
+    IMAGE_SIZE=$(docker images $WORKER_IMAGE:$ENVIRONMENT-latest --format "{{.Size}}")
+    log "Worker镜像大小: $IMAGE_SIZE"
     log "Worker镜像推送完成"
 }
 
 # 更新ECS服务
 update_ecs_services() {
-    log "更新ECS服务..."
+    log "更新ECS服务 (环境: $ENVIRONMENT)..."
+    
+    CLUSTER_NAME="${PROJECT_NAME}-${ENVIRONMENT}-cluster"
     
     # 更新后端服务
     aws ecs update-service \
-        --cluster $PROJECT_NAME-cluster \
-        --service $PROJECT_NAME-backend-service \
+        --cluster $CLUSTER_NAME \
+        --service $PROJECT_NAME-$ENVIRONMENT-backend-service \
         --force-new-deployment \
         --region $AWS_REGION
     
     # 更新前端服务
     aws ecs update-service \
-        --cluster $PROJECT_NAME-cluster \
-        --service $PROJECT_NAME-frontend-service \
+        --cluster $CLUSTER_NAME \
+        --service $PROJECT_NAME-$ENVIRONMENT-frontend-service \
+        --force-new-deployment \
+        --region $AWS_REGION
+    
+    # 更新Worker服务
+    aws ecs update-service \
+        --cluster $CLUSTER_NAME \
+        --service $PROJECT_NAME-$ENVIRONMENT-worker-service \
         --force-new-deployment \
         --region $AWS_REGION
     
@@ -154,7 +229,7 @@ update_ecs_services() {
 
 # 主函数
 main() {
-    log "开始构建和部署流程..."
+    log "开始构建和部署流程 (环境: $ENVIRONMENT)..."
     
     check_requirements
     login_ecr
@@ -166,10 +241,13 @@ main() {
         update_ecs_services
     fi
     
+    GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
     log "构建和推送完成！"
-    log "后端镜像: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:latest"
-    log "前端镜像: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:latest"
-    log "Worker镜像: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:latest"
+    log "后端镜像: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_IMAGE:$ENVIRONMENT-latest"
+    log "前端镜像: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_IMAGE:$ENVIRONMENT-latest"
+    log "Worker镜像: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$WORKER_IMAGE:$ENVIRONMENT-latest"
+    log ""
+    log "使用环境变量 ENVIRONMENT=dev|test|prod 来指定环境"
 }
 
 # 运行主函数

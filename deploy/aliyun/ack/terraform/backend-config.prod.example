@@ -1,0 +1,9 @@
+# Terraform Backend 配置文件 - 生产环境（阿里云）
+# 使用方法：
+#   terraform init -backend-config=backend-config.prod
+
+bucket = "knowhere-terraform-state-prod"
+prefix = "terraform.tfstate"
+region = "cn-guangzhou"
+encrypt = true
+

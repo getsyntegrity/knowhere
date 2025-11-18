@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache-pvc
+  namespace: knowhere
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: alicloud-nas
+  resources:
+    requests:
+      storage: 500Gi
+  volumeName: model-cache-pv
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: model-cache-pv
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: ${NAS_MOUNT_TARGET_DOMAIN}
+    path: /huggingface-cache
+

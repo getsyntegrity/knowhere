@@ -1,0 +1,99 @@
+# Worker服务依赖
+# 共享包的依赖在共享包中定义，这里只包含Worker专用依赖
+
+# 共享包（可编辑安装）
+-e ../../packages/shared-python
+
+# Celery任务队列（共享包已包含，但Worker需要完整配置）
+# celery==5.4.0  # 已在共享包中
+
+# 异步RabbitMQ客户端（共享包依赖，Worker需要）
+aio-pika==9.3.0
+
+# 机器学习和AI（Worker需要）
+# 先安装基础依赖（从PyPI）
+numpy==2.2.6
+pandas==2.3.1
+scikit-learn==1.5.2
+scipy==1.16.1
+# 使用CPU版本的PyTorch（减少约1.8GB的CUDA库）
+# 注意：--index-url必须在torch行之前，且只影响torch相关包
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+torchvision==0.17.2+cpu
+sentence-transformers==2.7.0
+transformers==4.39.3
+
+# 文本处理
+jieba==0.42.1
+Levenshtein==0.27.1
+
+# 文档处理
+python-docx==1.2.0
+beautifulsoup4==4.13.4
+lxml==5.4.0
+markitdown==0.1.2
+trafilatura==2.0.0
+pypdfium2==4.30.0
+pandasql==0.7.3
+openpyxl==3.1.2
+
+# AI服务
+openai==1.93.3
+dashscope==1.23.9
+
+# 云存储
+boto3==1.38.46
+botocore==1.38.46
+fs-s3fs==1.1.1
+oss2>=2.18.0
+
+# 图像处理
+pillow==11.2.1
+
+# 加密
+cryptography==45.0.5
+
+# 工具库
+tqdm==4.67.1
+click==8.2.1
+joblib==1.5.1
+pytz==2025.2
+PyYAML==6.0.2
+huggingface-hub==0.33.5
+
+# 文档处理相关
+ultralytics==8.1.47
+rapid-table==3.0.1
+rank-bm25==0.2.2
+pptx2md==2.0.6
+datasets==2.19.2
+accelerate==0.29.3
+
+# 其他工具库
+rapidfuzz==3.14.1
+aiohappyeyeballs==2.6.1
+aiosignal==1.4.0
+attrs==23.2.0
+frozenlist==1.8.0
+multidict==6.7.0
+yarl==1.22.0
+
+# 数据可视化
+matplotlib==3.10.5
+jinja2==3.1.6
+fsspec==2023.12.2
+filelock==3.13.4
+MarkupSafe==2.1.5
+packaging==23.2
+regex==2023.12.25
+tokenizers==0.15.2
+safetensors==0.4.1
+threadpoolctl==3.2.0
+
+# 时区数据
+tzdata==2025.2
+
+# 图像处理相关（容器环境只需headless版本，减少约60MB）
+opencv-python-headless==4.8.1.78
+

@@ -2,22 +2,20 @@
 Webhook配置管理API路由
 """
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+
+from app.core.dependencies import get_current_user, get_db
+from shared.models.database.user import User
+from shared.models.schemas.webhook import (WebhookConfigCreate,
+                                        WebhookConfigResponse, WebhookLogList,
+                                        WebhookLogResponse,
+                                        WebhookStatsResponse,
+                                        WebhookTestRequest,
+                                        WebhookTestResponse)
+from app.repositories.webhook_repository import WebhookRepository
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_db, get_current_user
-from app.models.database.user import User
-from app.models.schemas.webhook import (
-    WebhookConfigCreate,
-    WebhookConfigResponse,
-    WebhookLogResponse,
-    WebhookLogList,
-    WebhookStatsResponse,
-    WebhookTestRequest,
-    WebhookTestResponse
-)
-from app.repositories.webhook_repository import WebhookRepository
-from app.services.webhook.webhook_service import WebhookService
+# WebhookService已迁移到API服务
 
 router = APIRouter(tags=["Webhook管理"])
 
@@ -177,13 +175,17 @@ async def test_webhook(
 ):
     """测试Webhook连接"""
     try:
+        from datetime import datetime
+
+        from app.services.webhook.webhook_service import WebhookService
+        
         webhook_service = WebhookService()
         
         # 构建测试payload
         test_payload = {
             "event": "webhook.test",
             "message": "This is a test webhook from Knowhere",
-            "timestamp": "2024-01-01T00:00:00Z",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
             "user_id": str(current_user.id)
         }
         
