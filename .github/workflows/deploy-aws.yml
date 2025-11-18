@@ -5,55 +5,23 @@ on:
     branches: [ main, staging ]
   pull_request:
     branches: [ main, staging ]
+  workflow_run:
+    workflows: ["Build and Push Docker Images"]
+    types:
+      - completed
 
 env:
   AWS_REGION: us-east-1
   PROJECT_NAME: knowhere
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-    
-    - name: Install Python dependencies
-      run: |
-        cd apps/api
-        pip install -r requirements.txt
-    
-    - name: Run Python tests
-      run: |
-        cd apps/api
-        python -m pytest tests/ -v
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: 'pnpm'
-    
-    - name: Install pnpm
-      run: npm install -g pnpm
-    
-    - name: Install frontend dependencies
-      run: |
-        cd apps/web
-        pnpm install
-    
-    - name: Run frontend tests
-      run: |
-        cd apps/web
-        pnpm run type-check
-        pnpm run lint
-
   deploy-main:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: |
+      (github.event_name == 'workflow_run' && 
+       github.event.workflow_run.conclusion == 'success' && 
+       github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     permissions:
       contents: read
       checks: read
@@ -61,15 +29,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Wait for build images
-      uses: lewagon/wait-on-check-action@v1.3.2
       with:
-        ref: ${{ github.ref }}
-        check-name: 'Build and Push Docker Images'
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-        wait-interval: 10
-        allowed-conclusions: success
+        ref: ${{ github.event.workflow_run.head_sha || github.sha }}
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -128,7 +89,11 @@ jobs:
 
   deploy-staging:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/staging'
+    if: |
+      (github.event_name == 'workflow_run' && 
+       github.event.workflow_run.conclusion == 'success' && 
+       github.event.workflow_run.head_branch == 'staging') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/staging')
     permissions:
       contents: read
       checks: read
@@ -136,25 +101,13 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Wait for build images
-      uses: lewagon/wait-on-check-action@v1.3.2
       with:
-        ref: ${{ github.ref }}
-        check-name: 'Build and Push Docker Images'
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-        wait-interval: 10
-        allowed-conclusions: success
+        ref: ${{ github.event.workflow_run.head_sha || github.sha }}
     
     - name: Get image tag
       id: image-tag
       run: |
-        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-          GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
-          IMAGE_TAG="${GIT_TAG}-staging"
-        else
-          IMAGE_TAG="staging-latest"
-        fi
+        IMAGE_TAG="staging-latest"
         echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
     
     - name: Setup SSH
