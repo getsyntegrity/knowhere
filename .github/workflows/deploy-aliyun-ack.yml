@@ -13,6 +13,10 @@ jobs:
   deploy-main:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      checks: read
+      packages: read
     
     steps:
     - uses: actions/checkout@v4
@@ -81,6 +85,10 @@ jobs:
   deploy-staging:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/staging'
+    permissions:
+      contents: read
+      checks: read
+      packages: read
     
     steps:
     - uses: actions/checkout@v4
