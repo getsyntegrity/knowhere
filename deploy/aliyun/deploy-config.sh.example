@@ -1,0 +1,20 @@
+#!/bin/bash
+# 部署配置文件模板
+# 复制此文件为 deploy-config.sh 并填写实际配置值
+# 注意: deploy-config.sh 不会被提交到 git，包含敏感信息
+
+# ECS 服务器配置
+export ECS_HOST="your-ecs-ip"
+export ECS_USER="root"
+export SSH_KEY="scripts/id_rsa"  # 可选，留空则不使用。支持相对路径（相对于 deploy/aliyun）、绝对路径或 ~ 开头的路径
+
+# 阿里云 ACR 配置
+export ACR_REGISTRY="knowhere-registry.cn-shenzhen.cr.aliyuncs.com"
+export ACR_NAMESPACE="knowhere"
+export ALIYUN_ACR_USERNAME="your-username"
+export ALIYUN_ACR_PASSWORD="your-password"
+
+# SSL 证书配置
+export SSL_DOMAINS="api.knowhereto.com knowhereto.com"
+export SSL_EMAIL="admin@knowhereto.com"
+
