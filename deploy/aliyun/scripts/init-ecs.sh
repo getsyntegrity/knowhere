@@ -176,7 +176,7 @@ ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} bash << 'EO
     chmod 755 "${DATA_DIR}"
     chmod 755 "${DATA_DIR}/data"
     chmod 777 "${DATA_DIR}/logs"  # 允许容器内应用写入日志
-    chmod 755 "${DATA_DIR}/users"
+    chmod 777 "${DATA_DIR}/users"  # 允许容器内应用写入用户数据
     chmod 755 "/etc/letsencrypt" 2>/dev/null || true
     chmod 755 "/var/www/certbot"
     chmod 755 "${DATA_DIR}/nginx"

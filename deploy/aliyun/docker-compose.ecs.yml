@@ -97,12 +97,12 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
-      - NEXT_PUBLIC_API_URL=${API_URL:-https://api.knowhereto.com}
+      - NEXT_PUBLIC_API_URL=${API_URL:-https://apitest.knowhereto.com}
     networks:
       - knowhere-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -158,7 +158,7 @@ services:
       - knowhere-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 10s
       retries: 3

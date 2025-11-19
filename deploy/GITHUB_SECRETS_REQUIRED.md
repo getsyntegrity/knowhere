@@ -80,6 +80,29 @@
 - 如果不配置这些 Secret，系统会使用 GitHub Container Registry (ghcr.io) 作为默认镜像仓库
 - 如果配置了 ACR，镜像会同时推送到 GHCR 和 ACR
 
+### 7. 前端 API URL 配置（可选）
+
+用于在构建时注入 `NEXT_PUBLIC_API_URL` 环境变量到前端 Docker 镜像中。根据不同的镜像仓库（GHCR 和 ACR）使用不同的 API URL。
+
+| Secret 名称 | 说明 | 是否必需 | 使用场景 | 默认值 |
+|-----------|------|---------|---------|--------|
+| `STAGING_GHCR_API_URL` | Staging 环境推送到 GHCR 的 API URL | ⚠️ 可选 | GHCR 镜像构建 | `https://apitest.knowhereto.ai` |
+| `STAGING_ACR_API_URL` | Staging 环境推送到 ACR 的 API URL | ⚠️ 可选 | ACR 镜像构建 | `https://apitest.knowhereto.com` |
+| `PROD_GHCR_API_URL` | Production 环境推送到 GHCR 的 API URL | ⚠️ 可选 | GHCR 镜像构建 | `https://api.knowhereto.ai` |
+| `PROD_ACR_API_URL` | Production 环境推送到 ACR 的 API URL | ⚠️ 可选 | ACR 镜像构建 | `https://api.knowhereto.com` |
+
+**注意**:
+- 这些 Secret 仅用于前端（web）服务的 Docker 镜像构建
+- 如果不配置，构建时会使用默认值：
+  - GHCR 镜像：使用 `.ai` 域名（AWS 环境）
+  - ACR 镜像：使用 `.com` 域名（阿里云环境）
+- 系统会为 GHCR 和 ACR 分别构建镜像，每个镜像使用对应的 API URL
+- 示例配置：
+  - `STAGING_GHCR_API_URL`: `https://apitest.knowhereto.ai`
+  - `STAGING_ACR_API_URL`: `https://apitest.knowhereto.com`
+  - `PROD_GHCR_API_URL`: `https://api.knowhereto.ai`
+  - `PROD_ACR_API_URL`: `https://api.knowhereto.com`
+
 ---
 
 ## 配置说明

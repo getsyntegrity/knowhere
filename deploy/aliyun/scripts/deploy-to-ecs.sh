@@ -69,7 +69,7 @@ mkdir -p "${DATA_DIR}/nginx"
 chmod 755 "${DATA_DIR}"
 chmod 755 "${DATA_DIR}/data"
 chmod 777 "${DATA_DIR}/logs"  # 允许容器内应用写入日志
-chmod 755 "${DATA_DIR}/users"
+chmod 777 "${DATA_DIR}/users"  # 允许容器内应用写入用户数据
 chmod 755 "/etc/letsencrypt"
 chmod 755 "/var/www/certbot"
 

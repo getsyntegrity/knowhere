@@ -107,6 +107,53 @@ jobs:
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
       
+      - name: Determine API URLs
+        id: api-urls
+        run: |
+          # 只有 web 服务需要 API URL
+          if [ "${{ matrix.service }}" != "web" ]; then
+            echo "api_url_ghcr=" >> $GITHUB_OUTPUT
+            echo "api_url_acr=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          ENVIRONMENT="${{ steps.env.outputs.environment }}"
+          HAS_ACR="${{ env.ACR_REGISTRY != '' }}"
+          
+          # 根据环境和仓库类型确定 API URL
+          if [ "$ENVIRONMENT" == "prod" ]; then
+            # Production 环境
+            API_URL_GHCR="${{ secrets.PROD_GHCR_API_URL }}"
+            API_URL_ACR="${{ secrets.PROD_ACR_API_URL }}"
+            
+            # 如果没有配置 Secret，使用默认值
+            if [ -z "$API_URL_GHCR" ]; then
+              API_URL_GHCR="https://api.knowhereto.ai"
+            fi
+            if [ -z "$API_URL_ACR" ]; then
+              API_URL_ACR="https://api.knowhereto.com"
+            fi
+          else
+            # Staging 环境
+            API_URL_GHCR="${{ secrets.STAGING_GHCR_API_URL }}"
+            API_URL_ACR="${{ secrets.STAGING_ACR_API_URL }}"
+            
+            # 如果没有配置 Secret，使用默认值
+            if [ -z "$API_URL_GHCR" ]; then
+              API_URL_GHCR="https://apitest.knowhereto.ai"
+            fi
+            if [ -z "$API_URL_ACR" ]; then
+              API_URL_ACR="https://apitest.knowhereto.com"
+            fi
+          fi
+          
+          echo "api_url_ghcr=$API_URL_GHCR" >> $GITHUB_OUTPUT
+          echo "api_url_acr=$API_URL_ACR" >> $GITHUB_OUTPUT
+          echo "API URL for GHCR ($ENVIRONMENT): $API_URL_GHCR"
+          if [ "$HAS_ACR" == "true" ]; then
+            echo "API URL for ACR ($ENVIRONMENT): $API_URL_ACR"
+          fi
+      
       - name: Skip build for PR or filtered service
         id: should-build
         run: |
@@ -152,32 +199,53 @@ jobs:
           tags: |
             type=raw,value=${{ steps.tags.outputs.tags }}
       
-      - name: Build and push to GHCR and ACR
+      - name: Build and push to GHCR
         if: steps.should-build.outputs.should_build == 'true'
-        id: build
+        id: build-ghcr
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ steps.meta-ghcr.outputs.tags }}
-            ${{ steps.meta-acr.outputs.tags }}
+          tags: ${{ steps.meta-ghcr.outputs.tags }}
           labels: ${{ steps.meta-ghcr.outputs.labels }}
           build-args: |
             ENVIRONMENT=${{ steps.tags.outputs.environment }}
             APP_VERSION=${{ steps.tags.outputs.version }}
             BUILD_TIME=${{ github.event.head_commit.timestamp || github.event.pull_request.head.repo.updated_at || github.event.repository.updated_at }}
             GIT_COMMIT=${{ github.sha }}
+            NEXT_PUBLIC_API_URL=${{ steps.api-urls.outputs.api_url_ghcr }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push to ACR
+        if: steps.should-build.outputs.should_build == 'true' && env.ACR_REGISTRY != ''
+        id: build-acr
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-acr.outputs.tags }}
+          labels: ${{ steps.meta-acr.outputs.labels }}
+          build-args: |
+            ENVIRONMENT=${{ steps.tags.outputs.environment }}
+            APP_VERSION=${{ steps.tags.outputs.version }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp || github.event.pull_request.head.repo.updated_at || github.event.repository.updated_at }}
+            GIT_COMMIT=${{ github.sha }}
+            NEXT_PUBLIC_API_URL=${{ steps.api-urls.outputs.api_url_acr }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
       - name: Image digest
-        if: steps.should-build.outputs.should_build == 'true' && steps.build.outputs.digest != ''
+        if: steps.should-build.outputs.should_build == 'true'
         run: |
-          echo "Image pushed with digest ${{ steps.build.outputs.digest }}"
-          echo "GHCR: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image_name }}:${{ steps.tags.outputs.environment }}-latest"
-          if [ -n "${{ env.ACR_REGISTRY }}" ]; then
+          if [ -n "${{ steps.build-ghcr.outputs.digest }}" ]; then
+            echo "GHCR image pushed with digest ${{ steps.build-ghcr.outputs.digest }}"
+            echo "GHCR: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image_name }}:${{ steps.tags.outputs.environment }}-latest"
+          fi
+          if [ -n "${{ env.ACR_REGISTRY }}" ] && [ -n "${{ steps.build-acr.outputs.digest }}" ]; then
+            echo "ACR image pushed with digest ${{ steps.build-acr.outputs.digest }}"
             echo "ACR: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ matrix.image_name }}:${{ steps.tags.outputs.environment }}-latest"
           fi
 
