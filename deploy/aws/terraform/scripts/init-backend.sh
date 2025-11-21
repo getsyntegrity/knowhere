@@ -1,19 +1,38 @@
 #!/bin/bash
 # 初始化 Terraform Backend 资源（S3 Bucket 和 DynamoDB Table）
+# 
+# 重要说明：Terraform 仅用于 prod 环境（main 分支）的 Serverless 部署
+# - dev 环境：不进行远程部署，仅本地开发（不使用 Terraform）
+# - test 环境：使用 EC2 + Docker Compose（不使用 Terraform）
+# - prod 环境：使用 ECS Fargate Serverless（使用 Terraform）✅
+#
 # 使用方法：
-#   ./init-backend.sh dev
-#   ./init-backend.sh test
 #   ./init-backend.sh prod
 
 set -e
 
-ENVIRONMENT=${1:-dev}
+ENVIRONMENT=${1:-prod}
 PROJECT_NAME="knowhere"
 REGION=${2:-us-east-1}
 
 if [[ ! "$ENVIRONMENT" =~ ^(dev|test|prod)$ ]]; then
     echo "错误：环境必须是 dev、test 或 prod"
+    echo "注意：Terraform 仅用于 prod 环境，dev/test 环境使用 Docker Compose"
     exit 1
+fi
+
+# 警告：dev/test 环境不应使用 Terraform
+if [ "$ENVIRONMENT" != "prod" ]; then
+    echo "⚠️  警告：Terraform 仅用于 prod 环境"
+    echo "   - dev 环境：请使用本地开发环境（deploy/local-dev）"
+    echo "   - test 环境：请使用 EC2 + Docker Compose（deploy/aws/README.md）"
+    echo ""
+    read -p "是否继续初始化 ${ENVIRONMENT} 环境的 Backend？(y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "已取消"
+        exit 0
+    fi
 fi
 
 # 根据环境设置区域

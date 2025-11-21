@@ -2,6 +2,11 @@
 
 本文档提供在阿里云平台部署 Knowhere 项目的完整指南。
 
+> **重要说明**：不同环境采用不同的部署方案
+> 
+> - **Test 环境**（staging 分支）：使用 **ECS + Docker Compose** 方案，请参考 [阿里云 ECS 部署文档](aliyun/README.md)
+> - **Prod 环境**（main 分支）：使用 **ACK (Kubernetes) Serverless** 方案（本文档主要说明此方案）
+
 ## 📋 目录
 
 - [架构概述](#架构概述)
@@ -16,7 +21,49 @@
 
 ## 架构概述
 
-### 架构图
+### 环境部署方案
+
+#### Test 环境（staging 分支）
+
+Test 环境使用 **ECS + Docker Compose** 方案：
+
+```
+Internet
+    ↓
+阿里云 DNS
+    ↓
+ECS 服务器
+    ↓
+Nginx (容器)
+    ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│   Frontend      │   Backend       │   Worker        │
+│   (Next.js)     │   (FastAPI)     │   (Celery)      │
+│   Docker        │   Docker        │   Docker        │
+└─────────────────┴─────────────────┴─────────────────┘
+    ↓                     ↓                     ↓
+    └─────────┬───────────┴─────────────────────┘
+              ↓
+    ┌─────────────────────────┐
+    │   PostgreSQL (Docker)   │
+    │   Redis (Docker)         │
+    │   RabbitMQ (Docker)      │
+    └─────────────────────────┘
+    ↓
+    OSS (对象存储)
+```
+
+**特点**：
+- 使用固定 ECS 服务器
+- 所有服务通过 Docker Compose 管理
+- 基础服务（数据库、缓存、消息队列）运行在容器中
+- 适合测试环境，成本较低
+
+**详细文档**：请参考 [阿里云 ECS 部署文档](aliyun/README.md)
+
+#### Prod 环境（main 分支）
+
+Prod 环境使用 **ACK (Kubernetes) Serverless** 方案：
 
 ```
 Internet
@@ -44,7 +91,13 @@ ACK (Kubernetes)
     └─────────────────────────┘
 ```
 
-### 核心组件
+**特点**：
+- 使用 ACK (Kubernetes) 容器编排
+- 所有基础设施 Serverless（自动扩缩容）
+- 高可用、高可扩展性
+- 适合生产环境
+
+### 核心组件（Prod 环境）
 
 - **计算**: ACK (Alibaba Container Service for Kubernetes)
 - **数据库**: RDS Serverless (PostgreSQL)
@@ -422,22 +475,36 @@ export API_WEBHOOK_ENDPOINT=https://apidev.knowhereto.com/v1/internal/oss-events
 
 项目支持三个环境：`dev`、`test`、`prod`
 
-每个环境使用独立的：
-- 配置文件（`terraform.tfvars.{environment}`）
-- Terraform State（OSS Backend）
-- 资源（ACK 集群、RDS、OSS 等）
-- 域名和证书
+**重要**：不同环境采用不同的部署方案：
 
-### 环境差异
+- **dev 环境**：不进行远程部署，仅本地开发
+- **test 环境**（staging 分支）：使用 **ECS + Docker Compose** 方案
+  - 详细文档：[阿里云 ECS 部署文档](aliyun/README.md)
+  - 使用固定 ECS 服务器，所有服务通过 Docker Compose 管理
+- **prod 环境**（main 分支）：使用 **ACK (Kubernetes) Serverless** 方案
+  - 使用 ACK 集群，所有基础设施 Serverless
+  - 本文档主要说明此方案
 
-| 配置项 | dev | test | prod |
-|--------|-----|------|------|
-| ACK 集群工作节点数 | 2 | 2 | 3 |
-| RDS 实例数 | 1 | 1 | 1 (高可用配置) |
-| RabbitMQ max_tps | 1000 | 1000 | 5000 |
-| RabbitMQ max_connections | 500 | 500 | 1000 |
-| 日志保留 | 7 天 | 7 天 | 30 天 |
-| 删除保护 | 关闭 | 关闭 | 开启 |
+### Prod 环境配置差异
+
+以下配置仅适用于 **prod 环境**（ACK Kubernetes）：
+
+| 配置项 | prod |
+|--------|------|
+| ACK 集群工作节点数 | 3 |
+| RDS 实例数 | 1 (高可用配置) |
+| RabbitMQ max_tps | 5000 |
+| RabbitMQ max_connections | 1000 |
+| 日志保留 | 30 天 |
+| 删除保护 | 开启 |
+
+### Test 环境配置
+
+Test 环境使用 ECS + Docker Compose，配置方式不同：
+
+- 使用 Docker Compose 配置文件：`deploy/aliyun/docker-compose.ecs.yml`
+- 环境变量文件：`deploy/aliyun/.env.staging.template`
+- 详细配置请参考：[阿里云 ECS 部署文档](aliyun/README.md)
 
 详细环境配置请参考：[阿里云 Terraform 配置指南](aliyun/ack/terraform/README.md)
 

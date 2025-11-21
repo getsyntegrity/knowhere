@@ -1,11 +1,15 @@
 # Terraform变量示例文件
-# 复制此文件为 terraform.tfvars.{dev|test|prod} 并填入实际值
+# 
+# ⚠️  重要说明：Terraform 仅用于 prod 环境（main 分支）的 Serverless 部署
+# - dev 环境：不进行远程部署，仅本地开发（不使用 Terraform）
+# - test 环境：使用 EC2 + Docker Compose（不使用 Terraform）
+# - prod 环境：使用 ECS Fargate Serverless（使用 Terraform）✅
 # 
 # 使用方法：
-#   cp terraform.tfvars.example terraform.tfvars.dev
-#   编辑 terraform.tfvars.dev，填入开发环境的实际值
+#   cp terraform.tfvars.example terraform.tfvars.prod
+#   编辑 terraform.tfvars.prod，填入生产环境的实际值
 #
-#   terraform apply -var-file=terraform.tfvars.dev
+#   terraform apply -var-file=terraform.tfvars.prod
 
 # ============================================================================
 # 必需变量（必须设置，无默认值）
@@ -28,7 +32,7 @@ mq_password = "YourRabbitMQPassword123!"
 aws_region = "us-east-1"  # AWS区域
 
 # 环境配置
-environment = "dev"  # 环境名称: dev, test, 或 prod
+environment = "prod"  # 环境名称: 必须设置为 "prod"（Terraform 仅用于 prod 环境）
 # 注意：project_name 和 mq_username 使用默认值（在 variables.tf 中定义）
 # 如需覆盖，可以在此设置：
 # project_name = "knowhere"

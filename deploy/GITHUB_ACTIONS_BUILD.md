@@ -29,9 +29,9 @@
 GitHub Actions 会在以下情况自动触发构建：
 
 1. **分支推送**
-   - 推送到 `main` 分支 → 构建 `prod` 环境镜像
-   - 推送到 `staging` 分支 → 构建 `staging` 环境镜像
-   - **注意**: `dev` 分支不再触发构建
+   - 推送到 `main` 分支 → 构建 `prod` 环境镜像（用于 Serverless 部署）
+   - 推送到 `staging` 分支 → 构建 `staging` 环境镜像（用于 test 环境 ECS/EC2 部署）
+   - **注意**: `dev` 分支不再触发构建（dev 环境仅本地开发）
 
 2. **Tag 推送**
    - 推送以 `v` 开头的 tag（如 `v1.0.0`）→ 构建 `prod` 环境镜像
@@ -51,12 +51,12 @@ GitHub Actions 会在以下情况自动触发构建：
 
 ## 环境判断逻辑
 
-| Git 引用 | 环境 | 分支 |
-|---------|------|------|
-| `refs/heads/main` | `prod` | `main` |
-| `refs/heads/staging` | `staging` | `staging` |
-| `refs/tags/v*` | `prod` | `main` |
-| 手动触发 | 用户选择 | 根据环境选择 |
+| Git 引用 | 环境 | 分支 | 部署方案 |
+|---------|------|------|----------|
+| `refs/heads/main` | `prod` | `main` | Serverless (ECS Fargate/ACK) |
+| `refs/heads/staging` | `staging` | `staging` | ECS/EC2 + Docker Compose |
+| `refs/tags/v*` | `prod` | `main` | Serverless (ECS Fargate/ACK) |
+| 手动触发 | 用户选择 | 根据环境选择 | 根据环境选择 |
 
 ## 前端环境变量配置
 

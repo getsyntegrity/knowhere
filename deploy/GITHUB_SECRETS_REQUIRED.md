@@ -33,13 +33,19 @@
 | `AWS_ACCESS_KEY_ID` | AWS 访问密钥 ID | ✅ 必需 | AWS 服务认证（ECR、ECS、Terraform） |
 | `AWS_SECRET_ACCESS_KEY` | AWS 访问密钥 Secret | ✅ 必需 | AWS 服务认证（ECR、ECS、Terraform） |
 
-### 3. AWS Staging 部署 Secrets
+### 3. AWS Test 环境部署 Secrets（staging 分支）
+
+**注意**: 这些 Secrets 仅用于 **test 环境**（staging 分支）的 EC2 + Docker Compose 部署。
 
 | Secret 名称 | 说明 | 是否必需 | 使用场景 |
 |-----------|------|---------|---------|
 | `AWS_EC2_SSH_KEY` | EC2 服务器的 SSH 私钥 | ✅ 必需（staging） | 通过 SSH 部署到固定 EC2 服务器 |
 | `AWS_EC2_HOST` | EC2 服务器 IP 地址或域名 | ✅ 必需（staging） | 连接到 EC2 服务器 |
 | `AWS_EC2_USER` | EC2 服务器 SSH 用户名 | ✅ 必需（staging） | SSH 登录用户名（通常是 `ec2-user` 或 `ubuntu`） |
+
+**注意**: 
+- Prod 环境（main 分支）使用 ECS Fargate Serverless 方案，不需要这些 Secrets
+- 这些 Secrets 仅用于 test 环境的 EC2 部署
 
 ---
 
@@ -51,15 +57,21 @@
 |-----------|------|---------|---------|
 | `ALIYUN_ACCESS_KEY_ID` | 阿里云 AccessKey ID | ✅ 必需 | 阿里云服务认证 |
 | `ALIYUN_ACCESS_KEY_SECRET` | 阿里云 AccessKey Secret | ✅ 必需 | 阿里云服务认证 |
-| `ALIYUN_ACK_KUBECONFIG` | ACK 集群的 kubeconfig 配置 | ✅ 必需（main 分支） | 连接到 Kubernetes 集群进行部署 |
+| `ALIYUN_ACK_KUBECONFIG` | ACK 集群的 kubeconfig 配置 | ✅ 必需（main 分支，prod 环境） | 连接到 Kubernetes 集群进行部署（仅用于 prod 环境的 ACK 部署） |
 
-### 5. 阿里云 Staging 部署 Secrets
+### 5. 阿里云 Test 环境部署 Secrets（staging 分支）
+
+**注意**: 这些 Secrets 仅用于 **test 环境**（staging 分支）的 ECS + Docker Compose 部署。
 
 | Secret 名称 | 说明 | 是否必需 | 使用场景 |
 |-----------|------|---------|---------|
 | `ALIYUN_ECS_SSH_KEY` | ECS 服务器的 SSH 私钥 | ✅ 必需（staging） | 通过 SSH 部署到固定 ECS 服务器 |
 | `ALIYUN_ECS_HOST` | ECS 服务器 IP 地址或域名 | ✅ 必需（staging） | 连接到 ECS 服务器 |
 | `ALIYUN_ECS_USER` | ECS 服务器 SSH 用户名 | ✅ 必需（staging） | SSH 登录用户名（通常是 `root` 或 `ecs-user`） |
+
+**注意**: 
+- Prod 环境（main 分支）使用 ACK (Kubernetes) Serverless 方案，使用 `ALIYUN_ACK_KUBECONFIG` 而不是这些 Secrets
+- 这些 Secrets 仅用于 test 环境的 ECS 部署
 
 ---
 
@@ -130,23 +142,27 @@
 ### 仅使用 AWS 平台
 
 **必需 Secrets:**
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_EC2_SSH_KEY` (staging 部署)
-- `AWS_EC2_HOST` (staging 部署)
-- `AWS_EC2_USER` (staging 部署)
+- `AWS_ACCESS_KEY_ID` (所有环境)
+- `AWS_SECRET_ACCESS_KEY` (所有环境)
+- `AWS_EC2_SSH_KEY` (仅 test 环境，staging 分支)
+- `AWS_EC2_HOST` (仅 test 环境，staging 分支)
+- `AWS_EC2_USER` (仅 test 环境，staging 分支)
 
-**总计**: 5 个 Secrets
+**注意**: 
+- Prod 环境（main 分支）使用 ECS Fargate Serverless，不需要 EC2 相关 Secrets
+- Test 环境（staging 分支）使用 EC2 + Docker Compose，需要 EC2 相关 Secrets
+
+**总计**: 5 个 Secrets（如果只部署 prod 环境，只需要前 2 个）
 
 ### 仅使用阿里云平台
 
 **必需 Secrets:**
-- `ALIYUN_ACCESS_KEY_ID`
-- `ALIYUN_ACCESS_KEY_SECRET`
-- `ALIYUN_ACK_KUBECONFIG` (main 分支部署)
-- `ALIYUN_ECS_SSH_KEY` (staging 部署)
-- `ALIYUN_ECS_HOST` (staging 部署)
-- `ALIYUN_ECS_USER` (staging 部署)
+- `ALIYUN_ACCESS_KEY_ID` (所有环境)
+- `ALIYUN_ACCESS_KEY_SECRET` (所有环境)
+- `ALIYUN_ACK_KUBECONFIG` (仅 prod 环境，main 分支)
+- `ALIYUN_ECS_SSH_KEY` (仅 test 环境，staging 分支)
+- `ALIYUN_ECS_HOST` (仅 test 环境，staging 分支)
+- `ALIYUN_ECS_USER` (仅 test 环境，staging 分支)
 
 **可选 Secrets:**
 - `ALIYUN_ACR_REGISTRY`
@@ -154,7 +170,11 @@
 - `ALIYUN_ACR_USERNAME`
 - `ALIYUN_ACR_PASSWORD`
 
-**总计**: 6 个必需 + 4 个可选 = 最多 10 个 Secrets
+**注意**: 
+- Prod 环境（main 分支）使用 ACK (Kubernetes) Serverless，需要 `ALIYUN_ACK_KUBECONFIG`
+- Test 环境（staging 分支）使用 ECS + Docker Compose，需要 ECS 相关 Secrets
+
+**总计**: 6 个必需 + 4 个可选 = 最多 10 个 Secrets（如果只部署一个环境，需要更少）
 
 ### 同时使用 AWS 和阿里云平台
 

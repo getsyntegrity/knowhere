@@ -25,47 +25,65 @@
 
 ### 📁 [DEPLOYMENT_AWS.md](DEPLOYMENT_AWS.md)
 **AWS 部署详细指南** - AWS 平台完整部署指南（推荐阅读）
+- **Test 环境**（staging 分支）：EC2 + Docker Compose 方案
+- **Prod 环境**（main 分支）：ECS Fargate Serverless 方案
 
 ### 📁 [aws/terraform/README.md](aws/terraform/README.md)
 **Terraform 多环境配置指南** - 详细的多环境配置说明、Backend配置、变量说明
+- 仅适用于 **Prod 环境**（ECS Fargate）
 
 ### 📁 [aws/terraform/ENVIRONMENT_SETUP.md](aws/terraform/ENVIRONMENT_SETUP.md)
 **多环境配置说明** - 环境隔离机制、部署流程、配置状态
+- 仅适用于 **Prod 环境**（ECS Fargate）
 
 ### 📁 [aws/WORKER_DEPLOYMENT_GUIDE.md](aws/WORKER_DEPLOYMENT_GUIDE.md)
 Worker 服务部署指南
+- 适用于 **Prod 环境**（ECS Fargate）
+
+### 📁 [aws/scripts/deploy-to-ec2.sh](aws/scripts/deploy-to-ec2.sh)
+**EC2 部署脚本** - Test 环境（staging 分支）的 EC2 部署脚本
+- 用于在固定 EC2 服务器上部署应用
 
 ---
 
 ## 阿里云部署文档
 
 ### 📁 [DEPLOYMENT_ALIYUN.md](DEPLOYMENT_ALIYUN.md)
-**阿里云部署详细指南** - 阿里云平台完整部署指南，重点说明 ACR 构建服务（推荐阅读）
+**阿里云部署详细指南** - 阿里云平台完整部署指南（推荐阅读）
+- **Test 环境**（staging 分支）：ECS + Docker Compose 方案
+- **Prod 环境**（main 分支）：ACK (Kubernetes) Serverless 方案
+
+### 📁 [aliyun/README.md](aliyun/README.md)
+**阿里云 ECS Docker Compose 部署文档** - Test 环境（staging 分支）的 ECS 部署指南
+- 使用固定 ECS 服务器
+- 所有服务通过 Docker Compose 管理
+- 包含完整的部署流程、初始化脚本、SSL 配置等
 
 ### 📁 [aliyun/ack/terraform/README.md](aliyun/ack/terraform/README.md)
 **阿里云 Terraform 配置指南** - Terraform 多环境配置说明、Backend配置、变量说明
+- 仅适用于 **Prod 环境**（ACK Kubernetes）
 
 ### 📁 [aliyun/ack/ACR_BUILD_SERVICE_CONFIG.md](aliyun/ack/ACR_BUILD_SERVICE_CONFIG.md)
 **ACR 构建服务配置指南** - 详细的 ACR 构建规则配置说明，包括 Gitee 连接、构建规则创建等
+- 适用于所有环境（镜像构建）
 
 ### 📁 [aliyun/ack/kubernetes/README.md](aliyun/ack/kubernetes/README.md)
 **Kubernetes 部署指南** - Kubernetes 资源部署说明
+- 仅适用于 **Prod 环境**（ACK Kubernetes）
 
 ### 📁 [aliyun/ack/scripts/ACR_BUILD_SCRIPTS_README.md](aliyun/ack/scripts/ACR_BUILD_SCRIPTS_README.md)
 **ACR 构建脚本使用说明** - 触发和查看 ACR 构建的脚本使用说明
+- 适用于所有环境（镜像构建）
 
 ---
 
 ## 本地开发文档
 
 ### 📁 [local-dev/README.md](local-dev/README.md)
-本地开发环境配置
+本地开发环境配置指南
 
 ### 📁 [local-dev/S3_EVENT_SETUP.md](local-dev/S3_EVENT_SETUP.md)
 S3 事件设置说明
-
-### 📁 [docker/QUICK_START.md](docker/QUICK_START.md)
-Docker 快速开始指南
 
 ---
 
@@ -80,14 +98,22 @@ deploy/
 ├── DOCUMENTATION_INDEX.md      # 本文档（文档索引）
 │
 ├── aws/                        # AWS部署
-│   ├── terraform/
+│   ├── scripts/
+│   │   └── deploy-to-ec2.sh   # Test环境EC2部署脚本
+│   ├── terraform/              # Prod环境Terraform配置
 │   │   ├── README.md          # Terraform配置指南
 │   │   ├── ENVIRONMENT_SETUP.md  # 多环境配置
 │   │   └── PLAN_RESOURCES.md  # 资源详细说明
 │   └── WORKER_DEPLOYMENT_GUIDE.md
 │
 ├── aliyun/                     # 阿里云部署
-│   └── ack/
+│   ├── README.md               # Test环境ECS部署文档
+│   ├── docker-compose.ecs.yml  # Test环境Docker Compose配置
+│   ├── scripts/
+│   │   ├── init-ecs.sh         # ECS初始化脚本
+│   │   ├── deploy-to-ecs.sh    # ECS部署脚本
+│   │   └── deploy-local.sh     # 本地部署脚本
+│   └── ack/                    # Prod环境ACK配置
 │       ├── ACR_BUILD_SERVICE_CONFIG.md  # ACR构建服务配置
 │       ├── terraform/
 │       │   └── README.md      # 阿里云Terraform配置
@@ -106,11 +132,15 @@ deploy/
 ## 快速导航
 
 ### 首次部署
-1. 阅读 [README.md](README.md) 了解整体架构
+1. 阅读 [README.md](README.md) 了解整体架构和不同环境的部署方案
 2. 查看 [DOMAIN_CONFIG.md](DOMAIN_CONFIG.md) 了解域名配置
-3. 根据平台选择：
-   - **AWS**: 阅读 [DEPLOYMENT_AWS.md](DEPLOYMENT_AWS.md) 完整部署指南
-   - **阿里云**: 阅读 [DEPLOYMENT_ALIYUN.md](DEPLOYMENT_ALIYUN.md) 完整部署指南（重点了解 ACR 构建服务）
+3. 根据环境和平台选择：
+   - **Test 环境**（staging 分支）：
+     - **AWS**: 参考 [DEPLOYMENT_AWS.md](DEPLOYMENT_AWS.md#test环境部署) 的 Test 环境部署章节
+     - **阿里云**: 阅读 [aliyun/README.md](aliyun/README.md) ECS Docker Compose 部署文档
+   - **Prod 环境**（main 分支）：
+     - **AWS**: 阅读 [DEPLOYMENT_AWS.md](DEPLOYMENT_AWS.md#prod环境部署) 的 Prod 环境部署章节
+     - **阿里云**: 阅读 [DEPLOYMENT_ALIYUN.md](DEPLOYMENT_ALIYUN.md) 完整部署指南（ACK Kubernetes）
 
 ### 多环境配置
 - [aws/terraform/ENVIRONMENT_SETUP.md](aws/terraform/ENVIRONMENT_SETUP.md) - 环境隔离机制

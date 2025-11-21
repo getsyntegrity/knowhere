@@ -85,6 +85,18 @@ if [ -d "${DATA_DIR}/data/postgres" ]; then
     fi
 fi
 
+# 设置 Redis 数据目录权限（redis 用户 UID/GID 通常是 999）
+log "设置 Redis 数据目录权限..."
+if [ -d "${DATA_DIR}/data/redis" ]; then
+    # 如果 redis 容器未运行，可以安全地设置权限
+    if ! docker ps --format '{{.Names}}' | grep -q '^knowhere-redis$'; then
+        chown -R 999:999 "${DATA_DIR}/data/redis" 2>/dev/null || warn "无法设置 Redis 目录所有者（可能需要手动设置）"
+        chmod -R 755 "${DATA_DIR}/data/redis"
+    else
+        warn "Redis 容器正在运行，跳过权限设置（容器会自动管理权限）"
+    fi
+fi
+
 # ACR 登录（如果需要）
 ACR_REGISTRY=${ACR_REGISTRY:-}
 ACR_NAMESPACE=${ACR_NAMESPACE:-knowhere}

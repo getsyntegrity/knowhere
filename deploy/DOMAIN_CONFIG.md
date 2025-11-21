@@ -2,14 +2,19 @@
 
 ## 域名与分支映射
 
-| 服务 | 环境 | 域名 | Git分支 |
-|------|------|------|---------|
-| **API** | prod | `api.knowhereto.com` | main |
-| **API** | test | `apitest.knowhereto.com` | test |
-| **API** | dev | `apidev.knowhereto.com` | dev |
-| **Web** | prod | `knowhereto.com` | main |
-| **Web** | test | `test.knowhereto.com` | test |
-| **Web** | dev | `dev.knowhereto.com` | dev |
+| 服务 | 环境 | 域名 | Git分支 | 部署方案 |
+|------|------|------|---------|----------|
+| **API** | prod | `api.knowhereto.com` | main | Serverless (ECS Fargate/ACK) |
+| **API** | test | `apitest.knowhereto.com` | staging | ECS/EC2 + Docker Compose |
+| **API** | dev | `apidev.knowhereto.com` | dev | 本地开发（不部署） |
+| **Web** | prod | `knowhereto.com` | main | Serverless (ECS Fargate/ACK) |
+| **Web** | test | `test.knowhereto.com` | staging | ECS/EC2 + Docker Compose |
+| **Web** | dev | `dev.knowhereto.com` | dev | 本地开发（不部署） |
+
+**注意**：
+- **test 环境**使用 `staging` 分支，部署到固定的 ECS/EC2 服务器
+- **prod 环境**使用 `main` 分支，部署到 Serverless 基础设施
+- **dev 环境**不进行远程部署，仅本地开发
 
 ---
 
@@ -27,15 +32,21 @@
 | 200 | `knowhereto.com`, `www.knowhereto.com` | 前端服务 |
 | default | 其他 | 前端服务（默认） |
 
-### 阿里云 Kubernetes Ingress
+### 阿里云路由配置
+
+#### Test 环境（ECS + Docker Compose）
+
+Test 环境使用 Nginx 容器作为反向代理，配置在 `deploy/aliyun/nginx/nginx.conf` 中：
+- API 路由：`apitest.knowhereto.com` → `api` 容器
+- Web 路由：`test.knowhereto.com` → `web` 容器
+
+#### Prod 环境（ACK Kubernetes Ingress）
 
 Ingress配置使用环境变量：
 - `${API_DOMAIN}` - API域名
 - `${WEB_DOMAIN}` - Web域名
 
 部署时需要设置：
-- dev: `API_DOMAIN=apidev.knowhereto.com`, `WEB_DOMAIN=dev.knowhereto.com`
-- test: `API_DOMAIN=apitest.knowhereto.com`, `WEB_DOMAIN=test.knowhereto.com`
 - prod: `API_DOMAIN=api.knowhereto.com`, `WEB_DOMAIN=knowhereto.com`
 
 ---
@@ -67,10 +78,27 @@ Ingress配置使用环境变量：
 ## 配置文件位置
 
 ### AWS
+
+#### Test 环境（EC2）
+- Docker Compose配置：`deploy/aws/docker-compose.ec2.yml`（如存在）
+- 部署脚本：`deploy/aws/scripts/deploy-to-ec2.sh`
+- 环境变量模板：`deploy/config/aws/env.template`
+
+#### Prod 环境（ECS Fargate）
 - Terraform配置：`deploy/aws/terraform/`
 - 环境变量模板：`deploy/config/aws/env.template`
 
 ### 阿里云
+
+#### Test 环境（ECS）
+- Docker Compose配置：`deploy/aliyun/docker-compose.ecs.yml`
+- 部署脚本：`deploy/aliyun/scripts/deploy-to-ecs.sh`
+- 初始化脚本：`deploy/aliyun/scripts/init-ecs.sh`
+- 环境变量模板：`deploy/aliyun/.env.staging.template`
+- Nginx配置：`deploy/aliyun/nginx/nginx.conf`
+- 详细文档：`deploy/aliyun/README.md`
+
+#### Prod 环境（ACK Kubernetes）
 - Terraform配置：`deploy/aliyun/ack/terraform/`
 - Kubernetes配置：`deploy/aliyun/ack/kubernetes/`
 - 环境变量模板：`deploy/config/aliyun/env.template`

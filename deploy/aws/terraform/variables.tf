@@ -12,13 +12,13 @@ variable "aws_region" {
 }
 
 variable "environment" {
-  description = "环境名称 (dev/test/prod)"
+  description = "环境名称（Terraform 仅用于 prod 环境，dev/test 环境使用 Docker Compose）"
   type        = string
-  default     = "dev"
+  default     = "prod"
   
   validation {
     condition     = contains(["dev", "test", "prod"], var.environment)
-    error_message = "Environment must be one of: dev, test, prod"
+    error_message = "Environment must be one of: dev, test, prod. Note: Terraform is only used for prod environment. Use Docker Compose for dev/test environments."
   }
 }
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# 初始化脚本 - 阿里云 ECS 首次部署
-# 此脚本在本地执行，用于初始化 ECS 服务器环境
+# 初始化脚本 - AWS EC2 首次部署
+# 此脚本在本地执行，用于初始化 EC2 服务器环境
 
 set -e
 
@@ -36,16 +36,16 @@ if [ -f "$CONFIG_FILE" ]; then
 else
     warn "配置文件不存在: $CONFIG_FILE"
     warn "请复制 deploy-config.sh.example 为 deploy-config.sh 并填写配置"
-    warn "或手动设置环境变量: ECS_HOST, ECS_USER 等"
+    warn "或手动设置环境变量: EC2_HOST, EC2_USER 等"
 fi
 
 # 检查必要的环境变量
-if [ -z "$ECS_HOST" ]; then
-    error "ECS_HOST 环境变量未设置"
+if [ -z "$EC2_HOST" ]; then
+    error "EC2_HOST 环境变量未设置"
 fi
 
-if [ -z "$ECS_USER" ]; then
-    error "ECS_USER 环境变量未设置"
+if [ -z "$EC2_USER" ]; then
+    error "EC2_USER 环境变量未设置"
 fi
 
 # SSH 密钥配置（可选）
@@ -73,11 +73,11 @@ else
     SSH_OPTIONS=""
 fi
 
-log "开始初始化 ECS 服务器: ${ECS_HOST}"
+log "开始初始化 EC2 服务器: ${EC2_HOST}"
 
 # 检查并安装 Docker
 log "检查 Docker..."
-ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} bash << 'EOF'
+ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} bash << 'EOF'
     set -e
     
     if command -v docker &> /dev/null; then
@@ -130,6 +130,15 @@ ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} bash << 'EO
             systemctl start docker
             systemctl enable docker
             
+        # Amazon Linux 2 安装
+        elif [ "$OS" = "amzn" ]; then
+            # 安装必要的依赖
+            yum install -y docker
+            
+            # 启动 Docker 服务
+            systemctl start docker
+            systemctl enable docker
+            
         # CentOS/RHEL 安装
         elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
             # 安装必要的依赖
@@ -159,7 +168,7 @@ EOF
 
 # 创建远程目录结构
 log "创建远程目录结构..."
-ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} bash << 'EOF'
+ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} bash << 'EOF'
     set -e
     DATA_DIR="/var/lib/knowhere"
     
@@ -204,40 +213,40 @@ EOF
 # 传输 docker-compose 文件
 log "传输 docker-compose 配置文件..."
 scp $SSH_OPTIONS -o StrictHostKeyChecking=no \
-    "$DEPLOY_DIR/docker-compose.ecs.yml" \
-    ${ECS_USER}@${ECS_HOST}:/var/lib/knowhere/docker-compose.ecs.yml
+    "$DEPLOY_DIR/docker-compose.ec2.yml" \
+    ${EC2_USER}@${EC2_HOST}:/var/lib/knowhere/docker-compose.ec2.yml
 
 # 传输 nginx 配置文件
 log "传输 nginx 配置文件..."
-ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} "mkdir -p /var/lib/knowhere/nginx"
+ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "mkdir -p /var/lib/knowhere/nginx"
 scp $SSH_OPTIONS -o StrictHostKeyChecking=no \
     "$DEPLOY_DIR/nginx/nginx.conf" \
-    ${ECS_USER}@${ECS_HOST}:/var/lib/knowhere/nginx/nginx.conf
+    ${EC2_USER}@${EC2_HOST}:/var/lib/knowhere/nginx/nginx.conf
 
 # 传输部署脚本
 log "传输部署脚本..."
 scp $SSH_OPTIONS -o StrictHostKeyChecking=no \
-    "$DEPLOY_DIR/scripts/deploy-to-ecs.sh" \
-    ${ECS_USER}@${ECS_HOST}:/var/lib/knowhere/scripts/deploy-to-ecs.sh
+    "$DEPLOY_DIR/scripts/deploy-to-ec2.sh" \
+    ${EC2_USER}@${EC2_HOST}:/var/lib/knowhere/scripts/deploy-to-ec2.sh
 
 scp $SSH_OPTIONS -o StrictHostKeyChecking=no \
     "$DEPLOY_DIR/scripts/setup-ssl.sh" \
-    ${ECS_USER}@${ECS_HOST}:/var/lib/knowhere/scripts/setup-ssl.sh 2>/dev/null || warn "setup-ssl.sh 不存在，稍后创建"
+    ${EC2_USER}@${EC2_HOST}:/var/lib/knowhere/scripts/setup-ssl.sh 2>/dev/null || warn "setup-ssl.sh 不存在，稍后创建"
 
 scp $SSH_OPTIONS -o StrictHostKeyChecking=no \
     "$DEPLOY_DIR/scripts/renew-ssl.sh" \
-    ${ECS_USER}@${ECS_HOST}:/var/lib/knowhere/scripts/renew-ssl.sh 2>/dev/null || warn "renew-ssl.sh 不存在，稍后创建"
+    ${EC2_USER}@${EC2_HOST}:/var/lib/knowhere/scripts/renew-ssl.sh 2>/dev/null || warn "renew-ssl.sh 不存在，稍后创建"
 
 # 设置脚本执行权限
 log "设置脚本执行权限..."
-ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} bash << 'EOF'
+ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} bash << 'EOF'
     chmod +x /var/lib/knowhere/scripts/*.sh
     echo "权限设置完成"
 EOF
 
 # 检查 docker-compose（Docker 安装时已包含 docker-compose-plugin）
 log "检查 docker-compose..."
-ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} bash << 'EOF'
+ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} bash << 'EOF'
     if docker compose version &> /dev/null; then
         echo "docker-compose 已安装（Docker Compose Plugin）"
         docker compose version
@@ -255,22 +264,22 @@ EOF
 
 # 检查 .env 文件
 log "检查环境变量文件..."
-if ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} "[ -f /var/lib/knowhere/.env ]"; then
+if ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "[ -f /var/lib/knowhere/.env ]"; then
     warn ".env 文件已存在，跳过传输"
     log "如需更新 .env 文件，请手动传输:"
-    log "  scp $SSH_OPTIONS .env ${ECS_USER}@${ECS_HOST}:/var/lib/knowhere/.env"
+    log "  scp $SSH_OPTIONS .env ${EC2_USER}@${EC2_HOST}:/var/lib/knowhere/.env"
 else
     warn ".env 文件不存在，请手动创建并传输:"
-    log "  1. 基于 deploy/aliyun/.env.staging.template 创建 .env 文件"
+    log "  1. 基于 deploy/aws/.env.staging.template 创建 .env 文件"
     log "  2. 填写实际配置值"
-    log "  3. 传输到服务器: scp $SSH_OPTIONS .env ${ECS_USER}@${ECS_HOST}:/var/lib/knowhere/.env"
+    log "  3. 传输到服务器: scp $SSH_OPTIONS .env ${EC2_USER}@${EC2_HOST}:/var/lib/knowhere/.env"
 fi
 
 # 可选：预拉取基础服务镜像（加快后续部署速度）
 log "预拉取基础服务镜像（可选，加快后续部署速度）..."
-ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${ECS_USER}@${ECS_HOST} bash << 'EOF'
+ssh $SSH_OPTIONS -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} bash << 'EOF'
     set -e
-    COMPOSE_FILE="/var/lib/knowhere/docker-compose.ecs.yml"
+    COMPOSE_FILE="/var/lib/knowhere/docker-compose.ec2.yml"
     
     if [ ! -f "$COMPOSE_FILE" ]; then
         echo "docker-compose 文件不存在，跳过镜像预拉取"
@@ -299,6 +308,6 @@ log ""
 log "后续步骤:"
 log "  1. 准备 .env 文件并传输到服务器"
 log "  2. SSH 到服务器执行 SSL 证书获取: /var/lib/knowhere/scripts/setup-ssl.sh"
-log "  3. SSH 到服务器执行部署: /var/lib/knowhere/scripts/deploy-to-ecs.sh"
+log "  3. SSH 到服务器执行部署: /var/lib/knowhere/scripts/deploy-to-ec2.sh"
 log "  4. 设置 SSL 证书自动续期 cron 任务"
 

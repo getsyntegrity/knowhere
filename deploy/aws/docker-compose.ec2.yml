@@ -60,7 +60,7 @@ services:
 
   # API 服务
   api:
-    image: knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/knowhere-backend:staging-latest
+    image: ${GHCR_IMAGE_BACKEND:-ghcr.io/your-username/knowhere-backend:staging-latest}
     container_name: knowhere-api
     depends_on:
       postgres:
@@ -90,14 +90,14 @@ services:
 
   # Web 前端服务
   web:
-    image: knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/knowhere-frontend:staging-latest
+    image: ${GHCR_IMAGE_FRONTEND:-ghcr.io/your-username/knowhere-frontend:staging-latest}
     container_name: knowhere-web
     depends_on:
       - api
     environment:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
-      - NEXT_PUBLIC_API_URL=${API_URL:-https://apitest.knowhereto.com}
+      - NEXT_PUBLIC_API_URL=${API_URL:-https://apitest.knowhereto.ai}
     networks:
       - knowhere-network
     restart: unless-stopped
@@ -110,7 +110,7 @@ services:
 
   # Worker 服务
   worker:
-    image: knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/knowhere-worker:staging-latest
+    image: ${GHCR_IMAGE_WORKER:-ghcr.io/your-username/knowhere-worker:staging-latest}
     container_name: knowhere-worker
     depends_on:
       postgres:
