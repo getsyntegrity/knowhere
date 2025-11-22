@@ -27,15 +27,8 @@ error() {
     exit 1
 }
 
-# 检查环境参数
-ENVIRONMENT=${1:-}
-if [ -z "$ENVIRONMENT" ]; then
-    error "请指定环境: dev, test, 或 prod"
-fi
-
-if [[ ! "$ENVIRONMENT" =~ ^(dev|test|prod)$ ]]; then
-    error "环境必须是: dev, test, 或 prod"
-fi
+# Terraform 仅用于 prod 环境
+ENVIRONMENT="prod"
 
 cd "$TERRAFORM_DIR"
 
@@ -56,21 +49,9 @@ if [ ! -f "terraform.tfvars.${ENVIRONMENT}" ]; then
     log "创建 terraform.tfvars.${ENVIRONMENT}..."
     cp "terraform.tfvars.example" "terraform.tfvars.${ENVIRONMENT}"
     
-    # 更新环境特定的配置
-    case "$ENVIRONMENT" in
-        dev)
-            sed -i '' "s/environment = \"dev\"/environment = \"dev\"/" "terraform.tfvars.${ENVIRONMENT}"
-            sed -i '' "s|api_webhook_endpoint = \"\"|api_webhook_endpoint = \"https://apidev.knowhereto.com/v1/internal/oss-events\"|" "terraform.tfvars.${ENVIRONMENT}"
-            ;;
-        test)
-            sed -i '' "s/environment = \"dev\"/environment = \"test\"/" "terraform.tfvars.${ENVIRONMENT}"
-            sed -i '' "s|api_webhook_endpoint = \"\"|api_webhook_endpoint = \"https://apitest.knowhereto.com/v1/internal/oss-events\"|" "terraform.tfvars.${ENVIRONMENT}"
-            ;;
-        prod)
-            sed -i '' "s/environment = \"dev\"/environment = \"prod\"/" "terraform.tfvars.${ENVIRONMENT}"
-            sed -i '' "s|api_webhook_endpoint = \"\"|api_webhook_endpoint = \"https://api.knowhereto.com/v1/internal/oss-events\"|" "terraform.tfvars.${ENVIRONMENT}"
-            ;;
-    esac
+    # 更新环境特定的配置（仅 prod）
+    sed -i '' "s/environment = \"dev\"/environment = \"prod\"/" "terraform.tfvars.${ENVIRONMENT}"
+    sed -i '' "s|api_webhook_endpoint = \"\"|api_webhook_endpoint = \"https://api.knowhereto.com/v1/internal/oss-events\"|" "terraform.tfvars.${ENVIRONMENT}"
     
     log "✅ terraform.tfvars.${ENVIRONMENT} 已创建"
     warn "⚠️  重要：请编辑 terraform.tfvars.${ENVIRONMENT} 并填入以下实际值："
@@ -84,10 +65,19 @@ if [ ! -f "terraform.tfvars.${ENVIRONMENT}" ]; then
     echo "    - oss_secret_access_key: OSS 秘密访问密钥"
     echo "    - app_secret_key: 应用 JWT 密钥"
     echo ""
-    echo "  可选配置："
-    echo "    - stripe_secret_key: Stripe 密钥（如需要）"
-    echo "    - stripe_publishable_key: Stripe 发布密钥（如需要）"
-    echo "    - posthog_key: PostHog 密钥（如需要）"
+    echo "  可选配置（根据实际需求填写）："
+    echo "    - stripe_secret_key: Stripe 密钥"
+    echo "    - stripe_publishable_key: Stripe 发布密钥"
+    echo "    - posthog_key: PostHog 密钥"
+    echo "    - resend_api_key: Resend 邮件 API 密钥"
+    echo "    - moesif_application_id: Moesif 应用 ID"
+    echo "    - google_client_id/secret: Google OAuth 配置"
+    echo "    - github_client_id/secret: GitHub OAuth 配置"
+    echo "    - apple_client_id/secret: Apple OAuth 配置"
+    echo "    - smtp_*: SMTP 邮件配置"
+    echo "    - ds_key, ali_api_key, ark_api_key, gpt_api_key: AI 模型 API 密钥"
+    echo "    - mineru_api_key: MinerU API 密钥"
+    echo "    - 以及其他环境变量（参考 apps/api/env.example）"
     echo ""
 else
     warn "terraform.tfvars.${ENVIRONMENT} 已存在，跳过创建"
@@ -106,17 +96,20 @@ echo "   - terraform.tfvars.${ENVIRONMENT}"
 echo ""
 echo "2. 初始化 Backend（如果尚未初始化）："
 echo "   cd scripts"
-echo "   ./init-backend.sh ${ENVIRONMENT}"
+echo "   ./init-backend.sh prod"
 echo ""
 echo "3. 初始化 Terraform："
-echo "   terraform init -backend-config=backend-config.${ENVIRONMENT}"
+echo "   terraform init -backend-config=backend-config.prod"
 echo ""
 echo "4. 规划部署："
-echo "   terraform plan -var-file=terraform.tfvars.${ENVIRONMENT} \\"
-echo "     -var=\"app_version=\$(git describe --tags --exact-match HEAD 2>/dev/null || echo '${ENVIRONMENT}-\$(git rev-parse --short HEAD)')\""
+echo "   terraform plan -var-file=terraform.tfvars.prod \\"
+echo "     -var=\"app_version=\$(git describe --tags --exact-match HEAD 2>/dev/null || echo 'prod-\$(git rev-parse --short HEAD)')\""
 echo ""
 echo "5. 应用配置："
-echo "   terraform apply -var-file=terraform.tfvars.${ENVIRONMENT} \\"
-echo "     -var=\"app_version=\$(git describe --tags --exact-match HEAD 2>/dev/null || echo '${ENVIRONMENT}-\$(git rev-parse --short HEAD)')\""
+echo "   terraform apply -var-file=terraform.tfvars.prod \\"
+echo "     -var=\"app_version=\$(git describe --tags --exact-match HEAD 2>/dev/null || echo 'prod-\$(git rev-parse --short HEAD)')\""
+echo ""
+echo "6. 生成 Kubernetes Secrets 和 ConfigMap："
+echo "   ./scripts/generate-env-vars.sh kubectl | bash"
 echo ""
 

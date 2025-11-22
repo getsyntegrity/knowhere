@@ -29,9 +29,9 @@
 GitHub Actions 会在以下情况自动触发构建：
 
 1. **分支推送**
-   - 推送到 `main` 分支 → 构建 `prod` 环境镜像
-   - 推送到 `staging` 分支 → 构建 `staging` 环境镜像
-   - **注意**: `dev` 分支不再触发构建
+   - 推送到 `main` 分支 → 构建 `prod` 环境镜像（用于 Serverless 部署）
+   - 推送到 `staging` 分支 → 构建 `staging` 环境镜像（用于 test 环境 ECS/EC2 部署）
+   - **注意**: `dev` 分支不再触发构建（dev 环境仅本地开发）
 
 2. **Tag 推送**
    - 推送以 `v` 开头的 tag（如 `v1.0.0`）→ 构建 `prod` 环境镜像
@@ -51,12 +51,43 @@ GitHub Actions 会在以下情况自动触发构建：
 
 ## 环境判断逻辑
 
-| Git 引用 | 环境 | 分支 |
-|---------|------|------|
-| `refs/heads/main` | `prod` | `main` |
-| `refs/heads/staging` | `staging` | `staging` |
-| `refs/tags/v*` | `prod` | `main` |
-| 手动触发 | 用户选择 | 根据环境选择 |
+| Git 引用 | 环境 | 分支 | 部署方案 |
+|---------|------|------|----------|
+| `refs/heads/main` | `prod` | `main` | Serverless (ECS Fargate/ACK) |
+| `refs/heads/staging` | `staging` | `staging` | ECS/EC2 + Docker Compose |
+| `refs/tags/v*` | `prod` | `main` | Serverless (ECS Fargate/ACK) |
+| 手动触发 | 用户选择 | 根据环境选择 | 根据环境选择 |
+
+## 前端环境变量配置
+
+### NEXT_PUBLIC_API_URL 构建时注入
+
+前端 Docker 镜像在构建时会注入 `NEXT_PUBLIC_API_URL` 环境变量，该变量会被嵌入到客户端 JavaScript 代码中。
+
+**重要**: 系统会为 GHCR 和 ACR 分别构建镜像，每个镜像使用对应仓库的 API URL。
+
+**配置方式**:
+- 通过 GitHub Secrets 配置（推荐）：
+  - `STAGING_GHCR_API_URL`: Staging 环境推送到 GHCR 的 API URL
+  - `STAGING_ACR_API_URL`: Staging 环境推送到 ACR 的 API URL
+  - `PROD_GHCR_API_URL`: Production 环境推送到 GHCR 的 API URL
+  - `PROD_ACR_API_URL`: Production 环境推送到 ACR 的 API URL
+- 如果不配置，使用默认值：
+  - Staging GHCR: `https://apitest.knowhereto.ai`
+  - Staging ACR: `https://apitest.knowhereto.com`
+  - Production GHCR: `https://api.knowhereto.ai`
+  - Production ACR: `https://api.knowhereto.com`
+
+**构建流程**:
+1. 如果配置了 ACR，系统会构建两次：
+   - 第一次：使用 GHCR API URL 构建并推送到 GHCR
+   - 第二次：使用 ACR API URL 构建并推送到 ACR
+2. 如果只配置了 GHCR，只构建一次并推送到 GHCR
+
+**注意**: 
+- 该配置仅影响前端（web）服务的构建
+- 不同环境和不同仓库会构建不同的镜像，镜像中包含对应环境的 API URL
+- GHCR 镜像默认使用 `.ai` 域名（AWS 环境），ACR 镜像默认使用 `.com` 域名（阿里云环境）
 
 ## 镜像标签策略
 

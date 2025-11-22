@@ -145,7 +145,7 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["Health"])
     async def health_check():
         """简单的健康检查端点"""
-        version = os.getenv("APP_VERSION", app_config.APP_VERSION)
+        version = os.getenv("APP_VERSION", settings.APP_VERSION)
         return {
             "status": "healthy",
             "service": "knowhere-api",

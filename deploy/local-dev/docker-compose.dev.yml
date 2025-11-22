@@ -28,7 +28,7 @@ services:
     container_name: knowhere_redis
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru --stop-writes-on-bgsave-error no
     volumes:
       - redis_data:/data
     networks:

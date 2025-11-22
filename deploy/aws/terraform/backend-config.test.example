@@ -1,5 +1,12 @@
 # Terraform Backend 配置文件 - 测试环境
-# 使用方法：
+# 
+# ⚠️  重要说明：test 环境不使用 Terraform
+# - test 环境：使用 EC2 + Docker Compose 方案
+# - 请参考：deploy/aws/README.md（AWS EC2 Docker Compose 部署文档）
+# 
+# 此文件仅作为参考保留，实际部署不使用 Terraform
+# 
+# 如果确实需要使用（不推荐），使用方法：
 #   terraform init -backend-config=backend-config.test
 
 bucket         = "knowhere-terraform-state-test"

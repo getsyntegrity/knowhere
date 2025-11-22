@@ -92,9 +92,29 @@ resource "aws_iam_role_policy" "secrets_manager_access" {
           aws_secretsmanager_secret.s3_access_key.arn,
           aws_secretsmanager_secret.s3_secret_key.arn,
           aws_secretsmanager_secret.secret_key.arn,
+          aws_secretsmanager_secret.users_verify_token_secret.arn,
+          aws_secretsmanager_secret.users_reset_password_token_secret.arn,
+          aws_secretsmanager_secret.webhook_signing_secret.arn,
+          aws_secretsmanager_secret.s3_webhook_auth_token.arn,
+          aws_secretsmanager_secret.celery_broker_url.arn,
           aws_secretsmanager_secret.stripe_secret_key.arn,
           aws_secretsmanager_secret.stripe_publishable_key.arn,
-          aws_secretsmanager_secret.posthog_key.arn
+          aws_secretsmanager_secret.stripe_webhook_secret.arn,
+          aws_secretsmanager_secret.posthog_key.arn,
+          aws_secretsmanager_secret.resend_api_key.arn,
+          aws_secretsmanager_secret.moesif_application_id.arn,
+          aws_secretsmanager_secret.google_client_id.arn,
+          aws_secretsmanager_secret.google_client_secret.arn,
+          aws_secretsmanager_secret.github_client_id.arn,
+          aws_secretsmanager_secret.github_client_secret.arn,
+          aws_secretsmanager_secret.apple_client_id.arn,
+          aws_secretsmanager_secret.apple_client_secret.arn,
+          aws_secretsmanager_secret.smtp_password.arn,
+          aws_secretsmanager_secret.ds_key.arn,
+          aws_secretsmanager_secret.ali_api_key.arn,
+          aws_secretsmanager_secret.ark_api_key.arn,
+          aws_secretsmanager_secret.gpt_api_key.arn,
+          aws_secretsmanager_secret.mineru_api_key.arn
         ]
       },
       {
@@ -168,7 +188,7 @@ resource "aws_iam_role_policy_attachment" "ecs_task_role_s3" {
 # CloudWatch日志组 - 多环境支持
 resource "aws_cloudwatch_log_group" "backend" {
   name              = "/ecs/${var.project_name}-${var.environment}-backend"
-  retention_in_days = var.environment == "prod" ? 30 : 7
+  retention_in_days = 30
 
   tags = {
     Name        = "${var.project_name}-${var.environment}-backend-logs"
@@ -178,7 +198,7 @@ resource "aws_cloudwatch_log_group" "backend" {
 
 resource "aws_cloudwatch_log_group" "frontend" {
   name              = "/ecs/${var.project_name}-${var.environment}-frontend"
-  retention_in_days = var.environment == "prod" ? 30 : 7
+  retention_in_days = 30
 
   tags = {
     Name        = "${var.project_name}-${var.environment}-frontend-logs"
@@ -188,7 +208,7 @@ resource "aws_cloudwatch_log_group" "frontend" {
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ecs/${var.project_name}-${var.environment}-worker"
-  retention_in_days = var.environment == "prod" ? 30 : 7
+  retention_in_days = 30
 
   tags = {
     Name        = "${var.project_name}-${var.environment}-worker-logs"

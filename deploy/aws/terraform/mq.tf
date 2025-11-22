@@ -41,8 +41,8 @@ resource "aws_mq_broker" "rabbitmq" {
   broker_name         = "${var.project_name}-${var.environment}-rabbitmq"
   engine_type         = "RabbitMQ"
   engine_version      = "3.13"  # 使用有效的RabbitMQ版本
-  host_instance_type  = var.environment == "prod" ? "mq.m5.large" : "mq.t3.micro"
-  deployment_mode     = var.environment == "prod" ? "ACTIVE_STANDBY_MULTI_AZ" : "SINGLE_INSTANCE"
+  host_instance_type  = "mq.m5.large"
+  deployment_mode     = "ACTIVE_STANDBY_MULTI_AZ"
   publicly_accessible = false
 
   # 用户配置
@@ -52,7 +52,7 @@ resource "aws_mq_broker" "rabbitmq" {
   }
 
   # 子网配置
-  subnet_ids = var.environment == "prod" ? aws_subnet.private[*].id : [aws_subnet.private[0].id]
+  subnet_ids = aws_subnet.private[*].id
 
   # 安全组
   security_groups = [aws_security_group.mq.id]

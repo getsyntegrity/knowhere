@@ -78,7 +78,12 @@ deploy/aliyun/ack/terraform/terraform.tfstate.backup
 deploy/aliyun/ack/terraform/.terraform/
 deploy/aliyun/ack/terraform/.terraform.lock.hcl
 
+# 阿里云 ECS 部署配置
+deploy/aliyun/deploy-config.sh
+
 # Terraform common
 .terraform.lock.hcl
 LICENSE.txt
 .terraform
+
+doc-deploy/

@@ -24,7 +24,31 @@ Knowhere 项目采用容器化部署架构，支持在 AWS 和阿里云两个云
 - **Backend**: FastAPI 后端服务
 - **Worker**: Celery 异步任务处理服务
 
+### 环境部署方案
+
+项目支持三个环境，每个环境采用不同的部署方案：
+
+- **dev 环境**: 不进行远程部署，仅本地开发（使用 `local-dev` 目录的 Docker Compose 配置）
+- **test 环境**（staging 分支）: 使用 Docker + ECS/EC2 方案
+  - 阿里云：ECS 服务器 + Docker Compose（包含所有基础服务）
+  - AWS：EC2 服务器 + Docker Compose（包含所有基础服务）
+- **prod 环境**（main 分支）: 使用 Serverless 方案
+  - AWS：ECS Fargate（无服务器容器）+ RDS Serverless + ElastiCache Serverless
+  - 阿里云：ACK (Kubernetes) + RDS Serverless + Redis Serverless
+
 ### 基础设施
+
+#### Test 环境（ECS/EC2）
+
+- **计算**: AWS EC2 / 阿里云 ECS（固定服务器）
+- **数据库**: Docker 容器（PostgreSQL）
+- **缓存**: Docker 容器（Redis）
+- **消息队列**: Docker 容器（RabbitMQ）
+- **存储**: AWS S3 / 阿里云 OSS
+- **负载均衡**: Nginx（容器内）
+- **DNS**: AWS Route53 / 阿里云 DNS
+
+#### Prod 环境（Serverless）
 
 - **计算**: AWS ECS Fargate / 阿里云 ACK (Kubernetes)
 - **数据库**: AWS RDS Serverless v2 / 阿里云 RDS Serverless (PostgreSQL)
@@ -36,42 +60,37 @@ Knowhere 项目采用容器化部署架构，支持在 AWS 和阿里云两个云
 
 ## 快速开始
 
-### 选择部署平台
+### 选择部署平台和环境
 
-根据你的需求选择部署平台：
+根据你的需求选择部署平台和环境：
 
-- **AWS 部署**: 适合海外用户，使用 ECS Fargate，本地构建镜像推送到 ECR
-- **阿里云部署**: 适合国内用户，使用 ACK (Kubernetes)，使用 ACR 构建服务自动构建镜像
+#### 开发环境（dev）
 
-### 快速部署
+- **不进行远程部署**，仅本地开发
+- 使用 `deploy/local-dev` 目录的 Docker Compose 配置
+- 详细说明请参考：[本地开发环境](local-dev/README.md)
 
-#### AWS 部署
+#### 测试环境（test，staging 分支）
 
-```bash
-# 1. 查看 AWS 部署指南
-cat deploy/DEPLOYMENT_AWS.md
+- **AWS**: EC2 服务器 + Docker Compose
+  - 适合海外用户
+  - 使用固定 EC2 服务器，所有服务通过 Docker Compose 管理
+  - 详细说明请参考：[AWS 部署指南 - Test 环境](DEPLOYMENT_AWS.md#test环境部署)
+- **阿里云**: ECS 服务器 + Docker Compose
+  - 适合国内用户
+  - 使用固定 ECS 服务器，所有服务通过 Docker Compose 管理
+  - 详细说明请参考：[阿里云 ECS 部署文档](aliyun/README.md)
 
-# 2. 进入 AWS 部署目录
-cd deploy/aws/terraform
+#### 生产环境（prod，main 分支）
 
-# 3. 按照 AWS 部署指南完成部署
-```
-
-详细步骤请参考：[AWS 部署指南](DEPLOYMENT_AWS.md)
-
-#### 阿里云部署
-
-```bash
-# 1. 查看阿里云部署指南
-cat deploy/DEPLOYMENT_ALIYUN.md
-
-# 2. 进入阿里云部署目录
-cd deploy/aliyun/ack/terraform
-
-# 3. 按照阿里云部署指南完成部署
-```
-
-详细步骤请参考：[阿里云部署指南](DEPLOYMENT_ALIYUN.md)
+- **AWS**: ECS Fargate Serverless
+  - 适合海外用户
+  - 使用 ECS Fargate 无服务器容器，所有基础设施 Serverless
+  - 详细说明请参考：[AWS 部署指南 - Prod 环境](DEPLOYMENT_AWS.md#生产环境部署)
+- **阿里云**: ACK (Kubernetes) Serverless
+  - 适合国内用户
+  - 使用 ACK Kubernetes 集群，所有基础设施 Serverless
+  - 详细说明请参考：[阿里云部署指南 - Prod 环境](DEPLOYMENT_ALIYUN.md#生产环境部署)
 
 ## 平台选择
 
@@ -80,11 +99,16 @@ cd deploy/aliyun/ack/terraform
 **适用场景**:
 - 面向海外用户
 - 需要 AWS 生态集成
-- 使用 ECS Fargate 无服务器容器
 
-**特点**:
-- ✅ 本地构建镜像，推送到 ECR
-- ✅ 使用 ECS Fargate，无需管理服务器
+**Test 环境特点**:
+- ✅ 使用固定 EC2 服务器
+- ✅ Docker Compose 管理所有服务（应用 + 基础服务）
+- ✅ GitHub Actions 自动构建并推送镜像到 GHCR
+- ✅ 使用 GitHub Container Registry (ghcr.io)
+
+**Prod 环境特点**:
+- ✅ 使用 ECS Fargate 无服务器容器
+- ✅ 所有基础设施 Serverless（RDS、ElastiCache、Amazon MQ）
 - ✅ 使用 AWS Secrets Manager 管理密钥
 - ✅ 使用 CloudWatch 监控和日志
 
@@ -95,11 +119,16 @@ cd deploy/aliyun/ack/terraform
 **适用场景**:
 - 面向国内用户
 - 需要阿里云生态集成
-- 使用 Kubernetes 容器编排
 
-**特点**:
-- ✅ 使用 ACR 构建服务，自动构建镜像（无需本地构建）
-- ✅ 使用 ACK (Kubernetes)，支持更灵活的编排
+**Test 环境特点**:
+- ✅ 使用固定 ECS 服务器
+- ✅ Docker Compose 管理所有服务（应用 + 基础服务）
+- ✅ GitHub Actions 自动构建并推送镜像到 ACR 和 GHCR
+- ✅ 使用阿里云容器镜像服务 (ACR)
+
+**Prod 环境特点**:
+- ✅ 使用 ACK (Kubernetes) 容器编排
+- ✅ 所有基础设施 Serverless（RDS、Redis、RabbitMQ）
 - ✅ 使用 Kubernetes Secrets 管理密钥
 - ✅ 使用阿里云日志服务 SLS 监控和日志
 
@@ -107,17 +136,81 @@ cd deploy/aliyun/ack/terraform
 
 ## 部署方案
 
-### 镜像构建方式对比
+### 镜像构建方式
 
-| 平台 | 构建方式 | 说明 |
-|------|---------|------|
-| AWS | 本地构建 + ECR | 使用 `build-and-push.sh` 脚本在本地构建并推送到 ECR |
-| 阿里云 | ACR 构建服务 | 配置构建规则，代码推送自动触发构建，无需本地构建 |
+所有环境均使用 **GitHub Actions** 自动构建镜像：
+
+- **构建触发**: 代码推送到 `main` 或 `staging` 分支，或推送 Git Tag
+- **镜像仓库**: 
+  - GitHub Container Registry (ghcr.io) - 所有环境
+  - 阿里云容器镜像服务 (ACR) - 阿里云环境
+- **镜像标签**: 
+  - `staging-latest` - test 环境
+  - `main-latest` 或 `v*` - prod 环境
+
+详细说明请参考：[GitHub Actions 构建指南](GITHUB_ACTIONS_BUILD.md)
 
 ### 部署架构对比
 
-#### AWS 架构
+#### Test 环境架构（ECS/EC2 + Docker Compose）
 
+**AWS EC2 架构**:
+```
+Internet
+    ↓
+Route 53 (DNS)
+    ↓
+EC2 服务器
+    ↓
+Nginx (容器)
+    ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│   Frontend      │   Backend       │   Worker        │
+│   (Next.js)     │   (FastAPI)     │   (Celery)      │
+│   Docker        │   Docker        │   Docker        │
+└─────────────────┴─────────────────┴─────────────────┘
+    ↓                     ↓                     ↓
+    └─────────┬───────────┴─────────────────────┘
+              ↓
+    ┌─────────────────────────┐
+    │   PostgreSQL (Docker)  │
+    │   Redis (Docker)        │
+    │   RabbitMQ (Docker)     │
+    └─────────────────────────┘
+    ↓
+    S3 (对象存储)
+```
+
+**阿里云 ECS 架构**:
+```
+Internet
+    ↓
+阿里云 DNS
+    ↓
+ECS 服务器
+    ↓
+Nginx (容器)
+    ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│   Frontend      │   Backend       │   Worker        │
+│   (Next.js)     │   (FastAPI)     │   (Celery)      │
+│   Docker        │   Docker        │   Docker        │
+└─────────────────┴─────────────────┴─────────────────┘
+    ↓                     ↓                     ↓
+    └─────────┬───────────┴─────────────────────┘
+              ↓
+    ┌─────────────────────────┐
+    │   PostgreSQL (Docker)  │
+    │   Redis (Docker)        │
+    │   RabbitMQ (Docker)     │
+    └─────────────────────────┘
+    ↓
+    OSS (对象存储)
+```
+
+#### Prod 环境架构（Serverless）
+
+**AWS ECS Fargate 架构**:
 ```
 Internet
     ↓
@@ -134,13 +227,13 @@ Application Load Balancer (ALB)
     └─────────┬───────────┴─────────────────────┘
               ↓
     ┌─────────────────────────┐
-    │   RDS + ElastiCache     │
+    │   RDS Serverless v2     │
+    │   ElastiCache Serverless│
     │   S3 + Amazon MQ        │
     └─────────────────────────┘
 ```
 
-#### 阿里云架构
-
+**阿里云 ACK 架构**:
 ```
 Internet
     ↓
@@ -160,31 +253,56 @@ ACK (Kubernetes)
     └─────────┬───────────┴─────────────────────┘
               ↓
     ┌─────────────────────────┐
-    │   RDS + Redis           │
-    │   OSS + RabbitMQ        │
+    │   RDS Serverless       │
+    │   Redis Serverless     │
+    │   OSS + RabbitMQ       │
     └─────────────────────────┘
 ```
+
+### 部署方案对比表
+
+| 环境 | 平台 | 计算 | 数据库 | 缓存 | 消息队列 | 部署方式 |
+|------|------|------|--------|------|----------|----------|
+| **dev** | 本地 | Docker | Docker | Docker | Docker | 本地开发，不部署 |
+| **test** | AWS | EC2 | Docker | Docker | Docker | Docker Compose |
+| **test** | 阿里云 | ECS | Docker | Docker | Docker | Docker Compose |
+| **prod** | AWS | ECS Fargate | RDS Serverless | ElastiCache Serverless | Amazon MQ | Terraform + ECS |
+| **prod** | 阿里云 | ACK (K8s) | RDS Serverless | Redis Serverless | RabbitMQ Serverless | Terraform + K8s |
 
 ## 环境配置
 
 ### 多环境支持
 
-项目支持三个环境：
+项目支持三个环境，每个环境采用不同的部署策略：
 
 - **dev**: 开发环境
+  - **不进行远程部署**，仅本地开发
+  - 使用 `deploy/local-dev` 目录的 Docker Compose 配置
+  - 所有服务在本地 Docker 容器中运行
+
 - **test**: 测试环境
+  - **Git 分支**: `staging`
+  - **部署方案**: Docker + ECS/EC2（固定服务器）
+  - **AWS**: EC2 服务器 + Docker Compose
+  - **阿里云**: ECS 服务器 + Docker Compose
+  - 所有服务（应用 + 基础服务）通过 Docker Compose 管理
+
 - **prod**: 生产环境
+  - **Git 分支**: `main`
+  - **部署方案**: Serverless（无服务器）
+  - **AWS**: ECS Fargate + RDS Serverless + ElastiCache Serverless
+  - **阿里云**: ACK (Kubernetes) + RDS Serverless + Redis Serverless
 
 ### 域名配置
 
-| 服务 | 环境 | 域名 | Git分支 |
-|------|------|------|---------|
-| **API** | prod | `api.knowhereto.com` | main |
-| **API** | test | `apitest.knowhereto.com` | test |
-| **API** | dev | `apidev.knowhereto.com` | dev |
-| **Web** | prod | `knowhereto.com` | main |
-| **Web** | test | `test.knowhereto.com` | test |
-| **Web** | dev | `dev.knowhereto.com` | dev |
+| 服务 | 环境 | 域名 | Git分支 | 部署方案 |
+|------|------|------|---------|----------|
+| **API** | prod | `api.knowhereto.com` | main | Serverless |
+| **API** | test | `apitest.knowhereto.com` | staging | ECS/EC2 + Docker Compose |
+| **API** | dev | `apidev.knowhereto.com` | dev | 本地开发（不部署） |
+| **Web** | prod | `knowhereto.com` | main | Serverless |
+| **Web** | test | `test.knowhereto.com` | staging | ECS/EC2 + Docker Compose |
+| **Web** | dev | `dev.knowhereto.com` | dev | 本地开发（不部署） |
 
 详细域名配置请参考：[域名配置说明](DOMAIN_CONFIG.md)
 
@@ -328,9 +446,9 @@ cp deploy/config/aliyun/env.template deploy/config/aliyun/.env.dev
 ### 本地开发
 
 - [本地开发环境](local-dev/README.md) - 本地开发环境配置
-- [Docker 快速开始](docker/QUICK_START.md) - Docker 容器快速开始
+- [本地开发环境](local-dev/README.md) - 本地开发环境配置
 
 ---
 
-**最后更新**: 2024-01-01  
+**最后更新**: 2025-11-20
 **维护者**: DevOps Team
