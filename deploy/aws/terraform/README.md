@@ -278,7 +278,7 @@ aws secretsmanager update-secret \
 
 - ✅ 所有 `.tf` 文件（Terraform代码）
 - ✅ `terraform.tfvars.example`（配置模板）
-- ✅ `backend-config.{dev|test|prod}.example`（Backend配置模板）
+- ✅ `backend-config.prod.example`（Backend配置模板）
 - ✅ `backend.tf.example`（Backend配置示例）
 - ✅ `README.md`（文档）
 - ✅ `scripts/` 目录下的所有脚本
@@ -287,11 +287,7 @@ aws secretsmanager update-secret \
 
 以下文件**不应该**提交到版本控制（已在 `.gitignore` 中）：
 
-- ❌ `terraform.tfvars.dev`（包含实际密码和密钥）
-- ❌ `terraform.tfvars.test`（包含实际密码和密钥）
 - ❌ `terraform.tfvars.prod`（包含实际密码和密钥）
-- ❌ `backend-config.dev`（包含实际配置）
-- ❌ `backend-config.test`（包含实际配置）
 - ❌ `backend-config.prod`（包含实际配置）
 - ❌ `backend.tf`（包含实际Backend配置）
 - ❌ `terraform.tfstate`（State文件）
@@ -328,9 +324,9 @@ aws secretsmanager update-secret \
 
 ### 环境变量验证失败
 
-如果看到错误：`Environment must be one of: dev, test, prod`
+如果看到错误：`Environment must be 'prod'`
 
-**注意**：虽然 Terraform 代码支持 dev/test/prod，但根据项目规划，Terraform 仅用于 prod 环境。
+**注意**：Terraform 仅用于 prod 环境，environment 变量必须设置为 "prod"。
 
 检查 `terraform.tfvars.prod` 文件中的 `environment` 值是否正确：
 - ✅ 正确：`environment = "prod"`
@@ -346,7 +342,7 @@ aws secretsmanager update-secret \
 确保在 `deploy/aws/terraform` 目录下运行 terraform 命令，或使用绝对路径：
 
 ```bash
-terraform apply -var-file=/path/to/terraform.tfvars.dev
+terraform apply -var-file=terraform.tfvars.prod
 ```
 
 ## 相关文档

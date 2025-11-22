@@ -86,7 +86,7 @@ output "domain_name" {
 
 output "api_domain_name" {
   description = "API域名"
-  value       = var.environment == "prod" ? "api.${var.domain_name}" : (var.environment == "dev" ? "apidev.${var.domain_name}" : (var.environment == "test" ? "apitest.${var.domain_name}" : "${var.environment}-api.${var.domain_name}"))
+  value       = "api.${var.domain_name}"
 }
 
 output "redis_host_secret_arn" {
@@ -152,8 +152,8 @@ output "manual_dns_records" {
     
     # 需要创建的A记录（指向ALB）
     a_records = {
-      api = var.environment == "prod" ? "api.${var.domain_name}" : (var.environment == "dev" ? "apidev.${var.domain_name}" : (var.environment == "test" ? "apitest.${var.domain_name}" : "${var.environment}-api.${var.domain_name}"))
-      web = var.environment == "prod" ? var.domain_name : "${var.environment}.${var.domain_name}"
+      api = "api.${var.domain_name}"
+      web = var.domain_name
     }
     
     # ACM证书验证记录（CNAME类型）

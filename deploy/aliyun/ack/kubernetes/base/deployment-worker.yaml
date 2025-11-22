@@ -40,6 +40,11 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: redis-host
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: redis-port
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -60,10 +65,11 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: rabbitmq-password
-        - name: RABBITMQ_PORT
-          value: "5672"
-        - name: RABBITMQ_VHOST
-          value: "/"
+        - name: CELERY_BROKER_URL
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: celery-broker-url
         - name: APP_VERSION
           value: ${APP_VERSION}
         - name: S3_BUCKET_NAME
@@ -72,17 +78,42 @@ spec:
           valueFrom:
             secretKeyRef:
               name: knowhere-secrets
-              key: oss-access-key-id
+              key: s3-access-key-id
         - name: S3_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
               name: knowhere-secrets
-              key: oss-secret-access-key
+              key: s3-secret-access-key
         - name: SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: knowhere-secrets
               key: secret-key
+        - name: DS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: ds-key
+        - name: ALI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: ali-api-key
+        - name: ARK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: ark-api-key
+        - name: GPT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: gpt-api-key
+        - name: MINERU_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: mineru-api-key
         volumeMounts:
         - name: model-cache
           mountPath: /mnt/models/huggingface

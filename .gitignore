@@ -85,3 +85,5 @@ deploy/aliyun/deploy-config.sh
 .terraform.lock.hcl
 LICENSE.txt
 .terraform
+
+doc-deploy/

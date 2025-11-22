@@ -5,7 +5,7 @@ resource "aws_ecs_service" "backend" {
   name            = "${var.project_name}-${var.environment}-backend-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.backend.arn
-  desired_count   = var.environment == "prod" ? 2 : 1
+  desired_count   = 2
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -34,7 +34,7 @@ resource "aws_ecs_service" "frontend" {
   name            = "${var.project_name}-${var.environment}-frontend-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.frontend.arn
-  desired_count   = var.environment == "prod" ? 2 : 1
+  desired_count   = 2
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -63,7 +63,7 @@ resource "aws_ecs_service" "worker" {
   name            = "${var.project_name}-${var.environment}-worker-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.worker.arn
-  desired_count   = var.environment == "prod" ? 2 : 1
+  desired_count   = 2
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -92,7 +92,7 @@ resource "aws_ecs_task_definition" "backend" {
   container_definitions = jsonencode([
     {
       name  = "knowhere-backend"
-      image = "${aws_ecr_repository.backend.repository_url}:${var.environment}-latest"
+      image = "${aws_ecr_repository.backend.repository_url}:main-latest"
       portMappings = [
         {
           containerPort = 5005
@@ -107,11 +107,55 @@ resource "aws_ecs_task_definition" "backend" {
         },
         {
           name  = "DEBUG"
-          value = "false"
+          value = tostring(var.debug)
         },
         {
           name  = "LOG_LEVEL"
-          value = "INFO"
+          value = var.log_level
+        },
+        {
+          name  = "PYTHONUNBUFFERED"
+          value = "1"
+        },
+        {
+          name  = "APP_TITLE"
+          value = var.app_title
+        },
+        {
+          name  = "APP_VERSION"
+          value = var.app_version
+        },
+        {
+          name  = "APP_DESCRIPTION"
+          value = var.app_description
+        },
+        {
+          name  = "TMP_PATH"
+          value = var.tmp_path
+        },
+        {
+          name  = "FONT_PATH"
+          value = var.font_path
+        },
+        {
+          name  = "CHROMEDRIVER_PATH"
+          value = var.chromedriver_path
+        },
+        {
+          name  = "ALGORITHM"
+          value = var.algorithm
+        },
+        {
+          name  = "ACCESS_TOKEN_EXPIRE_MINUTES"
+          value = tostring(var.access_token_expire_minutes)
+        },
+        {
+          name  = "DB_SSL_MODE"
+          value = var.db_ssl_mode
+        },
+        {
+          name  = "REDIS_DATABASE"
+          value = tostring(var.redis_database)
         },
         {
           name  = "RABBITMQ_PORT"
@@ -122,16 +166,148 @@ resource "aws_ecs_task_definition" "backend" {
           value = "/"
         },
         {
-          name  = "APP_VERSION"
-          value = var.app_version
+          name  = "MESSAGE_BROKER_TYPE"
+          value = var.message_broker_type
+        },
+        {
+          name  = "CELERY_RESULT_BACKEND"
+          value = var.celery_result_backend
+        },
+        {
+          name  = "S3_TYPE"
+          value = var.s3_type
         },
         {
           name  = "S3_BUCKET_NAME"
           value = aws_s3_bucket.main.bucket
         },
         {
+          name  = "S3_ENDPOINT_URL"
+          value = var.s3_endpoint_url != "" ? var.s3_endpoint_url : "https://s3.${var.aws_region}.amazonaws.com"
+        },
+        {
+          name  = "S3_PRIVATE_DOMAIN"
+          value = var.s3_private_domain != "" ? var.s3_private_domain : "https://${aws_s3_bucket.main.bucket}.s3.${var.aws_region}.amazonaws.com"
+        },
+        {
+          name  = "S3_TEMP_PATH"
+          value = var.s3_temp_path
+        },
+        {
+          name  = "S3_REGION"
+          value = var.s3_region
+        },
+        {
+          name  = "S3_USE_SSL"
+          value = tostring(var.s3_use_ssl)
+        },
+        {
+          name  = "S3_ADDRESSING_STYLE"
+          value = var.s3_addressing_style
+        },
+        {
           name  = "SNS_TOPIC_ARN"
           value = aws_sns_topic.s3_events.arn
+        },
+        {
+          name  = "SNS_SIGNATURE_VERIFICATION"
+          value = tostring(var.sns_signature_verification)
+        },
+        {
+          name  = "SUPPORTED_EXTENSIONS"
+          value = var.supported_extensions
+        },
+        {
+          name  = "MAX_FILE_SIZE"
+          value = tostring(var.max_file_size)
+        },
+        {
+          name  = "MAX_IMAGE_SIZE"
+          value = tostring(var.max_image_size)
+        },
+        {
+          name  = "MIN_CONFIDENCE_THRESHOLD"
+          value = tostring(var.min_confidence_threshold)
+        },
+        {
+          name  = "HIGH_IOU_THRESHOLD"
+          value = tostring(var.high_iou_threshold)
+        },
+        {
+          name  = "DEFAULT_EMBEDDING_DIM"
+          value = tostring(var.default_embedding_dim)
+        },
+        {
+          name  = "DEFAULT_TOP_K"
+          value = tostring(var.default_top_k)
+        },
+        {
+          name  = "DEFAULT_BATCH_SIZE"
+          value = tostring(var.default_batch_size)
+        },
+        {
+          name  = "DEFAULT_EPOCHS"
+          value = tostring(var.default_epochs)
+        },
+        {
+          name  = "DEFAULT_THRESHOLD"
+          value = tostring(var.default_threshold)
+        },
+        {
+          name  = "FREE_PLAN_INITIAL_CREDITS"
+          value = tostring(var.free_plan_initial_credits)
+        },
+        {
+          name  = "USERS_DATA_PATH"
+          value = var.users_data_path
+        },
+        {
+          name  = "SMTP_HOST"
+          value = var.smtp_host
+        },
+        {
+          name  = "SMTP_PORT"
+          value = tostring(var.smtp_port)
+        },
+        {
+          name  = "SMTP_USER"
+          value = var.smtp_user
+        },
+        {
+          name  = "EMAILS_FROM_EMAIL"
+          value = var.emails_from_email
+        },
+        {
+          name  = "EMAILS_FROM_NAME"
+          value = var.emails_from_name
+        },
+        {
+          name  = "DS_URL"
+          value = var.ds_url
+        },
+        {
+          name  = "ALI_URL"
+          value = var.ali_url
+        },
+        {
+          name  = "ARK_URL"
+          value = var.ark_url
+        },
+        {
+          name  = "EMBEDDING_MODEL"
+          value = var.embedding_model
+        },
+        {
+          name  = "NORMOL_MODEL"
+          value = var.normal_model
+        },
+        {
+          name  = "IMAGE_MODEL"
+          value = var.image_model
+        },
+        {
+          name  = "MINERU_URL"
+          value = var.mineru_url
         }
       ]
       secrets = [
@@ -176,8 +352,88 @@ resource "aws_ecs_task_definition" "backend" {
           valueFrom = aws_secretsmanager_secret.secret_key.arn
         },
         {
+          name      = "USERS_VERIFY_TOKEN_SECRET"
+          valueFrom = aws_secretsmanager_secret.users_verify_token_secret.arn
+        },
+        {
+          name      = "USERS_RESET_PASSWORD_TOKEN_SECRET"
+          valueFrom = aws_secretsmanager_secret.users_reset_password_token_secret.arn
+        },
+        {
+          name      = "WEBHOOK_SIGNING_SECRET"
+          valueFrom = aws_secretsmanager_secret.webhook_signing_secret.arn
+        },
+        {
+          name      = "S3_WEBHOOK_AUTH_TOKEN"
+          valueFrom = aws_secretsmanager_secret.s3_webhook_auth_token.arn
+        },
+        {
+          name      = "CELERY_BROKER_URL"
+          valueFrom = aws_secretsmanager_secret.celery_broker_url.arn
+        },
+        {
           name      = "STRIPE_SECRET_KEY"
           valueFrom = aws_secretsmanager_secret.stripe_secret_key.arn
+        },
+        {
+          name      = "STRIPE_WEBHOOK_SECRET"
+          valueFrom = aws_secretsmanager_secret.stripe_webhook_secret.arn
+        },
+        {
+          name      = "RESEND_API_KEY"
+          valueFrom = aws_secretsmanager_secret.resend_api_key.arn
+        },
+        {
+          name      = "MOESIF_APPLICATION_ID"
+          valueFrom = aws_secretsmanager_secret.moesif_application_id.arn
+        },
+        {
+          name      = "GOOGLE_CLIENT_ID"
+          valueFrom = aws_secretsmanager_secret.google_client_id.arn
+        },
+        {
+          name      = "GOOGLE_CLIENT_SECRET"
+          valueFrom = aws_secretsmanager_secret.google_client_secret.arn
+        },
+        {
+          name      = "GITHUB_CLIENT_ID"
+          valueFrom = aws_secretsmanager_secret.github_client_id.arn
+        },
+        {
+          name      = "GITHUB_CLIENT_SECRET"
+          valueFrom = aws_secretsmanager_secret.github_client_secret.arn
+        },
+        {
+          name      = "APPLE_CLIENT_ID"
+          valueFrom = aws_secretsmanager_secret.apple_client_id.arn
+        },
+        {
+          name      = "APPLE_CLIENT_SECRET"
+          valueFrom = aws_secretsmanager_secret.apple_client_secret.arn
+        },
+        {
+          name      = "SMTP_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.smtp_password.arn
+        },
+        {
+          name      = "DS_KEY"
+          valueFrom = aws_secretsmanager_secret.ds_key.arn
+        },
+        {
+          name      = "ALI_API_KEY"
+          valueFrom = aws_secretsmanager_secret.ali_api_key.arn
+        },
+        {
+          name      = "ARK_API_KEY"
+          valueFrom = aws_secretsmanager_secret.ark_api_key.arn
+        },
+        {
+          name      = "GPT_API_KEY"
+          valueFrom = aws_secretsmanager_secret.gpt_api_key.arn
+        },
+        {
+          name      = "MINERU_API_KEY"
+          valueFrom = aws_secretsmanager_secret.mineru_api_key.arn
         }
       ]
       logConfiguration = {
@@ -217,7 +473,7 @@ resource "aws_ecs_task_definition" "frontend" {
   container_definitions = jsonencode([
     {
       name  = "knowhere-frontend"
-      image = "${aws_ecr_repository.frontend.repository_url}:${var.environment}-latest"
+      image = "${aws_ecr_repository.frontend.repository_url}:main-latest"
       portMappings = [
         {
           containerPort = 3000
@@ -242,7 +498,7 @@ resource "aws_ecs_task_definition" "frontend" {
       secrets = [
         {
           name      = "NEXT_PUBLIC_API_URL"
-          value     = var.environment == "prod" ? "https://api.${var.domain_name}" : (var.environment == "dev" ? "https://apidev.${var.domain_name}" : (var.environment == "test" ? "https://apitest.${var.domain_name}" : "https://${var.environment}-api.${var.domain_name}"))
+          value     = "https://api.${var.domain_name}"
         },
         {
           name      = "NEXT_PUBLIC_POSTHOG_KEY"
@@ -305,7 +561,7 @@ resource "aws_ecs_task_definition" "worker" {
   container_definitions = jsonencode([
     {
       name      = "knowhere-worker"
-      image     = "${aws_ecr_repository.worker.repository_url}:${var.environment}-latest"
+      image     = "${aws_ecr_repository.worker.repository_url}:main-latest"
       essential = true
       
       # EFS挂载点
@@ -332,11 +588,59 @@ resource "aws_ecs_task_definition" "worker" {
         },
         {
           name  = "DEBUG"
-          value = "false"
+          value = tostring(var.debug)
         },
         {
           name  = "LOG_LEVEL"
-          value = "INFO"
+          value = var.log_level
+        },
+        {
+          name  = "PYTHONUNBUFFERED"
+          value = "1"
+        },
+        {
+          name  = "APP_VERSION"
+          value = var.app_version
+        },
+        {
+          name  = "S3_TYPE"
+          value = var.s3_type
+        },
+        {
+          name  = "S3_BUCKET_NAME"
+          value = aws_s3_bucket.main.bucket
+        },
+        {
+          name  = "S3_ENDPOINT_URL"
+          value = var.s3_endpoint_url != "" ? var.s3_endpoint_url : "https://s3.${var.aws_region}.amazonaws.com"
+        },
+        {
+          name  = "S3_PRIVATE_DOMAIN"
+          value = var.s3_private_domain != "" ? var.s3_private_domain : "https://${aws_s3_bucket.main.bucket}.s3.${var.aws_region}.amazonaws.com"
+        },
+        {
+          name  = "S3_TEMP_PATH"
+          value = var.s3_temp_path
+        },
+        {
+          name  = "S3_REGION"
+          value = var.s3_region
+        },
+        {
+          name  = "S3_USE_SSL"
+          value = tostring(var.s3_use_ssl)
+        },
+        {
+          name  = "S3_ADDRESSING_STYLE"
+          value = var.s3_addressing_style
+        },
+        {
+          name  = "SNS_TOPIC_ARN"
+          value = aws_sns_topic.s3_events.arn
+        },
+        {
+          name  = "SNS_SIGNATURE_VERIFICATION"
+          value = tostring(var.sns_signature_verification)
         },
         {
           name  = "RABBITMQ_PORT"
@@ -347,16 +651,44 @@ resource "aws_ecs_task_definition" "worker" {
           value = "/"
         },
         {
-          name  = "APP_VERSION"
-          value = var.app_version
+          name  = "MESSAGE_BROKER_TYPE"
+          value = var.message_broker_type
         },
         {
-          name  = "S3_BUCKET_NAME"
-          value = aws_s3_bucket.main.bucket
+          name  = "CELERY_RESULT_BACKEND"
+          value = var.celery_result_backend
         },
         {
-          name  = "SNS_TOPIC_ARN"
-          value = aws_sns_topic.s3_events.arn
+          name  = "USERS_DATA_PATH"
+          value = var.users_data_path
+        },
+        {
+          name  = "DS_URL"
+          value = var.ds_url
+        },
+        {
+          name  = "ALI_URL"
+          value = var.ali_url
+        },
+        {
+          name  = "ARK_URL"
+          value = var.ark_url
+        },
+        {
+          name  = "EMBEDDING_MODEL"
+          value = var.embedding_model
+        },
+        {
+          name  = "NORMOL_MODEL"
+          value = var.normal_model
+        },
+        {
+          name  = "IMAGE_MODEL"
+          value = var.image_model
+        },
+        {
+          name  = "MINERU_URL"
+          value = var.mineru_url
         }
       ]
       secrets = [
@@ -399,6 +731,30 @@ resource "aws_ecs_task_definition" "worker" {
         {
           name      = "SECRET_KEY"
           valueFrom = aws_secretsmanager_secret.secret_key.arn
+        },
+        {
+          name      = "CELERY_BROKER_URL"
+          valueFrom = aws_secretsmanager_secret.celery_broker_url.arn
+        },
+        {
+          name      = "DS_KEY"
+          valueFrom = aws_secretsmanager_secret.ds_key.arn
+        },
+        {
+          name      = "ALI_API_KEY"
+          valueFrom = aws_secretsmanager_secret.ali_api_key.arn
+        },
+        {
+          name      = "ARK_API_KEY"
+          valueFrom = aws_secretsmanager_secret.ark_api_key.arn
+        },
+        {
+          name      = "GPT_API_KEY"
+          valueFrom = aws_secretsmanager_secret.gpt_api_key.arn
+        },
+        {
+          name      = "MINERU_API_KEY"
+          valueFrom = aws_secretsmanager_secret.mineru_api_key.arn
         }
       ]
       logConfiguration = {

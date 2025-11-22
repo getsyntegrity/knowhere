@@ -39,6 +39,11 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: redis-host
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: redis-port
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -59,10 +64,11 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: rabbitmq-password
-        - name: RABBITMQ_PORT
-          value: "5672"
-        - name: RABBITMQ_VHOST
-          value: "/"
+        - name: CELERY_BROKER_URL
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: celery-broker-url
         - name: APP_VERSION
           value: ${APP_VERSION}
         - name: S3_BUCKET_NAME
@@ -71,17 +77,122 @@ spec:
           valueFrom:
             secretKeyRef:
               name: knowhere-secrets
-              key: oss-access-key-id
+              key: s3-access-key-id
         - name: S3_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
               name: knowhere-secrets
-              key: oss-secret-access-key
+              key: s3-secret-access-key
         - name: SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: knowhere-secrets
               key: secret-key
+        - name: USERS_VERIFY_TOKEN_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: users-verify-token-secret
+        - name: USERS_RESET_PASSWORD_TOKEN_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: users-reset-password-token-secret
+        - name: WEBHOOK_SIGNING_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: webhook-signing-secret
+        - name: S3_WEBHOOK_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: s3-webhook-auth-token
+        - name: OSS_EVENT_CALLBACK_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: oss-event-callback-key
+        - name: STRIPE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: stripe-secret-key
+        - name: STRIPE_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: stripe-webhook-secret
+        - name: RESEND_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: resend-api-key
+        - name: MOESIF_APPLICATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: moesif-application-id
+        - name: GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: google-client-id
+        - name: GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: google-client-secret
+        - name: GITHUB_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: github-client-id
+        - name: GITHUB_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: github-client-secret
+        - name: APPLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: apple-client-id
+        - name: APPLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: apple-client-secret
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: smtp-password
+        - name: DS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: ds-key
+        - name: ALI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: ali-api-key
+        - name: ARK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: ark-api-key
+        - name: GPT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: gpt-api-key
+        - name: MINERU_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: knowhere-secrets
+              key: mineru-api-key
         resources:
           requests:
             cpu: 500m
