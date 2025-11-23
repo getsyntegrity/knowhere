@@ -20,29 +20,14 @@ spec:
       ${IMAGE_PULL_SECRETS}
       containers:
       - name: web
-        image: ${REGISTRY}/knowhere-frontend:${ENVIRONMENT}-latest
+        image: ${REGISTRY}/knowhere-frontend:${IMAGE_TAG}
         imagePullPolicy: Always
         ports:
         - containerPort: 3000
           name: http
-        envFrom:
-        - configMapRef:
-            name: knowhere-config
         env:
         - name: NEXT_PUBLIC_API_URL
-          value: ${API_URL}
-        - name: NEXT_PUBLIC_POSTHOG_KEY
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: posthog-key
-        - name: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: stripe-publishable-key
-        - name: APP_VERSION
-          value: ${APP_VERSION}
+          value: https://api.knowhereto.com
         resources:
           requests:
             cpu: 250m
