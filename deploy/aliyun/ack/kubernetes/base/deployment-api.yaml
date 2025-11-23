@@ -21,7 +21,7 @@ spec:
       containers:
       - name: api
         image: ${REGISTRY}/knowhere-backend:${IMAGE_TAG}
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5005
           name: http

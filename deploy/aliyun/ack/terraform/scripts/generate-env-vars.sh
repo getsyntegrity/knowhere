@@ -133,7 +133,7 @@ if [ -n "$RABBITMQ_USERNAME" ]; then
     RABBITMQ_PASSWORD=$(terraform output -raw rabbitmq_password 2>/dev/null || echo "")
     # 注意：RabbitMQ endpoint 需要通过控制台或 API 获取
     RABBITMQ_HOST="请通过阿里云控制台或API获取RabbitMQ端点"
-    CELERY_BROKER_URL="amqp://${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}//"
+    CELERY_BROKER_URL="amqp://${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/"
 else
     CELERY_BROKER_URL=""
 fi

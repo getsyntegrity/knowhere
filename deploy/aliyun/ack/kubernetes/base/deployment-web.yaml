@@ -21,7 +21,7 @@ spec:
       containers:
       - name: web
         image: ${REGISTRY}/knowhere-frontend:${IMAGE_TAG}
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
           name: http
