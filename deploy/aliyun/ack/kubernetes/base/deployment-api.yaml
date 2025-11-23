@@ -20,7 +20,7 @@ spec:
       ${IMAGE_PULL_SECRETS}
       containers:
       - name: api
-        image: ${REGISTRY}/knowhere-backend:${ENVIRONMENT}-latest
+        image: ${REGISTRY}/knowhere-backend:${IMAGE_TAG}
         imagePullPolicy: Always
         ports:
         - containerPort: 5005
@@ -69,10 +69,6 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: celery-broker-url
-        - name: APP_VERSION
-          value: ${APP_VERSION}
-        - name: S3_BUCKET_NAME
-          value: ${OSS_BUCKET_NAME}
         - name: S3_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
@@ -88,86 +84,6 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: secret-key
-        - name: USERS_VERIFY_TOKEN_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: users-verify-token-secret
-        - name: USERS_RESET_PASSWORD_TOKEN_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: users-reset-password-token-secret
-        - name: WEBHOOK_SIGNING_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: webhook-signing-secret
-        - name: S3_WEBHOOK_AUTH_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: s3-webhook-auth-token
-        - name: OSS_EVENT_CALLBACK_KEY
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: oss-event-callback-key
-        - name: STRIPE_SECRET_KEY
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: stripe-secret-key
-        - name: STRIPE_WEBHOOK_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: stripe-webhook-secret
-        - name: RESEND_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: resend-api-key
-        - name: MOESIF_APPLICATION_ID
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: moesif-application-id
-        - name: GOOGLE_CLIENT_ID
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: google-client-id
-        - name: GOOGLE_CLIENT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: google-client-secret
-        - name: GITHUB_CLIENT_ID
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: github-client-id
-        - name: GITHUB_CLIENT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: github-client-secret
-        - name: APPLE_CLIENT_ID
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: apple-client-id
-        - name: APPLE_CLIENT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: apple-client-secret
-        - name: SMTP_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: knowhere-secrets
-              key: smtp-password
         - name: DS_KEY
           valueFrom:
             secretKeyRef:
@@ -193,6 +109,10 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: mineru-api-key
+        volumeMounts:
+        - name: db-ssl-cert
+          mountPath: /etc/db-ssl
+          readOnly: true
         resources:
           requests:
             cpu: 500m
@@ -212,4 +132,8 @@ spec:
             port: 5005
           initialDelaySeconds: 10
           periodSeconds: 5
+      volumes:
+      - name: db-ssl-cert
+        secret:
+          secretName: db-ssl-cert
 
