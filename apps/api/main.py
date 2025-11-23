@@ -142,9 +142,9 @@ def create_app() -> FastAPI:
     async def read_root():
         return {"message": f"Welcome to {app.title} - 知识库API服务!"}
     
-    @app.get("/health", tags=["Health"])
+    @app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
     async def health_check():
-        """简单的健康检查端点"""
+        """简单的健康检查端点，支持 GET 和 HEAD 方法"""
         version = os.getenv("APP_VERSION", settings.APP_VERSION)
         return {
             "status": "healthy",
