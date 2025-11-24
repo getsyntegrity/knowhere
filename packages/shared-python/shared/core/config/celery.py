@@ -2,7 +2,6 @@
 Celery配置
 """
 from typing import Dict
-from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
@@ -64,10 +63,9 @@ class CeleryConfig(BaseModel):
     def get_rabbitmq_url(self) -> str:
         """构建RabbitMQ连接URL"""
         if self.RABBITMQ_USER and self.RABBITMQ_PASSWORD:
-            # 对用户名和密码进行URL编码，以支持特殊字符（如冒号）
-            username_encoded = quote(self.RABBITMQ_USER, safe='')
-            password_encoded = quote(self.RABBITMQ_PASSWORD, safe='')
-            return f"amqp://{username_encoded}:{password_encoded}@{self.RABBITMQ_HOST}:{self.RABBITMQ_PORT}{self.RABBITMQ_VHOST}"
+            # 直接使用原始值，不进行 URL 编码
+            # Celery/kombu 在解析 URL 时会自动处理特殊字符
+            return f"amqp://{self.RABBITMQ_USER}:{self.RABBITMQ_PASSWORD}@{self.RABBITMQ_HOST}:{self.RABBITMQ_PORT}{self.RABBITMQ_VHOST}"
         else:
             return f"amqp://{self.RABBITMQ_HOST}:{self.RABBITMQ_PORT}{self.RABBITMQ_VHOST}"
     
