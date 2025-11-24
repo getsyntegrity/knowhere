@@ -43,17 +43,20 @@ def parse_rabbitmq_url(url: str) -> Dict[str, Any]:
 
 def get_connection_params() -> Dict[str, Any]:
     """获取aio-pika连接参数"""
-    url = get_rabbitmq_url()
-    params = parse_rabbitmq_url(url)
-    
-    # 添加连接选项
-    params.update({
+    # 直接从配置读取，避免 URL 编码/解码问题
+    # 特别是当用户名或密码包含特殊字符时，直接使用原始值更可靠
+    params = {
+        "host": app_config.RABBITMQ_HOST,
+        "port": app_config.RABBITMQ_PORT,
+        "login": app_config.RABBITMQ_USER,  # 直接使用，不进行 URL 编码
+        "password": app_config.RABBITMQ_PASSWORD,  # 直接使用，不进行 URL 编码
+        "virtualhost": app_config.RABBITMQ_VHOST,
         "client_properties": {
             "application_name": "knowhere_api",
         },
         "heartbeat": 600,  # 心跳间隔（秒）
         "blocked_connection_timeout": 300,  # 阻塞连接超时（秒）
-    })
+    }
     
     return params
 
