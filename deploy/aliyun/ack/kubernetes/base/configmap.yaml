@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: knowhere-config
-  namespace: knowhere
+  namespace: ${NAMESPACE}
 data:
   # 环境配置
   ENVIRONMENT: "${ENVIRONMENT}"

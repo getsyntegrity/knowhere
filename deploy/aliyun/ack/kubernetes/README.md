@@ -116,8 +116,8 @@ kubectl get svc -n knowhere
 
 1. **Secrets 管理**：部署前需要先创建 Kubernetes Secrets，参考 `base/secrets.yaml` 中的说明
 2. **镜像构建**：确保已使用 `build-and-push.sh` 构建并推送镜像到容器镜像服务
-3. **DNS 配置**：确保 DNS 记录已正确配置，指向 SLB 地址
-4. **SSL 证书**：确保已配置 SSL 证书（通过 cert-manager 或手动配置）
+3. **DNS 配置**：确保 DNS 记录已正确配置，指向 Ingress Controller 的 LoadBalancer IP
+4. **SSL 证书**：确保已配置 SSL 证书（推荐使用阿里云证书文件，参考 `HTTPS_CERTIFICATE_CONFIG.md`）
 
 ## 故障排查
 
@@ -144,4 +144,21 @@ kubectl get pods -n ingress-nginx
 ### 环境变量未正确替换
 
 确保部署脚本正确设置了所有必需的环境变量，并检查 `deploy-k8s.sh` 脚本的输出日志。
+
+### HTTPS 证书配置
+
+如果 HTTPS 无法访问，请检查：
+
+```bash
+# 检查 TLS Secret 是否存在
+kubectl get secret knowhere-tls -n knowhere
+
+# 检查 Ingress 配置
+kubectl describe ingress knowhere-ingress -n knowhere
+
+# 查看证书配置文档
+cat ../HTTPS_CERTIFICATE_CONFIG.md
+```
+
+详细配置说明请参考 `HTTPS_CERTIFICATE_CONFIG.md`。
 
