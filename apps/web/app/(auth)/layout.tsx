@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { useAuth } from '@/hooks/useAuth'
+import { AppConfig } from '@/lib/config'
 
 export default function AuthLayout({
   children,
@@ -51,7 +52,22 @@ export default function AuthLayout({
 
       {/* 底部 */}
       <footer className="text-center text-sm text-muted-foreground p-6">
-        <p>&copy; 2024 Knowhere. All rights reserved.</p>
+        <p>
+          &copy; {AppConfig.copyrightYear} {AppConfig.companyName}
+          {AppConfig.showIcp && (
+            <>
+              {' '}
+              <a 
+                href={AppConfig.icpUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                {AppConfig.icpNumber}
+              </a>
+            </>
+          )}
+        </p>
       </footer>
     </div>
   )
