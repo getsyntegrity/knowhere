@@ -89,4 +89,4 @@ LICENSE.txt
 doc-deploy/
 deploy/aliyun/scripts/env.template
 deploy/aliyun/ack/*.md
-aws-ec2
+deploy/aws-ec2/

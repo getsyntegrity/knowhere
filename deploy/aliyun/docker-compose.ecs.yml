@@ -98,6 +98,9 @@ services:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
       - NEXT_PUBLIC_API_URL=${API_URL:-https://apitest.knowhereto.com}
+      - NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME:-深圳市渊维科技有限公司}
+      - NEXT_PUBLIC_ICP_NUMBER=${NEXT_PUBLIC_ICP_NUMBER:-}
+      - NEXT_PUBLIC_ICP_URL=${NEXT_PUBLIC_ICP_URL:-https://beian.miit.gov.cn/}
     networks:
       - knowhere-network
     restart: unless-stopped

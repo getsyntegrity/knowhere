@@ -40,32 +40,14 @@ export LOG_LEVEL=${LOG_LEVEL:-INFO}
         WEB_DOMAIN=${WEB_DOMAIN:-knowhereto.com}
         API_URL=${API_URL:-https://api.knowhereto.com}
 
-# SLB 实例 ID 配置（使用当前实际存在的SLB）
-# 注意：这些是Kubernetes自动创建的SLB ID，已保存用于后续部署
-API_SLB_ID=${API_SLB_ID:-lb-7xvpdva6f4faiy8w85ar0}
-WEB_SLB_ID=${WEB_SLB_ID:-lb-7xvj9rjc1ehi50z6vlqlc}
+# Web 前端环境变量配置
+NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME:-深圳市渊维科技有限公司}
+NEXT_PUBLIC_ICP_NUMBER=${NEXT_PUBLIC_ICP_NUMBER:-}
+NEXT_PUBLIC_ICP_URL=${NEXT_PUBLIC_ICP_URL:-https://beian.miit.gov.cn/}
 
-# SSL 证书配置（用于 HTTPS）
-# 阿里云证书 ID: 1872946667951752_19ab0485602_935740748_-1131298329
-SSL_CERT_ID=${SSL_CERT_ID:-1872946667951752_19ab0485602_935740748_-1131298329}
-# 或者使用本地证书文件（如果设置了，将优先使用）
-SSL_CERT_FILE=${SSL_CERT_FILE:-}
-SSL_KEY_FILE=${SSL_KEY_FILE:-}
-
-# 验证 SLB ID 配置
-if [ "$DEPLOY_API" = true ] || [ "$DEPLOY_WEB" = true ]; then
-    # 如果指定了SLB ID，检查两个 SLB ID 是否相同
-    if [ -n "$API_SLB_ID" ] && [ -n "$WEB_SLB_ID" ] && [ "$API_SLB_ID" = "$WEB_SLB_ID" ]; then
-        error "API_SLB_ID 和 WEB_SLB_ID 不能相同！请为每个服务配置不同的 SLB 实例。"
-    fi
-    # 如果未指定SLB ID，Kubernetes将自动创建新的SLB
-    if [ "$DEPLOY_API" = true ] && [ -z "$API_SLB_ID" ]; then
-        log "API_SLB_ID 未设置，Kubernetes将自动创建新的SLB"
-    fi
-    if [ "$DEPLOY_WEB" = true ] && [ -z "$WEB_SLB_ID" ]; then
-        log "WEB_SLB_ID 未设置，Kubernetes将自动创建新的SLB"
-    fi
-fi
+# SLB 实例 ID 配置
+API_SLB_ID=${API_SLB_ID:-}
+WEB_SLB_ID=${WEB_SLB_ID:-}
 
 # 默认值
 ACR_REGISTRY=${ACR_REGISTRY:-}
@@ -139,6 +121,16 @@ log "部署服务: $DEPLOY_SERVICES"
 log "  - API: $DEPLOY_API (SLB: $API_SLB_ID)"
 log "  - Web: $DEPLOY_WEB (SLB: $WEB_SLB_ID)"
 log "  - Worker: $DEPLOY_WORKER"
+if [ "$DEPLOY_WEB" = true ]; then
+    log "Web前端配置:"
+    log "  - 公司名称: $NEXT_PUBLIC_COMPANY_NAME"
+    if [ -n "$NEXT_PUBLIC_ICP_NUMBER" ]; then
+        log "  - ICP备案号: $NEXT_PUBLIC_ICP_NUMBER"
+        log "  - ICP备案链接: $NEXT_PUBLIC_ICP_URL"
+    else
+        log "  - ICP备案: 未配置（将不显示备案信息）"
+    fi
+fi
 
 # 检查必要的工具
 if ! command -v kubectl &> /dev/null; then
@@ -232,64 +224,9 @@ export IMAGE_PULL_SECRETS
 export IMAGE_TAG
 export API_SLB_ID
 export WEB_SLB_ID
-export API_SSL_CERT_ID
-export WEB_SSL_CERT_ID
-
-# 导出所有ConfigMap需要的环境变量
-export DEBUG
-export LOG_LEVEL
-export APP_TITLE
-export APP_DESCRIPTION
-export TMP_PATH
-export FONT_PATH
-export CHROMEDRIVER_PATH
-export USERS_DATA_PATH
-export ALGORITHM
-export ACCESS_TOKEN_EXPIRE_MINUTES
-export DB_SSL_MODE
-export REDIS_DATABASE
-export RABBITMQ_PORT
-export RABBITMQ_VHOST
-export MESSAGE_BROKER_TYPE
-export CELERY_RESULT_BACKEND
-export S3_TYPE
-export S3_TEMP_PATH
-export OSS_ENDPOINT
-export SUPPORTED_EXTENSIONS
-export MAX_FILE_SIZE
-export MAX_IMAGE_SIZE
-export MIN_CONFIDENCE_THRESHOLD
-export HIGH_IOU_THRESHOLD
-export DEFAULT_EMBEDDING_DIM
-export DEFAULT_TOP_K
-export DEFAULT_BATCH_SIZE
-export DEFAULT_EPOCHS
-export DEFAULT_THRESHOLD
-export SMTP_HOST
-export SMTP_PORT
-export SMTP_USER
-export EMAILS_FROM_EMAIL
-export EMAILS_FROM_NAME
-export DS_URL
-export ALI_URL
-export ARK_URL
-export EMBEDDING_MODEL
-export NORMAL_MODEL
-export IMAGE_MODEL
-export IMAGE_MODEL_MAX
-export MINERU_URL
-export USERS_VERIFY_TOKEN_SECRET
-export USERS_RESET_PASSWORD_TOKEN_SECRET
-export STRIPE_SECRET_KEY
-export STRIPE_PUBLISHABLE_KEY
-export STRIPE_WEBHOOK_SECRET
-export GOOGLE_CLIENT_ID
-export GOOGLE_CLIENT_SECRET
-export GITHUB_CLIENT_ID
-export GITHUB_CLIENT_SECRET
-export APPLE_CLIENT_ID
-export APPLE_CLIENT_SECRET
-export SMTP_PASSWORD
+export NEXT_PUBLIC_COMPANY_NAME
+export NEXT_PUBLIC_ICP_NUMBER
+export NEXT_PUBLIC_ICP_URL
 
 # 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

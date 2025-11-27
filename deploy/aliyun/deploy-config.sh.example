@@ -18,3 +18,12 @@ export ALIYUN_ACR_PASSWORD="your-password"
 export SSL_DOMAINS="api.knowhereto.com knowhereto.com"
 export SSL_EMAIL="admin@knowhereto.com"
 
+# Web 前端环境变量配置（可选）
+# 国内部署示例：
+# export NEXT_PUBLIC_COMPANY_NAME="深圳市渊维科技有限公司"
+# export NEXT_PUBLIC_ICP_NUMBER="粤ICP备2025384995号-3"
+# export NEXT_PUBLIC_ICP_URL="https://beian.miit.gov.cn/"
+# 海外部署示例：
+# export NEXT_PUBLIC_COMPANY_NAME="Your Company Name"
+# （不设置 ICP 相关变量即可隐藏备案信息）
+
