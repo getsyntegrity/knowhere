@@ -40,6 +40,11 @@ export LOG_LEVEL=${LOG_LEVEL:-INFO}
         WEB_DOMAIN=${WEB_DOMAIN:-knowhereto.com}
         API_URL=${API_URL:-https://api.knowhereto.com}
 
+# Web 前端环境变量配置
+NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME:-深圳市渊维科技有限公司}
+NEXT_PUBLIC_ICP_NUMBER=${NEXT_PUBLIC_ICP_NUMBER:-}
+NEXT_PUBLIC_ICP_URL=${NEXT_PUBLIC_ICP_URL:-https://beian.miit.gov.cn/}
+
 # SLB 实例 ID 配置
 API_SLB_ID=${API_SLB_ID:-}
 WEB_SLB_ID=${WEB_SLB_ID:-}
@@ -116,6 +121,16 @@ log "部署服务: $DEPLOY_SERVICES"
 log "  - API: $DEPLOY_API"
 log "  - Web: $DEPLOY_WEB"
 log "  - Worker: $DEPLOY_WORKER"
+if [ "$DEPLOY_WEB" = true ]; then
+    log "Web前端配置:"
+    log "  - 公司名称: $NEXT_PUBLIC_COMPANY_NAME"
+    if [ -n "$NEXT_PUBLIC_ICP_NUMBER" ]; then
+        log "  - ICP备案号: $NEXT_PUBLIC_ICP_NUMBER"
+        log "  - ICP备案链接: $NEXT_PUBLIC_ICP_URL"
+    else
+        log "  - ICP备案: 未配置（将不显示备案信息）"
+    fi
+fi
 
 # 检查必要的工具
 if ! command -v kubectl &> /dev/null; then
@@ -187,6 +202,9 @@ export IMAGE_PULL_SECRETS
 export IMAGE_TAG
 export API_SLB_ID
 export WEB_SLB_ID
+export NEXT_PUBLIC_COMPANY_NAME
+export NEXT_PUBLIC_ICP_NUMBER
+export NEXT_PUBLIC_ICP_URL
 
 # 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

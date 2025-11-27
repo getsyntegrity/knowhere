@@ -27,7 +27,13 @@ spec:
           name: http
         env:
         - name: NEXT_PUBLIC_API_URL
-          value: https://api.knowhereto.com
+          value: ${API_URL}
+        - name: NEXT_PUBLIC_COMPANY_NAME
+          value: ${NEXT_PUBLIC_COMPANY_NAME}
+        - name: NEXT_PUBLIC_ICP_NUMBER
+          value: ${NEXT_PUBLIC_ICP_NUMBER}
+        - name: NEXT_PUBLIC_ICP_URL
+          value: ${NEXT_PUBLIC_ICP_URL}
         resources:
           requests:
             cpu: 250m

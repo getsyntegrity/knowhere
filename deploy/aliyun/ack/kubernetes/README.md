@@ -112,6 +112,27 @@ kubectl get svc -n knowhere
 - `${APP_VERSION}` - 应用版本号
 - `${OSS_BUCKET_NAME}` - OSS 存储桶名称
 
+### Web 前端环境变量
+
+以下环境变量用于配置 Web 前端的版权和备案信息：
+
+- `${NEXT_PUBLIC_COMPANY_NAME}` - 公司名称（默认：深圳市渊维科技有限公司）
+- `${NEXT_PUBLIC_ICP_NUMBER}` - ICP备案号（国内部署时使用，留空则不显示）
+- `${NEXT_PUBLIC_ICP_URL}` - ICP备案链接（默认：https://beian.miit.gov.cn/）
+
+**使用示例**：
+
+```bash
+# 国内部署
+export NEXT_PUBLIC_COMPANY_NAME="深圳市渊维科技有限公司"
+export NEXT_PUBLIC_ICP_NUMBER="粤ICP备2025384995号-3"
+export NEXT_PUBLIC_ICP_URL="https://beian.miit.gov.cn/"
+
+# 海外部署（不显示备案信息）
+export NEXT_PUBLIC_COMPANY_NAME="Your Company Name"
+# 不设置 ICP 相关变量即可隐藏备案信息
+```
+
 ## 注意事项
 
 1. **Secrets 管理**：部署前需要先创建 Kubernetes Secrets，参考 `base/secrets.yaml` 中的说明
