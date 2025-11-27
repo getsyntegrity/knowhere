@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 /**
  * 运行时配置 API
  * 返回应用配置，支持不同环境动态配置
+ * 使用 /config 路径避免被 next.config.js 中的 rewrites 重写
  */
 export async function GET() {
   // 从环境变量读取配置（运行时读取，支持动态配置）

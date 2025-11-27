@@ -62,8 +62,8 @@ export async function getRuntimeConfig(): Promise<AppConfigType> {
     return getDefaultConfig()
   }
 
-  // 在客户端，从 API 获取配置
-  configPromise = fetch('/api/config')
+  // 在客户端，从 API 获取配置（使用 /config 避免被 rewrites 重写）
+  configPromise = fetch('/config')
     .then(res => res.json())
     .then(config => {
       runtimeConfig = config

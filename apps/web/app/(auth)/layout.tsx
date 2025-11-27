@@ -60,7 +60,7 @@ export default function AuthLayout({
               {' '}
               <a 
                 href={appConfig.icpUrl} 
-                target="_blank"
+                target="_blank" 
                 rel="noopener noreferrer"
                 className="text-primary hover:underline"
               >

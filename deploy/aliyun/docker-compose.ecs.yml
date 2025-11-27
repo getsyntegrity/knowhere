@@ -94,13 +94,21 @@ services:
     container_name: knowhere-web
     depends_on:
       - api
+    env_file:
+      - /var/lib/knowhere/.env
     environment:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
+      # API URL（构建时配置，需要 NEXT_PUBLIC_ 前缀）
+      # 如果 .env 文件中有 API_URL，会通过 env_file 读取，这里提供默认值
       - NEXT_PUBLIC_API_URL=${API_URL:-https://apitest.knowhereto.com}
-      - NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME:-深圳市渊维科技有限公司}
-      - NEXT_PUBLIC_ICP_NUMBER=${NEXT_PUBLIC_ICP_NUMBER:-}
-      - NEXT_PUBLIC_ICP_URL=${NEXT_PUBLIC_ICP_URL:-https://beian.miit.gov.cn/}
+      # 运行时配置（不带 NEXT_PUBLIC_ 前缀，通过 /api/config API 动态获取）
+      # 这些变量会从 .env 文件通过 env_file 读取，如果 .env 中没有则使用默认值
+      # 注意：environment 中的变量会覆盖 env_file 中的同名变量
+      - COMPANY_NAME=${COMPANY_NAME:-深圳市渊维科技有限公司}
+      - SIMPLE_COMPANY_NAME=${SIMPLE_COMPANY_NAME:-}
+      - ICP_NUMBER=${ICP_NUMBER:-}
+      - ICP_URL=${ICP_URL:-https://beian.miit.gov.cn/}
     networks:
       - knowhere-network
     restart: unless-stopped
