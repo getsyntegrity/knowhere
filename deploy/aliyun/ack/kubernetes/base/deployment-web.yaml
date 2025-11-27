@@ -38,15 +38,16 @@ spec:
           name: http
         env:
         - name: NEXT_PUBLIC_API_URL
-          value: ${API_URL}
-        - name: NEXT_PUBLIC_COMPANY_NAME
-          value: ${NEXT_PUBLIC_COMPANY_NAME}
-        - name: NEXT_PUBLIC_SIMPLE_COMPANY_NAME
-          value: ${NEXT_PUBLIC_SIMPLE_COMPANY_NAME}
-        - name: NEXT_PUBLIC_ICP_NUMBER
-          value: ${NEXT_PUBLIC_ICP_NUMBER}
-        - name: NEXT_PUBLIC_ICP_URL
-          value: ${NEXT_PUBLIC_ICP_URL}
+          value: "${API_URL}"
+        # 运行时配置（不带 NEXT_PUBLIC_ 前缀，支持动态配置）
+        - name: COMPANY_NAME
+          value: "${COMPANY_NAME}"
+        - name: SIMPLE_COMPANY_NAME
+          value: "${SIMPLE_COMPANY_NAME}"
+        - name: ICP_NUMBER
+          value: "${ICP_NUMBER}"
+        - name: ICP_URL
+          value: "${ICP_URL}"
         resources:
           requests:
             cpu: 250m

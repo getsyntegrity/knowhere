@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { useAuth } from '@/hooks/useAuth'
-import { AppConfig } from '@/lib/config'
+import { useAppConfig } from '@/hooks/useAppConfig'
 
 export default function AuthLayout({
   children,
@@ -14,6 +14,7 @@ export default function AuthLayout({
 }) {
   const { isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
+  const appConfig = useAppConfig()
 
   // 如果已登录，重定向到仪表板
   useEffect(() => {
@@ -38,7 +39,7 @@ export default function AuthLayout({
       {/* 顶部导航 */}
       <header className="flex items-center justify-between p-6">
         <Link href="/" className="text-2xl font-bold text-primary">
-          {AppConfig.simpleCompanyName}Knowhere
+          {appConfig.simpleCompanyName}Knowhere
         </Link>
         <ThemeToggle />
       </header>
@@ -53,17 +54,17 @@ export default function AuthLayout({
       {/* 底部 */}
       <footer className="text-center text-sm text-muted-foreground p-6">
         <p>
-          &copy; {AppConfig.copyrightYear} {AppConfig.companyName}
-          {AppConfig.showIcp && (
+          &copy; {appConfig.copyrightYear} {appConfig.companyName}
+          {appConfig.showIcp && (
             <>
               {' '}
               <a 
-                href={AppConfig.icpUrl} 
-                target="_blank" 
+                href={appConfig.icpUrl} 
+                target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary hover:underline"
               >
-                {AppConfig.icpNumber}
+                {appConfig.icpNumber}
               </a>
             </>
           )}

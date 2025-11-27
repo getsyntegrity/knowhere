@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
 import { OAuthButtons } from '@/components/auth/OAuthButtons'
-import { AppConfig } from '@/lib/config'
+import { useAppConfig } from '@/hooks/useAppConfig'
 
 const loginSchema = z.object({
   email: z.string().email('请输入有效的邮箱地址'),
@@ -27,6 +27,7 @@ export default function LoginPage() {
   const { login } = useAuth()
   const toast = useToast()
   const router = useRouter()
+  const appConfig = useAppConfig()
 
   const {
     register,
@@ -101,7 +102,7 @@ export default function LoginPage() {
           </div>
 
           <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? '登录中...' : !AppConfig.simpleCompanyName ? '登录' : `登录 - ${AppConfig.simpleCompanyName}`}
+            {isLoading ? '登录中...' : !appConfig.simpleCompanyName ? '登录' : `登录 - ${appConfig.simpleCompanyName}`}
           </Button>
         </form>
 

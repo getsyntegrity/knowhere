@@ -24,10 +24,22 @@ RUN corepack enable pnpm && \
 FROM base AS builder
 WORKDIR /app
 
-# 构建参数 - API URL（用于 Next.js NEXT_PUBLIC_* 变量）
+# 构建参数 - Next.js NEXT_PUBLIC_* 变量（必须在构建时传入，会被内联到客户端代码中）
 # 默认值使用 next.config.js 中的默认值，确保向后兼容
 ARG NEXT_PUBLIC_API_URL=https://apitest.knowhereto.ai
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+ARG NEXT_PUBLIC_COMPANY_NAME=""
+ENV NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME}
+
+ARG NEXT_PUBLIC_SIMPLE_COMPANY_NAME=""
+ENV NEXT_PUBLIC_SIMPLE_COMPANY_NAME=${NEXT_PUBLIC_SIMPLE_COMPANY_NAME}
+
+ARG NEXT_PUBLIC_ICP_NUMBER=""
+ENV NEXT_PUBLIC_ICP_NUMBER=${NEXT_PUBLIC_ICP_NUMBER}
+
+ARG NEXT_PUBLIC_ICP_URL=""
+ENV NEXT_PUBLIC_ICP_URL=${NEXT_PUBLIC_ICP_URL}
 
 # 复制 monorepo 配置文件
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
