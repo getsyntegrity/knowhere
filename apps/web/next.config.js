@@ -11,10 +11,8 @@ const nextConfig = {
   },
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'https://apitest.knowhereto.ai',
-    NEXT_PUBLIC_COMPANY_NAME: process.env.NEXT_PUBLIC_COMPANY_NAME || '',
-    NEXT_PUBLIC_SIMPLE_COMPANY_NAME: process.env.NEXT_PUBLIC_SIMPLE_COMPANY_NAME || '',
-    NEXT_PUBLIC_ICP_NUMBER: process.env.NEXT_PUBLIC_ICP_NUMBER || '',
-    NEXT_PUBLIC_ICP_URL: process.env.NEXT_PUBLIC_ICP_URL || '',
+    // 注意：其他配置（公司名称、ICP等）现在通过运行时 API (/api/config) 获取
+    // 支持动态配置，无需在构建时固定
   },
 }
 

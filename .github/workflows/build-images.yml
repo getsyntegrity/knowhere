@@ -215,6 +215,10 @@ jobs:
             BUILD_TIME=${{ github.event.head_commit.timestamp || github.event.pull_request.head.repo.updated_at || github.event.repository.updated_at }}
             GIT_COMMIT=${{ github.sha }}
             NEXT_PUBLIC_API_URL=${{ steps.api-urls.outputs.api_url_ghcr }}
+            NEXT_PUBLIC_COMPANY_NAME=${{ secrets.NEXT_PUBLIC_COMPANY_NAME }}
+            NEXT_PUBLIC_SIMPLE_COMPANY_NAME=${{ secrets.NEXT_PUBLIC_SIMPLE_COMPANY_NAME }}
+            NEXT_PUBLIC_ICP_NUMBER=${{ secrets.NEXT_PUBLIC_ICP_NUMBER }}
+            NEXT_PUBLIC_ICP_URL=${{ secrets.NEXT_PUBLIC_ICP_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
@@ -234,6 +238,10 @@ jobs:
             BUILD_TIME=${{ github.event.head_commit.timestamp || github.event.pull_request.head.repo.updated_at || github.event.repository.updated_at }}
             GIT_COMMIT=${{ github.sha }}
             NEXT_PUBLIC_API_URL=${{ steps.api-urls.outputs.api_url_acr }}
+            NEXT_PUBLIC_COMPANY_NAME=${{ secrets.NEXT_PUBLIC_COMPANY_NAME }}
+            NEXT_PUBLIC_SIMPLE_COMPANY_NAME=${{ secrets.NEXT_PUBLIC_SIMPLE_COMPANY_NAME }}
+            NEXT_PUBLIC_ICP_NUMBER=${{ secrets.NEXT_PUBLIC_ICP_NUMBER }}
+            NEXT_PUBLIC_ICP_URL=${{ secrets.NEXT_PUBLIC_ICP_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       

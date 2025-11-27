@@ -114,24 +114,29 @@ kubectl get svc -n knowhere
 
 ### Web 前端环境变量
 
-以下环境变量用于配置 Web 前端的版权和备案信息：
+以下环境变量用于配置 Web 前端的版权和备案信息（运行时动态配置，不带 `NEXT_PUBLIC_` 前缀）：
 
-- `${NEXT_PUBLIC_COMPANY_NAME}` - 公司名称（默认：深圳市渊维科技有限公司）
-- `${NEXT_PUBLIC_ICP_NUMBER}` - ICP备案号（国内部署时使用，留空则不显示）
-- `${NEXT_PUBLIC_ICP_URL}` - ICP备案链接（默认：https://beian.miit.gov.cn/）
+- `${COMPANY_NAME}` - 公司名称（默认：深圳市渊维科技有限公司）
+- `${SIMPLE_COMPANY_NAME}` - 公司简称（可选）
+- `${ICP_NUMBER}` - ICP备案号（国内部署时使用，留空则不显示）
+- `${ICP_URL}` - ICP备案链接（默认：https://beian.miit.gov.cn/）
 
 **使用示例**：
 
 ```bash
 # 国内部署
-export NEXT_PUBLIC_COMPANY_NAME="深圳市渊维科技有限公司"
-export NEXT_PUBLIC_ICP_NUMBER="粤ICP备2025384995号-3"
-export NEXT_PUBLIC_ICP_URL="https://beian.miit.gov.cn/"
+export COMPANY_NAME="深圳市渊维科技有限公司"
+export SIMPLE_COMPANY_NAME="渊维科技"
+export ICP_NUMBER="粤ICP备2025384995号-3"
+export ICP_URL="https://beian.miit.gov.cn/"
 
 # 海外部署（不显示备案信息）
-export NEXT_PUBLIC_COMPANY_NAME="Your Company Name"
+export COMPANY_NAME="Your Company Name"
+export SIMPLE_COMPANY_NAME="Your Company"
 # 不设置 ICP 相关变量即可隐藏备案信息
 ```
+
+**注意**：这些配置会在运行时动态读取，无需重新构建镜像，可以在不同环境（AWS、阿里云等）使用不同的配置值。
 
 ## 注意事项
 
