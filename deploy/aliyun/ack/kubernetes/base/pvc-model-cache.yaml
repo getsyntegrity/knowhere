@@ -2,7 +2,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: model-cache-pvc
-  namespace: knowhere
+  namespace: ${NAMESPACE}
 spec:
   accessModes:
     - ReadWriteMany

@@ -5,20 +5,13 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: knowhere-api
-  annotations:
-    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-id: "${API_SLB_ID}"
-    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-force-override-listeners: "false"
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   ports:
   - port: 80
     targetPort: 5005
     protocol: TCP
     name: http
-  - port: 443
-    targetPort: 5005
-    protocol: TCP
-    name: https
   selector:
     app: knowhere-api
 ---
@@ -29,20 +22,13 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: knowhere-web
-  annotations:
-    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-id: "${WEB_SLB_ID}"
-    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-force-override-listeners: "false"
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   ports:
   - port: 80
     targetPort: 3000
     protocol: TCP
     name: http
-  - port: 443
-    targetPort: 3000
-    protocol: TCP
-    name: https
   selector:
     app: knowhere-web
 ---

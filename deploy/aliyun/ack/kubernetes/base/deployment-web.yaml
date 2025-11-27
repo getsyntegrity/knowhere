@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: knowhere-web
-  namespace: knowhere
+  namespace: ${NAMESPACE}
   labels:
     app: knowhere-web
     environment: ${ENVIRONMENT}
@@ -18,10 +18,21 @@ spec:
         environment: ${ENVIRONMENT}
     spec:
       ${IMAGE_PULL_SECRETS}
+      affinity:
+        podAntiAffinity:
+          # 使用required确保每个节点最多一个web pod
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - knowhere-web
+            topologyKey: kubernetes.io/hostname
       containers:
       - name: web
         image: ${REGISTRY}/knowhere-frontend:${IMAGE_TAG}
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 3000
           name: http
@@ -30,6 +41,8 @@ spec:
           value: ${API_URL}
         - name: NEXT_PUBLIC_COMPANY_NAME
           value: ${NEXT_PUBLIC_COMPANY_NAME}
+        - name: NEXT_PUBLIC_SIMPLE_COMPANY_NAME
+          value: ${NEXT_PUBLIC_SIMPLE_COMPANY_NAME}
         - name: NEXT_PUBLIC_ICP_NUMBER
           value: ${NEXT_PUBLIC_ICP_NUMBER}
         - name: NEXT_PUBLIC_ICP_URL
@@ -39,8 +52,8 @@ spec:
             cpu: 250m
             memory: 512Mi
           limits:
-            cpu: 1000m
-            memory: 2Gi
+            cpu: 500m
+            memory: 1Gi
         livenessProbe:
           httpGet:
             path: /

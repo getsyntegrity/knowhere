@@ -57,6 +57,9 @@ httpx==0.28.1
 requests==2.32.4
 aiohttp==3.12.15
 
+# 邮件服务
+resend==2.19.0
+
 # 日志
 loguru==0.7.3
 # 数据库连接监控

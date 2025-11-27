@@ -6,6 +6,7 @@
 # 2. 再导入依赖User的模型
 from .api_key import APIKey
 from .credits_transaction import CreditsTransaction
+from .email_log import EmailLog
 from .job import Job
 from .job_result import JobChunk, JobResult
 from .subscription import Subscription
@@ -26,6 +27,7 @@ __all__ = [
     "Subscription",
     "CreditsTransaction",
     "UsageLog",
+    "EmailLog",
     "Job",
     "JobResult",
     "JobChunk",

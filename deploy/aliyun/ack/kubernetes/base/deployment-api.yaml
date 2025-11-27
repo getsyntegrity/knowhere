@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: knowhere-api
-  namespace: knowhere
+  namespace: ${NAMESPACE}
   labels:
     app: knowhere-api
     environment: ${ENVIRONMENT}
@@ -18,6 +18,17 @@ spec:
         environment: ${ENVIRONMENT}
     spec:
       ${IMAGE_PULL_SECRETS}
+      affinity:
+        podAntiAffinity:
+          # 使用required确保每个节点最多一个api pod
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - knowhere-api
+            topologyKey: kubernetes.io/hostname
       containers:
       - name: api
         image: ${REGISTRY}/knowhere-backend:${IMAGE_TAG}
@@ -118,8 +129,8 @@ spec:
             cpu: 500m
             memory: 1Gi
           limits:
-            cpu: 2000m
-            memory: 4Gi
+            cpu: 1000m
+            memory: 2Gi
         livenessProbe:
           httpGet:
             path: /health

@@ -5,6 +5,7 @@ from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
+from sqlalchemy.sql.expression import false
 
 
 class BillingConfig(BaseSettings):
@@ -33,6 +34,20 @@ class BillingConfig(BaseSettings):
     
     # Resend邮件配置
     RESEND_API_KEY: str = Field(default="", env="RESEND_API_KEY")
+    RESEND_FROM_EMAIL: str = Field(default="noreply@knowhere.ai", env="RESEND_FROM_EMAIL", description="发件人邮箱")
+    RESEND_FROM_NAME: str = Field(default="Knowhere AI", env="RESEND_FROM_NAME", description="发件人名称")
+    RESEND_MAX_RETRIES: int = Field(default=3, env="RESEND_MAX_RETRIES", description="最大重试次数")
+    RESEND_RETRY_DELAY: float = Field(default=1.0, env="RESEND_RETRY_DELAY", description="重试延迟秒数")
+    # Resend模板ID配置（使用Resend控制台的模板）
+    RESEND_TEMPLATE_WELCOME: Optional[str] = Field(default=None, env="RESEND_TEMPLATE_WELCOME", description="欢迎邮件模板ID")
+    RESEND_TEMPLATE_PURCHASE_CONFIRMATION: Optional[str] = Field(default=None, env="RESEND_TEMPLATE_PURCHASE_CONFIRMATION", description="购买确认邮件模板ID")
+    RESEND_TEMPLATE_JOB_COMPLETION: Optional[str] = Field(default=None, env="RESEND_TEMPLATE_JOB_COMPLETION", description="任务完成邮件模板ID")
+    RESEND_TEMPLATE_JOB_FAILURE: Optional[str] = Field(default=None, env="RESEND_TEMPLATE_JOB_FAILURE", description="任务失败邮件模板ID")
+    # Resend模板开关配置
+    RESEND_TEMPLATE_WELCOME_ENABLED: bool = Field(default=False, env="RESEND_TEMPLATE_WELCOME_ENABLED", description="欢迎邮件模板开关")
+    RESEND_TEMPLATE_PURCHASE_CONFIRMATION_ENABLED: bool = Field(default=False, env="RESEND_TEMPLATE_PURCHASE_CONFIRMATION_ENABLED", description="购买确认邮件模板开关")
+    RESEND_TEMPLATE_JOB_COMPLETION_ENABLED: bool = Field(default=False, env="RESEND_TEMPLATE_JOB_COMPLETION_ENABLED", description="任务完成邮件模板开关")
+    RESEND_TEMPLATE_JOB_FAILURE_ENABLED: bool = Field(default=False, env="RESEND_TEMPLATE_JOB_FAILURE_ENABLED", description="任务失败邮件模板开关")
     
     # Moesif配置
     MOESIF_APPLICATION_ID: str = Field(default="", env="MOESIF_APPLICATION_ID")
