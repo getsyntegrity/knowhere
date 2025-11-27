@@ -5,13 +5,16 @@
 
 export const AppConfig = {
   // 公司名称
-  companyName: process.env.NEXT_PUBLIC_COMPANY_NAME || '深圳市渊维科技有限公司',
+  companyName: process.env.NEXT_PUBLIC_COMPANY_NAME || 'Knowhere AI',
+
+  // 公司简称
+  simpleCompanyName: process.env.NEXT_PUBLIC_SIMPLE_COMPANY_NAME || '',
   
   // ICP备案号（国内部署时使用）
   icpNumber: process.env.NEXT_PUBLIC_ICP_NUMBER || '',
   
   // ICP备案链接（国内部署时使用）
-  icpUrl: process.env.NEXT_PUBLIC_ICP_URL || 'https://beian.miit.gov.cn/',
+  icpUrl: process.env.NEXT_PUBLIC_ICP_URL || '',
   
   // 版权年份
   copyrightYear: new Date().getFullYear(),

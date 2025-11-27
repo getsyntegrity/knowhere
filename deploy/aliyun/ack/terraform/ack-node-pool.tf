@@ -3,6 +3,8 @@ resource "alicloud_cs_kubernetes_node_pool" "main" {
   name                 = "${var.project_name}-${var.environment}-nodepool"
   cluster_id           = alicloud_cs_managed_kubernetes.main.id
   vswitch_ids          = alicloud_vswitch.private[*].id
+  # 实例类型配置：ecs.g6.xlarge = 4核16GB，ecs.g6.large = 2核8GB
+  # 注意：如果节点池在控制台被手动修改，需要运行 terraform apply 来同步配置
   instance_types       = var.environment == "prod" ? ["ecs.g6.xlarge"] : ["ecs.g6.large"]
   desired_size         = 2  # 默认2个节点
 

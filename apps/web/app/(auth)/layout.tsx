@@ -38,7 +38,7 @@ export default function AuthLayout({
       {/* 顶部导航 */}
       <header className="flex items-center justify-between p-6">
         <Link href="/" className="text-2xl font-bold text-primary">
-          Knowhere
+          {AppConfig.simpleCompanyName}Knowhere
         </Link>
         <ThemeToggle />
       </header>

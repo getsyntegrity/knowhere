@@ -42,6 +42,7 @@ export LOG_LEVEL=${LOG_LEVEL:-INFO}
 
 # Web 前端环境变量配置
 NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME:-深圳市渊维科技有限公司}
+NEXT_PUBLIC_SIMPLE_COMPANY_NAME=${NEXT_PUBLIC_SIMPLE_COMPANY_NAME:-}
 NEXT_PUBLIC_ICP_NUMBER=${NEXT_PUBLIC_ICP_NUMBER:-}
 NEXT_PUBLIC_ICP_URL=${NEXT_PUBLIC_ICP_URL:-https://beian.miit.gov.cn/}
 
@@ -124,6 +125,9 @@ log "  - Worker: $DEPLOY_WORKER"
 if [ "$DEPLOY_WEB" = true ]; then
     log "Web前端配置:"
     log "  - 公司名称: $NEXT_PUBLIC_COMPANY_NAME"
+    if [ -n "$NEXT_PUBLIC_SIMPLE_COMPANY_NAME" ]; then
+        log "  - 简化公司名称: $NEXT_PUBLIC_SIMPLE_COMPANY_NAME"
+    fi
     if [ -n "$NEXT_PUBLIC_ICP_NUMBER" ]; then
         log "  - ICP备案号: $NEXT_PUBLIC_ICP_NUMBER"
         log "  - ICP备案链接: $NEXT_PUBLIC_ICP_URL"
@@ -225,6 +229,7 @@ export IMAGE_TAG
 export API_SLB_ID
 export WEB_SLB_ID
 export NEXT_PUBLIC_COMPANY_NAME
+export NEXT_PUBLIC_SIMPLE_COMPANY_NAME
 export NEXT_PUBLIC_ICP_NUMBER
 export NEXT_PUBLIC_ICP_URL
 
