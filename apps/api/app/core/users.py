@@ -134,7 +134,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
                     logger.info(f"为用户 {user.id} 赠送 {initial_credits} Credits成功")
                     
                     # 发送欢迎邮件
-                    await self._send_welcome_email(user)
+                    await self._send_welcome_email(user, db=db)
                 else:
                     logger.error(f"为用户 {user.id} 创建Free订阅失败")
                     
@@ -143,7 +143,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
             logger.error(f"设置新用户订阅失败: {e}")
             # 不抛出异常，避免影响用户注册流程
     
-    async def _send_welcome_email(self, user):
+    async def _send_welcome_email(self, user, db=None):
         """发送欢迎邮件"""
         try:
             from app.services.email import EmailService
@@ -151,7 +151,9 @@ class UserManager(UUIDIDMixin, BaseUserManager):
             
             await email_service.send_welcome_email(
                 user_email=user.email,
-                user_name=getattr(user, 'full_name', None) or user.email
+                user_name=getattr(user, 'full_name', None) or user.email,
+                db=db,
+                user_id=str(user.id) if user.id else None
             )
             
             logger.info(f"欢迎邮件已发送给用户 {user.email}")
