@@ -394,8 +394,42 @@ if [ "$DEPLOY_API" = true ] || [ "$DEPLOY_WEB" = true ]; then
     fi
 fi
 
-# 生成Ingress配置（只包含需要部署的服务）
+# 生成Ingress配置（包含需要部署的服务，以及已存在的服务）
 log "生成Ingress配置..."
+
+# 检查集群中已存在的Deployment，确保已部署服务的路由不会被移除
+EXISTING_API_DEPLOYMENT=false
+EXISTING_WEB_DEPLOYMENT=false
+
+if kubectl get deployment knowhere-api -n "$NAMESPACE" &>/dev/null; then
+    EXISTING_API_DEPLOYMENT=true
+    log "检测到已存在的 API Deployment，将在Ingress中保留API路由"
+fi
+
+if kubectl get deployment knowhere-web -n "$NAMESPACE" &>/dev/null; then
+    EXISTING_WEB_DEPLOYMENT=true
+    log "检测到已存在的 Web Deployment，将在Ingress中保留Web路由"
+fi
+
+# 确定最终需要包含在Ingress中的服务
+# 如果服务已存在或本次需要部署，都应该包含在Ingress中
+FINAL_DEPLOY_API=false
+FINAL_DEPLOY_WEB=false
+
+if [ "$DEPLOY_API" = true ] || [ "$EXISTING_API_DEPLOYMENT" = true ]; then
+    FINAL_DEPLOY_API=true
+    if [ "$DEPLOY_API" != true ] && [ "$EXISTING_API_DEPLOYMENT" = true ]; then
+        log "  注意: API服务已存在但本次不部署，保留Ingress路由"
+    fi
+fi
+
+if [ "$DEPLOY_WEB" = true ] || [ "$EXISTING_WEB_DEPLOYMENT" = true ]; then
+    FINAL_DEPLOY_WEB=true
+    if [ "$DEPLOY_WEB" != true ] && [ "$EXISTING_WEB_DEPLOYMENT" = true ]; then
+        log "  注意: Web服务已存在但本次不部署，保留Ingress路由"
+    fi
+fi
+
 INGRESS_FILE="$TEMP_DIR/ingress-filtered.yaml"
 > "$INGRESS_FILE"  # 清空文件
 
@@ -415,10 +449,10 @@ spec:
 EOF
 
 # 添加TLS hosts
-if [ "$DEPLOY_API" = true ]; then
+if [ "$FINAL_DEPLOY_API" = true ]; then
     echo "    - ${API_DOMAIN}" >> "$INGRESS_FILE"
 fi
-if [ "$DEPLOY_WEB" = true ]; then
+if [ "$FINAL_DEPLOY_WEB" = true ]; then
     echo "    - ${WEB_DOMAIN}" >> "$INGRESS_FILE"
 fi
 
@@ -428,7 +462,7 @@ cat >> "$INGRESS_FILE" <<EOF
 EOF
 
 # 添加API规则
-if [ "$DEPLOY_API" = true ]; then
+if [ "$FINAL_DEPLOY_API" = true ]; then
     cat >> "$INGRESS_FILE" <<EOF
   - host: ${API_DOMAIN}
     http:
@@ -444,8 +478,8 @@ EOF
 fi
 
 # 添加Web规则
-if [ "$DEPLOY_WEB" = true ]; then
-    if [ "$DEPLOY_API" = true ]; then
+if [ "$FINAL_DEPLOY_WEB" = true ]; then
+    if [ "$FINAL_DEPLOY_API" = true ]; then
         echo "" >> "$INGRESS_FILE"
     fi
     cat >> "$INGRESS_FILE" <<EOF
@@ -465,6 +499,29 @@ fi
 # 应用Ingress
 log "创建Ingress..."
 kubectl apply -f "$INGRESS_FILE"
+
+# 验证Ingress配置
+log "验证Ingress配置..."
+sleep 2  # 等待Ingress更新
+INGRESS_HOSTS=$(kubectl get ingress knowhere-ingress -n "$NAMESPACE" -o jsonpath='{.spec.rules[*].host}' 2>/dev/null || echo "")
+
+# 检查API路由
+if [ "$FINAL_DEPLOY_API" = true ]; then
+    if echo "$INGRESS_HOSTS" | grep -q "${API_DOMAIN}"; then
+        log "  ✓ API路由已配置: ${API_DOMAIN}"
+    else
+        warn "  ⚠ API路由未正确配置，请检查Ingress"
+    fi
+fi
+
+# 检查Web路由
+if [ "$FINAL_DEPLOY_WEB" = true ]; then
+    if echo "$INGRESS_HOSTS" | grep -q "${WEB_DOMAIN}"; then
+        log "  ✓ Web路由已配置: ${WEB_DOMAIN}"
+    else
+        warn "  ⚠ Web路由未正确配置，请检查Ingress"
+    fi
+fi
 
 # 应用PodDisruptionBudget
 log "创建PodDisruptionBudget..."
