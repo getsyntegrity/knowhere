@@ -136,6 +136,9 @@ spec:
             - "from shared.core.celery_app import celery_app; celery_app.control.inspect().stats()"
           initialDelaySeconds: 60
           periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
         readinessProbe:
           exec:
             command:
@@ -144,6 +147,9 @@ spec:
             - "from shared.core.celery_app import celery_app; celery_app.control.inspect().stats()"
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
       # volumes:
       # - name: model-cache
       #   persistentVolumeClaim:

@@ -41,9 +41,11 @@ export LOG_LEVEL=${LOG_LEVEL:-INFO}
         API_URL=${API_URL:-https://api.knowhereto.com}
 
 # Web 前端环境变量配置（运行时动态配置，不带 NEXT_PUBLIC_ 前缀）
+# 注意：如果环境变量未设置，使用默认值；如果设置为空字符串，则保持空字符串
 COMPANY_NAME=${COMPANY_NAME:-深圳市渊维科技有限公司}
-SIMPLE_COMPANY_NAME=${SIMPLE_COMPANY_NAME:-}
-ICP_NUMBER=${ICP_NUMBER:-}
+# 生产环境默认值：如果未设置，使用默认值
+SIMPLE_COMPANY_NAME=${SIMPLE_COMPANY_NAME:-渊维科技}
+ICP_NUMBER=${ICP_NUMBER:-粤ICP备2025384995号-3}
 ICP_URL=${ICP_URL:-https://beian.miit.gov.cn/}
 
 # SLB 实例 ID 配置
@@ -334,7 +336,12 @@ fi
 
 if [ "$DEPLOY_WEB" = true ]; then
     log "  部署 Web Deployment"
-kubectl apply -f "$TEMP_DIR/deployment-web.yaml"
+    kubectl apply -f "$TEMP_DIR/deployment-web.yaml"
+    # 强制重启Web Pod以确保环境变量更新生效
+    log "  强制重启 Web Pod 以确保环境变量更新生效..."
+    kubectl rollout restart deployment/knowhere-web -n "$NAMESPACE" || warn "重启Web Pod失败，请手动重启: kubectl rollout restart deployment/knowhere-web -n $NAMESPACE"
+    log "  等待 Web Pod 就绪..."
+    kubectl rollout status deployment/knowhere-web -n "$NAMESPACE" --timeout=300s || warn "Web Pod 就绪超时，请检查Pod状态"
 fi
 
 if [ "$DEPLOY_WORKER" = true ]; then

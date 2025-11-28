@@ -24,23 +24,36 @@ export interface AppConfigType {
 
 // 获取配置（用于服务端组件）
 // 在服务端组件中调用此函数读取环境变量，然后通过 ConfigProvider 传递给客户端组件
-export const getDefaultConfig = (): AppConfigType => ({
-  // 公司名称（运行时配置，不带 NEXT_PUBLIC_ 前缀）
-  companyName: process.env.COMPANY_NAME || 'Knowhere AI',
-
-  // 公司简称
-  simpleCompanyName: process.env.SIMPLE_COMPANY_NAME || '',
+export const getDefaultConfig = (): AppConfigType => {
+  // 处理环境变量：如果值为空字符串或undefined，使用默认值
+  const getEnv = (key: string, defaultValue: string = ''): string => {
+    const value = process.env[key]
+    return value && value.trim() !== '' ? value : defaultValue
+  }
   
-  // ICP备案号（国内部署时使用）
-  icpNumber: process.env.ICP_NUMBER || '',
+  const companyName = getEnv('COMPANY_NAME', 'Knowhere AI')
+  const simpleCompanyName = getEnv('SIMPLE_COMPANY_NAME', '')
+  const icpNumber = getEnv('ICP_NUMBER', '')
+  const icpUrl = getEnv('ICP_URL', 'https://beian.miit.gov.cn/')
   
-  // ICP备案链接（国内部署时使用）
-  icpUrl: process.env.ICP_URL || 'https://beian.miit.gov.cn/',
-  
-  // 版权年份
-  copyrightYear: new Date().getFullYear(),
-  
-  // 是否显示ICP备案信息
-  showIcp: !!process.env.ICP_NUMBER,
-})
+  return {
+    // 公司名称（运行时配置，不带 NEXT_PUBLIC_ 前缀）
+    companyName,
+    
+    // 公司简称
+    simpleCompanyName,
+    
+    // ICP备案号（国内部署时使用）
+    icpNumber,
+    
+    // ICP备案链接（国内部署时使用）
+    icpUrl,
+    
+    // 版权年份
+    copyrightYear: new Date().getFullYear(),
+    
+    // 是否显示ICP备案信息（只有当icpNumber不为空时才显示）
+    showIcp: icpNumber.trim() !== '',
+  }
+}
 
