@@ -45,13 +45,16 @@ NEXT_PUBLIC_GOOGLE_CLIENT_ID=your_google_client_id
 NEXT_PUBLIC_GITHUB_CLIENT_ID=your_github_client_id
 NEXT_PUBLIC_APPLE_CLIENT_ID=your_apple_client_id
 
-# 版权和备案信息配置（可选）
-# 国内部署示例：
-# NEXT_PUBLIC_COMPANY_NAME=深圳市渊维科技有限公司
-# NEXT_PUBLIC_ICP_NUMBER=粤ICP备2025384995号-3
-# NEXT_PUBLIC_ICP_URL=https://beian.miit.gov.cn/
+# 版权和备案信息配置（可选，运行时动态配置）
+# 注意：这些配置在部署时通过环境变量设置，不带 NEXT_PUBLIC_ 前缀
+# 国内部署示例（在部署配置中设置）：
+# COMPANY_NAME=深圳市渊维科技有限公司
+# SIMPLE_COMPANY_NAME=渊维科技
+# ICP_NUMBER=粤ICP备2025384995号-3
+# ICP_URL=https://beian.miit.gov.cn/
 # 海外部署示例：
-# NEXT_PUBLIC_COMPANY_NAME=Your Company Name
+# COMPANY_NAME=Your Company Name
+# SIMPLE_COMPANY_NAME=Your Company
 # （不设置 ICP 相关变量即可隐藏备案信息）
 ```
 
@@ -162,13 +165,17 @@ apps/web/
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth客户端ID | 否 | - |
 | `NEXT_PUBLIC_GITHUB_CLIENT_ID` | GitHub OAuth客户端ID | 否 | - |
 | `NEXT_PUBLIC_APPLE_CLIENT_ID` | Apple OAuth客户端ID | 否 | - |
-| `NEXT_PUBLIC_COMPANY_NAME` | 公司名称（显示在页脚） | 否 | 深圳市渊维科技有限公司 |
-| `NEXT_PUBLIC_ICP_NUMBER` | ICP备案号（国内部署时使用） | 否 | - |
-| `NEXT_PUBLIC_ICP_URL` | ICP备案链接 | 否 | https://beian.miit.gov.cn/ |
+| `COMPANY_NAME` | 公司名称（显示在页脚，运行时配置） | 否 | Knowhere AI |
+| `SIMPLE_COMPANY_NAME` | 公司简称（运行时配置） | 否 | - |
+| `ICP_NUMBER` | ICP备案号（国内部署时使用，运行时配置） | 否 | - |
+| `ICP_URL` | ICP备案链接（运行时配置） | 否 | https://beian.miit.gov.cn/ |
 
 **注意**：
-- 如果设置了 `NEXT_PUBLIC_ICP_NUMBER`，页脚会自动显示备案信息
-- 海外部署时，只需设置 `NEXT_PUBLIC_COMPANY_NAME`，不设置 ICP 相关变量即可隐藏备案信息
+- 这些配置在部署时通过环境变量设置，不带 `NEXT_PUBLIC_` 前缀
+- 服务端组件在 SSR 时读取环境变量，通过 React Context 传递给客户端组件
+- 如果设置了 `ICP_NUMBER`，页脚会自动显示备案信息
+- 海外部署时，只需设置 `COMPANY_NAME`，不设置 ICP 相关变量即可隐藏备案信息
+- 支持运行时动态配置，无需重新构建镜像
 
 ## 贡献指南
 
