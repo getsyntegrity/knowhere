@@ -128,12 +128,6 @@ fi
 log "拉取最新镜像..."
 cd "$(dirname "$COMPOSE_FILE")"
 
-# 先拉取基础服务镜像（从 Docker Hub，无需登录）
-log "拉取基础服务镜像（postgres, redis, rabbitmq, nginx）..."
-$DOCKER_COMPOSE -f "$COMPOSE_FILE" pull postgres redis rabbitmq nginx || {
-    warn "部分基础服务镜像拉取失败，继续部署..."
-}
-
 # 拉取应用服务镜像（从 ACR，需要登录）
 log "拉取应用服务镜像（api, web, worker）..."
 $DOCKER_COMPOSE -f "$COMPOSE_FILE" pull api web worker || {

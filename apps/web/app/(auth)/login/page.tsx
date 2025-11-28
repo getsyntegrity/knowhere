@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
 import { OAuthButtons } from '@/components/auth/OAuthButtons'
-import { useAppConfig } from '@/hooks/useAppConfig'
+import { useAppConfigContext } from '@/components/providers/ConfigProvider'
 
 const loginSchema = z.object({
   email: z.string().email('请输入有效的邮箱地址'),
@@ -27,7 +27,7 @@ export default function LoginPage() {
   const { login } = useAuth()
   const toast = useToast()
   const router = useRouter()
-  const appConfig = useAppConfig()
+  const appConfig = useAppConfigContext()
 
   const {
     register,
