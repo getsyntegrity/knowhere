@@ -255,6 +255,18 @@ for file in "$K8S_BASE_DIR"/*.yaml; do
         log "处理文件: $filename"
         envsubst < "$file" > "$TEMP_DIR/$filename"
         
+        # 对于deployment文件，强制设置imagePullPolicy为Always以确保拉取最新镜像
+        if [[ "$filename" == deployment-*.yaml ]]; then
+            log "  强制设置 imagePullPolicy 为 Always 以确保拉取最新镜像"
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS使用BSD sed
+                sed -i '' 's/imagePullPolicy: IfNotPresent/imagePullPolicy: Always/g' "$TEMP_DIR/$filename"
+            else
+                # Linux使用GNU sed
+                sed -i 's/imagePullPolicy: IfNotPresent/imagePullPolicy: Always/g' "$TEMP_DIR/$filename"
+            fi
+        fi
+        
         # 验证：检查是否还有未替换的占位符（除了secrets.yaml，因为它可能包含base64编码的值）
         if [ "$filename" != "secrets.yaml" ]; then
             if grep -q '\${[A-Z_]*}' "$TEMP_DIR/$filename" 2>/dev/null; then
@@ -332,14 +344,19 @@ log "创建Deployment..."
 if [ "$DEPLOY_API" = true ]; then
     log "  部署 API Deployment"
     kubectl apply -f "$TEMP_DIR/deployment-api.yaml"
+    # 强制拉取最新镜像：删除现有pod以触发重新拉取
+    log "  强制拉取最新镜像并重启 API Pod..."
+    kubectl delete pods -l app=knowhere-api -n "$NAMESPACE" --grace-period=30 --force 2>/dev/null || true
+    log "  等待 API Pod 就绪..."
+    kubectl rollout status deployment/knowhere-api -n "$NAMESPACE" --timeout=300s || warn "API Pod 就绪超时，请检查Pod状态"
 fi
 
 if [ "$DEPLOY_WEB" = true ]; then
     log "  部署 Web Deployment"
     kubectl apply -f "$TEMP_DIR/deployment-web.yaml"
-    # 强制重启Web Pod以确保环境变量更新生效
-    log "  强制重启 Web Pod 以确保环境变量更新生效..."
-    kubectl rollout restart deployment/knowhere-web -n "$NAMESPACE" || warn "重启Web Pod失败，请手动重启: kubectl rollout restart deployment/knowhere-web -n $NAMESPACE"
+    # 强制拉取最新镜像并重启Web Pod以确保环境变量更新生效
+    log "  强制拉取最新镜像并重启 Web Pod..."
+    kubectl delete pods -l app=knowhere-web -n "$NAMESPACE" --grace-period=30 --force 2>/dev/null || true
     log "  等待 Web Pod 就绪..."
     kubectl rollout status deployment/knowhere-web -n "$NAMESPACE" --timeout=300s || warn "Web Pod 就绪超时，请检查Pod状态"
 fi
@@ -348,6 +365,11 @@ if [ "$DEPLOY_WORKER" = true ]; then
 if [ -f "$TEMP_DIR/deployment-worker.yaml" ]; then
         log "  部署 Worker Deployment"
     kubectl apply -f "$TEMP_DIR/deployment-worker.yaml"
+    # 强制拉取最新镜像：删除现有pod以触发重新拉取
+    log "  强制拉取最新镜像并重启 Worker Pod..."
+    kubectl delete pods -l app=knowhere-worker -n "$NAMESPACE" --grace-period=30 --force 2>/dev/null || true
+    log "  等待 Worker Pod 就绪..."
+    kubectl rollout status deployment/knowhere-worker -n "$NAMESPACE" --timeout=300s || warn "Worker Pod 就绪超时，请检查Pod状态"
     else
         warn "  deployment-worker.yaml 不存在，跳过 Worker 部署"
     fi
