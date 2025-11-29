@@ -193,8 +193,8 @@ export EMAILS_FROM_NAME=${EMAILS_FROM_NAME:-AI Smart Bid}
 export DS_URL=${DS_URL:-https://api.deepseek.com/v1/chat/completions}
 export ALI_URL=${ALI_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
 export ARK_URL=${ARK_URL:-https://ark.cn-beijing.volces.com/api/v3/chat/completions}
-export EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-v1}
-export NORMAL_MODEL=${NORMAL_MODEL:-gpt-3.5-turbo}
+export EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-v4}
+export NORMAL_MODEL=${NORMAL_MODEL:-deepseek-chat}
 export IMAGE_MODEL=${IMAGE_MODEL:-qwen-vl-plus}
 export IMAGE_MODEL_MAX=${IMAGE_MODEL_MAX:-qwen-vl-max}
 export MINERU_URL=${MINERU_URL:-https://mineru.net/api/v4/extract/task}
@@ -331,7 +331,7 @@ kubectl apply -f "$SERVICE_FILE"
 log "创建Deployment..."
 if [ "$DEPLOY_API" = true ]; then
     log "  部署 API Deployment"
-kubectl apply -f "$TEMP_DIR/deployment-api.yaml"
+    kubectl apply -f "$TEMP_DIR/deployment-api.yaml"
 fi
 
 if [ "$DEPLOY_WEB" = true ]; then

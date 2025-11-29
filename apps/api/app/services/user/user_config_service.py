@@ -23,9 +23,12 @@ class UserConfigService:
         """
         初始化用户配置
         
+        注意：此方法只返回配置信息，不创建任何目录或文件。
+        目录和文件的创建由Worker服务在使用时按需完成。
+        
         Args:
             user_id: 用户ID
-            root_dir: 根目录
+            root_dir: 根目录（已废弃，不再使用）
             
         Returns:
             用户配置的JSON字符串
@@ -55,10 +58,17 @@ class UserConfigService:
         """
         检查并创建用户目录结构
         
+        [已废弃] 此方法已废弃，目录创建逻辑已移至Worker服务。
+        API服务不再创建用户目录和文件，只负责返回配置信息。
+        
         Args:
             kb_data_folder: 知识库数据文件夹
             kb_vecs_folder: 知识库向量文件夹
         """
+        logger.warning(
+            "check_create_user() 已废弃，不应在API服务中调用。"
+            "目录创建逻辑已移至Worker服务，API服务只负责返回配置信息。"
+        )
         # 解析默认文件夹配置，处理特殊字符
         subfolders = [folder.strip() for folder in settings.DEFAULT_FOLDERS.split(",") if folder.strip()]
         
@@ -304,9 +314,8 @@ class UserConfigService:
             (user_info['kb_vec_term'] + "_" + user_info['user'])
         )
         
-        logger.debug(f"准备检查/创建用户目录: KB_PATH={user_info['KB_PATH']}, KB_VECS_PATH={user_info['KB_VECS_PATH']}")
-        UserConfigService.check_create_user(user_info['KB_PATH'], user_info['KB_VECS_PATH'])
-        logger.info("✅ 用户目录结构创建/检查完成")
+        logger.debug(f"计算用户目录路径: KB_PATH={user_info['KB_PATH']}, KB_VECS_PATH={user_info['KB_VECS_PATH']}")
+        # 注意：目录创建已移至Worker服务，API服务不再创建用户目录结构
         
         logger.debug("开始加载元数据设置...")
         user_info = UserConfigService.load_meta_settings(user_info)
