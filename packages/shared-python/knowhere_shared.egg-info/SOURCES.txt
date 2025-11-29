@@ -40,6 +40,7 @@ shared/models/database/__init__.py
 shared/models/database/access_token.py
 shared/models/database/api_key.py
 shared/models/database/credits_transaction.py
+shared/models/database/email_log.py
 shared/models/database/job.py
 shared/models/database/job_result.py
 shared/models/database/job_state_audit_log.py

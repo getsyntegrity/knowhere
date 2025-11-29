@@ -368,6 +368,19 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
                 f"{user_config['kb_vec_term']}_{user_config['user']}"
             )
         
+        # 确保用户目录结构存在（Worker服务按需创建）
+        if 'KB_PATH' in user_config and 'KB_VECS_PATH' in user_config:
+            from app.services.user.user_directory_service import UserDirectoryService
+            try:
+                UserDirectoryService.ensure_user_directories(
+                    user_config['KB_PATH'],
+                    user_config['KB_VECS_PATH']
+                )
+                logger.info(f"用户目录结构已确保存在: KB_PATH={user_config['KB_PATH']}, KB_VECS_PATH={user_config['KB_VECS_PATH']}")
+            except Exception as e:
+                logger.error(f"创建用户目录结构失败: {e}")
+                raise ValueError(f"无法创建用户目录结构: {e}")
+        
         # 更新 USER_SETTINGS 中的路径（只更新在 parse_and_vectorize_task 流程中实际使用的路径）
         if 'USER_SETTINGS' in user_config:
             user_settings = user_config['USER_SETTINGS']

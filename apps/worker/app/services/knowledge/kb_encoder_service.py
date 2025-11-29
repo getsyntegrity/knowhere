@@ -177,6 +177,12 @@ def load_existing_kb(USER_SETTINGS):
         
     except FileNotFoundError as e:
         logger.warning(f"知识库文件不存在，创建默认结构: {e}")
+        # 确保目录存在
+        from app.services.user.user_directory_service import UserDirectoryService
+        UserDirectoryService.ensure_directory_for_file(kb_vec_path)
+        UserDirectoryService.ensure_directory_for_file(kb_path_vec_path)
+        UserDirectoryService.ensure_directory_for_file(kb_content_path)
+        
         all_df_cols = (settings.ALL_DF_COLS or "path,content,summary,type,addtime").split(",")
         default_dim = getattr(settings, "DEFAULT_EMBEDDING_DIM", 1024)
         all_vec = np.empty((0, default_dim), dtype=np.float32)
@@ -191,6 +197,12 @@ def load_existing_kb(USER_SETTINGS):
         logger.error(f"  - KB_VEC_PATH: {kb_vec_path}")
         logger.error(f"  - KB_PATH_VEC_PATH: {kb_path_vec_path}")
         logger.error(f"  - KB_CONTENT_PATH: {kb_content_path}")
+        
+        # 确保目录存在
+        from app.services.user.user_directory_service import UserDirectoryService
+        UserDirectoryService.ensure_directory_for_file(kb_vec_path)
+        UserDirectoryService.ensure_directory_for_file(kb_path_vec_path)
+        UserDirectoryService.ensure_directory_for_file(kb_content_path)
         
         # 创建默认结构
         all_df_cols = (settings.ALL_DF_COLS or "path,content,summary,type,addtime").split(",")
@@ -274,6 +286,12 @@ async def encode_kb(user_info, add_dir=None, filtered_added_df=None, remove_node
     USER_SETTINGS['EMBEDDING_LEN'] = all_vec.shape[-1]
     if not mode=="normal":
         with g_lock:
+            # 确保保存文件的目录存在（修复FileNotFoundError问题）
+            from app.services.user.user_directory_service import UserDirectoryService
+            UserDirectoryService.ensure_directory_for_file(USER_SETTINGS['KB_VEC_PATH'])
+            UserDirectoryService.ensure_directory_for_file(USER_SETTINGS['KB_PATH_VEC_PATH'])
+            UserDirectoryService.ensure_directory_for_file(USER_SETTINGS['KB_CONTENT_PATH'])
+            
             np.save(USER_SETTINGS['KB_VEC_PATH'], all_vec)
             np.save(USER_SETTINGS['KB_PATH_VEC_PATH'], all_path_vec)
             if encryptor.encrypt:
