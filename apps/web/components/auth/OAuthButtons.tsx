@@ -3,7 +3,8 @@
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
-import { getGitHubAuthUrl, getAppleAuthUrl } from '@/lib/oauth'
+import { getGitHubAuthUrl, getAppleAuthUrl, isGoogleOAuthEnabled } from '@/lib/oauth'
+import { useAppConfigContext } from '@/components/providers/ConfigProvider'
 import { Github, Apple } from 'lucide-react'
 import { GoogleLogin } from '@react-oauth/google'
 
@@ -15,6 +16,11 @@ interface OAuthButtonsProps {
 export function OAuthButtons({ onSuccess, onError }: OAuthButtonsProps) {
   const { oauthLogin } = useAuth()
   const toast = useToast()
+  const config = useAppConfigContext()
+  
+  // 从Context获取OAuth配置（运行时配置）
+  const googleClientId = config.googleClientId
+  const googleEnabled = isGoogleOAuthEnabled(googleClientId)
 
   const handleOAuthSuccess = async (provider: 'google' | 'apple' | 'github', token: string) => {
     try {
@@ -51,18 +57,20 @@ export function OAuthButtons({ onSuccess, onError }: OAuthButtonsProps) {
 
   return (
     <div className="space-y-3">
-      {/* Google登录 */}
-      <GoogleLogin
-        onSuccess={handleGoogleSuccess}
-        onError={handleGoogleError}
-        useOneTap
-        theme="outline"
-        size="large"
-        width="100%"
-        text="signin_with"
-        shape="rectangular"
-        logo_alignment="left"
-      />
+      {/* Google登录 - 仅当配置了Google Client ID时显示 */}
+      {googleEnabled && (
+        <GoogleLogin
+          onSuccess={handleGoogleSuccess}
+          onError={handleGoogleError}
+          useOneTap
+          theme="outline"
+          size="large"
+          width="100%"
+          text="signin_with"
+          shape="rectangular"
+          logo_alignment="left"
+        />
+      )}
 
       {/* GitHub登录 */}
       <Button

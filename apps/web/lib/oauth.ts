@@ -1,17 +1,9 @@
-// OAuth配置
-export const OAUTH_CONFIG = {
-  google: {
-    clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '',
-    scope: 'openid email profile',
-  },
-  github: {
-    clientId: process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID || '',
-    scope: 'user:email',
-  },
-  apple: {
-    clientId: process.env.NEXT_PUBLIC_APPLE_CLIENT_ID || '',
-    scope: 'name email',
-  },
+// OAuth配置（从Context获取，不再使用NEXT_PUBLIC_环境变量）
+// 注意：这些配置现在通过ConfigProvider在运行时传递
+
+// 判断是否启用Google OAuth（仅检查配置是否存在）
+export function isGoogleOAuthEnabled(googleClientId: string): boolean {
+  return googleClientId !== ''
 }
 
 // GitHub OAuth URL生成

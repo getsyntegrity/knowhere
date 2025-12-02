@@ -58,20 +58,51 @@ class OAuthRepository(BaseRepository[OAuthProvider, dict, dict]):
         )
         return result.scalar_one_or_none()
     
-    async def update_tokens(self, session: AsyncSession, oauth_id: str, access_token: str, refresh_token: Optional[str] = None, expires_at: Optional[datetime] = None) -> bool:
+    async def update_tokens(self, session: AsyncSession, oauth_id: str, access_token: Optional[str] = None, refresh_token: Optional[str] = None, expires_at: Optional[datetime] = None) -> bool:
         """更新访问令牌"""
         from datetime import datetime
-
         from sqlalchemy import update
         
         update_data = {
-            "access_token": access_token,
             "updated_at": datetime.utcnow()
         }
         
-        if refresh_token:
+        if access_token is not None:
+            update_data["access_token"] = access_token
+        if refresh_token is not None:
             update_data["refresh_token"] = refresh_token
-        if expires_at:
+        if expires_at is not None:
+            update_data["expires_at"] = expires_at
+        
+        result = await session.execute(
+            update(OAuthProvider)
+            .where(OAuthProvider.id == oauth_id)
+            .values(**update_data)
+        )
+        await session.commit()
+        return result.rowcount > 0
+    
+    async def update_oauth_provider(self, session: AsyncSession, oauth_id: str, user_info: dict, access_token: Optional[str] = None, refresh_token: Optional[str] = None, expires_at: Optional[datetime] = None) -> bool:
+        """更新OAuth提供商完整信息（包括用户信息和token）"""
+        from datetime import datetime
+        from sqlalchemy import update
+        
+        update_data = {
+            "updated_at": datetime.utcnow()
+        }
+        
+        # 更新用户信息
+        if user_info.get("email"):
+            update_data["provider_email"] = user_info["email"]
+        if user_info.get("name"):
+            update_data["provider_username"] = user_info["name"]
+        
+        # 更新token信息
+        if access_token is not None:
+            update_data["access_token"] = access_token
+        if refresh_token is not None:
+            update_data["refresh_token"] = refresh_token
+        if expires_at is not None:
             update_data["expires_at"] = expires_at
         
         result = await session.execute(

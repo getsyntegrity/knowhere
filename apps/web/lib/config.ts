@@ -20,6 +20,8 @@ export interface AppConfigType {
   icpUrl: string
   copyrightYear: number
   showIcp: boolean
+  // OAuth配置（运行时配置，不带NEXT_PUBLIC_前缀）
+  googleClientId: string
 }
 
 // 获取配置（用于服务端组件）
@@ -35,6 +37,9 @@ export const getDefaultConfig = (): AppConfigType => {
   const simpleCompanyName = getEnv('SIMPLE_COMPANY_NAME', '')
   const icpNumber = getEnv('ICP_NUMBER', '')
   const icpUrl = getEnv('ICP_URL', 'https://beian.miit.gov.cn/')
+  
+  // OAuth配置（运行时配置，不带NEXT_PUBLIC_前缀）
+  const googleClientId = getEnv('GOOGLE_CLIENT_ID', '')
   
   return {
     // 公司名称（运行时配置，不带 NEXT_PUBLIC_ 前缀）
@@ -54,6 +59,9 @@ export const getDefaultConfig = (): AppConfigType => {
     
     // 是否显示ICP备案信息（只有当icpNumber不为空时才显示）
     showIcp: icpNumber.trim() !== '',
+    
+    // OAuth配置（运行时配置）
+    googleClientId,
   }
 }
 

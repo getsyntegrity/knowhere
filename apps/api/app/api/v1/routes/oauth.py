@@ -28,7 +28,22 @@ async def google_login(
     db: AsyncSession = Depends(get_db)
 ):
     """Google OAuth登录"""
-    google_service = GoogleAuthService()
+    from shared.core.config import settings
+    
+    # 检查是否启用Google OAuth
+    if not settings.is_google_oauth_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth未启用。请配置GOOGLE_CLIENT_ID和GOOGLE_CLIENT_SECRET。"
+        )
+    
+    try:
+        google_service = GoogleAuthService()
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
     
     try:
         user = await google_service.authenticate_user(db, request.id_token)
@@ -40,7 +55,7 @@ async def google_login(
         
         # 生成JWT令牌 - 使用FastAPI Users的JWT策略
         from app.core.jwt import jwt_strategy
-        access_token = jwt_strategy.create_access_token({"sub": str(user.id)})
+        access_token = await jwt_strategy.write_token(user)
         
         return OAuthLoginResponse(
             access_token=access_token,
@@ -80,7 +95,7 @@ async def apple_login(
         
         # 生成JWT令牌 - 使用FastAPI Users的JWT策略
         from app.core.jwt import jwt_strategy
-        access_token = jwt_strategy.create_access_token({"sub": str(user.id)})
+        access_token = await jwt_strategy.write_token(user)
         
         return OAuthLoginResponse(
             access_token=access_token,
@@ -120,7 +135,7 @@ async def github_login(
         
         # 生成JWT令牌 - 使用FastAPI Users的JWT策略
         from app.core.jwt import jwt_strategy
-        access_token = jwt_strategy.create_access_token({"sub": str(user.id)})
+        access_token = await jwt_strategy.write_token(user)
         
         return OAuthLoginResponse(
             access_token=access_token,

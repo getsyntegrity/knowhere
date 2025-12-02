@@ -507,6 +507,10 @@ resource "aws_ecs_task_definition" "frontend" {
         {
           name      = "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
           valueFrom = aws_secretsmanager_secret.stripe_publishable_key.arn
+        },
+        {
+          name      = "GOOGLE_CLIENT_ID"
+          valueFrom = aws_secretsmanager_secret.google_client_id.arn
         }
       ]
       logConfiguration = {
