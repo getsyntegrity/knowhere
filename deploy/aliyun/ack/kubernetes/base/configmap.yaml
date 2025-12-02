@@ -82,6 +82,9 @@ data:
   STRIPE_PUBLISHABLE_KEY: "${STRIPE_PUBLISHABLE_KEY}"
   STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET}"
   
+  # 前端URL配置（用于Stripe Checkout回调）
+  FRONTEND_URL: "${FRONTEND_URL:-https://knowhereto.com}"
+  
   # OAuth配置（可选，如果配置了则启用对应的OAuth登录）
   # Google OAuth：如果配置了GOOGLE_CLIENT_ID和GOOGLE_CLIENT_SECRET，则启用Google登录
   # GitHub OAuth：如果配置了GITHUB_CLIENT_ID和GITHUB_CLIENT_SECRET，则启用GitHub登录

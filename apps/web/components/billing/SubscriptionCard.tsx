@@ -82,27 +82,42 @@ export function SubscriptionCard({
       <CardHeader className="text-center">
         <CardTitle className="text-2xl">{plan.name}</CardTitle>
         <CardDescription>
-          {plan.price === 0 ? (
-            <span className="text-2xl font-bold text-green-600">免费</span>
-          ) : (
+          {(() => {
+            const price = typeof plan.price === 'number' ? plan.price : parseFloat(String(plan.price || 0))
+            console.log(`[SubscriptionCard] plan.id=${plan.id}, plan.price=${plan.price}, price=${price}, type=${typeof plan.price}`)
+            if (price === 0 || isNaN(price)) {
+              return <span className="text-2xl font-bold text-green-600">免费</span>
+            }
+            const formattedPrice = price.toFixed(2)
+            return (
             <span className="text-2xl font-bold">
-              ¥{plan.price}
+                ¥{formattedPrice}
+                {plan.period && (
               <span className="text-sm font-normal text-muted-foreground">
                 /{plan.period}
+                  </span>
+                )}
               </span>
-            </span>
-          )}
+            )
+          })()}
         </CardDescription>
       </CardHeader>
       
       <CardContent className="space-y-4">
+        {plan.description && (
+          <p className="text-sm text-muted-foreground text-center">{plan.description}</p>
+        )}
+        
+        {plan.credits !== undefined && (
         <div className="text-center">
           <div className="text-3xl font-bold text-primary">
             {plan.credits.toLocaleString()}
           </div>
           <div className="text-sm text-muted-foreground">Credits/月</div>
         </div>
+        )}
         
+        {plan.features && plan.features.length > 0 && (
         <ul className="space-y-2">
           {plan.features.map((feature, index) => (
             <li key={index} className="flex items-center gap-2">
@@ -111,6 +126,7 @@ export function SubscriptionCard({
             </li>
           ))}
         </ul>
+        )}
         
         <Button
           className="w-full"

@@ -308,6 +308,10 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "MINERU_URL"
           value = var.mineru_url
+        },
+        {
+          name  = "FRONTEND_URL"
+          value = "https://${var.domain_name}"
         }
       ]
       secrets = [

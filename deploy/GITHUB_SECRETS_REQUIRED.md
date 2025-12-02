@@ -115,7 +115,25 @@
   - `PROD_GHCR_API_URL`: `https://api.knowhereto.ai`
   - `PROD_ACR_API_URL`: `https://api.knowhereto.com`
 
-### 8. Google OAuth 配置（可选）
+### 8. 前端URL配置（可选）
+
+用于API服务的运行时环境变量配置，用于Stripe Checkout成功/取消回调。
+
+| Secret 名称 | 说明 | 是否必需 | 使用场景 | 默认值 |
+|-----------|------|---------|---------|--------|
+| `STAGING_FRONTEND_URL` | Staging环境前端URL | ⚠️ 可选 | API服务运行时配置 | `https://test.knowhereto.ai` (AWS) 或 `https://test.knowhereto.com` (阿里云) |
+| `PROD_FRONTEND_URL` | Production环境前端URL | ⚠️ 可选 | API服务运行时配置 | `https://knowhereto.ai` (AWS) 或 `https://knowhereto.com` (阿里云) |
+
+**注意**:
+- 这些Secret用于API服务的运行时环境变量配置（不是构建时）
+- 如果不配置，系统会根据部署平台使用默认值
+- AWS环境默认使用`.ai`域名，阿里云环境默认使用`.com`域名
+- 配置方式：GitHub仓库 → Settings → Secrets and variables → Actions → New repository secret
+- 示例配置：
+  - `STAGING_FRONTEND_URL`: `https://test.knowhereto.ai` (AWS) 或 `https://test.knowhereto.com` (阿里云)
+  - `PROD_FRONTEND_URL`: `https://knowhereto.ai` (AWS) 或 `https://knowhereto.com` (阿里云)
+
+### 9. Google OAuth 配置（可选）
 
 **重要变更**: Google OAuth配置已改为**运行时配置**，不再在构建时注入。这样同一个镜像可以在不同环境中使用不同的配置。
 

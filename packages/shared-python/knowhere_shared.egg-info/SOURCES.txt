@@ -47,6 +47,8 @@ shared/models/database/job_state_audit_log.py
 shared/models/database/job_state_history.py
 shared/models/database/knowledge_base.py
 shared/models/database/oauth_provider.py
+shared/models/database/payment_record.py
+shared/models/database/stripe_price_config.py
 shared/models/database/subscription.py
 shared/models/database/usage_log.py
 shared/models/database/user.py

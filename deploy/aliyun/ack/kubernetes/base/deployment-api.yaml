@@ -122,6 +122,8 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: mineru-api-key
+        - name: FRONTEND_URL
+          value: ${FRONTEND_URL:-https://knowhereto.com}
         volumeMounts:
         - name: db-ssl-cert
           mountPath: /etc/db-ssl

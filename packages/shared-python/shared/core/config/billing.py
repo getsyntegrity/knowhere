@@ -63,6 +63,9 @@ class BillingConfig(BaseSettings):
     S3_UPLOADS_BUCKET: str = Field(default="", env="S3_UPLOADS_BUCKET")
     S3_RESULTS_BUCKET: str = Field(default="", env="S3_RESULTS_BUCKET")
     
+    # 前端URL配置（用于Stripe Checkout回调）
+    FRONTEND_URL: str = Field(default="http://localhost:3000", env="FRONTEND_URL", description="前端URL（用于Stripe Checkout成功/取消回调）")
+    
     def validate_billing_config(self) -> bool:
         """验证计费配置"""
         if self.STRIPE_SECRET_KEY:

@@ -2,7 +2,10 @@
 计费相关 API
 """
 
+from typing import Optional
+
 from shared.core.database import get_db
+from shared.core.config import settings
 from app.core.dependencies import get_current_user
 from shared.models.database.user import User
 from shared.models.schemas.billing import (BuyCreditsRequest,
@@ -10,10 +13,10 @@ from shared.models.schemas.billing import (BuyCreditsRequest,
                                         CreditsBalanceResponse,
                                         PaymentIntentResponse,
                                         SubscribeRequest, TransactionHistoryResponse,
-                                        UsageStatsResponse)
+                                        UsageStatsResponse, BuyCreditsPackageRequest)
 from app.services.billing.credits_service import CreditsService
 from app.services.billing.stripe_service import StripeService
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["Billing"])
@@ -29,12 +32,13 @@ async def subscribe_plan(
     stripe_service = StripeService()
     
     try:
-        # 构建正确的成功和取消URL
-        base_url = "http://localhost:3000"  # 开发环境，生产环境需要配置
-        success_url = f"{base_url}/billing?success=true&plan={request.plan_id}"
-        cancel_url = f"{base_url}/billing?canceled=true"
+        # 使用环境变量配置的前端URL
+        frontend_url = settings.FRONTEND_URL
+        success_url = f"{frontend_url}/billing?success=true&plan={request.plan_id}"
+        cancel_url = f"{frontend_url}/billing?canceled=true"
         
         checkout_url = await stripe_service.create_checkout_session(
+            db=db,
             user_id=str(current_user.id),
             plan_id=request.plan_id,
             success_url=success_url,
@@ -70,6 +74,7 @@ async def buy_credits(
         payment_intent = await stripe_service.create_payment_intent(
             user_id=str(current_user.id),
             amount=amount_cents,
+            credits_amount=request.credits_amount,
             currency='cny'
         )
         
@@ -221,6 +226,140 @@ async def get_transaction_history(
         )
 
 
+@router.get("/price-configs", summary="获取价格配置列表")
+async def get_price_configs(
+    product_type: Optional[str] = Query(None, description="产品类型: subscription 或 credits_package"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取价格配置列表（订阅或Credits包）"""
+    try:
+        from app.services.billing.price_config_service import PriceConfigService
+        
+        price_config_service = PriceConfigService()
+        
+        if product_type == 'subscription':
+            # 获取所有订阅类型配置
+            configs = await price_config_service.repository.get_all_active(db)
+            subscription_configs = [c for c in configs if c.product_type == 'subscription']
+            return {
+                "subscriptions": [
+                    {
+                        "id": config.plan_id,
+                        "plan_id": config.plan_id,
+                        "price_id": config.price_id,
+                        "name": config.extra_metadata.get('display_name', config.plan_id.upper()) if config.extra_metadata else config.plan_id.upper(),
+                        "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
+                        "features": config.extra_metadata.get('features', []) if config.extra_metadata else [],
+                        "popular": config.extra_metadata.get('frontend_config', {}).get('popular', False) if config.extra_metadata else False,
+                        "amount_cents": config.amount_cents,
+                        "currency": config.currency,
+                        "metadata": config.extra_metadata or {}
+                    }
+                    for config in subscription_configs
+                ],
+                "credits_packages": []
+            }
+        elif product_type == 'credits_package':
+            # 获取所有Credits包配置
+            credits_configs = await price_config_service.get_all_credits_packages(db)
+            return {
+                "subscriptions": [],
+                "credits_packages": [
+                    {
+                        "id": config.plan_id,
+                        "plan_id": config.plan_id,
+                        "price_id": config.price_id,
+                        "name": config.extra_metadata.get('display_name', f"{config.credits_amount} Credits") if config.extra_metadata else f"{config.credits_amount} Credits",
+                        "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
+                        "credits_amount": config.credits_amount,
+                        "amount_cents": config.amount_cents,
+                        "currency": config.currency,
+                        "metadata": config.extra_metadata or {}
+                    }
+                    for config in credits_configs
+                ]
+            }
+        else:
+            # 获取所有配置
+            configs = await price_config_service.repository.get_all_active(db)
+            subscriptions = [c for c in configs if c.product_type == 'subscription']
+            credits_packages = [c for c in configs if c.product_type == 'credits_package']
+            
+            return {
+                "subscriptions": [
+                    {
+                        "id": config.plan_id,
+                        "plan_id": config.plan_id,
+                        "price_id": config.price_id,
+                        "name": config.extra_metadata.get('display_name', config.plan_id.upper()) if config.extra_metadata else config.plan_id.upper(),
+                        "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
+                        "features": config.extra_metadata.get('features', []) if config.extra_metadata else [],
+                        "popular": config.extra_metadata.get('frontend_config', {}).get('popular', False) if config.extra_metadata else False,
+                        "amount_cents": config.amount_cents,
+                        "currency": config.currency,
+                        "metadata": config.extra_metadata or {}
+                    }
+                    for config in subscriptions
+                ],
+                "credits_packages": [
+                    {
+                        "id": config.plan_id,
+                        "plan_id": config.plan_id,
+                        "price_id": config.price_id,
+                        "name": config.extra_metadata.get('display_name', f"{config.credits_amount} Credits") if config.extra_metadata else f"{config.credits_amount} Credits",
+                        "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
+                        "credits_amount": config.credits_amount,
+                        "amount_cents": config.amount_cents,
+                        "currency": config.currency,
+                        "metadata": config.extra_metadata or {}
+                    }
+                    for config in credits_packages
+                ]
+            }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取价格配置失败: {str(e)}"
+        )
+
+
+@router.post("/buy-credits-package", summary="通过价格ID购买Credits包")
+async def buy_credits_package(
+    request: BuyCreditsPackageRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """通过价格ID购买Credits包"""
+    stripe_service = StripeService()
+    
+    try:
+        # 使用环境变量配置的前端URL
+        frontend_url = settings.FRONTEND_URL
+        success_url = f"{frontend_url}/billing?success=true&type=credits_package"
+        cancel_url = f"{frontend_url}/billing?canceled=true"
+        
+        checkout_url = await stripe_service.create_checkout_session_for_credits_package(
+            db=db,
+            user_id=str(current_user.id),
+            price_id=request.price_id,
+            success_url=success_url,
+            cancel_url=cancel_url
+        )
+        
+        return CheckoutSessionResponse(
+            checkout_url=checkout_url,
+            session_id=""
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"创建Credits包购买失败: {str(e)}"
+        )
+
+
 @router.post("/webhook", summary="Stripe Webhook")
 async def stripe_webhook(
     request: Request,
@@ -233,13 +372,13 @@ async def stripe_webhook(
         payload = await request.body()
         sig_header = request.headers.get('stripe-signature')
         
-        result = await stripe_service.handle_webhook(payload, sig_header)
+        result = await stripe_service.handle_webhook(db, payload, sig_header)
         
         # 如果是订阅完成事件，发送确认邮件
-        if result.get('event_type') == 'checkout.session.completed':
+        if result.get('event_type') == 'checkout.session.completed' and result.get('payment_type') == 'subscription':
             await _send_purchase_confirmation_email(
                 user_id=result.get('user_id'),
-                plan_type=result.get('plan_type'),
+                plan_type=result.get('plan_id'),
                 amount=result.get('amount', 0),
                 db=db
             )
