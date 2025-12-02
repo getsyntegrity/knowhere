@@ -84,7 +84,11 @@ data:
   
   # OAuth配置（可选，如果配置了则启用对应的OAuth登录）
   # Google OAuth：如果配置了GOOGLE_CLIENT_ID和GOOGLE_CLIENT_SECRET，则启用Google登录
-  # 阿里云环境通常不配置Google OAuth，如需启用只需配置这两个变量即可
+  # GitHub OAuth：如果配置了GITHUB_CLIENT_ID和GITHUB_CLIENT_SECRET，则启用GitHub登录
+  # Apple OAuth：如果配置了APPLE_CLIENT_ID和APPLE_CLIENT_SECRET，则启用Apple登录
+  # 阿里云环境通常不配置这些OAuth，如需启用只需配置对应的变量即可
+  # GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+  # GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET}"
   GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID}"
   GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET}"
   APPLE_CLIENT_ID: "${APPLE_CLIENT_ID}"

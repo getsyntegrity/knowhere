@@ -26,6 +26,8 @@ export function useAppConfigContext(): AppConfigType {
       copyrightYear: new Date().getFullYear(),
       showIcp: false,
       googleClientId: '',
+      githubClientId: '',
+      appleClientId: '',
     }
   }
   return config

@@ -3,7 +3,7 @@
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
-import { getGitHubAuthUrl, getAppleAuthUrl, isGoogleOAuthEnabled } from '@/lib/oauth'
+import { getGitHubAuthUrl, getAppleAuthUrl, isGoogleOAuthEnabled, isGitHubOAuthEnabled, isAppleOAuthEnabled } from '@/lib/oauth'
 import { useAppConfigContext } from '@/components/providers/ConfigProvider'
 import { Github, Apple } from 'lucide-react'
 import { GoogleLogin } from '@react-oauth/google'
@@ -20,7 +20,11 @@ export function OAuthButtons({ onSuccess, onError }: OAuthButtonsProps) {
   
   // 从Context获取OAuth配置（运行时配置）
   const googleClientId = config.googleClientId
+  const githubClientId = config.githubClientId
+  const appleClientId = config.appleClientId
   const googleEnabled = isGoogleOAuthEnabled(googleClientId)
+  const githubEnabled = isGitHubOAuthEnabled(githubClientId)
+  const appleEnabled = isAppleOAuthEnabled(appleClientId)
 
   const handleOAuthSuccess = async (provider: 'google' | 'apple' | 'github', token: string) => {
     try {
@@ -46,12 +50,12 @@ export function OAuthButtons({ onSuccess, onError }: OAuthButtonsProps) {
   }
 
   const handleGitHubClick = () => {
-    const authUrl = getGitHubAuthUrl()
+    const authUrl = getGitHubAuthUrl(githubClientId)
     window.location.href = authUrl
   }
 
   const handleAppleClick = () => {
-    const authUrl = getAppleAuthUrl()
+    const authUrl = getAppleAuthUrl(appleClientId)
     window.location.href = authUrl
   }
 
@@ -72,25 +76,29 @@ export function OAuthButtons({ onSuccess, onError }: OAuthButtonsProps) {
         />
       )}
 
-      {/* GitHub登录 */}
-      <Button
-        variant="outline"
-        onClick={handleGitHubClick}
-        className="w-full h-11"
-      >
-        <Github className="w-5 h-5 mr-2" />
-        使用 GitHub 继续
-      </Button>
+      {/* GitHub登录 - 仅当配置了GitHub Client ID时显示 */}
+      {githubEnabled && (
+        <Button
+          variant="outline"
+          onClick={handleGitHubClick}
+          className="w-full h-11"
+        >
+          <Github className="w-5 h-5 mr-2" />
+          使用 GitHub 继续
+        </Button>
+      )}
 
-      {/* Apple登录 */}
-      <Button
-        variant="outline"
-        onClick={handleAppleClick}
-        className="w-full h-11"
-      >
-        <Apple className="w-5 h-5 mr-2" />
-        使用 Apple 继续
-      </Button>
+      {/* Apple登录 - 仅当配置了Apple Client ID时显示 */}
+      {appleEnabled && (
+        <Button
+          variant="outline"
+          onClick={handleAppleClick}
+          className="w-full h-11"
+        >
+          <Apple className="w-5 h-5 mr-2" />
+          使用 Apple 继续
+        </Button>
+      )}
 
       {/* 分隔线 */}
       <div className="relative">

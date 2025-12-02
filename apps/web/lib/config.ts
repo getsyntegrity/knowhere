@@ -22,6 +22,8 @@ export interface AppConfigType {
   showIcp: boolean
   // OAuth配置（运行时配置，不带NEXT_PUBLIC_前缀）
   googleClientId: string
+  githubClientId: string
+  appleClientId: string
 }
 
 // 获取配置（用于服务端组件）
@@ -40,6 +42,8 @@ export const getDefaultConfig = (): AppConfigType => {
   
   // OAuth配置（运行时配置，不带NEXT_PUBLIC_前缀）
   const googleClientId = getEnv('GOOGLE_CLIENT_ID', '')
+  const githubClientId = getEnv('GITHUB_CLIENT_ID', '')
+  const appleClientId = getEnv('APPLE_CLIENT_ID', '')
   
   return {
     // 公司名称（运行时配置，不带 NEXT_PUBLIC_ 前缀）
@@ -62,6 +66,8 @@ export const getDefaultConfig = (): AppConfigType => {
     
     // OAuth配置（运行时配置）
     googleClientId,
+    githubClientId,
+    appleClientId,
   }
 }
 
