@@ -87,6 +87,4 @@ LICENSE.txt
 .terraform
 
 doc-deploy/
-deploy/aliyun/scripts/env.template
 deploy/aliyun/ack/*.md
-deploy/aws-ec2/
