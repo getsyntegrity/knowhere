@@ -54,6 +54,7 @@ apps/worker/debug_parse.py
 apps/worker/debug_users/
 s3-notification.json
 users/
+test_*.csv
 
 # Deploy files (contain sensitive information)
 # AWS Terraform
