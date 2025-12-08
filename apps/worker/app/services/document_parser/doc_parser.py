@@ -189,6 +189,10 @@ def iter_block_items(doc_data):
         toc_field_active = False
 
         for elem in body.iterchildren():
+            # 跳过注释节点（Comment）和处理指令（PI） 注释节点的 tag 是一个函数对象，不是字符串
+            if not isinstance(elem.tag, str):
+                continue
+            
             tag = etree.QName(elem.tag).localname
 
             # --- text paras ---
