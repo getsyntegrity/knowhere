@@ -82,6 +82,11 @@ services:
     networks:
       - knowhere-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
       interval: 30s
@@ -146,6 +151,11 @@ services:
     networks:
       - knowhere-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "python", "-c", "from shared.core.celery_app import celery_app; celery_app.control.inspect().stats()"]
       interval: 30s
