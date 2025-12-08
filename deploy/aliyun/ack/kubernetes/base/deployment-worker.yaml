@@ -34,7 +34,7 @@ spec:
       containers:
       - name: worker
         image: ${REGISTRY}/knowhere-worker:${IMAGE_TAG}
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         envFrom:
         - configMapRef:
             name: knowhere-config
