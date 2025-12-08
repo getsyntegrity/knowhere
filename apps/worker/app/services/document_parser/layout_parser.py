@@ -456,7 +456,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
         logger.debug("🚀smart parse => interpreting hierarchy patterns...")
         level_html = df2html(basic_df.drop(columns=["reason"]))
         logger.debug(f"HTML转换完成，长度: {len(level_html)} 字符")
-        ot_limit = int(len(level_html)*1.2)  # min(int(len(level_html)*1.2), 8192) #int(len(level_html)*1.2)
+        ot_limit = min(int(len(level_html)*1.2), 8192) #min(int(len(level_html)*1.2), 8192) int(len(level_html)*1.2)
 
         paras = {"max_tokens": ot_limit, "max_depth": max_depth}
         prompt, temperature, top_p, max_tokens = build_prompt(task="eval-headings", texts=level_html, query="", paras=paras)
