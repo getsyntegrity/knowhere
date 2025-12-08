@@ -309,7 +309,7 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     if not llm_paras['doc_type'] in "templates":
         heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse)
 
-    if len(heading_candidates)>0:
+    if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique
         outline_dic = dict(zip(heading_candidates['id'], heading_candidates['level']))
     else:
