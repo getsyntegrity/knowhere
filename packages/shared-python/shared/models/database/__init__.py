@@ -11,6 +11,8 @@ from .job import Job
 from .job_result import JobChunk, JobResult
 from .subscription import Subscription
 from .usage_log import UsageLog
+from .stripe_price_config import StripePriceConfig
+from .payment_record import PaymentRecord
 
 # 按依赖顺序导入模型
 # 1. 先导入基础模型（没有外键依赖的）
@@ -31,5 +33,7 @@ __all__ = [
     "Job",
     "JobResult",
     "JobChunk",
+    "StripePriceConfig",
+    "PaymentRecord",
     # "OAuthProvider"
 ]

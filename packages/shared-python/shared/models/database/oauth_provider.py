@@ -33,7 +33,10 @@ class OAuthProvider(Base):
     
     # 唯一约束
     __table_args__ = (
-        UniqueConstraint('provider', 'provider_user_id', name='uk_provider_user'),
+        # 确保每个用户的每个OAuth类型只有一条记录
+        UniqueConstraint('user_id', 'provider', name='uk_user_provider'),
+        # 防止同一个第三方账号被多个用户绑定
+        UniqueConstraint('provider', 'provider_user_id', name='uk_provider_user_id'),
     )
     
     def __repr__(self):

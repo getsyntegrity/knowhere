@@ -12,7 +12,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router, tags=["认证"])
 
 # 注册OAuth认证路由
-api_router.include_router(oauth.router, prefix="/auth", tags=["OAuth认证"])
+api_router.include_router(oauth.router, prefix="/auth/oauth", tags=["OAuth认证"])
 
 # 注册API Key管理路由
 api_router.include_router(api_key.router, prefix="/auth", tags=["API Key管理"])

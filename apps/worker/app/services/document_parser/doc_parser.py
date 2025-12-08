@@ -189,6 +189,10 @@ def iter_block_items(doc_data):
         toc_field_active = False
 
         for elem in body.iterchildren():
+            # 跳过注释节点（Comment）和处理指令（PI） 注释节点的 tag 是一个函数对象，不是字符串
+            if not isinstance(elem.tag, str):
+                continue
+            
             tag = etree.QName(elem.tag).localname
 
             # --- text paras ---
@@ -305,7 +309,7 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     if not llm_paras['doc_type'] in "templates":
         heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse)
 
-    if len(heading_candidates)>0:
+    if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique
         outline_dic = dict(zip(heading_candidates['id'], heading_candidates['level']))
     else:

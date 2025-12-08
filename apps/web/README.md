@@ -159,23 +159,22 @@ apps/web/
 
 ## 环境变量
 
-| 变量名 | 描述 | 必需 | 默认值 |
-|--------|------|------|--------|
-| `NEXT_PUBLIC_API_URL` | API服务器地址 | 是 | - |
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth客户端ID | 否 | - |
-| `NEXT_PUBLIC_GITHUB_CLIENT_ID` | GitHub OAuth客户端ID | 否 | - |
-| `NEXT_PUBLIC_APPLE_CLIENT_ID` | Apple OAuth客户端ID | 否 | - |
-| `COMPANY_NAME` | 公司名称（显示在页脚，运行时配置） | 否 | Knowhere AI |
-| `SIMPLE_COMPANY_NAME` | 公司简称（运行时配置） | 否 | - |
-| `ICP_NUMBER` | ICP备案号（国内部署时使用，运行时配置） | 否 | - |
-| `ICP_URL` | ICP备案链接（运行时配置） | 否 | https://beian.miit.gov.cn/ |
+| 变量名 | 描述 | 必需 | 默认值 | 配置方式 |
+|--------|------|------|--------|---------|
+| `NEXT_PUBLIC_API_URL` | API服务器地址 | 是 | - | 构建时注入 |
+| `GOOGLE_CLIENT_ID` | Google OAuth客户端ID（可选） | 否 | - | 运行时配置 |
+| `COMPANY_NAME` | 公司名称（显示在页脚） | 否 | Knowhere AI | 运行时配置 |
+| `SIMPLE_COMPANY_NAME` | 公司简称 | 否 | - | 运行时配置 |
+| `ICP_NUMBER` | ICP备案号（国内部署时使用） | 否 | - | 运行时配置 |
+| `ICP_URL` | ICP备案链接 | 否 | https://beian.miit.gov.cn/ | 运行时配置 |
 
 **注意**：
-- 这些配置在部署时通过环境变量设置，不带 `NEXT_PUBLIC_` 前缀
-- 服务端组件在 SSR 时读取环境变量，通过 React Context 传递给客户端组件
-- 如果设置了 `ICP_NUMBER`，页脚会自动显示备案信息
-- 海外部署时，只需设置 `COMPANY_NAME`，不设置 ICP 相关变量即可隐藏备案信息
-- 支持运行时动态配置，无需重新构建镜像
+- **构建时配置**: `NEXT_PUBLIC_API_URL`必须在构建时注入（会被内联到客户端代码中）
+- **运行时配置**: `GOOGLE_CLIENT_ID`、`COMPANY_NAME`等配置通过运行时环境变量设置（不带`NEXT_PUBLIC_`前缀）
+- **服务端读取**: 服务端组件在SSR时读取环境变量，通过React Context传递给客户端组件
+- **镜像复用**: 运行时配置支持同一个镜像在不同环境中使用不同的配置，无需重新构建
+- **Google OAuth**: 配置驱动 - 如果配置了`GOOGLE_CLIENT_ID`则启用Google登录，未配置则不显示Google登录按钮
+- **ICP备案**: 如果设置了`ICP_NUMBER`，页脚会自动显示备案信息；海外部署时不设置即可隐藏
 
 ## 贡献指南
 

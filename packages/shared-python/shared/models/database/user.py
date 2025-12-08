@@ -44,6 +44,12 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         nullable=True, 
         default=utc_now
     )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, 
+        nullable=True, 
+        default=utc_now,
+        onupdate=utc_now
+    )
     
     # 开放API管理相关字段
     provider_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # 认证提供商类型

@@ -319,6 +319,15 @@ cp deploy/config/aws/env.template deploy/config/aws/.env.dev
 # 编辑配置文件，填入实际值
 ```
 
+**重要配置项**:
+- `GOOGLE_CLIENT_ID`: Google OAuth客户端ID（可选，运行时配置）
+- `GOOGLE_CLIENT_SECRET`: Google OAuth客户端密钥（可选，运行时配置）
+
+**注意**: 
+- 每个环境（dev/test/prod）需要使用不同的Google OAuth应用，确保在Google Cloud Console中为每个环境创建独立的OAuth 2.0客户端ID
+- `GOOGLE_CLIENT_ID`是运行时配置（不带`NEXT_PUBLIC_`前缀），同一个镜像可以在不同环境中使用不同的配置
+- **配置驱动**: 如果配置了`GOOGLE_CLIENT_ID`和`GOOGLE_CLIENT_SECRET`，则启用Google登录；未配置则不显示Google登录按钮
+
 #### 阿里云环境变量
 
 配置文件位置：`deploy/config/aliyun/env.template`
@@ -329,6 +338,56 @@ cp deploy/config/aliyun/env.template deploy/config/aliyun/.env.dev
 
 # 编辑配置文件，填入实际值
 ```
+
+**重要配置项**:
+- **默认不配置**Google OAuth相关变量
+- 如需启用Google登录，只需配置`GOOGLE_CLIENT_ID`和`GOOGLE_CLIENT_SECRET`即可
+
+### Google OAuth 登录配置
+
+Google OAuth登录功能采用配置驱动方式：如果配置了`GOOGLE_CLIENT_ID`和`GOOGLE_CLIENT_SECRET`，则启用Google登录；未配置则不显示Google登录按钮。
+
+#### AWS环境配置
+
+1. **创建Google OAuth应用**:
+   - 访问 [Google Cloud Console](https://console.cloud.google.com/)
+   - 创建OAuth 2.0客户端ID
+   - 为每个环境（dev/test/prod）创建独立的客户端ID
+   - 配置授权重定向URI：`https://<your-domain>/auth/callback/google`
+
+2. **配置环境变量**:
+   - 在`deploy/config/aws/.env.<environment>`中配置：
+     ```bash
+     GOOGLE_CLIENT_ID=your-google-client-id
+     GOOGLE_CLIENT_SECRET=your-google-client-secret
+     ```
+
+3. **配置Terraform变量**（用于部署）:
+   - 在`deploy/aws/terraform/terraform.tfvars`中配置：
+     ```hcl
+     google_client_id = "your-google-client-id"
+     google_client_secret = "your-google-client-secret"
+     ```
+   - Terraform会自动将配置存储到AWS Secrets Manager
+   - **运行时注入**: `GOOGLE_CLIENT_ID`会在容器运行时从Secrets Manager注入，前端通过服务端组件读取并传递给客户端组件
+   - **镜像复用**: 同一个镜像可以在不同环境中使用，只需在运行时设置不同的环境变量
+
+#### 阿里云环境配置
+
+- **默认不配置**Google OAuth相关变量，前端不会显示Google登录按钮
+- **如需启用**: 只需配置`GOOGLE_CLIENT_ID`和`GOOGLE_CLIENT_SECRET`，系统会自动启用Google登录
+- **配置驱动**: 有配置就启用，没配置就不显示，无需区分平台
+
+#### 多环境配置说明
+
+- **dev环境**: 使用本地`.env`文件配置，用于本地开发测试
+- **test环境**: 如需启用Google OAuth，使用独立的Google OAuth应用，配置在对应环境的`.env`文件中
+- **prod环境**: 如需启用Google OAuth，使用独立的Google OAuth应用，配置在对应环境的`.env`文件中
+
+**安全建议**:
+- 每个环境使用不同的Google OAuth应用，确保环境隔离
+- Google OAuth密钥存储在AWS Secrets Manager中，不要硬编码
+- 定期轮换OAuth密钥
 
 ## 版本管理
 

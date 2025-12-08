@@ -19,6 +19,11 @@ class BuyCreditsRequest(BaseModel):
     payment_method_id: Optional[str] = Field(default=None, description="支付方式ID")
 
 
+class BuyCreditsPackageRequest(BaseModel):
+    """通过价格ID购买Credits包请求"""
+    price_id: str = Field(..., description="Stripe价格ID")
+
+
 class SubscriptionResponse(BaseModel):
     """订阅信息响应"""
     id: str

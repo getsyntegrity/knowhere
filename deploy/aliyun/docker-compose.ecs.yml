@@ -75,6 +75,7 @@ services:
       - ENVIRONMENT=staging
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
+      - FRONTEND_URL=${FRONTEND_URL:-https://test.knowhereto.com}
     volumes:
       - /var/lib/knowhere/logs:/app/logs
       - /var/lib/knowhere/users:/app/users
