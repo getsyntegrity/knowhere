@@ -1,40 +1,48 @@
-// OAuth配置
-export const OAUTH_CONFIG = {
-  google: {
-    clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '',
-    scope: 'openid email profile',
-  },
-  github: {
-    clientId: process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID || '',
-    scope: 'user:email',
-  },
-  apple: {
-    clientId: process.env.NEXT_PUBLIC_APPLE_CLIENT_ID || '',
-    scope: 'name email',
-  },
+// OAuth配置（从Context获取，不再使用NEXT_PUBLIC_环境变量）
+// 注意：这些配置现在通过ConfigProvider在运行时传递
+
+// 判断是否启用Google OAuth（仅检查配置是否存在）
+export function isGoogleOAuthEnabled(googleClientId: string): boolean {
+  return googleClientId !== ''
+}
+
+// 判断是否启用GitHub OAuth（仅检查配置是否存在）
+export function isGitHubOAuthEnabled(githubClientId: string): boolean {
+  return githubClientId !== ''
+}
+
+// 判断是否启用Apple OAuth（仅检查配置是否存在）
+export function isAppleOAuthEnabled(appleClientId: string): boolean {
+  return appleClientId !== ''
 }
 
 // GitHub OAuth URL生成
-export function getGitHubAuthUrl() {
+export function getGitHubAuthUrl(githubClientId: string) {
+  const state = generateRandomState()
+  saveOAuthState(state) // 保存state以便后续验证
+  
   const params = new URLSearchParams({
-    client_id: OAUTH_CONFIG.github.clientId,
+    client_id: githubClientId,
     redirect_uri: `${window.location.origin}/auth/callback/github`,
-    scope: OAUTH_CONFIG.github.scope,
-    state: generateRandomState(),
+    scope: 'user:email', // 需要user:email scope以获取用户邮箱
+    state: state,
   })
   
   return `https://github.com/login/oauth/authorize?${params.toString()}`
 }
 
 // Apple OAuth URL生成
-export function getAppleAuthUrl() {
+export function getAppleAuthUrl(appleClientId: string) {
+  const state = generateRandomState()
+  saveOAuthState(state) // 保存state以便后续验证
+  
   const params = new URLSearchParams({
-    client_id: OAUTH_CONFIG.apple.clientId,
+    client_id: appleClientId,
     redirect_uri: `${window.location.origin}/auth/callback/apple`,
     response_type: 'code id_token',
-    scope: OAUTH_CONFIG.apple.scope,
+    scope: 'name email',
     response_mode: 'form_post',
-    state: generateRandomState(),
+    state: state,
   })
   
   return `https://appleid.apple.com/auth/authorize?${params.toString()}`

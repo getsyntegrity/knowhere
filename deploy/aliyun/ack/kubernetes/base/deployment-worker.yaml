@@ -20,15 +20,17 @@ spec:
       ${IMAGE_PULL_SECRETS}
       affinity:
         podAntiAffinity:
-          # 使用required确保每个节点最多一个worker pod
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - knowhere-worker
-            topologyKey: kubernetes.io/hostname
+          # 使用preferred优先分布在不同节点，但允许必要时在同一节点运行
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - knowhere-worker
+              topologyKey: kubernetes.io/hostname
       containers:
       - name: worker
         image: ${REGISTRY}/knowhere-worker:${IMAGE_TAG}
@@ -123,10 +125,10 @@ spec:
               key: mineru-api-key
         resources:
           requests:
-            cpu: 1000m
+            cpu: 700m
             memory: 2Gi
           limits:
-            cpu: 2000m
+            cpu: 1500m
             memory: 4Gi
         livenessProbe:
           exec:

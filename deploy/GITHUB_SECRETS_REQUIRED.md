@@ -115,6 +115,47 @@
   - `PROD_GHCR_API_URL`: `https://api.knowhereto.ai`
   - `PROD_ACR_API_URL`: `https://api.knowhereto.com`
 
+### 8. 前端URL配置（可选）
+
+用于API服务的运行时环境变量配置，用于Stripe Checkout成功/取消回调。
+
+| Secret 名称 | 说明 | 是否必需 | 使用场景 | 默认值 |
+|-----------|------|---------|---------|--------|
+| `STAGING_FRONTEND_URL` | Staging环境前端URL | ⚠️ 可选 | API服务运行时配置 | `https://test.knowhereto.ai` (AWS) 或 `https://test.knowhereto.com` (阿里云) |
+| `PROD_FRONTEND_URL` | Production环境前端URL | ⚠️ 可选 | API服务运行时配置 | `https://knowhereto.ai` (AWS) 或 `https://knowhereto.com` (阿里云) |
+
+**注意**:
+- 这些Secret用于API服务的运行时环境变量配置（不是构建时）
+- 如果不配置，系统会根据部署平台使用默认值
+- AWS环境默认使用`.ai`域名，阿里云环境默认使用`.com`域名
+- 配置方式：GitHub仓库 → Settings → Secrets and variables → Actions → New repository secret
+- 示例配置：
+  - `STAGING_FRONTEND_URL`: `https://test.knowhereto.ai` (AWS) 或 `https://test.knowhereto.com` (阿里云)
+  - `PROD_FRONTEND_URL`: `https://knowhereto.ai` (AWS) 或 `https://knowhereto.com` (阿里云)
+
+### 9. Google OAuth 配置（可选）
+
+**重要变更**: Google OAuth配置已改为**运行时配置**，不再在构建时注入。这样同一个镜像可以在不同环境中使用不同的配置。
+
+| Secret 名称 | 说明 | 是否必需 | 使用场景 | 默认值 |
+|-----------|------|---------|---------|--------|
+| ~~`GOOGLE_CLIENT_ID_TEST`~~ | ~~已废弃~~ | ❌ 不再需要 | ~~不再使用~~ | - |
+| ~~`GOOGLE_CLIENT_ID_PROD`~~ | ~~已废弃~~ | ❌ 不再需要 | ~~不再使用~~ | - |
+
+**重要说明**:
+- **运行时配置**: `GOOGLE_CLIENT_ID`现在通过运行时环境变量配置（不带`NEXT_PUBLIC_`前缀）
+- **镜像复用**: 同一个镜像可以在不同环境中使用，只需在运行时设置不同的环境变量
+- **配置驱动**: 如果配置了`GOOGLE_CLIENT_ID`和`GOOGLE_CLIENT_SECRET`，则启用Google登录；未配置则不显示Google登录按钮
+- **无需区分平台**: 不再需要区分AWS或阿里云环境，只需检查是否配置了OAuth凭证即可
+- **配置方式**:
+  - **AWS环境**: 通过Terraform配置，`GOOGLE_CLIENT_ID`存储在AWS Secrets Manager中，运行时注入到容器
+  - **阿里云环境**: 默认不配置，如需启用只需配置`GOOGLE_CLIENT_ID`和`GOOGLE_CLIENT_SECRET`即可
+- **配置步骤**:
+  1. 在Google Cloud Console中创建OAuth 2.0客户端ID
+  2. 为每个环境（test/prod）创建独立的客户端ID
+  3. 在AWS环境中，通过Terraform配置`google_client_id`变量，系统会自动存储到Secrets Manager
+  4. 后端`GOOGLE_CLIENT_SECRET`同样通过Terraform配置到AWS Secrets Manager
+
 ---
 
 ## 配置说明

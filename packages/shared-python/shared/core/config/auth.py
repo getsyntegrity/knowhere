@@ -34,6 +34,33 @@ class AuthConfig(BaseSettings):
     APPLE_CLIENT_ID: Optional[str] = Field(default=None, description="Apple OAuth 客户端ID")
     APPLE_CLIENT_SECRET: Optional[str] = Field(default=None, description="Apple OAuth 客户端密钥")
     
+    def is_google_oauth_enabled(self) -> bool:
+        """判断是否启用Google OAuth - 仅检查配置是否存在"""
+        return (
+            self.GOOGLE_CLIENT_ID is not None and
+            self.GOOGLE_CLIENT_ID != "" and
+            self.GOOGLE_CLIENT_SECRET is not None and
+            self.GOOGLE_CLIENT_SECRET != ""
+        )
+    
+    def is_github_oauth_enabled(self) -> bool:
+        """判断是否启用GitHub OAuth - 仅检查配置是否存在"""
+        return (
+            self.GITHUB_CLIENT_ID is not None and
+            self.GITHUB_CLIENT_ID != "" and
+            self.GITHUB_CLIENT_SECRET is not None and
+            self.GITHUB_CLIENT_SECRET != ""
+        )
+    
+    def is_apple_oauth_enabled(self) -> bool:
+        """判断是否启用Apple OAuth - 仅检查配置是否存在"""
+        return (
+            self.APPLE_CLIENT_ID is not None and
+            self.APPLE_CLIENT_ID != "" and
+            self.APPLE_CLIENT_SECRET is not None and
+            self.APPLE_CLIENT_SECRET != ""
+        )
+    
     def validate_auth_config(self) -> bool:
         """验证认证配置"""
         required_fields = [

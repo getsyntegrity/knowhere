@@ -16,6 +16,11 @@ class AppleAuthService(OAuthService):
     
     def __init__(self):
         super().__init__()
+        # 验证配置
+        if not settings.is_apple_oauth_enabled():
+            raise ValueError(
+                "Apple OAuth未启用。请配置APPLE_CLIENT_ID和APPLE_CLIENT_SECRET"
+            )
         self.client_id = settings.APPLE_CLIENT_ID
         self.client_secret = settings.APPLE_CLIENT_SECRET
     
@@ -30,7 +35,8 @@ class AppleAuthService(OAuthService):
             
             return user
         except Exception as e:
-            print(f"Apple认证失败: {e}")
+            from loguru import logger
+            logger.error(f"Apple认证失败: {e}", exc_info=True)
             return None
     
     async def get_user_info(self, access_token: str) -> Dict[str, Any]:
@@ -70,11 +76,24 @@ class AppleAuthService(OAuthService):
                 issuer="https://appleid.apple.com"
             )
             
+            # Apple ID Token中的name字段只在首次登录时提供，后续登录可能为空
+            name_parts = payload.get("name", {})
+            if isinstance(name_parts, dict):
+                first_name = name_parts.get("firstName", "")
+                last_name = name_parts.get("lastName", "")
+                full_name = f"{first_name} {last_name}".strip()
+            else:
+                full_name = ""
+            
             return {
                 "id": payload["sub"],
                 "email": payload.get("email"),
-                "name": payload.get("name", {}).get("firstName", "") + " " + payload.get("name", {}).get("lastName", ""),
-                "verified_email": True  # Apple ID Token已验证
+                "name": full_name or payload.get("email", "").split("@")[0],  # 如果没有name，使用email前缀
+                "picture": None,  # Apple不提供头像URL
+                "verified_email": True,  # Apple ID Token已验证
+                "access_token": None,  # Apple使用ID Token，不需要单独的access_token
+                "refresh_token": None,
+                "expires_at": None
             }
             
         except Exception as e:

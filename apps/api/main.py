@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
         logger.info("开始运行数据库迁移...")
         # 使用subprocess运行alembic upgrade head
         result = subprocess.run([
-            sys.executable, "-m", "alembic", "upgrade", "head"
+            sys.executable, "-m", "alembic", "upgrade", "heads"
         ], cwd=str(Path(__file__).parent), capture_output=True, text=True)
         
         if result.returncode == 0:

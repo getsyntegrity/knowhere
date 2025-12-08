@@ -134,12 +134,17 @@ build_frontend() {
     fi
     
     # 构建镜像（从项目根目录，使用新的Dockerfile路径）
+    # 注意：Google OAuth配置（GOOGLE_CLIENT_ID）不再在构建时注入
+    # 这些配置通过运行时环境变量设置（不带NEXT_PUBLIC_前缀）
+    NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://apitest.knowhereto.ai}
+    
     docker build -t $FRONTEND_IMAGE:$ENVIRONMENT-latest \
         -f deploy/docker/Dockerfile.web \
         --build-arg ENVIRONMENT=$ENVIRONMENT \
         --build-arg APP_VERSION=$APP_VERSION \
         --build-arg BUILD_TIME=$BUILD_TIME \
         --build-arg GIT_COMMIT=$GIT_COMMIT \
+        --build-arg NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
         .
     
     # 标记镜像 - 使用版本号作为标签

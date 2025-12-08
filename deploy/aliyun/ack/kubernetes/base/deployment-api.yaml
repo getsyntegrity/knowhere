@@ -20,15 +20,17 @@ spec:
       ${IMAGE_PULL_SECRETS}
       affinity:
         podAntiAffinity:
-          # 使用required确保每个节点最多一个api pod
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - knowhere-api
-            topologyKey: kubernetes.io/hostname
+          # 使用preferred优先分布在不同节点，但允许必要时在同一节点运行
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - knowhere-api
+              topologyKey: kubernetes.io/hostname
       containers:
       - name: api
         image: ${REGISTRY}/knowhere-backend:${IMAGE_TAG}
@@ -120,16 +122,18 @@ spec:
             secretKeyRef:
               name: knowhere-secrets
               key: mineru-api-key
+        - name: FRONTEND_URL
+          value: ${FRONTEND_URL:-https://knowhereto.com}
         volumeMounts:
         - name: db-ssl-cert
           mountPath: /etc/db-ssl
           readOnly: true
         resources:
           requests:
-            cpu: 500m
+            cpu: 300m
             memory: 1Gi
           limits:
-            cpu: 1000m
+            cpu: 800m
             memory: 2Gi
         livenessProbe:
           httpGet:

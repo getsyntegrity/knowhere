@@ -15,6 +15,11 @@ class GoogleAuthService(OAuthService):
     
     def __init__(self):
         super().__init__()
+        # 验证配置
+        if not settings.is_google_oauth_enabled():
+            raise ValueError(
+                "Google OAuth未启用。请配置GOOGLE_CLIENT_ID和GOOGLE_CLIENT_SECRET"
+            )
         self.client_id = settings.GOOGLE_CLIENT_ID
         self.client_secret = settings.GOOGLE_CLIENT_SECRET
     
@@ -29,7 +34,8 @@ class GoogleAuthService(OAuthService):
             
             return user
         except Exception as e:
-            print(f"Google认证失败: {e}")
+            from loguru import logger
+            logger.error(f"Google认证失败: {e}", exc_info=True)
             return None
     
     async def get_user_info(self, access_token: str) -> Dict[str, Any]:

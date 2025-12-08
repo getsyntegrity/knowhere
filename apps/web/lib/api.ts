@@ -126,13 +126,36 @@ export interface CreditPackage {
 
 export interface SubscriptionPlan {
   id: string
+  plan_id: string
+  price_id?: string
   name: string
-  price: number
-  period: string
-  credits: number
+  price?: number
+  period?: string
+  credits?: number
   features: string[]
   popular: boolean
   stripe_price_id?: string
+  description?: string
+  amount_cents?: number
+  currency?: string
+  metadata?: Record<string, any>
+}
+
+export interface CreditsPackage {
+  id: string
+  plan_id: string
+  price_id: string
+  name: string
+  description?: string
+  credits_amount: number
+  amount_cents: number
+  currency: string
+  metadata?: Record<string, any>
+}
+
+export interface PriceConfigsResponse {
+  subscriptions: SubscriptionPlan[]
+  credits_packages: CreditsPackage[]
 }
 
 export interface CreditPackagePurchase {
@@ -651,6 +674,23 @@ class KnowhereAPI {
    */
   async getCurrentSubscription() {
     return this.get<Subscription>('/v1/billing/subscription')
+  }
+
+  /**
+   * 获取价格配置列表
+   */
+  async getPriceConfigs(productType?: 'subscription' | 'credits_package') {
+    const params = productType ? `?product_type=${productType}` : ''
+    return this.get<PriceConfigsResponse>(`/v1/billing/price-configs${params}`)
+  }
+
+  /**
+   * 通过价格ID购买Credits包
+   */
+  async buyCreditsPackage(priceId: string) {
+    return this.post<CheckoutSessionResponse>('/v1/billing/buy-credits-package', {
+      price_id: priceId,
+    })
   }
 
   /**

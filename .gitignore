@@ -49,6 +49,9 @@ packages/shared-types/generated/
 
 # custom
 apps/api/users/
+apps/api/tests/
+apps/worker/debug_parse.py
+apps/worker/debug_users/
 s3-notification.json
 users/
 
@@ -87,6 +90,4 @@ LICENSE.txt
 .terraform
 
 doc-deploy/
-deploy/aliyun/scripts/env.template
 deploy/aliyun/ack/*.md
-deploy/aws-ec2/

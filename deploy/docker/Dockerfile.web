@@ -29,6 +29,12 @@ WORKDIR /app
 ARG NEXT_PUBLIC_API_URL=https://apitest.knowhereto.ai
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
+# 注意：Google OAuth配置（GOOGLE_CLIENT_ID）不再在构建时注入
+# 这些配置通过运行时环境变量设置（不带NEXT_PUBLIC_前缀）
+# 服务端组件在SSR时读取这些环境变量，通过React Context传递给客户端组件
+# 这样同一个镜像可以在不同环境中使用不同的配置
+# 如果配置了GOOGLE_CLIENT_ID则启用Google登录，未配置则不显示
+
 # 注意：公司名称、ICP等配置不再在构建时设置
 # 这些配置通过运行时环境变量设置（COMPANY_NAME, SIMPLE_COMPANY_NAME, ICP_NUMBER, ICP_URL）
 # 服务端组件在 SSR 时读取这些环境变量，通过 React Context 传递给客户端组件
