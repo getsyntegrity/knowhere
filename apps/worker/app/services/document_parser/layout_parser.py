@@ -119,7 +119,20 @@ def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
         sub_dfs.append(pd.DataFrame(current_rows, columns=df.columns))
     return sub_dfs, raw_headings
 
-def judge_by_conditions(text, scope=20):
+def judge_by_conditions(text, scope=20, return_detail=False):
+    """
+    判断文本的编号模式并返回特征码
+    
+    Args:
+        text: 输入文本
+        scope: 检查的文本范围
+        return_detail: 是否返回详细信息（包括单位类型）
+    
+    Returns:
+        如果 return_detail=False: 返回 pos_triggered_code 列表
+        如果 return_detail=True: 返回 (pos_triggered_code, detail_info) 元组
+            其中 detail_info 是包含额外信息的字典，例如中文单位类型
+    """
     text = text.replace("\u3000", " ")
     text = unicodedata.normalize("NFKC", text)[:scope]
 
@@ -141,8 +154,8 @@ def judge_by_conditions(text, scope=20):
     regex_cn_brac_paren = r"^[\(\（]\s*[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*\s*[\)\）]"
     regex_cn_brac_right = r"^[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*\s*[\)\）]"
     # ========== 中文特殊（第x章/节/条/款/...） ==========
-    # regex_cn_special = r"^第[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*(章|节|条|部分|款|目|项)?(?:\s{1,4}(?=\S)|$)"
-    regex_cn_special = r"^第[一二三四五六七八九十百千万\d]+(?:\.[一二三四五六七八九十百千万\d]+)*(章|节|条|部分|款|目|项)?(?=$|\s|[A-Za-z0-9\u4e00-\u9fa5])"
+    # 改进：捕获单位后缀，用于自适应区分不同类型
+    regex_cn_special = r"^第[一二三四五六七八九十百千万\d]+(?:\.[一二三四五六七八九十百千万\d]+)*(章|节|条|部分|款|目|项|编|篇|卷|辑)?(?=$|\s|[A-Za-z0-9\u4e00-\u9fa5])"
     # ========== 英文字母编号 ==========
     regex_letter_dot = r"^[A-Za-z](?:\.\d+)*[\.、](?=\s*\S)"
     regex_letter_brac_paren = r"^[\(\（]\s*[A-Za-z](?:\.\d+)*(?!\.0)\s*[\)\）]"
@@ -167,15 +180,42 @@ def judge_by_conditions(text, scope=20):
         regex_appendix
     ]
 
+    # 中文特殊编号的索引（在pos_regex_conditions中的位置）
+    CN_SPECIAL_IDX = 12
+
     pos_triggered_code = []
+    reason_suffix_parts = []  # 收集可用于 reason 字符串的后缀部分
+    
     for idx, regex in enumerate(pos_regex_conditions):
         match = re.match(regex, text)
         if match:
+            matched_text = match.group(0)
             symbols = ".-" #TODO can be expanded to include more symbols indicating level depth
-            count_ = (sum(match.group(0).count(s) for s in symbols) + 1)
+            count_ = (sum(matched_text.count(s) for s in symbols) + 1)
+            
+            # 特殊处理：中文特殊编号（第x章/节/条/...）
+            # 自适应策略：提取单位后缀，将其编码用于自动区分不同单位类型
+            if idx == CN_SPECIAL_IDX and return_detail:
+                # 尝试提取单位类型（章、节、条、款等）
+                unit_match = re.search(r'(章|节|条|部分|款|目|项|编|篇|卷|辑)', matched_text)
+                if unit_match:
+                    unit = unit_match.group(1)
+                    # 构造可以直接拼接到 reason 的字符串片段
+                    reason_suffix_parts.append(f"[CN:{unit}]")
+            
             pos_triggered_code.append(count_)
         else:
             pos_triggered_code.append(0)
+    
+    if return_detail:
+        # 构造 detail_info，包含一个可以直接拼接的 reason_suffix
+        detail_info = {
+            'reason_suffix': ' '.join(reason_suffix_parts) if reason_suffix_parts else ''
+        }
+        # 如果有内容，在前面加个空格以便拼接
+        if detail_info['reason_suffix']:
+            detail_info['reason_suffix'] = ' ' + detail_info['reason_suffix']
+        return pos_triggered_code, detail_info
     return pos_triggered_code
 
 def remove_by_conditions(text, include_punc=False):
@@ -226,7 +266,7 @@ def filter_md_headings(md_lines):
             line = "resource or annotation"
         else:
             line_clean, hash_lvl = md_heading_match(line, as_is=False) # detect "#" in .md lines
-            pos_code = judge_by_conditions(line_clean)
+            pos_code, detail_info = judge_by_conditions(line_clean, return_detail=True)
             neg_code = remove_by_conditions(line_clean)
 
             if any(x>0 for x in neg_code):
@@ -235,7 +275,7 @@ def filter_md_headings(md_lines):
 
             elif any(x>0 for x in pos_code) and all(x==0 for x in neg_code):
                 code_lvl = get_max_lvl(str(pos_code))
-                code_str = f"pos conditions {pos_code} AND no neg conditions"
+                code_str = f"pos conditions {pos_code} {detail_info.get('reason_suffix', '')} AND no neg conditions"
 
             else:
                 code_lvl = -1
@@ -315,7 +355,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
 
         # 4. proceed condition judge
         if enable_regx:
-            pos_code = judge_by_conditions(text)
+            pos_code, detail_info = judge_by_conditions(text, return_detail=True)
             neg_code = remove_by_conditions(text)
 
             if any(x > 0 for x in neg_code):
@@ -323,7 +363,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
                 code_str = f"pos conditions {pos_code} BUT neg conditions {neg_code}"
             elif any(x > 0 for x in pos_code) and all(x==0 for x in neg_code):
                 code_lvl = get_max_lvl(str(pos_code))
-                code_str = f"pos conditions {pos_code} AND no neg conditions"
+                code_str = f"pos conditions {pos_code} {detail_info.get('reason_suffix', '')} AND no neg conditions"
             else:
                 code_lvl = -1
                 code_str = f"no pos conditions"
@@ -357,6 +397,7 @@ async def pred_titles(infos, doc_type, prompt_limt=4000, enable_regx=True, smart
 
     # 2. parse smart/not smart
     # raw_preds.to_csv(f"./test_naive_1.csv", index=False, encoding='utf-8-sig')
+
     heading_preds = est_hierarchies_naive(raw_preds, smart_parse)
 
     if smart_parse:
@@ -400,6 +441,7 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True):
         save_preds.insert(save_preds.columns.get_loc('lvl_neg')+1, 'lvl_map', heading_preds['level'].tolist())
 
     # save_preds.to_csv(f"./test_naive_2.csv", index=False, encoding='utf-8-sig')
+    
     return heading_preds
 
 async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
@@ -446,7 +488,9 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
         base_preds = pd.DataFrame(eval_response(layout_res))
         base_preds.insert(1, "heading", basic_df["heading"].values)  # insert original heading back
         base_preds["reason"] = basic_df["reason"].values
+
         # base_preds.to_csv(f"./test_llm_base.csv", index=False, encoding='utf-8-sig')
+
         base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
         logger.debug(f"层级映射构建完成: {lvl_mapping}")
 
@@ -460,6 +504,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
 
         full_preds = pd.concat(full_preds, ignore_index=True)
         full_preds['heading'] = raw_headings
+        
         # full_preds.to_csv(f"./test_llm_full.csv", index=False, encoding='utf-8-sig')
         full_preds.drop("origin_level", axis=1, inplace=True)
         logger.info(f"✅ 文档层级结构解析完成，共识别 {len(full_preds)} 个标题")
