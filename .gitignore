@@ -49,6 +49,8 @@ packages/shared-types/generated/
 
 # custom
 apps/api/users/
+apps/worker/debug_parse.py
+apps/worker/debug_users/
 s3-notification.json
 users/
 
