@@ -142,8 +142,18 @@ class OpenAICompatibleClient:
         if top_p is not None:
             payload["top_p"] = top_p
         
-        # 添加其他kwargs参数
-        payload.update(kwargs)
+        # 只添加 OpenAI API 支持的参数，过滤掉客户端配置参数
+        # OpenAI API 标准参数白名单
+        allowed_api_params = {
+            'n', 'stop', 'presence_penalty', 'frequency_penalty', 
+            'logit_bias', 'user', 'seed', 'tools', 'tool_choice',
+            'response_format', 'logprobs', 'top_logprobs'
+        }
+        
+        # 过滤并添加额外的 API 参数
+        for key, value in kwargs.items():
+            if key in allowed_api_params:
+                payload[key] = value
 
         try:
             logger.info(f"🌐 开始HTTP请求到 {self.api_url} (模型: {payload['model']}, 超时: {self.timeout}s)...")

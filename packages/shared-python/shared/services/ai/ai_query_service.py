@@ -150,13 +150,19 @@ class AIQueryService:
             default_model=kwargs.get('model'),
             timeout=kwargs.get('timeout', 300)
         )
+        
+        # 只传递 API 相关参数，不传递客户端配置参数
+        # 过滤掉客户端配置参数
+        client_config_params = {'api_key', 'api_url', 'timeout', 'user_id'}
+        api_params = {k: v for k, v in kwargs.items() if k not in client_config_params}
+        
         try:
             result = await ai_client.chat_completion(
                 messages=messages,
                 temperature=temperature,
                 conversation_id=conversation,
                 model=kwargs.get('model'),
-                **kwargs
+                **api_params
             )
 
             await task_service.save_task_result(
