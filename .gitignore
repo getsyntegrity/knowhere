@@ -56,6 +56,28 @@ s3-notification.json
 users/
 test_*.csv
 
+# 测试和调试生成的 CSV 文件
+*.csv
+!requirements.csv
+
+# 调试脚本（本地使用）
+apps/worker/start_celery_worker.py
+apps/worker/start_celery_debug.sh
+apps/worker/clear_celery_queues.sh
+packages/shared-python/shared/services/ai/direct_ai_client.py
+
+# 调试文档（本地使用）
+MIGRATION_GUIDE.md
+START_CELERY_DEBUG.md
+CELERY_DEBUG_QUICKSTART.md
+QUICK_DEBUG_GUIDE.md
+TROUBLESHOOTING.md
+DEBUG_WITH_AI.md
+MODEL_CONFIGURATION_GUIDE.md
+SIMPLE_GUIDE.md
+*_GUIDE.md
+USAGE_*.md
+
 # Deploy files (contain sensitive information)
 # AWS Terraform
 deploy/aws/terraform/terraform.tfstate
