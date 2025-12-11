@@ -133,7 +133,7 @@ class AIQueryService:
     ) -> Any:
         """在当前Celery任务内直接执行AI查询，避免嵌套子任务阻塞"""
         from shared.services.redis import RedisServiceFactory, TaskRedisService
-        from shared.utils.DeepSeekClient import DeepSeekRedisStreamClient
+        from shared.utils.OpenAICompatibleClient import OpenAICompatibleClient
 
         redis_service = RedisServiceFactory.get_service()
         task_service = TaskRedisService(redis_service)
@@ -142,12 +142,21 @@ class AIQueryService:
 
         await task_service.set_task_status(user_id, "正在连接AI大模型...")
 
-        ai_client = DeepSeekRedisStreamClient(redis_service)
+        # 创建OpenAI兼容客户端，支持自定义配置
+        ai_client = OpenAICompatibleClient(
+            redis_service=redis_service,
+            api_key=kwargs.get('api_key'),
+            api_url=kwargs.get('api_url'),
+            default_model=kwargs.get('model'),
+            timeout=kwargs.get('timeout', 300)
+        )
         try:
             result = await ai_client.chat_completion(
                 messages=messages,
                 temperature=temperature,
                 conversation_id=conversation,
+                model=kwargs.get('model'),
+                **kwargs
             )
 
             await task_service.save_task_result(

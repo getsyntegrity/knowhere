@@ -285,7 +285,7 @@ def filter_md_headings(md_lines):
                 est_lvl = code_lvl
                 str_lvl = code_str
             else:
-                if isinstance(code_lvl, int):
+                if isinstance(code_lvl, int) and all(x==0 for x in neg_code):
                     est_lvl = max(hash_lvl, code_lvl) # current miner tend to produce fewer #s
                 else:
                     est_lvl = code_lvl # code_lvl could be not sure
@@ -469,11 +469,12 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
         ctx_task_id = str(uuid.uuid4())
         
         # 使用Redis直接追踪任务状态，无需数据库持久化
+        from shared.core.config import settings
         from shared.services.redis import RedisServiceFactory
         redis_service = RedisServiceFactory.get_service()
         await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
         
-        # 使用统一的AI查询服务
+        # 使用统一的AI查询服务，调用通义千问
         layout_res = await ai_query_service.query_ai(
             messages=messages,
             user_id=ctx_task_id,
@@ -481,7 +482,11 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
             timeout=300,
             temperature=temperature,
             top_p=top_p,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            # 使用阿里云配置调用通义千问
+            model="qwen-max",
+            api_key=settings.ALI_API_KEY,
+            api_url=settings.ALI_URL
         )
         logger.info(f"✅ AI服务调用完成，正在处理响应数据...")
 
