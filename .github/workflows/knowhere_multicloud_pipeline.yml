@@ -117,14 +117,20 @@ jobs:
           IMAGE_TAG="${{ steps.tags.outputs.image_tag }}"
           LATEST_TAG="${{ steps.tags.outputs.latest_tag }}"
           
-          # GHCR镜像URI
-          GHCR_URI="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image_name }}"
+          # 将所有者名称和镜像名称都转换为小写
+          OWNER_LOWERCASE=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME_LOWERCASE=$(echo "${{ matrix.image_name }}" | tr '[:upper:]' '[:lower:]')
+          
+          # GHCR镜像URI（强制小写）
+          GHCR_URI="${{ env.REGISTRY }}/$OWNER_LOWERCASE/$IMAGE_NAME_LOWERCASE"
           echo "ghcr_image_uri=$GHCR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "ghcr_latest_uri=$GHCR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
           
-          # ACR镜像URI（如果配置了ACR）
+          # ACR镜像URI（如果配置了ACR，也需要确保小写）
           if [ -n "${{ env.ACR_REGISTRY }}" ]; then
-            ACR_URI="${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ matrix.image_name }}"
+            # ACR命名空间也需要小写
+            ACR_NAMESPACE_LOWERCASE=$(echo "${{ env.ACR_NAMESPACE }}" | tr '[:upper:]' '[:lower:]')
+            ACR_URI="${{ env.ACR_REGISTRY }}/$ACR_NAMESPACE_LOWERCASE/$IMAGE_NAME_LOWERCASE"
             echo "acr_image_uri=$ACR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
             echo "acr_latest_uri=$ACR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
           fi
