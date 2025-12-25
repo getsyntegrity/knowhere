@@ -25,6 +25,11 @@ on:
           - api
           - web
           - worker
+      simulate_only:
+        description: '仅模拟流程，不实际部署'
+        required: false
+        type: boolean
+        default: false
 
 env:
   # 容器注册表配置
