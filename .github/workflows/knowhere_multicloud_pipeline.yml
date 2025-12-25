@@ -300,84 +300,37 @@ jobs:
           
           echo "✅ ${{ matrix.service }} deployed to AWS EKS"
       
-      - name: Deploy to Aliyun ECS (预发布环境)
+      - name: ECS Docker Compose Deployment
         if: steps.deploy-type.outputs.deploy_type == 'ecs'
         env:
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
         run: |
-          echo "🚀 Deploying to Aliyun ECS Staging Instance"
-          
           # 配置阿里云CLI
           aliyun configure set --profile default \
             --access-key-id $ALIYUN_ACCESS_KEY_ID \
             --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
             --region $ALIYUN_REGION
           
-          # 选择镜像源（优先使用ACR）
-          if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
-            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
-          else
-            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
-          fi
+          # 选择镜像
+          IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
           
-          # 定义部署脚本
-          DEPLOY_SCRIPT=$(cat << 'EOF'
-          #!/bin/bash
-          set -e
-          
-          SERVICE_NAME="$1"
-          IMAGE="$2"
-          PORT_MAPPING="$3"
-          
-          echo "Deploying $SERVICE_NAME with image $IMAGE"
-          
-          # 停止并删除旧容器
-          docker stop $SERVICE_NAME 2>/dev/null || true
-          docker rm $SERVICE_NAME 2>/dev/null || true
-          
-          # 拉取新镜像
-          docker pull $IMAGE
-          
-          # 运行新容器（根据服务类型调整参数）
-          if [ "$SERVICE_NAME" == "api" ]; then
-            docker run -d --name $SERVICE_NAME --restart always \
-              -p 8080:8080 \
-              -e NODE_ENV=staging \
-              $IMAGE
-          elif [ "$SERVICE_NAME" == "web" ]; then
-            docker run -d --name $SERVICE_NAME --restart always \
-              -p 80:3000 -p 443:3000 \
-              -e NODE_ENV=staging \
-              $IMAGE
-          elif [ "$SERVICE_NAME" == "worker" ]; then
-            docker run -d --name $SERVICE_NAME --restart always \
-              -e NODE_ENV=staging \
-              $IMAGE
-          fi
-          
-          # 验证容器状态
-          sleep 5
-          if docker ps | grep -q $SERVICE_NAME; then
-            echo "✅ $SERVICE_NAME deployed successfully"
-            docker logs $SERVICE_NAME --tail 10
-          else
-            echo "❌ $SERVICE_NAME deployment failed"
-            exit 1
-          fi
-          EOF
-          )
-          
-          # 在ECS实例上执行部署
+          # 发送部署命令到ECS
           aliyun ecs RunCommand \
-            --InstanceId.1 ${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }} \
-            --RegionId $ALIYUN_REGION \
+            --InstanceId.1 "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
+            --RegionId "$ALIYUN_REGION" \
             --Type RunShellScript \
-            --CommandContent "$DEPLOY_SCRIPT" \
-            --Parameters "[{\"Name\":\"serviceName\", \"Value\":\"${{ matrix.service }}\"}, {\"Name\":\"image\", \"Value\":\"$IMAGE\"}]"
-          
-          echo "✅ Deployment command sent to ECS instance"
+            --CommandContent "
+              cd /var/lib/knowhere
+              docker pull $IMAGE
+              sed -i 's|image:.*${{ matrix.service }}.*|image: $IMAGE|' docker-compose.ecs.yaml
+              docker-compose -f docker-compose.ecs.yaml up -d ${{ matrix.service }}
+              sleep 10
+              docker-compose -f docker-compose.ecs.yaml ps ${{ matrix.service }}
+            " \
+            --Timeout 600 \
+            --Wait
       
       - name: Deployment summary
         run: |
