@@ -3,8 +3,8 @@ name: CI/CD Pipeline - Production & Staging
 on:
   #push:
   #  branches: [main, staging]
-    tags:
-      - 'v*'
+  #  tags:
+  #    - 'v*'
   #pull_request:
   #  branches: [main]
   workflow_dispatch:
