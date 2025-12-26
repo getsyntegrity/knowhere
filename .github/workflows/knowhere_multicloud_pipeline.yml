@@ -1,0 +1,365 @@
+name: CI/CD Pipeline - Production & Staging
+
+on:
+  #push:
+  #  branches: [main, staging]
+  #  tags:
+  #    - 'v*'
+  #pull_request:
+  #  branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: '强制部署到指定环境'
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+      service:
+        description: '服务选择（空=全部）'
+        required: false
+        type: choice
+        options:
+          - all
+          - api
+          - web
+          - worker
+      simulate_only:
+        description: '仅模拟流程，不实际部署'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  # 容器注册表配置
+  REGISTRY: ghcr.io
+  ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
+  ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
+  
+  # 集群配置（仅生产环境）
+  ALIYUN_ACK_PROD_CLUSTER_ID: ${{ secrets.ALIYUN_ACK_PROD_CLUSTER_ID }}
+  AWS_EKS_PROD_CLUSTER_NAME: ${{ secrets.AWS_EKS_PROD_CLUSTER_NAME }}
+  AWS_EKS_PROD_REGION: ${{ secrets.AWS_EKS_PROD_REGION }}
+  ALIYUN_ECS_STAGING_INSTANCE_ID: ${{ secrets.ALIYUN_ECS_STAGING_INSTANCE_ID }}
+
+jobs:
+  # Job 1: 构建和推送镜像
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    strategy:
+      matrix:
+        service: [api, web, worker]
+        include:
+          - service: api
+            dockerfile: deploy/docker/Dockerfile.api
+            image_name: knowhere-backend
+          - service: web
+            dockerfile: deploy/docker/Dockerfile.web
+            image_name: knowhere-frontend
+          - service: worker
+            dockerfile: deploy/docker/Dockerfile.worker
+            image_name: knowhere-worker
+    
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      image_tag: ${{ steps.tags.outputs.image_tag }}
+      acr_image_uri: ${{ steps.image-uris.outputs.acr_image_uri }}
+      ghcr_image_uri: ${{ steps.image-uris.outputs.ghcr_image_uri }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Determine target environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.target_environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/* ]] || [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            # PR或其他分支推送到staging环境
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          fi
+          echo "Environment determined: ${{ steps.env.outputs.environment }}"
+      
+      - name: Generate image tag
+        id: tags
+        run: |
+          ENVIRONMENT="${{ steps.env.outputs.environment }}"
+          SHORT_SHA=${GITHUB_SHA:0:8}
+          
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
+            IMAGE_TAG="${GIT_TAG}-${ENVIRONMENT}"
+          else
+            IMAGE_TAG="${ENVIRONMENT}-${SHORT_SHA}"
+          fi
+          
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "latest_tag=${ENVIRONMENT}-latest" >> $GITHUB_OUTPUT
+          echo "Generated tag: $IMAGE_TAG"
+      
+      - name: Generate image URIs
+        id: image-uris
+        run: |
+          ENVIRONMENT="${{ steps.env.outputs.environment }}"
+          IMAGE_TAG="${{ steps.tags.outputs.image_tag }}"
+          LATEST_TAG="${{ steps.tags.outputs.latest_tag }}"
+          
+          # 将所有者名称和镜像名称都转换为小写
+          OWNER_LOWERCASE=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME_LOWERCASE=$(echo "${{ matrix.image_name }}" | tr '[:upper:]' '[:lower:]')
+          
+          # GHCR镜像URI（强制小写）
+          GHCR_URI="${{ env.REGISTRY }}/$OWNER_LOWERCASE/$IMAGE_NAME_LOWERCASE"
+          echo "ghcr_image_uri=$GHCR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "ghcr_latest_uri=$GHCR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          # ACR镜像URI（如果配置了ACR，也需要确保小写）
+          if [ -n "${{ env.ACR_REGISTRY }}" ]; then
+            # ACR命名空间也需要小写
+            ACR_NAMESPACE_LOWERCASE=$(echo "${{ env.ACR_NAMESPACE }}" | tr '[:upper:]' '[:lower:]')
+            ACR_URI="${{ env.ACR_REGISTRY }}/$ACR_NAMESPACE_LOWERCASE/$IMAGE_NAME_LOWERCASE"
+            echo "acr_image_uri=$ACR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
+            echo "acr_latest_uri=$ACR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Skip build for PR
+        id: should-build
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "PR build, skipping push"
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Login to GitHub Container Registry
+        if: steps.should-build.outputs.should_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Login to Alibaba Cloud Container Registry
+        if: steps.should-build.outputs.should_build == 'true' && env.ACR_REGISTRY != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+      
+      - name: Build and push to registries
+        if: steps.should-build.outputs.should_build == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ steps.image-uris.outputs.ghcr_image_uri }}
+            ${{ steps.image-uris.outputs.ghcr_latest_uri }}
+            ${{ steps.image-uris.outputs.acr_image_uri }}
+            ${{ steps.image-uris.outputs.acr_latest_uri }}
+          build-args: |
+            ENVIRONMENT=${{ steps.env.outputs.environment }}
+            APP_VERSION=${{ steps.tags.outputs.image_tag }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Record build summary
+        if: steps.should-build.outputs.should_build == 'true'
+        run: |
+          echo "=== Build Summary ==="
+          echo "Service: ${{ matrix.service }}"
+          echo "Environment: ${{ steps.env.outputs.environment }}"
+          echo "Image Tag: ${{ steps.tags.outputs.image_tag }}"
+          echo "GHCR Image: ${{ steps.image-uris.outputs.ghcr_image_uri }}"
+          if [ -n "${{ steps.image-uris.outputs.acr_image_uri }}" ]; then
+            echo "ACR Image: ${{ steps.image-uris.outputs.acr_image_uri }}"
+          fi
+
+  # Job 2: 环境部署
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event.inputs.simulate_only != 'true'
+    # if: github.event_name != 'pull_request'
+    
+    strategy:
+      matrix:
+        service: [api, web, worker]
+    
+    steps:
+      - name: Determine deployment type
+        id: deploy-type
+        run: |
+          ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+          
+          if [ "$ENVIRONMENT" == "prod" ]; then
+            echo "deploy_type=k8s" >> $GITHUB_OUTPUT
+            echo "targets=aliyun-ack,aws-eks" >> $GITHUB_OUTPUT
+            echo "Deploying to Kubernetes clusters (ACK & EKS)"
+          else
+            echo "deploy_type=ecs" >> $GITHUB_OUTPUT
+            echo "targets=aliyun-ecs" >> $GITHUB_OUTPUT
+            echo "Deploying to ECS single instance"
+          fi
+      
+      - name: Deploy to Aliyun ACK (生产环境)
+        if: steps.deploy-type.outputs.deploy_type == 'k8s'
+        env:
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+          ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
+        run: |
+          echo "🚀 Deploying to Aliyun ACK Production Cluster"
+          
+          # 配置阿里云CLI
+          aliyun configure set --profile default \
+            --access-key-id $ALIYUN_ACCESS_KEY_ID \
+            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
+            --region $ALIYUN_REGION
+          
+          # 获取ACK集群kubeconfig
+          aliyun cs GetClusterKubeConfig \
+            --ClusterId ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }} \
+            --RegionId $ALIYUN_REGION > kubeconfig.yaml
+          
+          export KUBECONFIG=kubeconfig.yaml
+          
+          # 选择镜像源
+          if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
+            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
+          else
+            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
+          fi
+          
+          # 更新K8s Deployment（根据您的实际部署文件调整）
+          kubectl set image deployment/${{ matrix.service }} \
+            ${{ matrix.service }}=$IMAGE \
+            --namespace=prod
+          
+          # 验证部署状态
+          kubectl rollout status deployment/${{ matrix.service }} \
+            --namespace=prod \
+            --timeout=300s
+          
+          echo "✅ ${{ matrix.service }} deployed to Aliyun ACK"
+      
+      - name: Deploy to AWS EKS (生产环境)
+        if: steps.deploy-type.outputs.deploy_type == 'k8s'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          echo "🚀 Deploying to AWS EKS Production Cluster"
+          
+          # 配置AWS凭证
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set region ${{ env.AWS_EKS_PROD_REGION }}
+          
+          # 更新kubeconfig访问EKS集群
+          aws eks update-kubeconfig \
+            --name ${{ env.AWS_EKS_PROD_CLUSTER_NAME }} \
+            --region ${{ env.AWS_EKS_PROD_REGION }}
+          
+          export KUBECONFIG=~/.kube/config
+          
+          # 选择镜像源
+          if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
+            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
+          else
+            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
+          fi
+          
+          # 更新K8s Deployment
+          kubectl set image deployment/${{ matrix.service }} \
+            ${{ matrix.service }}=$IMAGE \
+            --namespace=prod
+          
+          # 验证部署状态
+          kubectl rollout status deployment/${{ matrix.service }} \
+            --namespace=prod \
+            --timeout=300s
+          
+          echo "✅ ${{ matrix.service }} deployed to AWS EKS"
+      
+      - name: Deploy to Aliyun ECS via Docker Compose (预发布环境)
+        if: steps.deploy-type.outputs.deploy_type == 'ecs'
+        env:
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+          ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
+        run: |
+          echo "🚀 开始部署到阿里云ECS（通过Docker Compose）"
+          
+          # 配置阿里云CLI
+          aliyun configure set --profile default \
+            --access-key-id $ALIYUN_ACCESS_KEY_ID \
+            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
+            --region $ALIYUN_REGION
+          
+          # 选择镜像源
+          if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
+            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
+          else
+            if [ "${{ matrix.service }}" == "api" ]; then
+              IMAGE_NAME="knowhere-backend"
+            elif [ "${{ matrix.service }}" == "web" ]; then
+              IMAGE_NAME="knowhere-frontend"
+            elif [ "${{ matrix.service }}" == "worker" ]; then
+              IMAGE_NAME="knowhere-worker"
+            fi
+            
+            GHCR_IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
+            IMAGE_TAG="${GHCR_IMAGE##*:}"
+            IMAGE="knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/$IMAGE_NAME:$IMAGE_TAG"
+          fi
+          
+          echo "📦 镜像地址: $IMAGE"
+          
+          # 读取本地部署脚本
+          DEPLOY_SCRIPT_CONTENT=$(cat deploy/aliyun/scripts/deploy-ecs.sh)
+          
+          # 发送到ECS执行
+          aliyun ecs RunCommand \
+            --InstanceId.1 "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
+            --RegionId "$ALIYUN_REGION" \
+            --Type RunShellScript \
+            --CommandContent "$DEPLOY_SCRIPT_CONTENT" \
+            --Parameters "[{\"Name\":\"serviceName\", \"Value\":\"${{ matrix.service }}\"}, {\"Name\":\"imageFull\", \"Value\":\"$IMAGE\"}]" \
+            --Timeout 600 \
+            --Wait
+          
+          echo "✅ ${{ matrix.service }} 部署完成"
+      
+      - name: Deployment summary
+        run: |
+          echo "🎉 Deployment Completed Successfully!"
+          echo "====================================="
+          echo "Service: ${{ matrix.service }}"
+          echo "Environment: ${{ needs.build-and-push.outputs.environment }}"
+          echo "Deployment Type: ${{ steps.deploy-type.outputs.deploy_type }}"
+          echo "Targets: ${{ steps.deploy-type.outputs.targets }}"
+          echo "Image Tag: ${{ needs.build-and-push.outputs.image_tag }}"
+          echo ""
+          echo "Next steps:"
+          echo "- Verify service health checks"
+          echo "- Monitor application logs"
+          echo "- Run integration tests (if applicable)"
