@@ -315,14 +315,11 @@ jobs:
             --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
             --region $ALIYUN_REGION
           
-          # 选择镜像源 - 必须使用ACR地址，因为compose文件中使用的是ACR
+          # 选择镜像源 - 必须使用ACR地址
           if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
             IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
-            echo "📦 使用ACR镜像: $IMAGE"
           else
-            # 如果ACR镜像不存在，构建一个ACR格式的镜像地址
-            # 因为compose文件固定使用ACR地址，所以这里需要转换
-            IMAGE_NAME=""
+            # 构建ACR格式的镜像地址
             if [ "${{ matrix.service }}" == "api" ]; then
               IMAGE_NAME="knowhere-backend"
             elif [ "${{ matrix.service }}" == "web" ]; then
@@ -331,22 +328,15 @@ jobs:
               IMAGE_NAME="knowhere-worker"
             fi
             
-            if [ -n "$IMAGE_NAME" ]; then
-              # 从GHCR镜像地址提取标签
-              GHCR_IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
-              IMAGE_TAG="${GHCR_IMAGE##*:}"
-              IMAGE="knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/$IMAGE_NAME:$IMAGE_TAG"
-              echo "⚠️  ACR镜像不存在，使用转换后的ACR格式镜像: $IMAGE"
-            else
-              echo "❌ 无法确定镜像名称，请检查服务名配置"
-              exit 1
-            fi
+            GHCR_IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
+            IMAGE_TAG="${GHCR_IMAGE##*:}"
+            IMAGE="knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/$IMAGE_NAME:$IMAGE_TAG"
           fi
           
           echo "📦 最终使用的镜像地址: $IMAGE"
           
-          # 将在ECS上执行的部署脚本
-          DEPLOY_SCRIPT_CONTENT=$(cat << 'SCRIPT_EOF'
+          # 部署脚本
+          DEPLOY_SCRIPT_BASE64=$(base64 << 'SCRIPT_EOF'
 #!/bin/bash
 set -e
 
@@ -359,102 +349,66 @@ echo "🔧 开始部署 $SERVICE_NAME 服务"
 echo "📁 工作目录: $COMPOSE_DIR"
 echo "🐳 目标镜像: $IMAGE_FULL"
 
-# 1. 切换到工作目录
+# 切换到工作目录
 cd "$COMPOSE_DIR" || { echo "❌ 无法进入目录: $COMPOSE_DIR"; exit 1; }
 
-# 2. 检查 Docker Compose 文件
+# 检查 Docker Compose 文件
 if [ ! -f "$COMPOSE_FILE" ]; then
   echo "❌ Docker Compose 文件不存在: $COMPOSE_FILE"
-  ls -la "$COMPOSE_DIR"
   exit 1
 fi
 
 echo "📋 当前Docker Compose状态:"
 docker-compose -f "$COMPOSE_FILE" ps
 
-# 3. 拉取新镜像
+# 拉取新镜像
 echo "⬇️ 拉取新镜像..."
 docker pull "$IMAGE_FULL" || { 
-  echo "❌ 拉取镜像失败，尝试登录ACR..."
-  # 尝试登录ACR（如果未配置自动登录）
-  docker logout knowhere-registry.cn-shenzhen.cr.aliyuncs.com 2>/dev/null || true
-  # 这里需要ACR凭证，建议在ECS上预先配置好免密拉取
-  echo "⚠️  请确保ECS已配置ACR免密拉取或已登录"
+  echo "❌ 拉取镜像失败"
   exit 1
 }
 
-# 4. 更新 Docker Compose 文件中的镜像标签
+# 更新 Docker Compose 文件中的镜像标签
 echo "📝 更新 Docker Compose 配置..."
-echo "🔍 查找服务 $SERVICE_NAME 的配置..."
-
-# 备份原文件
 BACKUP_FILE="$COMPOSE_FILE.backup.$(date +%Y%m%d%H%M%S)"
 cp "$COMPOSE_FILE" "$BACKUP_FILE"
 echo "📄 已备份原文件到: $BACKUP_FILE"
 
-# 根据不同的服务使用不同的更新策略
 if [ "$SERVICE_NAME" = "api" ]; then
-  # 更新api服务镜像
   sed -i "s|image:.*knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/knowhere-backend:.*|image: $IMAGE_FULL|" "$COMPOSE_FILE"
   echo "✅ 已更新API服务镜像"
-  
 elif [ "$SERVICE_NAME" = "web" ]; then
-  # 更新web服务镜像
   sed -i "s|image:.*knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/knowhere-frontend:.*|image: $IMAGE_FULL|" "$COMPOSE_FILE"
   echo "✅ 已更新Web服务镜像"
-  
 elif [ "$SERVICE_NAME" = "worker" ]; then
-  # 更新worker服务镜像
   sed -i "s|image:.*knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/knowhere-worker:.*|image: $IMAGE_FULL|" "$COMPOSE_FILE"
   echo "✅ 已更新Worker服务镜像"
-  
 else
   echo "❌ 未知服务名: $SERVICE_NAME"
   exit 1
 fi
 
-# 显示更新后的配置
-echo "📋 更新后的配置预览:"
-grep -A5 -B2 "image:.*$SERVICE_NAME" "$COMPOSE_FILE" || grep -A5 -B2 "^[[:space:]]*$SERVICE_NAME:" "$COMPOSE_FILE"
-
-# 5. 重启服务
+# 重启服务
 echo "🔄 重启服务 $SERVICE_NAME..."
 docker-compose -f "$COMPOSE_FILE" up -d "$SERVICE_NAME"
 
-# 6. 等待并检查服务状态
+# 等待并检查服务状态
 echo "⏳ 等待服务启动(15秒)..."
 sleep 15
 
-echo "🔍 检查所有服务状态:"
-docker-compose -f "$COMPOSE_FILE" ps
-
-echo "🔍 检查 $SERVICE_NAME 服务状态:"
+echo "🔍 检查服务状态:"
 docker-compose -f "$COMPOSE_FILE" ps "$SERVICE_NAME"
 
-# 7. 检查健康状态
-echo "💓 检查健康状态..."
+# 检查容器状态
 CONTAINER_ID=$(docker-compose -f "$COMPOSE_FILE" ps -q "$SERVICE_NAME")
 if [ -n "$CONTAINER_ID" ]; then
-  echo "📦 容器ID: $CONTAINER_ID"
-  
-  # 检查容器状态
   CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
-  echo "📈 容器状态: $CONTAINER_STATUS"
-  
-  # 检查健康状态
-  HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no healthcheck")
-  echo "❤️  健康状态: $HEALTH_STATUS"
-  
   if [ "$CONTAINER_STATUS" = "running" ]; then
     echo "✅ 服务 $SERVICE_NAME 已成功启动!"
-    
-    # 查看最近日志
-    echo "📄 最近日志(最后20行):"
-    docker-compose -f "$COMPOSE_FILE" logs --tail=20 "$SERVICE_NAME" 2>/dev/null || echo "无法获取日志"
+    echo "📄 最近日志:"
+    docker-compose -f "$COMPOSE_FILE" logs --tail=10 "$SERVICE_NAME" 2>/dev/null || echo "无法获取日志"
   else
     echo "❌ 服务 $SERVICE_NAME 未正常运行"
-    echo "🔍 容器详情:"
-    docker inspect "$CONTAINER_ID" | grep -A10 '"State"'
     exit 1
   fi
 else
@@ -466,25 +420,21 @@ echo "🎉 $SERVICE_NAME 部署完成!"
 SCRIPT_EOF
           )
           
-          # 打印将在ECS上执行的脚本（仅用于调试）
-          echo "📜 将在ECS上执行的部署脚本:"
-          echo "========================================"
-          echo "$DEPLOY_SCRIPT_CONTENT"
-          echo "========================================"
+          # 通过阿里云 CLI 发送base64编码的脚本到ECS实例
+          echo "📤 发送部署命令到ECS实例: ${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}"
           
-          # 通过阿里云 CLI 发送命令到 ECS 实例
-          echo "📤 发送部署命令到 ECS 实例: ${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}"
-          
+          # 在ECS上解码并执行脚本
           aliyun ecs RunCommand \
             --InstanceId.1 "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
             --RegionId "$ALIYUN_REGION" \
             --Type RunShellScript \
-            --CommandContent "$DEPLOY_SCRIPT_CONTENT" \
-            --Parameters "[{\"Name\":\"serviceName\", \"Value\":\"${{ matrix.service }}\"}, {\"Name\":\"imageFull\", \"Value\":\"$IMAGE\"}]" \
+            --CommandContent "
+              echo '$DEPLOY_SCRIPT_BASE64' | base64 -d | bash -s -- '${{ matrix.service }}' '$IMAGE'
+            " \
             --Timeout 600 \
             --Wait
           
-          echo "✅ ${{ matrix.service }} 部署命令已发送并在ECS上执行完成"
+          echo "✅ ${{ matrix.service }} 部署完成"
       
       - name: Deployment summary
         run: |
