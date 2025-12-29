@@ -341,7 +341,7 @@ jobs:
           echo "📦 镜像地址: $IMAGE"
           
           # 读取本地部署脚本
-          DEPLOY_SCRIPT_CONTENT=$(cat deploy/aliyun/scripts/deploy-ecs.sh)
+          DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh)
           
           # 发送到ECS执行
           aliyun ecs RunCommand \
