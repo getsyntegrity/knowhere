@@ -378,8 +378,7 @@ jobs:
             --Type RunShellScript \
             --CommandContent "$DEPLOY_SCRIPT_CONTENT" \
             --Parameters "[{\"Name\":\"serviceName\", \"Value\":\"${{ matrix.service }}\"}, {\"Name\":\"imageFull\", \"Value\":\"$IMAGE\"}]" \
-            --Timeout 600 \
-            --Wait
+            --Timeout 600 
           
           echo "✅ ${{ matrix.service }} 部署完成"
       
