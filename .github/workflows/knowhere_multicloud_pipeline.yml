@@ -360,19 +360,12 @@ jobs:
           echo "📦 镜像地址: $IMAGE"
           
           if [ -f ".github/scripts/deploy-ecs.sh" ]; then
-            DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh)
-            echo "部署脚本读取成功"
+            DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh | sed -e "s/{{serviceName}}/${{ matrix.service }}/g" -e "s|{{imageFull}}|$IMAGE|g")
+            echo "✅ 部署脚本参数替换完成"
           else
             echo "错误: 找不到部署脚本 .github/scripts/deploy-ecs.sh"
             exit 1
           fi
-          echo "=== 调试信息：传入的参数 ==="
-          echo "服务名 (serviceName): ${{ matrix.service }}"
-          echo "镜像地址 (IMAGE): $IMAGE"
-          echo "=== 调试信息：脚本前5行 (检查占位符格式) ==="
-          head -n 5 .github/scripts/deploy-ecs.sh
-          echo "=== 调试信息：最终Parameters JSON ==="
-          echo "{\"serviceName\":\"${{ matrix.service }}\", \"imageFull\":\"$IMAGE\"}"
           # 发送到ECS执行
           echo "正在向ECS实例发送部署命令..."
           RAW_OUTPUT=$(aliyun ecs RunCommand \
@@ -380,7 +373,6 @@ jobs:
             --RegionId "$ALIYUN_REGION" \
             --Type RunShellScript \
             --CommandContent "$DEPLOY_SCRIPT_CONTENT" \
-            --Parameters "{\"serviceName\":\"${{ matrix.service }}\", \"imageFull\":\"$IMAGE\"}" \
             --Timeout 600)
 
           echo "命令原始返回: $RAW_OUTPUT"
