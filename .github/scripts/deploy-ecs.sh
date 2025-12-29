@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-SERVICE_NAME="$1"
-IMAGE_FULL="$2"
+SERVICE_NAME="{{serviceName}}"
+IMAGE_FULL="{{imageFull}}"
 COMPOSE_DIR="/var/lib/knowhere"
 COMPOSE_FILE="docker-compose.ecs.yaml"
 
