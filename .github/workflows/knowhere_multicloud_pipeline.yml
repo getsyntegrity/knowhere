@@ -306,6 +306,23 @@ jobs:
           access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           region: ${{ secrets.ALIYUN_REGION }}
+
+      - name: Debug - Locate script file
+        run: |
+          echo "1. 当前工作目录："
+          pwd
+          echo ""
+          echo "2. 列出当前目录所有文件："
+          ls -la
+          echo ""
+          echo "3. 检查 .github 目录是否存在："
+          ls -la .github/ || echo ".github 目录不存在"
+          echo ""
+          echo "4. 检查 .github/scripts 目录是否存在："
+          ls -la .github/scripts/ || echo ".github/scripts 目录不存在"
+          echo ""
+          echo "5. 尝试直接列出脚本文件："
+          find . -name "deploy-ecs.sh" 2>/dev/null || echo "未找到名为 deploy-ecs.sh 的文件"
       - name: Deploy to Aliyun ECS via Docker Compose (预发布环境)
         if: steps.deploy-type.outputs.deploy_type == 'ecs'
         env:
