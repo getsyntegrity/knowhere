@@ -4,7 +4,7 @@ set -e
 SERVICE_NAME="{{serviceName}}"
 IMAGE_FULL="{{imageFull}}"
 COMPOSE_DIR="/var/lib/knowhere"
-COMPOSE_FILE="docker-compose.ecs.yaml"
+COMPOSE_FILE="docker-compose.ecs.yml"
 
 echo "🔧 开始部署 $SERVICE_NAME 服务"
 echo "📁 工作目录: $COMPOSE_DIR"
