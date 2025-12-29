@@ -44,7 +44,7 @@ env:
   ALIYUN_ECS_STAGING_INSTANCE_ID: ${{ secrets.ALIYUN_ECS_STAGING_INSTANCE_ID }}
 
 jobs:
-  # Job 1: 构建和推送镜像
+  # Job 1: 构建和推送镜像 (此部分逻辑暂未按手动输入过滤，可按需优化)
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -193,18 +193,35 @@ jobs:
             echo "ACR Image: ${{ steps.image-uris.outputs.acr_image_uri }}"
           fi
 
-  # Job 2: 环境部署
+  # Job 2: 环境部署 (已修复服务过滤和脚本路径问题)
   deploy:
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.event.inputs.simulate_only != 'true'
-    # if: github.event_name != 'pull_request'
     
     strategy:
       matrix:
         service: [api, web, worker]
     
     steps:
+      # 核心修复1: 检出代码，否则无法读取仓库内的脚本
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 核心修复2: 根据手动输入判断当前任务是否需要部署
+      - name: Check if should deploy this service
+        id: check-deploy
+        run: |
+          INPUT_SERVICE="${{ github.event.inputs.service }}"
+          CURRENT_SERVICE="${{ matrix.service }}"
+          if [[ -z "$INPUT_SERVICE" || "$INPUT_SERVICE" == "all" || "$INPUT_SERVICE" == "$CURRENT_SERVICE" ]]; then
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "✅ Will deploy service: $CURRENT_SERVICE"
+          else
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "⏭️  Skipping service: $CURRENT_SERVICE (manual input specified: $INPUT_SERVICE)"
+          fi
+
       - name: Determine deployment type
         id: deploy-type
         run: |
@@ -220,14 +237,15 @@ jobs:
             echo "Deploying to ECS single instance"
           fi
       
+      # 生产环境部署步骤均已添加条件判断
       - name: Deploy to Aliyun ACK (生产环境)
-        if: steps.deploy-type.outputs.deploy_type == 'k8s'
+        if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
         env:
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
         run: |
-          echo "🚀 Deploying to Aliyun ACK Production Cluster"
+          echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
           
           # 配置阿里云CLI
           aliyun configure set --profile default \
@@ -262,12 +280,12 @@ jobs:
           echo "✅ ${{ matrix.service }} deployed to Aliyun ACK"
       
       - name: Deploy to AWS EKS (生产环境)
-        if: steps.deploy-type.outputs.deploy_type == 'k8s'
+        if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          echo "🚀 Deploying to AWS EKS Production Cluster"
+          echo "🚀 Deploying ${{ matrix.service }} to AWS EKS Production Cluster"
           
           # 配置AWS凭证
           aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
@@ -301,36 +319,22 @@ jobs:
           echo "✅ ${{ matrix.service }} deployed to AWS EKS"
           
       - name: Set up Aliyun CLI
+        if: steps.check-deploy.outputs.should_deploy == 'true'
         uses: aliyun/setup-aliyun-cli-action@v1
         with:
           access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           region: ${{ secrets.ALIYUN_REGION }}
 
-      - name: Debug - Locate script file
-        run: |
-          echo "1. 当前工作目录："
-          pwd
-          echo ""
-          echo "2. 列出当前目录所有文件："
-          ls -la
-          echo ""
-          echo "3. 检查 .github 目录是否存在："
-          ls -la .github/ || echo ".github 目录不存在"
-          echo ""
-          echo "4. 检查 .github/scripts 目录是否存在："
-          ls -la .github/scripts/ || echo ".github/scripts 目录不存在"
-          echo ""
-          echo "5. 尝试直接列出脚本文件："
-          find . -name "deploy-ecs.sh" 2>/dev/null || echo "未找到名为 deploy-ecs.sh 的文件"
+      # 预发布环境 (ECS) 部署步骤
       - name: Deploy to Aliyun ECS via Docker Compose (预发布环境)
-        if: steps.deploy-type.outputs.deploy_type == 'ecs'
+        if: steps.deploy-type.outputs.deploy_type == 'ecs' && steps.check-deploy.outputs.should_deploy == 'true'
         env:
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
         run: |
-          echo "🚀 开始部署到阿里云ECS（通过Docker Compose）"
+          echo "🚀 开始部署 ${{ matrix.service }} 服务到阿里云ECS（通过Docker Compose）"
           
           # 配置阿里云CLI
           aliyun configure set --profile default \
@@ -357,8 +361,15 @@ jobs:
           
           echo "📦 镜像地址: $IMAGE"
           
-          # 读取本地部署脚本
-          DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh)
+          # 核心修复3: 读取本地部署脚本 (此时文件已因 Checkout 步骤而存在)
+          # 简单检查文件是否存在
+          if [ -f ".github/scripts/deploy-ecs.sh" ]; then
+            DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh)
+            echo "部署脚本读取成功"
+          else
+            echo "错误: 找不到部署脚本 .github/scripts/deploy-ecs.sh"
+            exit 1
+          fi
           
           # 发送到ECS执行
           aliyun ecs RunCommand \
@@ -373,6 +384,7 @@ jobs:
           echo "✅ ${{ matrix.service }} 部署完成"
       
       - name: Deployment summary
+        if: steps.check-deploy.outputs.should_deploy == 'true'
         run: |
           echo "🎉 Deployment Completed Successfully!"
           echo "====================================="
