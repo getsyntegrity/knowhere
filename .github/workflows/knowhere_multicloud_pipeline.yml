@@ -193,7 +193,7 @@ jobs:
             echo "ACR Image: ${{ steps.image-uris.outputs.acr_image_uri }}"
           fi
 
-  # Job 2: 环境部署 (已修复服务过滤和脚本路径问题)
+  # Job 2: 环境部署
   deploy:
     runs-on: ubuntu-latest
     needs: build-and-push
@@ -204,11 +204,9 @@ jobs:
         service: [api, web, worker]
     
     steps:
-      # 核心修复1: 检出代码，否则无法读取仓库内的脚本
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 核心修复2: 根据手动输入判断当前任务是否需要部署
       - name: Check if should deploy this service
         id: check-deploy
         run: |
@@ -237,7 +235,7 @@ jobs:
             echo "Deploying to ECS single instance"
           fi
       
-      # 生产环境部署步骤均已添加条件判断
+      # 生产环境部署步骤添加条件判断
       - name: Deploy to Aliyun ACK (生产环境)
         if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
         env:
@@ -267,7 +265,7 @@ jobs:
             IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
           fi
           
-          # 更新K8s Deployment（根据您的实际部署文件调整）
+          # 更新K8s Deployment
           kubectl set image deployment/${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
             --namespace=prod
@@ -361,8 +359,6 @@ jobs:
           
           echo "📦 镜像地址: $IMAGE"
           
-          # 核心修复3: 读取本地部署脚本 (此时文件已因 Checkout 步骤而存在)
-          # 简单检查文件是否存在
           if [ -f ".github/scripts/deploy-ecs.sh" ]; then
             DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh)
             echo "部署脚本读取成功"
@@ -370,7 +366,13 @@ jobs:
             echo "错误: 找不到部署脚本 .github/scripts/deploy-ecs.sh"
             exit 1
           fi
-          
+          echo "=== 调试信息：传入的参数 ==="
+          echo "服务名 (serviceName): ${{ matrix.service }}"
+          echo "镜像地址 (IMAGE): $IMAGE"
+          echo "=== 调试信息：脚本前5行 (检查占位符格式) ==="
+          head -n 5 .github/scripts/deploy-ecs.sh
+          echo "=== 调试信息：最终Parameters JSON ==="
+          echo "{\"serviceName\":\"${{ matrix.service }}\", \"imageFull\":\"$IMAGE\"}"
           # 发送到ECS执行
           echo "正在向ECS实例发送部署命令..."
           RAW_OUTPUT=$(aliyun ecs RunCommand \
@@ -397,13 +399,11 @@ jobs:
           POLL_INTERVAL=10
           for ((i=1; i<=MAX_POLL; i++)); do
               echo "正在查询执行状态 ($i/$MAX_POLL)..."
-              # 这里同样移除 --output 参数，通过文本处理提取状态
               INVOCATION_RAW=$(aliyun ecs DescribeInvocationResults \
                 --RegionId "$ALIYUN_REGION" \
                 --InstanceId "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
                 --InvokeId "$INVOKE_ID" 2>/dev/null)
 
-              # 从原始文本中提取关键字段
               STATUS=$(echo "$INVOCATION_RAW" | grep -oP '(?<="InvocationStatus": ")[^"]+' | head -1)
               EXIT_CODE=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ExitCode": )[0-9]+' | head -1)
               ERROR_INFO=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ErrorInfo": ")[^"]+' | head -1)
