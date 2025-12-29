@@ -260,9 +260,7 @@ jobs:
             --region $ALIYUN_REGION
           
           # 获取ACK集群kubeconfig
-          aliyun cs GetClusterKubeConfig \
-            --ClusterId ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }} \
-            --RegionId $ALIYUN_REGION > kubeconfig.yaml
+          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION > kubeconfig.yaml
           
           export KUBECONFIG=kubeconfig.yaml
           
