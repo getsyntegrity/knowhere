@@ -353,7 +353,20 @@ jobs:
             fi
             
             GHCR_IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
-            IMAGE_TAG="${GHCR_IMAGE##*:}"
+            PREDEFINED_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+            if [ -n "$PREDEFINED_TAG" ]; then
+                IMAGE_TAG="$PREDEFINED_TAG"
+                echo "   使用预定义的 image_tag: $IMAGE_TAG"
+            else
+                # 回退到从URI提取，并增加错误处理
+                IMAGE_TAG="${GHCR_IMAGE##*:}"
+                if [ "$IMAGE_TAG" = "$GHCR_IMAGE" ]; then
+                    echo "❌ 错误：无法从 GHCR 镜像URI中提取标签，且未找到预定义标签。"
+                    echo "GHCR_URI 格式不正确: $GHCR_IMAGE"
+                    exit 1
+                fi
+            fi
+            
             IMAGE="knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere/$IMAGE_NAME:$IMAGE_TAG"
           fi
           
