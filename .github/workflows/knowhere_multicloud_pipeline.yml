@@ -258,12 +258,12 @@ jobs:
             IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
           fi
           echo "正在更新 ${{ matrix.service }} 的镜像..."
-          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/${{ matrix.service }} \
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/knowhere-${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
             --namespace=knowhere
           
           # 验证部署状态
-          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/${{ matrix.service }} \
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/knowhere-${{ matrix.service }} \
             --namespace=knowhere \
             --timeout=300s
           
@@ -297,12 +297,12 @@ jobs:
           fi
           
           # 更新K8s Deployment
-          kubectl set image deployment/${{ matrix.service }} \
+          kubectl set image deployment/knowhere-${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
             --namespace=knowhere
           
           # 验证部署状态
-          kubectl rollout status deployment/${{ matrix.service }} \
+          kubectl rollout status deployment/knowhere-${{ matrix.service }} \
             --namespace=knowhere \
             --timeout=300s
           
