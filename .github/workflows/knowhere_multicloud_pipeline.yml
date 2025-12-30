@@ -261,7 +261,7 @@ jobs:
           
           # 获取ACK集群kubeconfig
           ACK_KUBECONFIG_FILE="ack_kubeconfig_${{ github.run_id }}.yaml"
-          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION --PrivateIpAddress false > > $ACK_KUBECONFIG_FILE
+          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION --PrivateIpAddress false > $ACK_KUBECONFIG_FILE
           if [ -s "$ACK_KUBECONFIG_FILE" ]; then
               echo "配置文件已生成，尝试设置上下文..."
               # 尝试列出上下文，如果失败则手动创建
