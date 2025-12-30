@@ -260,8 +260,17 @@ jobs:
             --region $ALIYUN_REGION
           
           # 获取ACK集群kubeconfig
-          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION --PrivateIpAddress false > ~/.kube/config
-    
+          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION --PrivateIpAddress false > kubeconfig.yaml
+          export KUBECONFIG=$(pwd)/kubeconfig.yaml
+          ALL_CONTEXTS=$(kubectl config get-contexts -o name)
+          if [ -n "$ALL_CONTEXTS" ]; then
+              FIRST_CONTEXT=$(echo "$ALL_CONTEXTS" | head -n 1)
+              kubectl config use-context "$FIRST_CONTEXT"
+              echo "✅ 已设置当前上下文为: $FIRST_CONTEXT"
+          else
+              echo "❌ 错误：kubeconfig 中未找到任何上下文。"
+              exit 1
+          fi
           
           
           # 选择镜像源
