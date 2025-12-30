@@ -234,6 +234,39 @@ jobs:
             echo "targets=aliyun-ecs" >> $GITHUB_OUTPUT
             echo "Deploying to ECS single instance"
           fi
+      - name: Build deployment image URI
+        id: build-image
+        run: |
+          ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          
+          # 构建统一且唯一的镜像标签
+          # 格式：环境-短git提交哈希，例如 prod-a1b2c3d4
+          IMAGE_TAG="${ENVIRONMENT}-${SHORT_SHA}"
+          echo "统一镜像标签: $IMAGE_TAG"
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          ACR_REGISTRY_BASE="knowhere-registry.cn-shenzhen.cr.aliyuncs.com/knowhere"
+          
+          case "${{ matrix.service }}" in
+            api)
+              IMAGE_NAME="knowhere-backend"
+              ;;
+            web)
+              IMAGE_NAME="knowhere-frontend"
+              ;;
+            worker)
+              IMAGE_NAME="knowhere-worker"
+              ;;
+            *)
+              echo "❌ 错误：未知服务名 ${{ matrix.service }}"
+              exit 1
+              ;;
+          esac
+          
+          # 最终用于部署的镜像地址
+          DEPLOY_IMAGE="${ACR_REGISTRY_BASE}/${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "用于部署的镜像: $DEPLOY_IMAGE"
+          echo "deploy_image=$DEPLOY_IMAGE" >> $GITHUB_OUTPUT
       
       # 生产环境部署步骤添加条件判断
       - name: Set up Aliyun CLI
@@ -252,14 +285,11 @@ jobs:
           echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
           ACK_KUBECONFIG_FILE="ack_kubeconfig.yaml"
           echo "$ALIYUN_ACK_KUBECONFIG" > "$ACK_KUBECONFIG_FILE"
-          if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
-            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
-          else
-            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
-          fi
+          DEPLOY_IMAGE="${{ steps.build-image.outputs.deploy_image }}"
+          echo "使用镜像: $DEPLOY_IMAGE"
           echo "正在更新 ${{ matrix.service }} 的镜像..."
           kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/knowhere-${{ matrix.service }} \
-            ${{ matrix.service }}=$IMAGE \
+            ${{ matrix.service }}="$DEPLOY_IMAGE" \
             --namespace=knowhere
           
           # 验证部署状态
@@ -290,15 +320,12 @@ jobs:
           export KUBECONFIG=~/.kube/config
           
           # 选择镜像源
-          if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
-            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
-          else
-            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
-          fi
+          DEPLOY_IMAGE="${{ steps.build-image.outputs.deploy_image }}"
+          echo "使用镜像: $DEPLOY_IMAGE"
           
           # 更新K8s Deployment
           kubectl set image deployment/knowhere-${{ matrix.service }} \
-            ${{ matrix.service }}=$IMAGE \
+            ${{ matrix.service }}="$DEPLOY_IMAGE" \
             --namespace=knowhere
           
           # 验证部署状态
