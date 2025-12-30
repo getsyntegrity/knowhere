@@ -260,9 +260,12 @@ jobs:
             --region $ALIYUN_REGION
           
           # 获取ACK集群kubeconfig
-          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION > kubeconfig.yaml
+          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION --PrivateIpAddress false > kubeconfig.yaml
           
           export KUBECONFIG=kubeconfig.yaml
+          echo "=== 检查获取的 kubeconfig 文件内容 ==="
+          head -n 20 kubeconfig.yaml
+          echo "=== 文件内容结束 ==="
           
           # 选择镜像源
           if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
