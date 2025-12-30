@@ -260,11 +260,11 @@ jobs:
           echo "正在更新 ${{ matrix.service }} 的镜像..."
           kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
-            --namespace=prod
+            --namespace=knowhere
           
           # 验证部署状态
           kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/${{ matrix.service }} \
-            --namespace=prod \
+            --namespace=knowhere \
             --timeout=300s
           
           echo "✅ ${{ matrix.service }} 已成功部署到阿里云 ACK"
@@ -299,11 +299,11 @@ jobs:
           # 更新K8s Deployment
           kubectl set image deployment/${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
-            --namespace=prod
+            --namespace=knowhere
           
           # 验证部署状态
           kubectl rollout status deployment/${{ matrix.service }} \
-            --namespace=prod \
+            --namespace=knowhere \
             --timeout=300s
           
           echo "✅ ${{ matrix.service }} deployed to AWS EKS"
