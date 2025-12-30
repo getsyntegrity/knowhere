@@ -266,6 +266,15 @@ jobs:
           echo "=== 检查获取的 kubeconfig 文件内容 ==="
           head -n 20 kubeconfig.yaml
           echo "=== 文件内容结束 ==="
+          echo "已设置 KUBECONFIG 环境变量为: $KUBECONFIG"
+
+          # 验证配置是否被加载
+          echo "当前 kubeconfig 上下文:"
+          kubectl config current-context
+          
+          echo "检查可用的集群:"
+          kubectl config get-clusters
+          
           
           # 选择镜像源
           if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
