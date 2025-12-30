@@ -247,62 +247,23 @@ jobs:
       - name: Deploy to Aliyun ACK (生产环境)
         if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
         env:
-          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
+          ALIYUN_ACK_KUBECONFIG: ${{ secrets.ALIYUN_ACK_KUBECONFIG }} # 读取Secret
         run: |
           echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
-          
-          # 配置阿里云CLI
-          aliyun configure set --profile default \
-            --access-key-id $ALIYUN_ACCESS_KEY_ID \
-            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
-            --region $ALIYUN_REGION
-          
-          # 获取ACK集群kubeconfig
-          ACK_KUBECONFIG_FILE="ack_kubeconfig_${{ github.run_id }}.yaml"
-          aliyun cs GET /k8s/${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}/user_config --RegionId $ALIYUN_REGION --PrivateIpAddress false > $ACK_KUBECONFIG_FILE
-          if [ -s "$ACK_KUBECONFIG_FILE" ]; then
-              echo "配置文件已生成，尝试设置上下文..."
-              # 尝试列出上下文，如果失败则手动创建
-              if ! kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config get-contexts >/dev/null 2>&1; then
-                  echo "配置文件结构可能不标准，尝试提取关键信息手动构建..."
-              fi
-              CONTEXT_NAME=$(kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config get-contexts -o name | head -n 1)
-              if [ -n "$CONTEXT_NAME" ]; then
-                  kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config use-context "$CONTEXT_NAME"
-                  echo "✅ ACK集群上下文已设置为: $CONTEXT_NAME"
-              else
-                  # 如果还是没有上下文，创建一个
-                  CLUSTER_NAME="ack-prod-cluster"
-                  kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config set-cluster $CLUSTER_NAME \
-                    --server=$(grep -A5 'server:' $ACK_KUBECONFIG_FILE | grep 'server:' | awk '{print $2}' | head -1) \
-                    --certificate-authority=<(grep -A5 'certificate-authority-data:' $ACK_KUBECONFIG_FILE | grep 'certificate-authority-data:' | awk '{print $2}' | head -1)
-                  kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config set-credentials "ack-user" --token="PLACEHOLDER"
-                  kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config set-context ack-prod \
-                    --cluster=$CLUSTER_NAME --user=ack-user --namespace=prod
-                  kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config use-context ack-prod
-                  CONTEXT_NAME="ack-prod"
-              fi
-              # 显式设置命名空间
-              kubectl --kubeconfig=$ACK_KUBECONFIG_FILE config set-context --current --namespace=prod
-          else
-              echo "❌ 错误：ACK kubeconfig 文件为空或未生成！"
-              exit 1
-          fi
-
-          echo "正在使用配置文件 $ACK_KUBECONFIG_FILE 更新部署..."
+          ACK_KUBECONFIG_FILE="ack_kubeconfig.yaml"
+          echo "$ALIYUN_ACK_KUBECONFIG" > "$ACK_KUBECONFIG_FILE"
           if [ -n "${{ needs.build-and-push.outputs.acr_image_uri }}" ]; then
-              IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
+            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
           else
-              IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
+            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
           fi
-          
-          kubectl --kubeconfig=$ACK_KUBECONFIG_FILE set image deployment/${{ matrix.service }} \
+          echo "正在更新 ${{ matrix.service }} 的镜像..."
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
             --namespace=prod
           
-          kubectl --kubeconfig=$ACK_KUBECONFIG_FILE rollout status deployment/${{ matrix.service }} \
+          # 验证部署状态
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/${{ matrix.service }} \
             --namespace=prod \
             --timeout=300s
           
