@@ -142,8 +142,6 @@ class OpenAICompatibleClient:
         if top_p is not None:
             payload["top_p"] = top_p
         
-        # 只添加 OpenAI API 支持的参数，过滤掉客户端配置参数
-        # OpenAI API 标准参数白名单
         allowed_api_params = {
             'n', 'stop', 'presence_penalty', 'frequency_penalty', 
             'logit_bias', 'user', 'seed', 'tools', 'tool_choice',
