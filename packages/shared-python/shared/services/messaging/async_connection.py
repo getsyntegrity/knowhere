@@ -53,21 +53,31 @@ class AsyncConnectionManager:
         
         try:
             params = get_connection_params()
+            if params["MESSAGE_BROKER_TYPE"] == "rabbitmq":
+                connection = await asyncio.wait_for(
+                    aio_pika.connect_robust(
+                        host=params["host"],
+                        port=params["port"],
+                        login=params["login"],
+                        password=params["password"],
+                        virtualhost=params["virtualhost"],
+                        client_properties=params.get("client_properties", {}),
+                        heartbeat=params.get("heartbeat", 600),
+                        blocked_connection_timeout=params.get("blocked_connection_timeout", 300),
+                    ),
+                    timeout=30.0
+                )                
+            else:
+                connection = await asyncio.wait_for(
+                    aio_pika.connect_robust(
+                        url=params["CELERY_BROKER_URL"],
+                        client_properties=params.get("client_properties", {}),
+                        heartbeat=params.get("heartbeat", 600),
+                        blocked_connection_timeout=params.get("blocked_connection_timeout", 300),
+                    ),
+                    timeout=30.0
+                )
             logger.info(f"正在连接到RabbitMQ: host={params['host']}, port={params['port']}, virtualhost={params['virtualhost']}")
-            
-            connection = await asyncio.wait_for(
-                aio_pika.connect_robust(
-                    host=params["host"],
-                    port=params["port"],
-                    login=params["login"],
-                    password=params["password"],
-                    virtualhost=params["virtualhost"],
-                    client_properties=params.get("client_properties", {}),
-                    heartbeat=params.get("heartbeat", 600),
-                    blocked_connection_timeout=params.get("blocked_connection_timeout", 300),
-                ),
-                timeout=30.0
-            )
             
             # 存储到当前上下文（自动绑定到当前事件循环）
             _connection_var.set(connection)

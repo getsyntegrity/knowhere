@@ -2,6 +2,7 @@
 Redis配置
 """
 import asyncio
+import ssl
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
@@ -20,6 +21,9 @@ class RedisConfig(BaseModel):
     REDIS_PORT: int = Field(default=6379, description="Redis端口")
     REDIS_PASSWORD: Optional[str] = Field(default=None, description="Redis密码")
     REDIS_DATABASE: int = Field(default=0, description="Redis数据库")
+    
+    # SSL/TLS配置 (AWS ElastiCache)
+    REDIS_SSL: bool = Field(default=False, description="是否启用SSL连接")
     
     # 连接池配置
     REDIS_MAX_CONNECTIONS: int = Field(default=20, description="最大连接数")
@@ -57,8 +61,10 @@ class RedisConfig(BaseModel):
     
     def get_connection_url(self) -> str:
         """获取Redis连接URL"""
+        # AWS ElastiCache使用rediss://协议进行SSL连接
+        protocol = "rediss" if self.REDIS_SSL else "redis"
         password_part = f":{self.REDIS_PASSWORD}@" if self.REDIS_PASSWORD else ""
-        return f"redis://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DATABASE}"
+        return f"{protocol}://{password_part}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DATABASE}"
     
     def get_connection_params(self) -> Dict[str, Any]:
         """获取Redis连接参数"""
