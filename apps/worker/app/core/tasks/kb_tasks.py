@@ -258,8 +258,14 @@ def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: s
         
         try:
             logger.info(f"开始执行异步函数: task_id={self.request.id}, job_id={job_id}")
+            
+            # 计算是否为最后一次重试
+            max_retries = settings.KB_TASK_MAX_RETRIES
+            is_final_attempt = self.request.retries >= max_retries
+            logger.info(f"Retry status: current={self.request.retries}, max={max_retries}, is_final={is_final_attempt}")
+            
             result = loop.run_until_complete(_parse_and_vectorize_async(
-                job_id, user_id
+                job_id, user_id, is_final_attempt=is_final_attempt
             ))
             logger.info(f"异步函数执行完成: task_id={self.request.id}, job_id={job_id}, result keys={list(result.keys()) if isinstance(result, dict) else None}")
             return result
@@ -271,12 +277,12 @@ def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: s
             
     except Exception as e:
         logger.error(f"解析并向量化任务失败: task_id={self.request.id}, job_id={job_id}, error={e}", exc_info=True)
-        raise self.retry(exc=e, countdown=120, max_retries=2)
+        raise self.retry(exc=e, countdown=settings.KB_TASK_RETRY_COUNTDOWN, max_retries=settings.KB_TASK_MAX_RETRIES)
 
 
-async def _parse_and_vectorize_async(job_id: str, user_id: str):
+async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt: bool = False):
     """异步解析并向量化（文件已通过S3直传）"""
-    logger.info(f"异步函数开始执行: job_id={job_id}, user_id={user_id}")
+    logger.info(f"异步函数开始执行: job_id={job_id}, user_id={user_id}, is_final_attempt={is_final_attempt}")
     message_publisher = get_message_publisher()
     logger.info(f"消息发布器获取成功: job_id={job_id}")
     
@@ -640,13 +646,16 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         logger.error(f"解析并向量化失败: job_id={job_id}, error={e}, error_type={type(e).__name__}")
         logger.error(f"异常堆栈跟踪: job_id={job_id}\n{error_trace}")
         # 发布失败消息
-        logger.info(f"开始发布失败消息: job_id={job_id}")
+        logger.info(f"开始发布失败消息: job_id={job_id}, refund_credits={is_final_attempt}")
         message_publisher = get_message_publisher()
         await message_publisher.publish_failure(
             job_id=job_id,
             error_message=str(e),
             error_type=type(e).__name__,
             stack_trace=error_trace,
+            metadata={
+                "refund_credits": is_final_attempt
+            }
         )
         logger.info(f"失败消息发布完成: job_id={job_id}")
         raise

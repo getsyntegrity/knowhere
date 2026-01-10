@@ -51,6 +51,8 @@ def get_connection_params() -> Dict[str, Any]:
         "login": app_config.RABBITMQ_USER,  # 直接使用，不进行 URL 编码
         "password": app_config.RABBITMQ_PASSWORD,  # 直接使用，不进行 URL 编码
         "virtualhost": app_config.RABBITMQ_VHOST,
+        "MESSAGE_BROKER_TYPE": app_config.MESSAGE_BROKER_TYPE,
+        "CELERY_BROKER_URL": app_config.CELERY_BROKER_URL,
         "client_properties": {
             "application_name": "knowhere_api",
         },

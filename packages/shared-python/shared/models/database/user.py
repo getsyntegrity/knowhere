@@ -55,6 +55,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     provider_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # 认证提供商类型
     provider_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)   # 第三方用户ID
     credits_balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Credits余额
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Stripe客户ID
     subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # 订阅ID
     user_type: Mapped[str] = mapped_column(
         String(50), 

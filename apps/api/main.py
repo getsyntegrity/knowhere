@@ -4,7 +4,9 @@ from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI
+from sqlalchemy import text
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # 从共享包导入
 from shared.core.config import redis_pool_manager, settings
@@ -23,6 +25,7 @@ from app.core.users import get_user_manager
 from app.core.jwt import auth_backend
 from app.core.image_cli import ImageCli
 from app.middleware.api_key_auth_middleware import api_key_auth_middleware
+from app.middleware.credits_middleware import credits_middleware
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from fastapi_users import FastAPIUsers
@@ -47,6 +50,20 @@ async def lifespan(app: FastAPI):
     """
     logger.info("知识库API服务开始启动...")
     
+    # 尝试删除 payment_records 表的 ix_payment_records_payment_intent_id 索引和相关唯一约束
+    try:
+        logger.info("尝试删除 payment_records 表的 payment_intent_id 相关索引和约束...")
+        async with engine.begin() as conn:
+            # 删除普通索引
+            await conn.execute(text("DROP INDEX IF EXISTS ix_payment_records_payment_intent_id"))
+            # 删除自动生成的唯一约束 (key)
+            await conn.execute(text("ALTER TABLE payment_records DROP CONSTRAINT IF EXISTS payment_records_payment_intent_id_key"))
+            # 删除可能存在的命名唯一约束
+            await conn.execute(text("ALTER TABLE payment_records DROP CONSTRAINT IF EXISTS uq_payment_record_payment_intent_id"))
+        logger.info("索引和约束删除操作完成")
+    except Exception as e:
+        logger.warning(f"删除索引/约束时发生错误: {e}")
+
     # 运行数据库迁移
     from alembic.config import Config
     from alembic import command
@@ -72,6 +89,15 @@ async def lifespan(app: FastAPI):
     # 创建数据库表（如果不存在）
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    
+    # 手动添加 stripe_customer_id 字段（如果不存在）- 针对现有数据库的修补
+    try:
+        logger.info("检查并添加 stripe_customer_id 字段...")
+        async with engine.begin() as conn:
+            # 使用 PostgreSQL 的 ADD COLUMN IF NOT EXISTS 语法
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255)"))
+    except Exception as e:
+        logger.warning(f"添加 stripe_customer_id 字段失败: {e}")
     
     # 导入所有模型以确保它们被注册
     from shared.models.database import user
@@ -129,6 +155,9 @@ def create_app() -> FastAPI:
     
     # 添加Moesif API监控中间件
     app.add_middleware(MoesifMiddleware)
+
+    # Credits 扣费中间件（仅作用于 POST /api/v1/jobs）
+    app.add_middleware(BaseHTTPMiddleware, dispatch=credits_middleware)
     
     # 添加API Key认证中间件
     # app.add_middleware(api_key_auth_middleware)

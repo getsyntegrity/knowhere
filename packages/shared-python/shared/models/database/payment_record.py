@@ -22,7 +22,7 @@ class PaymentRecord(Base):
     __tablename__ = "payment_records"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
     user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     payment_type: Mapped[str] = mapped_column(String(50), nullable=False)  # subscription/credits_package
@@ -41,7 +41,6 @@ class PaymentRecord(Base):
     user: Mapped[User] = relationship("User", lazy="select")
     
     __table_args__ = (
-        UniqueConstraint('payment_intent_id', name='uq_payment_record_payment_intent_id'),
         UniqueConstraint('checkout_session_id', name='uq_payment_record_checkout_session_id'),
     )
     
