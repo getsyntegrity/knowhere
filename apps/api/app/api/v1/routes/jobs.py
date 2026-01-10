@@ -4,15 +4,17 @@
 
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
 from shared.core.constants.system import SystemConstants
+from shared.core.config import settings
 from app.core.dependencies import get_current_user_dual_auth, get_db
 from shared.core.state_machine.states import JobStatus
 from shared.models.database.user import User
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
-                                    JobResponse, JobResult)
+                                    JobResponse, JobResult, JobResultResponse)
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
@@ -170,6 +172,15 @@ def validate_file_type(file_name: str) -> bool:
         all_supported_extensions.extend(category)
 
     return file_extension in all_supported_extensions
+
+
+def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """确保返回UTC时间"""
+    if not dt:
+        return None
+    if dt.tzinfo:
+        return dt.astimezone(timezone.utc)
+    return dt.replace(tzinfo=timezone.utc)
 
 
 @router.post("", response_model=JobResponse, summary="创建解析任务")
@@ -427,6 +438,9 @@ async def list_jobs(
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     job_status: Optional[str] = Query(None, description="状态过滤"),
     job_type: Optional[str] = Query(None, description="任务类型过滤"),
+    recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
+    start_time: Optional[datetime] = Query(None, description="开始时间，ISO格式"),
+    end_time: Optional[datetime] = Query(None, description="结束时间，ISO格式"),
     current_user: User = Depends(get_current_user_dual_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -435,6 +449,26 @@ async def list_jobs(
     """
     try:
         job_repo = JobRepository()
+        
+        if recent_days not in (None, 1, 7, 30):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="recent_days 仅支持 1、7、30",
+            )
+        created_after = None
+        if recent_days:
+            from datetime import datetime, timedelta
+            created_after = datetime.now() - timedelta(days=recent_days)
+        
+        if start_time and end_time and start_time > end_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start_time 不能晚于 end_time",
+            )
+        # start_time / end_time 优先于 recent_days
+        if start_time:
+            created_after = start_time
+        created_before = end_time
 
         # 获取任务列表
         jobs = await job_repo.get_jobs_by_user(
@@ -442,6 +476,8 @@ async def list_jobs(
             user_id=str(current_user.id),
             limit=page_size,
             offset=(page - 1) * page_size,
+            created_after=created_after,
+            created_before=created_before,
         )
 
         # 类型过滤
@@ -489,18 +525,49 @@ async def list_jobs(
                     expires_in = result_url_info.get("expires_in", 3600)
                     result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
+            original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
+            source_url = original_request.get("source_url") if isinstance(original_request, dict) else None
+            file_name = None
+            if source_url:
+                parsed_source = urlparse(source_url)
+                file_name = os.path.basename(parsed_source.path) or None
+            if not file_name and isinstance(original_request, dict):
+                file_name = original_request.get("file_name")
+            file_extension = None
+            if file_name:
+                ext = os.path.splitext(file_name)[1]
+                file_extension = ext[1:].upper() if ext else None
+            
+            parsing_params = {}
+            if isinstance(original_request, dict):
+                parsing_params = original_request.get("parsing_params") or {}
+            if not parsing_params and isinstance(job_metadata, dict):
+                parsing_params = job_metadata.get("parsing_params") or {}
+            model = parsing_params.get("model") if isinstance(parsing_params, dict) else None
+            ocr_enabled = parsing_params.get("ocr_enabled") if isinstance(parsing_params, dict) else None
+            
+            duration_seconds = None
+            if job.updated_at and job.created_at:
+                duration_seconds = (job.updated_at - job.created_at).total_seconds()
+            
             job_responses.append(
                 JobResult(
                     job_id=job.job_id,
                     status=status_for_api,
                     source_type=job.source_type,
                     data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-                    created_at=job.created_at,
+                    created_at=ensure_utc(job.created_at),
                     progress=None,  # 任务列表不显示详细进度
                     error={"message": job.error_message} if job.error_message else None,
                     result=result,
                     result_url=result_url,
-                    result_url_expires_at=result_url_expires_at,
+                    result_url_expires_at=ensure_utc(result_url_expires_at),
+                    file_name=file_name,
+                    file_extension=file_extension,
+                    model=model,
+                    ocr_enabled=ocr_enabled,
+                    duration_seconds=duration_seconds,
+                    credits_spent=settings.CREDITS_PER_API_CALL,
                 )
             )
 
@@ -519,7 +586,7 @@ async def list_jobs(
 
 
 @router.get(
-    "/{job_id}", response_model=JobResult, summary="获取任务结果"
+    "/{job_id}", response_model=JobResultResponse, summary="获取任务结果"
 )
 async def get_job_result(
     job_id: str,
@@ -604,17 +671,43 @@ async def get_job_result(
                 from datetime import datetime, timedelta
                 result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
-        response_data = JobResult(
+        original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
+        source_url = original_request.get("source_url") if isinstance(original_request, dict) else None
+        file_name = None
+        if source_url:
+            parsed_source = urlparse(source_url)
+            file_name = os.path.basename(parsed_source.path) or None
+        if not file_name and isinstance(original_request, dict):
+            file_name = original_request.get("file_name")
+        file_extension = None
+        if file_name:
+            ext = os.path.splitext(file_name)[1]
+            file_extension = ext[1:].upper() if ext else None
+        
+        parsing_params = {}
+        if isinstance(original_request, dict):
+            parsing_params = original_request.get("parsing_params") or {}
+        if not parsing_params and isinstance(job_metadata, dict):
+            parsing_params = job_metadata.get("parsing_params") or {}
+        model = parsing_params.get("model") if isinstance(parsing_params, dict) else None
+        ocr_enabled = parsing_params.get("ocr_enabled") if isinstance(parsing_params, dict) else None
+        
+        response_data = JobResultResponse(
             job_id=job.job_id,
             status=status_for_api,
             source_type=job.source_type,
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-            created_at=job.created_at,
+            created_at=ensure_utc(job.created_at),
             progress=progress,
             error={"message": job.error_message} if job.error_message else None,
             result=result,
             result_url=result_url,
-            result_url_expires_at=result_url_expires_at,
+            result_url_expires_at=ensure_utc(result_url_expires_at),
+            file_name=file_name,
+            file_extension=file_extension,
+            model=model,
+            ocr_enabled=ocr_enabled,
+            duration_seconds=(job.updated_at - job.created_at).total_seconds() if job.updated_at and job.created_at else None,
         )
 
         return response_data

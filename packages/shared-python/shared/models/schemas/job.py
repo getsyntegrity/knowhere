@@ -74,7 +74,39 @@ class JobResult(BaseModel):
     result: Optional[Dict[str, Any]] = Field(None, description="解析结果（包含 checksum 和 statistics）")
     result_url: Optional[str] = Field(None, description="结果文件URL（ZIP包下载链接）")
     result_url_expires_at: datetime = Field(..., description="结果文件URL过期时间")
+    
+    # 扩展字段
+    file_name: Optional[str] = Field(None, description="源文件名（从URL或file_name获取）")
+    file_extension: Optional[str] = Field(None, description="文件后缀，大写")
+    model: Optional[str] = Field(None, description="解析使用的模型")
+    ocr_enabled: Optional[bool] = Field(None, description="是否启用OCR")
+    duration_seconds: Optional[float] = Field(None, description="任务耗时（updated_at - created_at，单位秒）")
+    credits_spent: Optional[int] = Field(None, description="花费点数")
 
+class JobResultResponse(BaseModel):
+    """任务状态查询响应"""
+
+    job_id: str = Field(..., description="任务ID")
+    status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="任务状态")
+    source_type: str = Field(..., description="文件来源类型")
+    data_id: Optional[str] = Field(None, description="用户自定义ID")
+    created_at: datetime = Field(..., description="创建时间")
+
+    # 状态相关字段
+    progress: Optional[Dict[str, Any]] = Field(None, description="进度信息")
+    error: Optional[Dict[str, Any]] = Field(None, description="错误信息")
+
+    # 结果相关字段
+    result: Optional[Dict[str, Any]] = Field(None, description="解析结果（包含 checksum 和 statistics）")
+    result_url: Optional[str] = Field(None, description="结果文件URL（ZIP包下载链接）")
+    result_url_expires_at: datetime = Field(..., description="结果文件URL过期时间")
+    
+    # 扩展字段
+    file_name: Optional[str] = Field(None, description="源文件名（从URL或file_name获取）")
+    file_extension: Optional[str] = Field(None, description="文件后缀，大写")
+    model: Optional[str] = Field(None, description="解析使用的模型")
+    ocr_enabled: Optional[bool] = Field(None, description="是否启用OCR")
+    duration_seconds: Optional[float] = Field(None, description="任务耗时（updated_at - created_at，单位秒）")
 
 class JobList(BaseModel):
     """任务列表响应"""
