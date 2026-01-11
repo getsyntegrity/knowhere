@@ -35,6 +35,7 @@ env:
   REGISTRY: ghcr.io
   ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
   ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
+  # AWS ECR配置（硬编码）
   ECR_REGISTRY: 107424103509.dkr.ecr.us-east-1.amazonaws.com
   ECR_REPOSITORY: knowhere
   
@@ -136,14 +137,11 @@ jobs:
             echo "acr_latest_uri=$ACR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
           fi
           
-          # ECR镜像URI（如果配置了ECR）
-          if [ -n "${{ env.ECR_REGISTRY }}" ] && [ -n "${{ env.ECR_REPOSITORY }}" ]; then
-            # ECR仓库名称从矩阵中获取
-            ECR_REPO_NAME="${{ matrix.ecr_repo_name }}"
-            ECR_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/$ECR_REPO_NAME"
-            echo "ecr_image_uri=$ECR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
-            echo "ecr_latest_uri=$ECR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
-          fi
+          # ECR镜像URI
+          ECR_REPO_NAME="${{ matrix.ecr_repo_name }}"
+          ECR_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/$ECR_REPO_NAME"
+          echo "ecr_image_uri=$ECR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "ecr_latest_uri=$ECR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
       
       - name: Skip build for PR
         id: should-build
@@ -171,12 +169,21 @@ jobs:
           username: ${{ secrets.ALIYUN_ACR_USERNAME }}
           password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
       
-      - name: Login to AWS ECR
-        if: steps.should-build.outputs.should_build == 'true' && env.ECR_REGISTRY != ''
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Configure AWS credentials for ECR
+        if: steps.should-build.outputs.should_build == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          mask-password: true
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1  # ECR所在区域
+      
+      - name: Login to AWS ECR
+        if: steps.should-build.outputs.should_build == 'true'
+        id: login-ecr
+        run: |
+          # 使用aws cli登录ECR
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+          echo "✅ Logged in to AWS ECR"
       
       - name: Build and push to registries
         if: steps.should-build.outputs.should_build == 'true'
@@ -211,9 +218,7 @@ jobs:
           if [ -n "${{ steps.image-uris.outputs.acr_image_uri }}" ]; then
             echo "ACR Image: ${{ steps.image-uris.outputs.acr_image_uri }}"
           fi
-          if [ -n "${{ steps.image-uris.outputs.ecr_image_uri }}" ]; then
-            echo "ECR Image: ${{ steps.image-uris.outputs.ecr_image_uri }}"
-          fi
+          echo "ECR Image: ${{ steps.image-uris.outputs.ecr_image_uri }}"
 
   # Job 2: 环境部署
   deploy:
@@ -448,13 +453,14 @@ jobs:
 
               STATUS=$(echo "$INVOCATION_RAW" | grep -oP '(?<="InvocationStatus": ")[^"]+' | head -1)
               EXIT_CODE=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ExitCode": )[0-9]+' | head -1)
-              ERROR_INFO=$(echo "$INVOKATION_RAW" | grep -oP '(?<="ErrorInfo": ")[^"]+' | head -1)
               
               if [[ "$STATUS" == "Success" ]]; then
                   echo "✅ ECS实例上的脚本执行成功。"
                   break
               elif [[ "$STATUS" == "Failed" ]]; then
                   echo "❌ ECS实例上的脚本执行失败，退出码: $EXIT_CODE"
+                  # 尝试提取错误信息
+                  ERROR_INFO=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ErrorInfo": ")[^"]+' | head -1 2>/dev/null || echo "未知错误")
                   echo "错误信息: $ERROR_INFO"
                   exit 1
               elif [[ "$STATUS" == "Running" ]]; then
