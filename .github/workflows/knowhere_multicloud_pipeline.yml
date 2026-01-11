@@ -1,12 +1,12 @@
 name: CI/CD Pipeline - Production & Staging
 
 on:
-  #push:
-  #  branches: [main, staging]
-  #  tags:
-  #    - 'v*'
-  #pull_request:
-  #  branches: [main]
+  push:
+    branches: [main, staging]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       target_environment:
@@ -23,6 +23,7 @@ on:
         options:
           - all
           - api
+          - web
           - worker
       simulate_only:
         description: '仅模拟流程，不实际部署'
@@ -35,7 +36,7 @@ env:
   REGISTRY: ghcr.io
   ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
   ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
-  # AWS ECR配置（硬编码）
+  # AWS ECR配置
   ECR_REGISTRY: 107424103509.dkr.ecr.us-east-1.amazonaws.com
   ECR_REPOSITORY: knowhere
   
@@ -55,29 +56,26 @@ jobs:
     
     strategy:
       matrix:
-        service: [api, worker]  # 移除了web
+        # AWS环境不需要web，但构建阶段仍然构建所有服务（包括web）
+        # 因为阿里云环境需要web服务
+        service: [api, web, worker]
         include:
           - service: api
             dockerfile: deploy/docker/Dockerfile.api
             image_name: knowhere-backend
             ecr_repo_name: knowhere-backend  # ECR仓库名称
+          - service: web
+            dockerfile: deploy/docker/Dockerfile.web
+            image_name: knowhere-frontend
+            ecr_repo_name: knowhere-frontend  # ECR仓库名称（AWS不需要但保留）
           - service: worker
             dockerfile: deploy/docker/Dockerfile.worker
             image_name: knowhere-worker
             ecr_repo_name: knowhere-worker  # ECR仓库名称
     
     outputs:
-      # 矩阵作业的输出需要通过特定的方式来捕获，这里我们改为在步骤中输出文件
-      # 这里保留一些全局输出，但ECR镜像URI需要单独处理
       environment: ${{ steps.env.outputs.environment }}
       image_tag: ${{ steps.tags.outputs.image_tag }}
-      # 为每个服务分别设置输出
-      api_acr_image_uri: ${{ steps.api-acr-uri.outputs.image_uri }}
-      worker_acr_image_uri: ${{ steps.worker-acr-uri.outputs.image_uri }}
-      api_ghcr_image_uri: ${{ steps.api-ghcr-uri.outputs.image_uri }}
-      worker_ghcr_image_uri: ${{ steps.worker-ghcr-uri.outputs.image_uri }}
-      api_ecr_image_uri: ${{ steps.api-ecr-uri.outputs.image_uri }}
-      worker_ecr_image_uri: ${{ steps.worker-ecr-uri.outputs.image_uri }}
     
     steps:
       - name: Checkout code
@@ -147,15 +145,26 @@ jobs:
             echo "acr_latest_uri=$ACR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
           fi
           
-          # ECR镜像URI
-          ECR_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/$ECR_REPO_NAME"
-          echo "ecr_image_uri=$ECR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "ecr_latest_uri=$ECR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          # ECR镜像URI（AWS不需要web服务的ECR镜像）
+          if [ "$SERVICE" != "web" ]; then
+            # API和worker服务推送到ECR
+            ECR_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/$ECR_REPO_NAME"
+            echo "ecr_image_uri=$ECR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
+            echo "ecr_latest_uri=$ECR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          else
+            # Web服务不推送到ECR，因为AWS不需要
+            echo "ecr_image_uri=" >> $GITHUB_OUTPUT
+            echo "ecr_latest_uri=" >> $GITHUB_OUTPUT
+          fi
           
           # 为当前服务保存镜像URI到文件，供后续步骤使用
           echo "GHCR_URI=$GHCR_URI:$IMAGE_TAG" >> $GITHUB_ENV
-          echo "ACR_URI=$ACR_URI:$IMAGE_TAG" >> $GITHUB_ENV
-          echo "ECR_URI=$ECR_URI:$IMAGE_TAG" >> $GITHUB_ENV
+          if [ -n "${{ env.ACR_REGISTRY }}" ]; then
+            echo "ACR_URI=$ACR_URI:$IMAGE_TAG" >> $GITHUB_ENV
+          fi
+          if [ "$SERVICE" != "web" ]; then
+            echo "ECR_URI=$ECR_URI:$IMAGE_TAG" >> $GITHUB_ENV
+          fi
       
       - name: Save image URIs to outputs for each service
         id: save-uris
@@ -170,18 +179,7 @@ jobs:
           ${SERVICE}_ecr_image_uri=${{ steps.image-uris.outputs.ecr_image_uri }}
           EOF
           
-          # 输出到GITHUB_OUTPUT以便后续步骤使用
-          if [ "$SERVICE" == "api" ]; then
-            echo "api_ghcr_image_uri=${{ steps.image-uris.outputs.ghcr_image_uri }}" >> $GITHUB_OUTPUT
-            echo "api_acr_image_uri=${{ steps.image-uris.outputs.acr_image_uri }}" >> $GITHUB_OUTPUT
-            echo "api_ecr_image_uri=${{ steps.image-uris.outputs.ecr_image_uri }}" >> $GITHUB_OUTPUT
-          elif [ "$SERVICE" == "worker" ]; then
-            echo "worker_ghcr_image_uri=${{ steps.image-uris.outputs.ghcr_image_uri }}" >> $GITHUB_OUTPUT
-            echo "worker_acr_image_uri=${{ steps.image-uris.outputs.acr_image_uri }}" >> $GITHUB_OUTPUT
-            echo "worker_ecr_image_uri=${{ steps.image-uris.outputs.ecr_image_uri }}" >> $GITHUB_OUTPUT
-          fi
-          
-          # 上传为工件，供后续作业使用
+          # 上传为文件，供后续作业使用
           echo "ENV_FILE=$ENV_FILE" >> $GITHUB_ENV
       
       - name: Upload image URIs as artifact
@@ -265,7 +263,11 @@ jobs:
           if [ -n "${{ steps.image-uris.outputs.acr_image_uri }}" ]; then
             echo "ACR Image: ${{ steps.image-uris.outputs.acr_image_uri }}"
           fi
-          echo "ECR Image: ${{ steps.image-uris.outputs.ecr_image_uri }}"
+          if [ -n "${{ steps.image-uris.outputs.ecr_image_uri }}" ]; then
+            echo "ECR Image: ${{ steps.image-uris.outputs.ecr_image_uri }}"
+          else
+            echo "ECR Image: (not pushed for web service)"
+          fi
 
   # Job 2: 环境部署
   deploy:
@@ -274,8 +276,10 @@ jobs:
     if: github.event.inputs.simulate_only != 'true'
     
     strategy:
+      # 部署矩阵：阿里云环境需要部署所有服务，AWS环境只部署api和worker
+      # 具体逻辑在后续步骤中判断
       matrix:
-        service: [api, worker]  # 移除了web
+        service: [api, web, worker]  # 构建了所有服务，部署时根据平台过滤
     
     steps:
       - name: Checkout code
@@ -331,6 +335,7 @@ jobs:
         id: deploy-type
         run: |
           ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+          SERVICE="${{ matrix.service }}"
           
           # 确定部署类型（基于环境和平台策略）
           if [ "$ENVIRONMENT" == "prod" ]; then
@@ -356,11 +361,20 @@ jobs:
           echo "aws_eks_namespace=$AWS_EKS_NAMESPACE" >> $GITHUB_OUTPUT
           echo "aliyun_ack_namespace=$ALIYUN_ACK_NAMESPACE" >> $GITHUB_OUTPUT
           
-          # 输出用于后续步骤判断的清晰目标
+          # 输出部署目标信息
           echo "AWS EKS 目标: 集群 ${{ env.AWS_EKS_PROD_CLUSTER_NAME }}, 命名空间 $AWS_EKS_NAMESPACE"
           echo "Aliyun ACK 目标: 集群 ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}, 命名空间 $ALIYUN_ACK_NAMESPACE"
           if [ "$ENVIRONMENT" == "staging" ]; then
             echo "Aliyun ECS 目标: 实例 ${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}"
+          fi
+          
+          # 判断当前服务是否应该部署到AWS
+          # AWS环境不需要web服务
+          if [ "$SERVICE" == "web" ]; then
+            echo "skip_aws_deploy=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Web服务不会部署到AWS环境"
+          else
+            echo "skip_aws_deploy=false" >> $GITHUB_OUTPUT
           fi
       
       # 阿里云 ACK 部署步骤
@@ -408,7 +422,7 @@ jobs:
       
       # AWS EKS 部署步骤 - 统一处理生产和预发布
       - name: Deploy to AWS EKS
-        if: steps.check-deploy.outputs.should_deploy == 'true'
+        if: steps.check-deploy.outputs.should_deploy == 'true' && steps.deploy-type.outputs.skip_aws_deploy == 'false'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -564,12 +578,28 @@ jobs:
       - name: Deployment summary
         if: steps.check-deploy.outputs.should_deploy == 'true'
         run: |
-          echo "🎉 Deployment Completed Successfully!"
+          ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+          SERVICE="${{ matrix.service }}"
+          
+          echo "🎉 Deployment Summary"
           echo "====================================="
-          echo "Service: ${{ matrix.service }}"
-          echo "Environment: ${{ needs.build-and-push.outputs.environment }}"
+          echo "Service: $SERVICE"
+          echo "Environment: $ENVIRONMENT"
           echo "Deployment Type: ${{ steps.deploy-type.outputs.deploy_type }}"
-          echo "Image: ${{ env.ECR_IMAGE_URI || env.ACR_IMAGE_URI || env.GHCR_IMAGE_URI }}"
+          
+          if [ "$SERVICE" == "web" ] && [ "${{ steps.deploy-type.outputs.skip_aws_deploy }}" == "true" ]; then
+            echo "⚠️ Web服务仅在阿里云环境部署，AWS环境已跳过"
+          fi
+          
+          # 显示使用的镜像
+          if [ -n "${{ env.ECR_IMAGE_URI }}" ] && [ "${{ env.ECR_IMAGE_URI }}" != "null" ]; then
+            echo "Image: ${{ env.ECR_IMAGE_URI }}"
+          elif [ -n "${{ env.ACR_IMAGE_URI }}" ] && [ "${{ env.ACR_IMAGE_URI }}" != "null" ]; then
+            echo "Image: ${{ env.ACR_IMAGE_URI }}"
+          else
+            echo "Image: ${{ env.GHCR_IMAGE_URI }}"
+          fi
+          
           echo ""
           echo "Next steps:"
           echo "- Verify service health checks"
