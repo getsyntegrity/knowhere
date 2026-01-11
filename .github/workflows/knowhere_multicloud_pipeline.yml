@@ -67,11 +67,17 @@ jobs:
             ecr_repo_name: knowhere-worker  # ECR仓库名称
     
     outputs:
+      # 矩阵作业的输出需要通过特定的方式来捕获，这里我们改为在步骤中输出文件
+      # 这里保留一些全局输出，但ECR镜像URI需要单独处理
       environment: ${{ steps.env.outputs.environment }}
       image_tag: ${{ steps.tags.outputs.image_tag }}
-      acr_image_uri: ${{ steps.image-uris.outputs.acr_image_uri }}
-      ghcr_image_uri: ${{ steps.image-uris.outputs.ghcr_image_uri }}
-      ecr_image_uri: ${{ steps.image-uris.outputs.ecr_image_uri }}
+      # 为每个服务分别设置输出
+      api_acr_image_uri: ${{ steps.api-acr-uri.outputs.image_uri }}
+      worker_acr_image_uri: ${{ steps.worker-acr-uri.outputs.image_uri }}
+      api_ghcr_image_uri: ${{ steps.api-ghcr-uri.outputs.image_uri }}
+      worker_ghcr_image_uri: ${{ steps.worker-ghcr-uri.outputs.image_uri }}
+      api_ecr_image_uri: ${{ steps.api-ecr-uri.outputs.image_uri }}
+      worker_ecr_image_uri: ${{ steps.worker-ecr-uri.outputs.image_uri }}
     
     steps:
       - name: Checkout code
@@ -113,16 +119,20 @@ jobs:
           echo "latest_tag=${ENVIRONMENT}-latest" >> $GITHUB_OUTPUT
           echo "Generated tag: $IMAGE_TAG"
       
-      - name: Generate image URIs
+      - name: Generate image URIs for current service
         id: image-uris
         run: |
           ENVIRONMENT="${{ steps.env.outputs.environment }}"
           IMAGE_TAG="${{ steps.tags.outputs.image_tag }}"
           LATEST_TAG="${{ steps.tags.outputs.latest_tag }}"
           
-          # 将所有者名称和镜像名称都转换为小写
-          OWNER_LOWERCASE=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          # 获取当前服务的配置
+          SERVICE="${{ matrix.service }}"
           IMAGE_NAME_LOWERCASE=$(echo "${{ matrix.image_name }}" | tr '[:upper:]' '[:lower:]')
+          ECR_REPO_NAME="${{ matrix.ecr_repo_name }}"
+          
+          # 将所有者名称转换为小写
+          OWNER_LOWERCASE=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           
           # GHCR镜像URI（强制小写）
           GHCR_URI="${{ env.REGISTRY }}/$OWNER_LOWERCASE/$IMAGE_NAME_LOWERCASE"
@@ -138,10 +148,47 @@ jobs:
           fi
           
           # ECR镜像URI
-          ECR_REPO_NAME="${{ matrix.ecr_repo_name }}"
           ECR_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/$ECR_REPO_NAME"
           echo "ecr_image_uri=$ECR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "ecr_latest_uri=$ECR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          # 为当前服务保存镜像URI到文件，供后续步骤使用
+          echo "GHCR_URI=$GHCR_URI:$IMAGE_TAG" >> $GITHUB_ENV
+          echo "ACR_URI=$ACR_URI:$IMAGE_TAG" >> $GITHUB_ENV
+          echo "ECR_URI=$ECR_URI:$IMAGE_TAG" >> $GITHUB_ENV
+      
+      - name: Save image URIs to outputs for each service
+        id: save-uris
+        run: |
+          SERVICE="${{ matrix.service }}"
+          ENV_FILE="/tmp/${SERVICE}_image_uris.env"
+          
+          # 创建包含镜像URI的文件
+          cat > $ENV_FILE << EOF
+          ${SERVICE}_ghcr_image_uri=${{ steps.image-uris.outputs.ghcr_image_uri }}
+          ${SERVICE}_acr_image_uri=${{ steps.image-uris.outputs.acr_image_uri }}
+          ${SERVICE}_ecr_image_uri=${{ steps.image-uris.outputs.ecr_image_uri }}
+          EOF
+          
+          # 输出到GITHUB_OUTPUT以便后续步骤使用
+          if [ "$SERVICE" == "api" ]; then
+            echo "api_ghcr_image_uri=${{ steps.image-uris.outputs.ghcr_image_uri }}" >> $GITHUB_OUTPUT
+            echo "api_acr_image_uri=${{ steps.image-uris.outputs.acr_image_uri }}" >> $GITHUB_OUTPUT
+            echo "api_ecr_image_uri=${{ steps.image-uris.outputs.ecr_image_uri }}" >> $GITHUB_OUTPUT
+          elif [ "$SERVICE" == "worker" ]; then
+            echo "worker_ghcr_image_uri=${{ steps.image-uris.outputs.ghcr_image_uri }}" >> $GITHUB_OUTPUT
+            echo "worker_acr_image_uri=${{ steps.image-uris.outputs.acr_image_uri }}" >> $GITHUB_OUTPUT
+            echo "worker_ecr_image_uri=${{ steps.image-uris.outputs.ecr_image_uri }}" >> $GITHUB_OUTPUT
+          fi
+          
+          # 上传为工件，供后续作业使用
+          echo "ENV_FILE=$ENV_FILE" >> $GITHUB_ENV
+      
+      - name: Upload image URIs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service }}-image-uris
+          path: ${{ env.ENV_FILE }}
       
       - name: Skip build for PR
         id: should-build
@@ -247,6 +294,39 @@ jobs:
             echo "⏭️  Skipping service: $CURRENT_SERVICE (manual input specified: $INPUT_SERVICE)"
           fi
 
+      - name: Download image URIs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.service }}-image-uris
+          path: /tmp/image-uris
+
+      - name: Load image URIs from file
+        id: load-uris
+        run: |
+          ENV_FILE="/tmp/image-uris/${{ matrix.service }}_image_uris.env"
+          if [ -f "$ENV_FILE" ]; then
+            # 读取环境变量文件
+            source $ENV_FILE
+            
+            # 输出到GitHub Actions环境
+            echo "GHCR_IMAGE_URI=${${{ matrix.service }}_ghcr_image_uri}" >> $GITHUB_ENV
+            echo "ACR_IMAGE_URI=${${{ matrix.service }}_acr_image_uri}" >> $GITHUB_ENV
+            echo "ECR_IMAGE_URI=${${{ matrix.service }}_ecr_image_uri}" >> $GITHUB_ENV
+            
+            # 同时输出到步骤输出
+            echo "ghcr_uri=${${{ matrix.service }}_ghcr_image_uri}" >> $GITHUB_OUTPUT
+            echo "acr_uri=${${{ matrix.service }}_acr_image_uri}" >> $GITHUB_OUTPUT
+            echo "ecr_uri=${${{ matrix.service }}_ecr_image_uri}" >> $GITHUB_OUTPUT
+            
+            echo "✅ Loaded image URIs for ${{ matrix.service }}"
+            echo "GHCR: ${${{ matrix.service }}_ghcr_image_uri}"
+            echo "ACR: ${${{ matrix.service }}_acr_image_uri}"
+            echo "ECR: ${${{ matrix.service }}_ecr_image_uri}"
+          else
+            echo "❌ Error: Image URIs file not found: $ENV_FILE"
+            exit 1
+          fi
+
       - name: Determine deployment type and namespace
         id: deploy-type
         run: |
@@ -307,10 +387,12 @@ jobs:
           export KUBECONFIG=kubeconfig.yaml
           
           # 使用ACR镜像（阿里云环境优先使用ACR）
-          IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
-          if [ -z "$IMAGE" ]; then
-            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
+          IMAGE="${{ env.ACR_IMAGE_URI }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
+            IMAGE="${{ env.GHCR_IMAGE_URI }}"
           fi
+          
+          echo "Using image: $IMAGE"
           
           # 更新K8s Deployment
           kubectl set image deployment/${{ matrix.service }} \
@@ -355,13 +437,13 @@ jobs:
           echo "✅ Kubeconfig 已动态生成至: $EKS_KUBECONFIG_FILE"
           
           # 使用ECR镜像（AWS环境优先使用ECR）
-          IMAGE="${{ needs.build-and-push.outputs.ecr_image_uri }}"
-          if [ -z "$IMAGE" ]; then
+          IMAGE="${{ env.ECR_IMAGE_URI }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
             echo "⚠️ ECR镜像未找到，回退到ACR镜像"
-            IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
+            IMAGE="${{ env.ACR_IMAGE_URI }}"
           fi
           
-          if [ -z "$IMAGE" ]; then
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
             echo "❌ 错误：没有找到可用的镜像URI"
             exit 1
           fi
@@ -405,10 +487,10 @@ jobs:
             --region $ALIYUN_REGION
           
           # 使用ACR镜像（阿里云环境优先使用ACR）
-          IMAGE="${{ needs.build-and-push.outputs.acr_image_uri }}"
-          if [ -z "$IMAGE" ]; then
+          IMAGE="${{ env.ACR_IMAGE_URI }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
             echo "⚠️ ACR镜像未找到，回退到GHCR镜像"
-            IMAGE="${{ needs.build-and-push.outputs.ghcr_image_uri }}"
+            IMAGE="${{ env.GHCR_IMAGE_URI }}"
           fi
           
           echo "📦 镜像地址: $IMAGE"
@@ -487,7 +569,7 @@ jobs:
           echo "Service: ${{ matrix.service }}"
           echo "Environment: ${{ needs.build-and-push.outputs.environment }}"
           echo "Deployment Type: ${{ steps.deploy-type.outputs.deploy_type }}"
-          echo "Image Tag: ${{ needs.build-and-push.outputs.image_tag }}"
+          echo "Image: ${{ env.ECR_IMAGE_URI || env.ACR_IMAGE_URI || env.GHCR_IMAGE_URI }}"
           echo ""
           echo "Next steps:"
           echo "- Verify service health checks"
