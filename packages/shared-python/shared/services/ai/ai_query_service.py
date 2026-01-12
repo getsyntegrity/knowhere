@@ -148,6 +148,7 @@ class AIQueryService:
                 messages=messages,
                 temperature=temperature,
                 conversation_id=conversation,
+                max_tokens=kwargs.get("max_tokens"),
             )
 
             await task_service.save_task_result(
