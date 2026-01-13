@@ -221,7 +221,7 @@ async def parse_usage_overview(
     - 同比上月增长（最近30天 vs 再前30天）
     - 已用积分（从credits_transactions表统计，包含usage和refund类型）
     - 预估金额（取第一个 credits_package 的单价：amount_cents/(100*credits_amount)）
-    - 成功率（jobs: done 占 done+failed）
+    - 成功率（jobs: done 占所有状态总数）
     - 平均处理时间（jobs: updated_at - created_at，秒）
     """
     try:
@@ -267,7 +267,7 @@ async def parse_usage_overview(
         job_row = await db.execute(
             select(
                 func.count().filter(Job.status == "done").label("done_cnt"),
-                func.count().filter(Job.status.in_(["done", "failed"])).label("total_cnt"),
+                func.count().label("total_cnt"),  # 所有状态的总数
                 func.avg(func.extract("epoch", Job.updated_at - Job.created_at)).label("avg_secs"),
             ).where(Job.user_id == user_id)
         )
