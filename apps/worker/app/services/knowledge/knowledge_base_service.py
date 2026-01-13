@@ -465,22 +465,24 @@ def checkerboard_qlabel(user, query, qlabel, api_name='qwen_api'):
 async def checkerboard_inject_parse(
     file_full_path, 
     filename, 
-    user_config: dict = None,  # 新增参数：可选的用户配置
+    user_config: dict = None,  # New parameter: optional user configuration
     **kwargs
 ):
     """
-    解析文档
+    Parse document
     
     Args:
-        file_full_path: 文件完整路径
-        filename: 文件名
-        user_config: 用户配置字典（可选，如果不提供则从上下文获取）
-        **kwargs: 其他参数
+        file_full_path: full file path
+        filename: file name
+        user_config: user configuration dict (optional, retrieve from context if not provided)
+        **kwargs: other arguments
     
     Returns:
-        解析后的目录路径
+        tuple: (kb_dir, parsed_df)
+            - kb_dir: directory path after parsing
+            - parsed_df: parsed content DataFrame (pandas.DataFrame)
     """
-    # 如果没有传入user_config，则从上下文获取（兼容旧调用方式）
+    # If user_config is not provided, retrieve from context (compatible with old calling convention)
     if user_config is None:
         user_context: User | None = get_current_user()
         redis_service = RedisServiceFactory.get_service()
@@ -488,7 +490,7 @@ async def checkerboard_inject_parse(
         user_redis_service = UserRedisService(redis_service)
         
         if not user_context:
-            raise ValueError("用户上下文为空")
+            raise ValueError("User context is empty")
         
         user_config = await user_redis_service.get_user_config(str(user_context.id))
         if not user_config:
@@ -500,10 +502,10 @@ async def checkerboard_inject_parse(
         else:
             user = user_config
     else:
-        # 使用传入的user_config
+        # Use provided user_config
         user = user_config
     
-    # 构建base_llm_paras
+    # Build base_llm_paras
     base_llm_paras = {
         "llm_histories": user['USER_SETTINGS']['llm_histories'],
         "smart_title_parse": kwargs.get('smart_title_parse', True),
@@ -524,11 +526,11 @@ async def checkerboard_inject_parse(
     logger.debug(f"file_full_path: {file_full_path}")
 
     if is_remote(file_full_path):
-        # 如果已经是完整的URL（预签名URL），直接使用
-        # 不需要调用 get_pub_fileurl()
-        pass # TODO: 后续需要处理
-    # 对于本地文件，保持原始路径，不要替换为.fragment
-    # file_full_path 保持原值
+        # If it is already a full URL (presigned URL), use it directly
+        # No need to call get_pub_fileurl()
+        pass # TODO: Handle subsequently
+    # For local files, keep original path, do not replace with .fragment
+    # file_full_path keeps original value
 
     split_char = settings.SPLIT_CHAR or ";"
     kb_dir = kwargs.get('kb_dir', '默认目录')
@@ -591,7 +593,6 @@ async def checkerboard_inject_parse(
         
     logger.debug(f"kb_dir: {kb_dir}")
     
-    # Return kb_dir and the DataFrame directly from parsing (no CSV read)
     return kb_dir, parsed_df
 
 def checkerboard_learn(user, reply, user_intention, sim_contents, user_selected_ids, current_markers):
