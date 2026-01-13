@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.models.database.usage_log import UsageLog
 from shared.models.database.job import Job
 from shared.models.database.stripe_price_config import StripePriceConfig
+from shared.models.database.credits_transaction import CreditsTransaction
 
 router = APIRouter(tags=["Billing"])
 
@@ -218,7 +219,7 @@ async def parse_usage_overview(
     返回使用概览：
     - 请求总数
     - 同比上月增长（最近30天 vs 再前30天）
-    - 已用积分
+    - 已用积分（从credits_transactions表统计，包含usage和refund类型）
     - 预估金额（取第一个 credits_package 的单价：amount_cents/(100*credits_amount)）
     - 成功率（jobs: done 占 done+failed）
     - 平均处理时间（jobs: updated_at - created_at，秒）
@@ -229,14 +230,22 @@ async def parse_usage_overview(
         current_start = now - timedelta(days=30)
         previous_start = now - timedelta(days=60)
 
-        # 请求总数 & 已用积分
-        total_row = await db.execute(
-            select(
-                func.count(UsageLog.id),
-                func.coalesce(func.sum(UsageLog.credits_used), 0)
-            ).where(UsageLog.user_id == user_id)
+        # 请求总数（从UsageLog表统计）
+        request_row = await db.execute(
+            select(func.count(UsageLog.id))
+            .where(UsageLog.user_id == user_id)
         )
-        total_requests, total_credits_used = total_row.first() or (0, 0)
+        total_requests = request_row.scalar_one() or 0
+
+        # 已用积分：从credits_transactions表统计usage和refund类型
+        # usage类型为负数（扣除），refund类型为正数（退还）
+        # 净消耗 = abs(sum(usage + refund))
+        credits_row = await db.execute(
+            select(func.coalesce(func.sum(CreditsTransaction.credits_amount), 0))
+            .where(CreditsTransaction.user_id == user_id)
+            .where(CreditsTransaction.transaction_type.in_(["usage", "refund"]))
+        )
+        total_credits_used = abs(credits_row.scalar_one() or 0)
 
         # 同比上月增长：最近30天 vs 前一个30天
         curr_row = await db.execute(

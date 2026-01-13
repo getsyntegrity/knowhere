@@ -435,7 +435,7 @@ async def create_job(
 @router.get("/page", response_model=JobList, summary="获取任务列表")
 async def list_jobs(
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=10000, description="每页数量"),
     job_status: Optional[str] = Query(None, description="状态过滤"),
     job_type: Optional[str] = Query(None, description="任务类型过滤"),
     recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
@@ -469,6 +469,14 @@ async def list_jobs(
         if start_time:
             created_after = start_time
         created_before = end_time
+
+        # 获取符合条件的总记录数
+        total_count = await job_repo.count_jobs_by_user(
+            db=db,
+            user_id=str(current_user.id),
+            created_after=created_after,
+            created_before=created_before,
+        )
 
         # 获取任务列表
         jobs = await job_repo.get_jobs_by_user(
@@ -571,8 +579,12 @@ async def list_jobs(
                 )
             )
 
+        # 计算总页数
+        import math
+        total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
+
         response = JobList(
-            jobs=job_responses, total=len(job_responses), page=page, page_size=page_size
+            jobs=job_responses, total=total_count, page=page, page_size=page_size, total_pages=total_pages
         )
 
         return response
