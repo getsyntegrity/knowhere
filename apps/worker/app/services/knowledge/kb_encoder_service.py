@@ -418,7 +418,8 @@ async def build_forest(source_node=None, k=5, cut_len=2000, threshold=0.8):
                 messages=messages,
                 user_id=ctx_task_id,
                 conversation_id=ctx_task_id,
-                timeout=60
+                timeout=60,
+                max_tokens=max_tokens
             )
             answer = eval_response(connect_res)
             

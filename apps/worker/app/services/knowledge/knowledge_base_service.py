@@ -335,7 +335,8 @@ async def talk2kb(query, context, paras):
         messages=messages,
         user_id=ctx_task_id,
         conversation_id=ctx_task_id,
-        timeout=60
+        timeout=60,
+        max_tokens=max_tokens
     )
     answer = eval_response(ask_res)
     
@@ -411,7 +412,8 @@ async def talk2kb_mm(query, context, paras):
             messages=messages,
             user_id=ctx_task_id,
             conversation_id=ctx_task_id,
-            timeout=60
+            timeout=60,
+            max_tokens=max_tokens
         )
         answer = eval_response(ask_res)
         

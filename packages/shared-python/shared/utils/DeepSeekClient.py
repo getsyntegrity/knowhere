@@ -67,6 +67,9 @@ class DeepSeekRedisStreamClient:
         """
         非流式聊天补全
         """
+        if max_tokens is None:
+            max_tokens = 4096
+        
         conversation_state = await self.get_conversation_state(conversation_id)
 
         # 统一处理消息格式，兼容字符串与列表输入
