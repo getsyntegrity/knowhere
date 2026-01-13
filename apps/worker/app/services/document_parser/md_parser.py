@@ -259,8 +259,8 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
     all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
     doc_df = pd.DataFrame(df_list, columns=all_df_cols)
     doc_df = process_dup_paths_df(doc_df)
-    doc_df_path = os.path.join(kb_dir, 'KB_PTXT.csv')
-    doc_df.to_csv(doc_df_path, encoding='utf-8', index=False)
+
+    # Return the DataFrame directly without writing to CSV
 
     # path_keys = [f"{base_llm_paras['doc_name']}{split_char}{k}" for k in inner_paths]
     # doc_graph, _ = restore_graph_by_paths(path_keys)
@@ -270,4 +270,4 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
 
     
     
-    
+    return doc_df

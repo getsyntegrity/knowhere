@@ -234,7 +234,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.parse_and_vectorize_task')                                                           
 def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):                                                          
-    """解析并向量化任务（文件已通过S3直传）"""
+    """解析任务（文件已通过S3直传）
+    
+    注：向量化逻辑已移除，仅处理文件解析、ZIP包生成和S3上传
+    """
     logger.info(f"任务开始执行: task_id={self.request.id}, job_id={job_id}, user_id={user_id}, job_type={job_type}")
     try:
         if not job_id:
@@ -460,7 +463,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
         doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
         logger.info(f"开始解析文件: job_id={job_id}, filename={filename}, 类型={doc_type}, file_url={file_url[:100] if file_url else None}...")
         
-        add_dir = await checkerboard_inject_parse(
+        add_dir, add_contents_df = await checkerboard_inject_parse(
             file_full_path=file_url,
             filename=filename,
             user_config=user_config,  # 传入用户配置
@@ -472,7 +475,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
             summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
             add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
         )
-        logger.info(f"文件解析调用完成: job_id={job_id}, add_dir={add_dir}")
+        logger.info(f"文件解析调用完成: job_id={job_id}, add_dir={add_dir}, add_contents_df length={len(add_contents_df) if add_contents_df is not None else 0}")
         
         if not add_dir:
             logger.error(f"文件解析失败，未返回解析目录: job_id={job_id}, filename={filename}")
@@ -507,9 +510,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
         
         chunks_redis_service = ChunksRedisService(redis_service)
         
-        # 单独处理当前文件解析的chunks
-        from app.services.knowledge.kb_encoder_service import load_new_data
-        add_contents_df = load_new_data(add_dir)
+        # 使用从解析过程返回的DataFrame，不需要再次读取KB_PTXT.csv文件
         if add_contents_df is not None:
             logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")                                                                    
             success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)                                                              

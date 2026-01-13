@@ -208,15 +208,6 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
     img_df = pd.DataFrame(df_list, columns=all_df_cols)
     img_df = process_dup_paths_df(img_df)
 
-    img_df.to_csv(os.path.join(kb_dir, 'KB_PTXT.csv'), encoding='utf-8', index=False)
 
-
-
-        
-        
-        
-        
-        
-
-
-
+    # Return the DataFrame directly without writing to CSV
+    return img_df
