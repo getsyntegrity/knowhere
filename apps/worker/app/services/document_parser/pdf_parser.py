@@ -28,9 +28,6 @@ async def poll_mineru_task(
     get_status: Callable[[dict], Optional[dict]],
 ) -> None:
     # 优化轮询策略：添加延迟、超时和错误处理
-    import asyncio
-    import time
-
     status_header = get_mineru_headers()
 
     max_polling_attempts = 120  # 最大轮询次数 (10分钟)
