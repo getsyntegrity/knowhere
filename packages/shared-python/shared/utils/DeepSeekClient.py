@@ -5,6 +5,7 @@ import httpx
 
 from shared.core.config import settings
 from shared.services.redis import RedisService, RedisServiceFactory
+from loguru import logger
 
 
 class DeepSeekRedisStreamClient:
@@ -66,6 +67,9 @@ class DeepSeekRedisStreamClient:
         """
         非流式聊天补全
         """
+        if max_tokens is None:
+            max_tokens = 4096
+        
         conversation_state = await self.get_conversation_state(conversation_id)
 
         # 统一处理消息格式，兼容字符串与列表输入
@@ -89,9 +93,10 @@ class DeepSeekRedisStreamClient:
             "max_tokens": max_tokens
         }
 
+        logger.debug(f"request LLM with max_tokens: {max_tokens}")
+
         try:
             from shared.core.constants import APIConstants
-            from loguru import logger
             import time
             logger.info(f"🌐 开始HTTP请求到 {settings.DS_URL} (超时: {APIConstants.DEEPSEEK_TIMEOUT}s)...")
             request_start = time.time()
@@ -125,6 +130,7 @@ class DeepSeekRedisStreamClient:
         except httpx.HTTPStatusError as e:
             conversation_state["status"] = "failed"
             await self.update_conversation_state(conversation_state)
+            logger.error(f"API Error Response: {e.response.text}")
             raise Exception(f"API请求失败: {str(e)}") from e
         except Exception as e:
             conversation_state["status"] = "failed"

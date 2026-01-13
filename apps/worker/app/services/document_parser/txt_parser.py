@@ -139,7 +139,8 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
             messages=messages,
             user_id=ctx_task_id,
             conversation_id=ctx_task_id,
-            timeout=90
+            timeout=90,
+            max_tokens=max_tokens
         )
         resp = eval_response(resp)
 
