@@ -238,18 +238,6 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
                 output_dir=output_dir,
                 get_status=lambda d: d.get("data"),
             )
-    elif mode == "local":
-        # 延迟导入minerU相关模块
-        from app.kbs.tools.minerU.demo.demo import do_parse
-        from app.kbs.tools.minerU.mineru.cli.common import read_fn
-
-        file_data = read_fn(pdf_path)
-        do_parse(
-            output_dir,  # Output directory for storing parsing results
-            [filename],  # List of PDF file names to be parsed
-            [file_data],  # List of PDF bytes to be parsed
-            ["ch"],
-        )
     else:
         raise ValueError(f"Unknown PDF parser mode: {mode}")
 
