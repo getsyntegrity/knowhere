@@ -540,8 +540,9 @@ async def checkerboard_inject_parse(
     kb_dir = path_handle(os.path.join(*dir_terms), mode="sanitize")
     os.makedirs(kb_dir, exist_ok=True)
 
-    # 根据文件类型解析
-    if '.txt' in file_full_path or ".fragment" in file_full_path:
+    # 根据文件类型解析 (统一转为小写判断)
+    file_path_lower = file_full_path.lower()
+    if '.txt' in file_path_lower or ".fragment" in file_path_lower:
         logger.debug(f"file type is txt or fragment")
         try:
             fragment_content = kwargs.get('fragment_content')
@@ -550,37 +551,37 @@ async def checkerboard_inject_parse(
         txt_lines = await parse_texts(file_path=file_full_path, fragment_content=fragment_content, baseurl=baseurl)
         await parse_md(kb_dir, source_type='md', md_lines=txt_lines, base_llm_paras=base_llm_paras)
 
-    elif ('.png' in file_full_path or '.jpg' in file_full_path or '.jpeg' in file_full_path) or ".fragment" in file_full_path:
+    elif ('.png' in file_path_lower or '.jpg' in file_path_lower or '.jpeg' in file_path_lower) or ".fragment" in file_path_lower:
         logger.debug(f"file type is image")
         await parse_image(file_full_path, filename=filename, kb_dir=kb_dir, baseurl=baseurl, base_llm_paras=base_llm_paras)
 
-    elif '.pdf' in file_full_path:
+    elif '.pdf' in file_path_lower:
         logger.debug(f"file type is pdf")
         if filename is not None and file_full_path is not None:
             await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
 
-    elif '.docx' in file_full_path:
+    elif '.docx' in file_path_lower:
         logger.debug(f"file type is docx")
         if filename is not None and file_full_path is not None:
             parsed_structure, df_list = await parse_docx(file_full_path, base_llm_paras, kb_dir, filename, baseurl)
             await convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras=base_llm_paras)
 
-    elif '.xlsx' in file_full_path:
+    elif '.xlsx' in file_path_lower:
         logger.debug(f"file type is xlsx")
         if filename is not None and file_full_path is not None:
             await parse_xlsx(file_full_path, filename, kb_dir, baseurl, base_llm_paras=base_llm_paras)
 
-    elif '.pptx' in file_full_path:
+    elif '.pptx' in file_path_lower:
         logger.debug(f"file type is pptx")
         if filename is not None and file_full_path is not None:
             await parse_pdfs(file_full_path, filename=filename, output_dir=kb_dir, base_llm_paras=base_llm_paras, mode="api")
 
-    elif '.md' in file_full_path:
+    elif '.md' in file_path_lower:
         logger.debug(f"file type is md")
         if filename is not None and file_full_path is not None:
             await parse_md(kb_dir, source_type="md", file_path=file_full_path, base_llm_paras=base_llm_paras)
 
-    elif '.json' in file_full_path:
+    elif '.json' in file_path_lower:
         logger.debug(f"file type is json")
     logger.debug(f"kb_dir: {kb_dir}")
     return kb_dir
