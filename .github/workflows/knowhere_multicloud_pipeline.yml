@@ -238,8 +238,8 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: |
-            ${{ steps.image-uris.outputs.ghcr_image_uri }}
-            ${{ steps.image-uris.outputs.ghcr_latest_uri }}
+            # ${{ steps.image-uris.outputs.ghcr_image_uri }}
+            # ${{ steps.image-uris.outputs.ghcr_latest_uri }}
             ${{ steps.image-uris.outputs.acr_image_uri }}
             ${{ steps.image-uris.outputs.acr_latest_uri }}
             ${{ steps.image-uris.outputs.ecr_image_uri }}
