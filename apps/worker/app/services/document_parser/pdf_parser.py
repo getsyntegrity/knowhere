@@ -7,7 +7,6 @@ from typing import Callable, Optional
 from loguru import logger
 
 from shared.core.config import settings
-from shared.utils.env import is_development
 from shared.core.constants import APIConstants
 from app.services.document_parser.md_parser import parse_md
 from shared.utils.FileDownUpUtils import s3_download_extract_zip
@@ -200,44 +199,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
 
 async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api"):
     if mode == "api":
-        if is_development():
-            """
-            on local development, we can not pass localStack presigned url to mineru api
-            instead, we need to upload the file to mineru
-            """
-            await upload_and_parse(pdf_path, filename, output_dir)
-        else:
-            base_url = settings.MINERU_URL
-            url = f"{base_url}/extract/task"
-            headers = get_mineru_headers()
-
-            payload = {
-                "url": pdf_path,
-                "is_ocr": True,
-                "enable_formula": True,
-                "language": "auto",
-            }
-
-            logger.info(f"🔗 Submitting task for: {filename}")
-
-            res = requests.post(url, headers=headers, json=payload, timeout=MINERU_API_TIMEOUT)
-            if res.status_code != 200:
-                raise Exception(f"MinerU Failed to submit task to mineru api: {url}, {res.status_code} - {res.text}")
-
-            result = res.json()
-            if result.get("code") != 0:
-                raise Exception(f"MinerU API error: {result.get('msg', 'Unknown error')}")
-
-            task_id = result["data"]["task_id"]
-            status_url = f"{base_url}/extract/task/{task_id}"
-            logger.info(f"🔗 Task submitted, task_id: {task_id}")
-
-            await poll_mineru_task(
-                status_url=status_url,
-                task_id=task_id,
-                output_dir=output_dir,
-                get_status=lambda d: d.get("data"),
-            )
+        await upload_and_parse(pdf_path, filename, output_dir)
     else:
         raise ValueError(f"Unknown PDF parser mode: {mode}")
 
