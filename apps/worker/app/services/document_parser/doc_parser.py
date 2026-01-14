@@ -417,8 +417,6 @@ async def convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras):
 
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     doc_df = process_dup_paths_df(doc_df)
-    doc_df_path = os.path.join(kb_dir, 'KB_PTXT.csv')
-    doc_df.to_csv(doc_df_path, encoding='utf-8', index=False)
 
     # doc_graph, _ = restore_graph_by_paths(path_keys)
     # graph_path = os.path.join(kb_dir, 'hierarchy.json')

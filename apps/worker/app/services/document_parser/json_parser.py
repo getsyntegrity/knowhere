@@ -163,7 +163,7 @@ def parse_json(file_path, kb_dir, llm_paras, content_key='content', local_summar
             
 
     doc_df = pd.concat(df_list, ignore_index=True)
-    doc_df.to_csv(os.path.join(kb_dir, 'KB_PTXT.csv'), encoding='utf-8', index=False)
+    
     return doc_df
 
 
