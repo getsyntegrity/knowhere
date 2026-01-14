@@ -164,7 +164,6 @@ def parse_json(file_path, kb_dir, llm_paras, content_key='content', local_summar
 
     doc_df = pd.concat(df_list, ignore_index=True)
     
-    # Return the DataFrame directly without writing to CSV
     return doc_df
 
 

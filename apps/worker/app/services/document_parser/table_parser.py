@@ -489,7 +489,6 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
     # tb_graph, _ = restore_graph_by_paths(all_tb_paths)
     # graph_path = os.path.join(kb_dir, 'graph.json')
     
-    # Return the DataFrame directly without writing to CSV
     return table_df
     #     with open(graph_path, 'w', encoding='utf-8') as f:
     #         json.dump(tb_graph, f, ensure_ascii=False, indent=4)

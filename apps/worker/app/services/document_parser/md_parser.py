@@ -260,8 +260,6 @@ async def parse_md(kb_dir, source_type, file_path=None, md_lines=None, base_llm_
     doc_df = pd.DataFrame(df_list, columns=all_df_cols)
     doc_df = process_dup_paths_df(doc_df)
 
-    # Return the DataFrame directly without writing to CSV
-
     # path_keys = [f"{base_llm_paras['doc_name']}{split_char}{k}" for k in inner_paths]
     # doc_graph, _ = restore_graph_by_paths(path_keys)
     #     with open(graph_path, 'w', encoding='utf-8') as f:

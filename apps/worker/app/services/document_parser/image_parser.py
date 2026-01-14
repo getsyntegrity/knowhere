@@ -209,5 +209,4 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
     img_df = process_dup_paths_df(img_df)
 
 
-    # Return the DataFrame directly without writing to CSV
     return img_df
