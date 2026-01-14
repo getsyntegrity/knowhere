@@ -446,7 +446,7 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True):
 
 async def est_hierarchies_llm(raw_preds, prompt_limt, max_len=30, max_depth=6):
     if len(raw_preds)==0:
-        return []
+        return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
     full_preds = []
     level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
