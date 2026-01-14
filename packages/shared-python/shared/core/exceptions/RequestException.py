@@ -84,7 +84,6 @@ class RequestException(Exception):
             original_exception=original_exception
         )
 
-
 # --- 使用示例 ---
 
 def risky_operation(should_fail: bool):
