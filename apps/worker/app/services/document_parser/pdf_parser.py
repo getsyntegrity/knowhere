@@ -27,33 +27,33 @@ async def poll_mineru_task(
     output_dir: str,
     get_status: Callable[[dict], Optional[dict]],
 ) -> None:
-    # 优化轮询策略：添加延迟、超时和错误处理
+    # Optimize polling strategy: add delay, timeout and error handling
     status_header = get_mineru_headers()
 
-    max_polling_attempts = 120  # 最大轮询次数 (10分钟)
-    polling_interval = 5.0  # 轮询间隔(秒)
-    max_wait_time = 600  # 最大等待时间(10分钟)
+    max_polling_attempts = 120  # Max polling attempts (10 minutes)
+    polling_interval = 5.0  # Polling interval (seconds)
+    max_wait_time = 600  # Max wait time (10 minutes)
 
-    # 动态轮询间隔：根据任务状态调整
+    # Dynamic polling interval: adjust based on task state
     def get_polling_interval(state: str, attempt: int) -> float:
         if state == "pending":
-            return min(10.0, 2.0 + attempt * 0.5)  # 等待中逐渐增加间隔
+            return min(10.0, 2.0 + attempt * 0.5)  # Increase interval gradually while pending
         elif state == "running":
-            return 5.0  # 运行中保持5秒间隔
+            return 5.0  # Keep 5s interval while running
         else:
-            return 2.0  # 其他状态快速检查
+            return 2.0  # Quick check for other states
 
     start_time = time.time()
     attempt = 0
 
     while attempt < max_polling_attempts:
-        # 检查是否超时
+        # Check for timeout
         if time.time() - start_time > max_wait_time:
-            raise TimeoutError(f"PDF解析超时，等待时间超过{max_wait_time}秒")
+            raise TimeoutError(f"PDF parsing timed out, exceeded {max_wait_time} seconds")
 
         try:
             logger.debug(
-                f"parse_pdfs status_url: {status_url} (尝试 {attempt + 1}/{max_polling_attempts})"
+                f"parse_pdfs status_url: {status_url} (attempt {attempt + 1}/{max_polling_attempts})"
             )
             res = requests.get(status_url, headers=status_header, timeout=MINERU_API_TIMEOUT)
 
@@ -72,46 +72,46 @@ async def poll_mineru_task(
                 state = status.get("state", "unknown")
 
                 if state == "done":
-                    # 解析完成
+                    # Parsing completed
                     res_zip_url = status["full_zip_url"]
                     s3_download_extract_zip(
                         res_zip_url,
                         dest_dir=output_dir,
                         keep_exts=[".md", ".jpg", ".jpeg", ".png", ".gif"],
                     )
-                    logger.info(f"PDF解析完成，任务ID: {task_id}")
+                    logger.info(f"PDF parsing completed, Task ID: {task_id}")
                     break
 
                 elif state == "running":
-                    # 显示进度
+                    # Display progress
                     if "extract_progress" in status:
                         try:
                             progress = (
                                 status["extract_progress"]["extracted_pages"]
                                 / status["extract_progress"]["total_pages"]
                             )
-                            logger.info(f"PDF解析进度: {progress:.2%} (任务ID: {task_id})")
+                            logger.info(f"PDF parsing progress: {progress:.2%} (Task ID: {task_id})")
                         except (KeyError, ZeroDivisionError):
-                             logger.info(f"PDF解析进行中... (任务ID: {task_id})")
+                             logger.info(f"PDF parsing in progress... (Task ID: {task_id})")
                     else:
-                        logger.info(f"PDF解析进行中... (任务ID: {task_id})")
+                        logger.info(f"PDF parsing in progress... (Task ID: {task_id})")
 
                 elif state == "failed":
-                    # 解析失败
-                    error_msg = status.get("err_msg", "未知错误")
-                    raise Exception(f"PDF解析失败: {error_msg}")
+                    # Parsing failed
+                    error_msg = status.get("err_msg", "Unknown error")
+                    raise Exception(f"MinerU PDF parsing failed: {error_msg}")
 
                 elif state == "pending":
-                    # 排队中
-                    logger.debug(f"PDF解析排队中... (任务ID: {task_id})")
+                    # Pending
+                    logger.debug(f"PDF parsing pending... (Task ID: {task_id})")
 
                 elif state == "waiting-file":
-                    # 等待文件上传排队
-                    logger.debug(f"PDF解析等待文件上传排队... (任务ID: {task_id})")
+                    # Waiting for file upload queuing
+                    logger.debug(f"PDF parsing waiting for file upload queuing... (Task ID: {task_id})")
                 
                 elif state == "converting":
-                    # 格式转换中
-                    logger.debug(f"PDF解析格式转换中... (任务ID: {task_id})")
+                    # Converting format
+                    logger.debug(f"PDF parsing converting format... (Task ID: {task_id})")
 
                 else:
                     logger.warning(f"Unknown state: {state}, full response: {status}")
@@ -122,23 +122,22 @@ async def poll_mineru_task(
                 attempt += 1
 
             else:
-                logger.warning(f"状态查询失败，状态码: {res.status_code}")
-                await asyncio.sleep(polling_interval * 2)  # 失败时延长等待
+                logger.warning(f"Status query failed, status code: {res.status_code}")
+                await asyncio.sleep(polling_interval * 2)  # Extend wait on failure
                 attempt += 1
 
         except requests.RequestException as e:
-            logger.warning(f"网络请求失败: {e}")
+            logger.warning(f"Network request failed: {e}")
             await asyncio.sleep(polling_interval * 2)
             attempt += 1
         except Exception as e:
-            logger.error(f"PDF解析过程中出错: {e}")
+            logger.error(f"Error during PDF parsing: {e}")
             raise
 
     if attempt >= max_polling_attempts:
         raise TimeoutError(
-            f"PDF解析超时，已轮询{max_polling_attempts}次，任务ID: {task_id}"
+            f"minerU PDF parsing timed out after {max_polling_attempts} attempts, Task ID: {task_id}"
         )
-
 
 
 async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
@@ -156,7 +155,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
     logger.info(f"Requesting upload URL for: {filename}")
     res = requests.post(url, headers=headers, json=payload, timeout=MINERU_API_TIMEOUT)
     if res.status_code != 200:
-        raise Exception(f"Failed to get upload URL: {res.status_code} - {res.text}")
+        raise Exception(f"MinerU Failed to get upload URL: {res.status_code} - {res.text}")
 
     result = res.json()
     if result.get("code") != 0:
@@ -178,7 +177,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
         )
         if upload_res.status_code != 200:
             raise Exception(
-                f"Failed to upload file: {upload_res.status_code} - {upload_res.text}"
+                f"MinerU Failed to upload file: {upload_res.status_code} - {upload_res.text}"
             )
 
     logger.info("File uploaded successfully, waiting for parsing...")
@@ -197,6 +196,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
         output_dir=output_dir,
         get_status=get_batch_status,
     )
+
 
 async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api"):
     if mode == "api":
@@ -222,7 +222,7 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
 
             res = requests.post(url, headers=headers, json=payload, timeout=MINERU_API_TIMEOUT)
             if res.status_code != 200:
-                raise Exception(f"Failed to submit task: {res.status_code} - {res.text}")
+                raise Exception(f"MinerU Failed to submit task to mineru api: {url}, {res.status_code} - {res.text}")
 
             result = res.json()
             if result.get("code") != 0:
@@ -241,13 +241,9 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
     else:
         raise ValueError(f"Unknown PDF parser mode: {mode}")
 
-    logger.info("✅ 解析PDF第一步完成 已解压为md存储")
+    logger.info("✅ PDF parsing step 1 complete: Unzipped and stored as md")
 
-    base_llm_paras.update({"doc_name": filename})
-    await parse_md(
-        output_dir,
-        source_type="md",
-        file_path=os.path.join(output_dir, "full.md"),
-        base_llm_paras=base_llm_paras,
-    )
-    logger.info("✅ 解析PDF第二步完成 已通过md_parser获取知识数据")
+    base_llm_paras.update({"doc_name":filename})
+    parsed_df = await parse_md(output_dir, source_type='md', file_path=os.path.join(output_dir, 'full.md'), base_llm_paras=base_llm_paras)
+    print("✅ PDF parsing step 2 complete: Knowledge data retrieved via md_parser")
+    return parsed_df
