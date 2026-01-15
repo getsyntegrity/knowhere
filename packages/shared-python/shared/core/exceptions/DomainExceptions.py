@@ -284,6 +284,7 @@ class TimeoutException(KnowhereException):
 class UnknownException(KnowhereException):
     """
     Wrapper for non-KnowhereException errors. HTTP 500.
+    Like a synatx error in the code.
 
     Use this to wrap unexpected exceptions so they conform to the API schema.
     Internal details are logged but NOT sent to client.

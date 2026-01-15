@@ -3,15 +3,14 @@
 from shared.core.response.ErrorCode import (
     ErrorCode,
     SubCode,
-    ERROR_CODE_TO_HTTP_STATUS,
+    ErrorCodeMapper,
     ALWAYS_RETRYABLE_ERROR_CODES,
 )
 
 __all__ = [
     "ErrorCode",
     "SubCode",
-    "ERROR_CODE_TO_HTTP_STATUS",
+    "ErrorCodeMapper",
     "ALWAYS_RETRYABLE_ERROR_CODES",
 ]
-
 

@@ -66,26 +66,67 @@ class ErrorCode(str, Enum):
     DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED"  # 504 - Timeout
 
 
-# HTTP Status Code Mapping
-ERROR_CODE_TO_HTTP_STATUS = {
-    ErrorCode.OK: 200,
-    ErrorCode.INVALID_ARGUMENT: 400,
-    ErrorCode.FAILED_PRECONDITION: 400,
-    ErrorCode.OUT_OF_RANGE: 400,
-    ErrorCode.UNAUTHENTICATED: 401,
-    ErrorCode.PERMISSION_DENIED: 403,
-    ErrorCode.NOT_FOUND: 404,
-    ErrorCode.ABORTED: 409,
-    ErrorCode.ALREADY_EXISTS: 409,
-    ErrorCode.RESOURCE_EXHAUSTED: 429,
-    ErrorCode.CANCELLED: 499,
-    ErrorCode.UNKNOWN: 500,
-    ErrorCode.INTERNAL_ERROR: 500,
-    ErrorCode.DATA_LOSS: 500,
-    ErrorCode.NOT_IMPLEMENTED: 501,
-    ErrorCode.UNAVAILABLE: 503,
-    ErrorCode.DEADLINE_EXCEEDED: 504,
-}
+class ErrorCodeMapper:
+    """
+    Bidirectional mapping between ErrorCode and HTTP status codes.
+    
+    Usage:
+        ErrorCodeMapper.get_http_status_from_error_code(ErrorCode.NOT_FOUND)  # 404
+        ErrorCodeMapper.get_error_code_from_http_status(401)  # ErrorCode.UNAUTHENTICATED
+    """
+    
+    _error_code_to_http_status = {
+        ErrorCode.OK: 200,
+        ErrorCode.INVALID_ARGUMENT: 400,
+        ErrorCode.FAILED_PRECONDITION: 400,
+        ErrorCode.OUT_OF_RANGE: 400,
+        ErrorCode.UNAUTHENTICATED: 401,
+        ErrorCode.PERMISSION_DENIED: 403,
+        ErrorCode.NOT_FOUND: 404,
+        ErrorCode.ABORTED: 409,
+        ErrorCode.ALREADY_EXISTS: 409,
+        ErrorCode.RESOURCE_EXHAUSTED: 429,
+        ErrorCode.CANCELLED: 499,
+        ErrorCode.UNKNOWN: 500,
+        ErrorCode.INTERNAL_ERROR: 500,
+        ErrorCode.DATA_LOSS: 500,
+        ErrorCode.NOT_IMPLEMENTED: 501,
+        ErrorCode.UNAVAILABLE: 503,
+        ErrorCode.DEADLINE_EXCEEDED: 504,
+    }
+    
+    # Reverse mapping: HTTP Status -> ErrorCode
+    # Note: Some statuses map to multiple codes; we pick the most common one.
+    _http_status_to_error_code = {
+        200: ErrorCode.OK,
+        400: ErrorCode.INVALID_ARGUMENT,
+        401: ErrorCode.UNAUTHENTICATED,
+        403: ErrorCode.PERMISSION_DENIED,
+        404: ErrorCode.NOT_FOUND,
+        409: ErrorCode.ALREADY_EXISTS,
+        422: ErrorCode.INVALID_ARGUMENT,  # Pydantic validation
+        429: ErrorCode.RESOURCE_EXHAUSTED,
+        499: ErrorCode.CANCELLED,
+        500: ErrorCode.INTERNAL_ERROR,
+        501: ErrorCode.NOT_IMPLEMENTED,
+        502: ErrorCode.UNAVAILABLE,
+        503: ErrorCode.UNAVAILABLE,
+        504: ErrorCode.DEADLINE_EXCEEDED,
+    }
+    
+    @classmethod
+    def get_http_status_from_error_code(
+        cls, code: ErrorCode, default: int = 500
+    ) -> int:
+        """Get HTTP status code from ErrorCode."""
+        return cls._error_code_to_http_status.get(code, default)
+    
+    @classmethod
+    def get_error_code_from_http_status(
+        cls, status: int, default: ErrorCode = ErrorCode.UNKNOWN
+    ) -> ErrorCode:
+        """Get ErrorCode from HTTP status code."""
+        return cls._http_status_to_error_code.get(status, default)
 
 
 # Always Retryable Error Codes (retry with exponential backoff)

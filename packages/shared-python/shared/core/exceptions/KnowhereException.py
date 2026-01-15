@@ -33,7 +33,7 @@ Wrong Usage:
 
 from typing import Any, Dict, Optional, Union
 
-from shared.core.response.ErrorCode import ErrorCode, SubCode, ERROR_CODE_TO_HTTP_STATUS
+from shared.core.response.ErrorCode import ErrorCode, SubCode, ErrorCodeMapper
 
 
 class KnowhereException(Exception):
@@ -74,8 +74,8 @@ class KnowhereException(Exception):
         self.code = code
         self.message = message
         self.details = details or {}
-        self.http_status_code = http_status_code or ERROR_CODE_TO_HTTP_STATUS.get(
-            code, 500
+        self.http_status_code = http_status_code or ErrorCodeMapper.get_http_status_from_error_code(
+            code
         )
         # Internal fields for logging - NOT exposed to client
         self.original_exception = original_exception
