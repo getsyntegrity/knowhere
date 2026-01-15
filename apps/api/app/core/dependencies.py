@@ -15,15 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # 工具函数和常量
 # ============================================================================
 
-class AuthError(Exception):
-    """认证错误基类"""
-
-class APIKeyAuthError(AuthError):
-    """API Key认证错误"""
-
-class JWTAuthError(AuthError):
-    """JWT认证错误"""
-
 def _extract_bearer_token(auth_header: str) -> Optional[str]:
     """从Authorization头部提取Bearer token"""
     if not auth_header or not auth_header.startswith("Bearer "):
