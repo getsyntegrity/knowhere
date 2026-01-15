@@ -100,33 +100,35 @@ class WebhookHandlerService:
         job_id: str,
         error_message: str,
         error_type: Optional[str] = None,
+        error_code: str = "UNKNOWN",
         webhook_url: str = None
     ) -> Dict[str, Any]:
         """
-        处理Job失败的Webhook发送
+        Handle Job failure Webhook sending
         
         Args:
-            db: 数据库会话
-            job_id: 任务ID
-            error_message: 错误消息
-            error_type: 错误类型（可选）
-            webhook_url: Webhook URL（可选，如果为None则从Job中获取）
+            db: Database session
+            job_id: Job ID
+            error_message: Error message
+            error_type: Error type (optional, Python exception class name)
+            error_code: Canonical error code (e.g., INVALID_ARGUMENT, INTERNAL_ERROR)
+            webhook_url: Webhook URL (optional, if None will get from Job)
         
         Returns:
-            Dict: 发送结果
+            Dict: Sending result
         """
         try:
-            # 如果未提供webhook_url，从Job中获取
+            # If webhook_url not provided, get from Job
             if not webhook_url:
                 from app.repositories.job_repository import JobRepository
                 job_repo = JobRepository()
                 job = await job_repo.get_job_by_id(db, job_id)
                 if not job or not job.webhook_enabled or not job.webhook_url:
-                    logger.info(f"Job {job_id} Webhook未启用，跳过")
+                    logger.info(f"Job {job_id} Webhook not enabled, skipping")
                     return {"success": False, "skipped": True, "reason": "webhook_not_enabled"}
                 webhook_url = job.webhook_url
             
-            # 构建Webhook payload
+            # Build Webhook payload
             webhook_payload: Dict[str, Any] = {
                 "event": "job.failed",
                 "job_id": job_id,
@@ -134,8 +136,8 @@ class WebhookHandlerService:
                 "failed_at": datetime.utcnow().isoformat(),
                 "error": {
                     "message": error_message,
-                    "type": error_type or "PROCESSING_ERROR",
-                    "code": "PROCESSING_ERROR"
+                    "type": error_type or "Exception",
+                    "code": error_code
                 }
             }
             

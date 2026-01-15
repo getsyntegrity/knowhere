@@ -115,6 +115,38 @@ def check_job_permission(job, current_user: User) -> None:
         )
 
 
+def _build_error_response(job, job_metadata: Optional[dict] = None) -> Optional[dict]:
+    """
+    Build StandardErrorObject dict for embedded error pattern.
+    
+    This returns the same error structure as synchronous API errors,
+    enabling clients to use the same error handling for both sync
+    and async (job) errors.
+    
+    Args:
+        job: Job object with job_id, error_code, and error_message
+        job_metadata: Job metadata dict that may contain error_details
+        
+    Returns:
+        dict: StandardErrorObject (code, message, request_id, details) or None
+    """
+    if not job.error_message:
+        return None
+        
+    error_response = {
+        "code": job.error_code or "UNKNOWN",
+        "message": job.error_message,
+        "request_id": job.job_id  # Use job_id as request_id for tracing
+    }
+    
+    # Extract error_details from job_metadata if present
+    if job_metadata and isinstance(job_metadata, dict):
+        error_details = job_metadata.get("error_details")
+        if error_details:
+            error_response["details"] = error_details
+    
+    return error_response
+
 def create_job_response(
     job_id: str,
     job,
@@ -566,7 +598,7 @@ async def list_jobs(
                     data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
                     created_at=ensure_utc(job.created_at),
                     progress=None,  # 任务列表不显示详细进度
-                    error={"message": job.error_message} if job.error_message else None,
+                    error=_build_error_response(job, job_metadata),
                     result=result,
                     result_url=result_url,
                     result_url_expires_at=ensure_utc(result_url_expires_at),
@@ -711,7 +743,7 @@ async def get_job_result(
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
             created_at=ensure_utc(job.created_at),
             progress=progress,
-            error={"message": job.error_message} if job.error_message else None,
+            error=_build_error_response(job, job_metadata),
             result=result,
             result_url=result_url,
             result_url_expires_at=ensure_utc(result_url_expires_at),

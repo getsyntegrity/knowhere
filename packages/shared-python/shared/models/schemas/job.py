@@ -57,56 +57,75 @@ class JobResponse(BaseModel):
     expires_in: Optional[int] = Field(None, description="URL过期时间（秒）")
 
 
-class JobResult(BaseModel):
-    """任务状态查询响应"""
-
-    job_id: str = Field(..., description="任务ID")
-    status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="任务状态")
-    source_type: str = Field(..., description="文件来源类型")
-    data_id: Optional[str] = Field(None, description="用户自定义ID")
-    created_at: datetime = Field(..., description="创建时间")
-
-    # 状态相关字段
-    progress: Optional[Dict[str, Any]] = Field(None, description="进度信息")
-    error: Optional[Dict[str, Any]] = Field(None, description="错误信息")
-
-    # 结果相关字段
-    result: Optional[Dict[str, Any]] = Field(None, description="解析结果（包含 checksum 和 statistics）")
-    result_url: Optional[str] = Field(None, description="结果文件URL（ZIP包下载链接）")
-    result_url_expires_at: datetime = Field(..., description="结果文件URL过期时间")
+class StandardErrorObject(BaseModel):
+    """
+    Standard error object for embedded error pattern.
     
-    # 扩展字段
-    file_name: Optional[str] = Field(None, description="源文件名（从URL或file_name获取）")
-    file_extension: Optional[str] = Field(None, description="文件后缀，大写")
-    model: Optional[str] = Field(None, description="解析使用的模型")
-    ocr_enabled: Optional[bool] = Field(None, description="是否启用OCR")
-    duration_seconds: Optional[float] = Field(None, description="任务耗时（updated_at - created_at，单位秒）")
-    credits_spent: Optional[int] = Field(None, description="花费点数")
+    Reuses the same structure as synchronous API errors,
+    enabling clients to use the same error handling logic
+    for both sync and async (job) errors.
+    """
+    code: str = Field(..., description="Canonical error code (e.g., INVALID_ARGUMENT, INTERNAL_ERROR)")
+    message: str = Field(..., description="Human-readable error message")
+    request_id: str = Field(..., description="Original request ID for tracing")
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details (violations, retry_after, etc.)")
+
+
+class JobResult(BaseModel):
+    """Job status query response"""
+
+    job_id: str = Field(..., description="Job ID")
+    status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="Job status")
+    source_type: str = Field(..., description="File source type")
+    data_id: Optional[str] = Field(None, description="User-defined ID")
+    created_at: datetime = Field(..., description="Creation time")
+
+    # Status-related fields
+    progress: Optional[Dict[str, Any]] = Field(None, description="Progress information")
+    
+    # Error field - uses StandardErrorObject for embedded error pattern
+    # When status == "failed", this contains the error details
+    error: Optional[StandardErrorObject] = Field(None, description="Error information (only when status=failed)")
+
+    # Result-related fields
+    result: Optional[Dict[str, Any]] = Field(None, description="Parsing result (contains checksum and statistics)")
+    result_url: Optional[str] = Field(None, description="Result file URL (ZIP download link)")
+    result_url_expires_at: datetime = Field(..., description="Result URL expiration time")
+    
+    # Extended fields
+    file_name: Optional[str] = Field(None, description="Source file name")
+    file_extension: Optional[str] = Field(None, description="File extension, uppercase")
+    model: Optional[str] = Field(None, description="Parsing model used")
+    ocr_enabled: Optional[bool] = Field(None, description="Whether OCR is enabled")
+    duration_seconds: Optional[float] = Field(None, description="Job duration (updated_at - created_at, in seconds)")
+    credits_spent: Optional[int] = Field(None, description="Credits consumed")
 
 class JobResultResponse(BaseModel):
-    """任务状态查询响应"""
+    """Job status query response (for GET /jobs/{job_id}/result)"""
 
-    job_id: str = Field(..., description="任务ID")
-    status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="任务状态")
-    source_type: str = Field(..., description="文件来源类型")
-    data_id: Optional[str] = Field(None, description="用户自定义ID")
-    created_at: datetime = Field(..., description="创建时间")
+    job_id: str = Field(..., description="Job ID")
+    status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="Job status")
+    source_type: str = Field(..., description="File source type")
+    data_id: Optional[str] = Field(None, description="User-defined ID")
+    created_at: datetime = Field(..., description="Creation time")
 
-    # 状态相关字段
-    progress: Optional[Dict[str, Any]] = Field(None, description="进度信息")
-    error: Optional[Dict[str, Any]] = Field(None, description="错误信息")
-
-    # 结果相关字段
-    result: Optional[Dict[str, Any]] = Field(None, description="解析结果（包含 checksum 和 statistics）")
-    result_url: Optional[str] = Field(None, description="结果文件URL（ZIP包下载链接）")
-    result_url_expires_at: datetime = Field(..., description="结果文件URL过期时间")
+    # Status-related fields
+    progress: Optional[Dict[str, Any]] = Field(None, description="Progress information")
     
-    # 扩展字段
-    file_name: Optional[str] = Field(None, description="源文件名（从URL或file_name获取）")
-    file_extension: Optional[str] = Field(None, description="文件后缀，大写")
-    model: Optional[str] = Field(None, description="解析使用的模型")
-    ocr_enabled: Optional[bool] = Field(None, description="是否启用OCR")
-    duration_seconds: Optional[float] = Field(None, description="任务耗时（updated_at - created_at，单位秒）")
+    # Error field - uses StandardErrorObject for embedded error pattern
+    error: Optional[StandardErrorObject] = Field(None, description="Error information (only when status=failed)")
+
+    # Result-related fields
+    result: Optional[Dict[str, Any]] = Field(None, description="Parsing result (contains checksum and statistics)")
+    result_url: Optional[str] = Field(None, description="Result file URL (ZIP download link)")
+    result_url_expires_at: datetime = Field(..., description="Result URL expiration time")
+    
+    # Extended fields
+    file_name: Optional[str] = Field(None, description="Source file name")
+    file_extension: Optional[str] = Field(None, description="File extension, uppercase")
+    model: Optional[str] = Field(None, description="Parsing model used")
+    ocr_enabled: Optional[bool] = Field(None, description="Whether OCR is enabled")
+    duration_seconds: Optional[float] = Field(None, description="Job duration (updated_at - created_at, in seconds)")
 
 class JobList(BaseModel):
     """任务列表响应"""

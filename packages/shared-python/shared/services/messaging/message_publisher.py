@@ -340,6 +340,7 @@ class MessagePublisher:
         self,
         job_id: str,
         error_message: str,
+        error_code: str = "UNKNOWN",
         error_type: Optional[str] = None,
         stack_trace: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
@@ -350,8 +351,9 @@ class MessagePublisher:
         Args:
             job_id: 任务ID
             error_message: 错误消息
-            error_type: 错误类型
-            stack_trace: 堆栈跟踪
+            error_code: 规范错误代码 (e.g., INVALID_ARGUMENT, INTERNAL_ERROR)
+            error_type: 错误类型 (Python exception class name)
+            stack_trace: 堆栈跟踪 (仅内部日志)
             metadata: 元数据
             
         Returns:
@@ -359,6 +361,7 @@ class MessagePublisher:
         """
         message = JobFailureMessage(
             job_id=job_id,
+            error_code=error_code,
             error_message=error_message,
             error_type=error_type,
             stack_trace=stack_trace,
