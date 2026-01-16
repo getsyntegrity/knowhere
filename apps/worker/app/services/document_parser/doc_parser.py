@@ -86,7 +86,8 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
     img_id = 'IMAGE_' + gen_str_codes(image_summary) + '_IMAGE'
     img_kid = gen_str_codes(img_id + str(uuid.uuid4()))
     img_bottom_content = img_id + '\n上图内容总结:\n' + image_summary + '\n'
-    img_path = settings.SPLIT_CHAR.join(img_dir.split(os.sep) + [f"{img_name}{img_ext}"])
+    # Use relative path for images (avoid absolute path in path column)
+    img_path = f"images/{img_name}{img_ext}"
 
     headings_stack[-1]['content'].append(img_bottom_content)
     df_list.append([img_bottom_content, img_path, img_id, len(img_bottom_content), "", image_summary, img_kid, "", "", time_stamp])
@@ -124,7 +125,8 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     with open(tb_path, 'w', encoding='utf-8') as f:
         f.write(tb_html_str)
 
-    tb_path = settings.SPLIT_CHAR.join(tb_dir.split(os.sep) + [f"{tb_name}.html"])
+    # Use relative path for tables (avoid absolute path in path column)
+    tb_path = f"tables/{tb_name}.html"
     headings_stack[-1]['content'].append(tb_bottom_content)
     df_list.append([tb_bottom_content, tb_path, table_id, len(tb_bottom_content), tb_keywords, tb_summary, table_kid, "", "", time_stamp])
     return headings_stack, df_list

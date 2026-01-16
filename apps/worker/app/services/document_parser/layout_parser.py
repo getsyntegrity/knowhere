@@ -629,7 +629,9 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
         raw_preds = pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
     # 2. parse smart/not smart
+    # TODO save raw_preds as preds_1
     heading_preds = est_hierarchies_naive(raw_preds, smart_parse)
+    # TODO save heading_preds as preds_2
 
     if smart_parse:
         heading_preds = await est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name)
@@ -644,23 +646,23 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
         logger.debug("后处理完成")
 
     if heading_preds["level"].eq(-1).all():  # non are estimated as headings
-        logger.warning("⚠️ 未识别到任何有效标题")
+        logger.warning("⚠️ No valid headings estimated")
         heading_preds = pd.DataFrame()
     else:
         heading_preds['level'] = pd.to_numeric(heading_preds['level'], errors='coerce').fillna(-1).astype(int)
         
-        # 使用树结构优化标题层级
+        # process isolated nodes
         try:
             tree, node_to_id, _ = build_tree_from_dataframe(heading_preds)
             processed_tree = remove_isolated_nodes(tree)
             heading_preds = tree_to_dataframe(processed_tree, node_to_id, heading_preds)
-            logger.debug("树结构优化完成")
         except Exception as e:
-            logger.warning(f"树结构优化失败，跳过: {e}")
+            logger.warning(f"Tree structure optimization failed, skipping: {e}")
         
-        logger.info(f"✅ 标题解析完成，最终识别 {len(heading_preds[heading_preds['level'] > 0])} 个有效标题")
+        logger.info(f"✅ Heading parsing completed, final {len(heading_preds[heading_preds['level'] > 0])} valid headings")
     
-    return heading_preds  # 4-row dataframe
+    # TODO save heading_preds as preds_5
+    return heading_preds
 
 
 def est_hierarchies_naive(raw_preds, proceed_smart=True):
@@ -687,7 +689,6 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True):
 
 
 async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None):
-    """LLM层级解析"""
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
@@ -708,6 +709,8 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
 
         base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
         logger.debug(f"层级映射构建完成: {len(lvl_mapping)} 个映射规则")
+
+        # TODO save base_preds as preds_3
 
         if len(level_dfs) > 1:
             logger.debug(f"处理多个层级DataFrame，共 {len(level_dfs)} 个...")

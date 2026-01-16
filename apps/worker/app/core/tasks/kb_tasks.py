@@ -526,6 +526,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
             source_file_name=source_file_name,
             data_id=data_id,
             job_metadata=job_metadata,
+            parsed_df=add_contents_df,  # 传入 DataFrame 以生成 kb.csv 和 hierarchy.json
         )
         
         # 提取 checksum 的字符串值（ZipResultService 返回的是字典格式）

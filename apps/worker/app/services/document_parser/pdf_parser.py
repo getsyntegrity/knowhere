@@ -207,5 +207,4 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api",
 
     base_llm_paras.update({"doc_name":filename})
     parsed_df = await parse_md(output_dir, source_type='md', file_path=os.path.join(output_dir, 'full.md'), base_llm_paras=base_llm_paras, relative_root=relative_root)
-    print("✅ PDF parsing step 2 complete: Knowledge data retrieved via md_parser")
     return parsed_df
