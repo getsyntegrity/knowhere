@@ -436,13 +436,13 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
         add_dir, add_contents_df = await checkerboard_inject_parse(
             file_full_path=file_url,
             filename=filename,
-            user_config=user_config,  # 传入用户配置
+            output_dir=user_config['KB_PATH'],  # 直接传入输出目录
             kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),                                                                     
             doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
             smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
             summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             
             summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),                                                             
-            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),                                                                 
             add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
         )
         logger.info(f"File parsing completed: job_id={job_id}, add_dir={add_dir}, add_contents_df length={len(add_contents_df) if add_contents_df is not None else 0}")

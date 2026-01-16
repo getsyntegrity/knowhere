@@ -4,14 +4,19 @@
 """
 import gc
 
-import torch
+# torch 是可选依赖，只在需要 CUDA 清理时使用
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
 
 
 def gc_collect():
     """
-    执行垃圾回收，包括 CUDA 缓存清理
+    执行垃圾回收，包括 CUDA 缓存清理（如果 torch 可用）
     """
     gc.collect()
-    if torch.cuda.is_available():
+    if HAS_TORCH and torch.cuda.is_available():
         torch.cuda.empty_cache()
 

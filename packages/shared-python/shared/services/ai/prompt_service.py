@@ -691,6 +691,50 @@ def build_prompt(task, texts, query, **kwargs):
         禁止输出除 JSON 外的任何文字、符号或解释
         """
 
+    elif task=="detect-toc-range":
+        temperature = 0.1
+        max_tokens = 100
+        start_idx = kwargs['paras']['start_idx']
+        end_idx = kwargs['paras']['end_idx']
+
+        prompt = f"""你是一个文档分析专家，现在需要从候选区域中识别出真正的目录内容的起始和终止位置。
+
+        【候选区域信息】
+        - 候选区域起始行号: {start_idx}
+        - 候选区域结束行号: {end_idx}
+
+        【候选区域内容】
+        {texts}
+
+        【判断规则】
+        请分析上述内容，找出真正的目录区域的起始和终止行号：
+
+        1. **目录行特征**：
+        - 起始于"目录"、"目次"等标题
+        - 通常包含章节编号或序号（如"1."、"一、"、"第一章"等）
+        - 包含标题文本，且在末尾部分通常有页码数字
+        - 格式相对统一、规整，行文本中部可能存在类似"..."的省略号
+        - 绝大部分行号连续
+        - 目录区域应包含"目录" "table of contents"等起始关键词所在的行（如果这些关键词存在）
+
+        【输出格式】
+        以JSON格式输出：
+        {{
+            "toc_start": 数字,  // 目录内容起始行号（绝对行号）
+            "toc_end": 数字,    // 目录内容终止行号（绝对行号）
+            "confidence": "high" | "medium" | "low"  // 置信度
+        }}
+
+        如果在输入内容中不存在符合上述特征的目录区域，输出：
+        {{
+            "toc_start": null,
+            "toc_end": null,
+            "confidence": "low"
+        }}
+
+        只输出JSON，不要输出其他内容
+        """
+
     return prompt, temperature, top_p, max_tokens
 
 

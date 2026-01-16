@@ -3,6 +3,7 @@ OpenAI兼容的通用AI客户端
 支持任何符合OpenAI API规范的模型（DeepSeek、Qwen、GLM等）
 """
 import json
+import os
 import time
 from typing import Optional, List, Dict, Any, Union
 
@@ -10,7 +11,9 @@ import httpx
 from loguru import logger
 
 from shared.core.config import settings
-from shared.services.redis import RedisService, RedisServiceFactory
+
+# 本地调试模式：不使用 Redis
+LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
 
 class OpenAICompatibleClient:
@@ -21,25 +24,30 @@ class OpenAICompatibleClient:
     
     def __init__(
         self, 
-        redis_service: Optional[RedisService] = None,
+        redis_service = None,
         api_key: Optional[str] = None,
         api_url: Optional[str] = None,
         default_model: Optional[str] = None,
-        timeout: int = 300
+        timeout: int = 300,
+        skip_redis: bool = False
     ):
         """
         初始化客户端
         
         Args:
-            redis_service: Redis服务实例，用于会话管理
+            redis_service: Redis服务实例，用于会话管理（可选）
             api_key: API密钥，默认使用settings.DS_KEY
             api_url: API URL，默认使用settings.DS_URL
             default_model: 默认模型名称，默认使用settings.NORMOL_MODEL
             timeout: 请求超时时间（秒）
+            skip_redis: 是否跳过Redis（本地调试模式）
         """
-        if redis_service is None:
-            redis_service = RedisServiceFactory.get_service()
-        self.redis_service = redis_service
+        # 本地调试模式或显式跳过：不使用 Redis
+        if LOCAL_DEBUG or skip_redis or redis_service is None:
+            self.redis_service = None
+        else:
+            from shared.services.redis import RedisServiceFactory
+            self.redis_service = redis_service or RedisServiceFactory.get_service()
         
         # 支持自定义配置，如果没有则使用默认配置
         self.api_key = api_key or settings.DS_KEY
@@ -47,10 +55,20 @@ class OpenAICompatibleClient:
         self.default_model = default_model or getattr(settings, 'NORMOL_MODEL', 'deepseek-chat')
         self.timeout = timeout
         
-        logger.debug(f"初始化OpenAI兼容客户端: URL={self.api_url}, Model={self.default_model}")
+        logger.debug(f"初始化OpenAI兼容客户端: URL={self.api_url}, Model={self.default_model}, Redis={'启用' if self.redis_service else '禁用'}")
 
     async def get_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
         """从Redis获取指定对话的状态"""
+        # 无 Redis 模式：返回空状态
+        if self.redis_service is None:
+            return {
+                "id": conversation_id,
+                "messages": [],
+                "progress": 0,
+                "status": "pending",
+                "last_updated": time.time()
+            }
+        
         key = f"ai_conversation:{conversation_id}"
 
         state_raw = await self.redis_service.get(key)
@@ -76,6 +94,10 @@ class OpenAICompatibleClient:
 
     async def update_conversation_state(self, conversation_state: Dict[str, Any]):
         """更新Redis中的对话状态"""
+        # 无 Redis 模式：跳过
+        if self.redis_service is None:
+            return
+            
         key = f"ai_conversation:{conversation_state['id']}"
         state_json = {
             "messages": conversation_state["messages"],
@@ -120,8 +142,12 @@ class OpenAICompatibleClient:
         else:
             incoming_messages = [{"role": "user", "content": str(messages)}]
 
-        previous_messages = conversation_state.get("messages", []) or []
-        all_messages = previous_messages + incoming_messages
+        # 无 Redis 模式：不使用历史消息
+        if self.redis_service is None:
+            all_messages = incoming_messages
+        else:
+            previous_messages = conversation_state.get("messages", []) or []
+            all_messages = previous_messages + incoming_messages
 
         # 构建请求头
         headers = {
@@ -174,37 +200,43 @@ class OpenAICompatibleClient:
             if content is None:
                 content = ""
 
-            # 更新会话状态
-            if message:
-                assistant_message = {"role": message.get("role", "assistant"), "content": content}
-            else:
-                assistant_message = {"role": "assistant", "content": content}
+            # 更新会话状态（仅在有 Redis 时）
+            if self.redis_service is not None:
+                if message:
+                    assistant_message = {"role": message.get("role", "assistant"), "content": content}
+                else:
+                    assistant_message = {"role": "assistant", "content": content}
 
-            conversation_state["messages"] = all_messages + [assistant_message]
-            conversation_state["progress"] = len(content)
-            conversation_state["status"] = "completed"
-            await self.update_conversation_state(conversation_state)
+                conversation_state["messages"] = all_messages + [assistant_message]
+                conversation_state["progress"] = len(content)
+                conversation_state["status"] = "completed"
+                await self.update_conversation_state(conversation_state)
 
             return content
 
         except httpx.HTTPStatusError as e:
-            conversation_state["status"] = "failed"
-            await self.update_conversation_state(conversation_state)
+            if self.redis_service is not None:
+                conversation_state["status"] = "failed"
+                await self.update_conversation_state(conversation_state)
             logger.error(f"❌ API请求失败: {str(e)}, Response: {e.response.text if hasattr(e, 'response') else 'N/A'}")
             raise Exception(f"API请求失败: {str(e)}") from e
         except httpx.TimeoutException as e:
-            conversation_state["status"] = "failed"
-            await self.update_conversation_state(conversation_state)
+            if self.redis_service is not None:
+                conversation_state["status"] = "failed"
+                await self.update_conversation_state(conversation_state)
             logger.error(f"⏱️ API请求超时: {str(e)}")
             raise Exception(f"API请求超时: {str(e)}") from e
         except Exception as e:
-            conversation_state["status"] = "failed"
-            await self.update_conversation_state(conversation_state)
+            if self.redis_service is not None:
+                conversation_state["status"] = "failed"
+                await self.update_conversation_state(conversation_state)
             logger.error(f"❌ 处理请求时发生未知错误: {str(e)}")
             raise Exception(f"处理请求时发生未知错误: {str(e)}") from e
 
     async def reset_conversation(self, conversation_id: str = "default"):
         """重置对话历史"""
+        if self.redis_service is None:
+            return
         key = f"ai_conversation:{conversation_id}"
         await self.redis_service.delete(key)
 
@@ -220,6 +252,8 @@ class OpenAICompatibleClient:
 
     async def get_all_conversations(self) -> List[str]:
         """获取所有对话ID列表"""
+        if self.redis_service is None:
+            return []
         keys = await self.redis_service._get_client().keys("ai_conversation:*")
         return [key.decode('utf-8').split(":", 1)[1] for key in keys]
 

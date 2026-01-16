@@ -278,7 +278,7 @@ def iter_block_items(doc_data):
             ele_num += 1
             map_index += 1
 
-async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url="", start_text="", end_text=""):
+async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", start_text="", end_text="", relative_root=None):
     doc_data = await load_file_bytes(docx_path, file_url=file_url)
 
     doc_structure = []
@@ -286,9 +286,9 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     headings_stack = [{'level': -1, 'content': doc_structure}]
     current_heading = ''
 
-    tb_dir = os.path.join(kb_dir, "tables")
+    tb_dir = os.path.join(output_dir, "tables")
     os.makedirs(tb_dir, exist_ok=True)
-    img_dir = os.path.join(kb_dir, "images")
+    img_dir = os.path.join(output_dir, "images")
     os.makedirs(img_dir, exist_ok=True)
 
     block_tuples = list(iter_block_items(doc_data))
@@ -307,7 +307,8 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     outline_dic = {-1:-1}
     smart_title_parse = llm_paras['smart_title_parse']
     if not llm_paras['doc_type'] in "templates":
-        heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse)
+        model_name = llm_paras.get("model_name", "deepseek-chat") if llm_paras else "deepseek-chat"
+        heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name)
 
     if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique
@@ -384,12 +385,13 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     # heading_data.to_csv(os.path.join(kb_dir, 'table_train.csv'), encoding='utf-8-sig')
     return {'content' : doc_structure}, df_list
 
-async def convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras):
+async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, relative_root=None):
     split_char = settings.SPLIT_CHAR
     leaf_dics = get_leaf_dics(parsed_structure)
     leaf_dics = await postprocess_leaf_dics(leaf_dics, base_llm_paras)
 
-    doc_name = kb_dir.split(os.sep)[-1]  # 允许带上.docx方便graph后续建构
+    # Use relative_root for path construction instead of absolute output_dir
+    doc_name = relative_root if relative_root else output_dir.split(os.sep)[-1]
     if len(leaf_dics) == 0:
         raise '❌PROBABLY EMPTY FILE!'
 
@@ -407,7 +409,9 @@ async def convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras):
             keywords = row['keywords']
             summary = row['local_summary']
             know_id = gen_str_codes(bottom_content + str(uuid.uuid4()))
-            know_path = split_char.join(kb_dir.split(os.sep) + ([key] if key.strip() else []))
+            # Use relative_root for path instead of absolute kb_dir
+            path_suffix = key if key.strip() else ""
+            know_path = split_char.join([relative_root, path_suffix]) if relative_root and path_suffix else (relative_root or path_suffix)
             df_list.append(
                 [bottom_content, know_path, match_type, len(bottom_content), keywords, summary, know_id, bottom_tokens,
                  "", time_stamp])

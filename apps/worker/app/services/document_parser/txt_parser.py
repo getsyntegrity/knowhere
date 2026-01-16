@@ -21,46 +21,6 @@ def clean_texts_by_form(text, form='html'):
     # try other formats
     return text
 
-def detect_tocs_in_texts(md_lines):
-    def normalize_md(s):
-        s = re.sub(r"^\s*#+\s*", "", s)
-        s = re.sub(r"\s+", "", s)
-        return s.lower()
-
-    #TODO only detect the first area should consider more areas in texts, maybe changed to vlm page detection?
-    toc_titles = {"目录", "目次", "tableofcontents", "contents"}
-
-    start_idx = None
-    for i, line in enumerate(md_lines):
-        if normalize_md(line) in toc_titles:
-            start_idx = i
-            break
-    if start_idx is None:
-        return None
-
-    # Step 2 find the pivot line
-    pivot_line = None
-    pivot_idx = None
-    for j in range(start_idx + 1, len(md_lines)):
-        text = md_lines[j].strip()
-        if text:
-            pivot_line = normalize_md(text)
-            pivot_idx = j
-            break
-    if pivot_line is None:
-        return None
-
-    end_idx = pivot_idx
-    for k in range(pivot_idx + 1, len(md_lines)):
-        text = md_lines[k].strip()
-        repeated = (normalize_md(text) in pivot_line) or (pivot_line in normalize_md(text))
-        if text and repeated:
-            break
-        end_idx = k
-
-    toc_lines = md_lines[start_idx:end_idx + 1]
-    return start_idx, end_idx, toc_lines
-
 async def parse_texts(file_path=None, fragment_content=None, baseurl=""): #base_llm_paras=None
     if not ".fragment" in file_path:
         txt_bytes = await load_file_bytes(file_path, file_url=baseurl)
@@ -129,10 +89,12 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
 
         ctx_task_id = str(uuid.uuid4())
         
-        # 使用Redis直接追踪任务状态，无需数据库持久化
-        from shared.services.redis import RedisServiceFactory
-        redis_service = RedisServiceFactory.get_service()
-        await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
+        # 使用Redis直接追踪任务状态（LOCAL_DEBUG模式跳过）
+        import os
+        if os.getenv("LOCAL_DEBUG", "0") != "1":
+            from shared.services.redis import RedisServiceFactory
+            redis_service = RedisServiceFactory.get_service()
+            await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
 
         # 使用统一的AI查询服务
         resp = await ai_query_service.query_ai(
@@ -145,7 +107,9 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
         resp = eval_response(resp)
 
         if type_ == "keywords":
-            return resp['answer']
+            if isinstance(resp, dict):
+                return resp.get('answer', resp)
+            return resp
         else:
             return resp
 

@@ -203,7 +203,10 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
             )
             header_res = eval_response(header_res)
             try:
-                header_id = header_res['answer'][-1]
+                if isinstance(header_res, dict):
+                    header_id = header_res.get('answer', header_res)[-1]
+                else:
+                    header_id = header_res[-1]
                 header_rows = list(range(header_id+1))
             except Exception as e:
                 print(f"⚠️ 可能无表头被识别到  {e}")
@@ -418,7 +421,7 @@ async def table_scope_analyze(query, tb_path, paras, num_row=7):
         tb_context = None
     return tb_context
 
-async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None, window_h=10):
+async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, window_h=10, relative_root=None):
     split_char = settings.SPLIT_CHAR or "-->"
     time_stamp = get_str_time()
     df_list = []
@@ -430,7 +433,7 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
     all_sheets = sheets_dict.items()
     print(f'该xlsx文件包含{len(all_sheets)}个sheet表')
 
-    tb_dir = os.path.join(kb_dir, "tables")
+    tb_dir = os.path.join(output_dir, "tables")
     os.makedirs(tb_dir, exist_ok=True)
     all_tb_paths = []
     exist_sheets = []
@@ -475,8 +478,9 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
                 bottom_tokens = tokenize2stw_remove([tb_bottom_content], base_llm_paras['stopwords'])
 
                 all_tb_paths.extend(tb_paths)
-                tb_path = split_char.join(tb_path.split(os.sep))
-                df_list.append([tb_bottom_content, tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp])
+                # Use relative path for tables: "tables/xxx.html"
+                relative_tb_path = f"tables/{tb_name}"
+                df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp])
 
             except Exception as e:
                 print(f'parse table fails, because {e}')

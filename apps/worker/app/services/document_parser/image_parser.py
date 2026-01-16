@@ -72,7 +72,21 @@ async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images"
     from shared.core.constants import ProcessingConstants
     if max_tokens is None:
         max_tokens = ProcessingConstants.IMG_MAX_TOKENS
-    urls_ = process_img_path4read(paths_, kb_dir, size_cut)
+    
+    # Filter unsupported formats (sxjg logic)
+    valid_exts = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+    valid_paths = []
+    for p in paths_:
+        ext = os.path.splitext(p)[-1].lower()
+        if ext in valid_exts:
+            valid_paths.append(p)
+        else:
+            logger.debug(f"Skipping unsupported image format: {p}")
+
+    if not valid_paths:
+        return None
+    
+    urls_ = process_img_path4read(valid_paths, kb_dir, size_cut)
 
     if task == "summary-images":
         image_model = settings.IMAGE_MODEL or "gpt-4-vision-preview"
@@ -136,15 +150,15 @@ async def detect_summary_img_md(line, last_context, kb_dir, mode=False):
             imgs.append((ip, image_summary))
     return imgs
 
-async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_llm_paras=None, auto_rename=True):
+async def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm_paras=None, auto_rename=True, relative_root=None):
     split_char = settings.SPLIT_CHAR or "-->"
     df_list = []
     time_stamp = get_str_time()
-    os.makedirs(kb_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
     try:
         # 临时保存图像到本地 默认使用filename
-        img_path = os.path.join(kb_dir, filename)
+        img_path = os.path.join(output_dir, filename)
         img_bytes = await load_file_bytes(image_path, file_url=baseurl)
         img_obj = Image.open(io.BytesIO(img_bytes))
         img_obj.save(img_path)
@@ -160,21 +174,21 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
         from shared.core.constants import ProcessingConstants
         img_max_tokens = ProcessingConstants.IMG_MAX_TOKENS
         img_context = f"{filename}\n{base_llm_paras['frag_desc']}"
-        type_resp = await ask_image(client, kb_dir, paths_=[filename], title_text=img_context, task="judge-image-type", size_cut=False)
+        type_resp = await ask_image(client, output_dir, paths_=[filename], title_text=img_context, task="judge-image-type", size_cut=False)
         if type_resp is not None:
             if type_resp["answer"]=="text":
                 img_task = "ocr-image"
                 img_max_tokens = ProcessingConstants.IMG_OCR_MAX_TOKENS
 
         if base_llm_paras['summary_image']: # 留出增加上下文的空间 文字辅助理解图
-            image_content = await ask_image(client, kb_dir, paths_=[filename], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
+            image_content = await ask_image(client, output_dir, paths_=[filename], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
             if image_content is None:
                 image_content = filename
         else:
             image_content = filename
 
         if type_resp["answer"]=="text" and base_llm_paras['summary_image']:
-            image_summary = await ask_image(client, kb_dir, paths_=[filename], title_text=filename)
+            image_summary = await ask_image(client, output_dir, paths_=[filename], title_text=filename)
             if image_summary is None:
                 image_summary = image_content
         else:
@@ -184,10 +198,13 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
         img_name = path_handle(image_summary[:20], mode="sanitize")
         img_suffix = os.path.splitext(img_path)[-1]
         if auto_rename:
-            update_img_path = os.path.join(kb_dir, f"{img_name}{img_suffix}")
+            update_img_path = os.path.join(output_dir, f"{img_name}{img_suffix}")
             os.rename(img_path, update_img_path)
+            # Store the relative filename for path construction
+            final_img_name = f"{img_name}{img_suffix}"
         else:
             update_img_path = img_path
+            final_img_name = filename
     except Exception as e:
         logger.error(f'存储图像失败 因为 {e}...')
         raise
@@ -201,12 +218,12 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
 
     img_bottom_content = f"{img_id}\n上图内容\n{image_content}"
     know_id = gen_str_codes(img_bottom_content + str(uuid.uuid4()))
-    update_img_path = split_char.join(update_img_path.split(os.sep))
-    df_list.append([img_bottom_content, update_img_path, match_type, len(img_bottom_content), "", image_summary, know_id, "", "", time_stamp])
+    # Use relative path for images
+    relative_img_path = final_img_name
+    df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, know_id, "", "", time_stamp])
 
     all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
     img_df = pd.DataFrame(df_list, columns=all_df_cols)
     img_df = process_dup_paths_df(img_df)
-
 
     return img_df

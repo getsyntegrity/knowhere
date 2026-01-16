@@ -1,13 +1,17 @@
 """
 AI查询服务
-统一处理AI查询任务，支持Celery和ARQ两种模式
+统一处理AI查询任务，支持Celery和本地直连模式
 """
 import asyncio
+import os
 import time
 from typing import Any, Optional
 
 from celery import current_task
 from loguru import logger
+
+# 本地调试模式：设置环境变量 LOCAL_DEBUG=1 启用
+LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
 class AIQueryService:
     """AI查询服务"""
@@ -17,9 +21,9 @@ class AIQueryService:
         初始化AI查询服务
 
         Args:
-            use_celery: 是否使用Celery，False则使用ARQ
+            use_celery: 是否使用Celery，False则使用本地直连模式
         """
-        self.use_celery = use_celery
+        self.use_celery = use_celery and not LOCAL_DEBUG
 
     async def query_ai(
         self,
@@ -44,14 +48,16 @@ class AIQueryService:
         Returns:
             AI查询结果
         """
-        if self.use_celery:
-            return await self._query_with_celery(
-                messages, user_id, temperature, conversation_id, timeout, **kwargs
+        # 本地调试模式：直接调用 LLM
+        if LOCAL_DEBUG or not self.use_celery:
+            return await self._execute_direct(
+                messages, user_id, temperature, conversation_id, **kwargs
             )
-        else:
-            return await self._query_with_arq(
-                messages, user_id, temperature, conversation_id, timeout, **kwargs
-            )
+        
+        # 生产模式：使用 Celery
+        return await self._query_with_celery(
+            messages, user_id, temperature, conversation_id, timeout, **kwargs
+        )
 
     async def _query_with_celery(
         self,
@@ -97,22 +103,44 @@ class AIQueryService:
             logger.error(f"Celery AI查询失败: {e}")
             raise
 
-    async def _query_with_arq(
+    async def _execute_direct(
         self,
         messages: Any,
         user_id: str,
         temperature: float,
         conversation_id: Optional[str],
-        timeout: int,
         **kwargs
     ) -> Any:
-        """使用ARQ执行AI查询（向后兼容）"""
-        try:
-            # 提交ARQ任务（已弃用，仅用于向后兼容）
-            raise NotImplementedError("ARQ模式已弃用，请使用Celery模式")
+        """本地直连模式：直接调用 OpenAI API，不依赖 Redis/Celery"""
+        from shared.utils.OpenAICompatibleClient import OpenAICompatibleClient
 
-        except Exception as e:
-            logger.error(f"ARQ AI查询失败: {e}")
+        conversation = conversation_id or f"ai_query_{user_id}_{int(time.time())}"
+
+        # 创建OpenAI兼容客户端
+        ai_client = OpenAICompatibleClient(
+            redis_service=None,  # 本地模式不需要 Redis
+            api_key=kwargs.get('api_key'),
+            api_url=kwargs.get('api_url'),
+            default_model=kwargs.get('model'),
+            timeout=kwargs.get('timeout', 300)
+        )
+        
+        # 过滤掉已经单独处理的参数，避免重复传递
+        excluded_params = {'api_key', 'api_url', 'timeout', 'user_id', 'model', 'max_tokens'}
+        api_params = {k: v for k, v in kwargs.items() if k not in excluded_params}
+        
+        try:
+            result = await ai_client.chat_completion(
+                messages=messages,
+                temperature=temperature,
+                conversation_id=conversation,
+                model=kwargs.get('model'),
+                max_tokens=kwargs.get('max_tokens'),
+                **api_params
+            )
+            return result
+        except Exception as exc:
+            logger.error(f"本地直连 AI 查询失败: {exc}")
             raise
 
     @staticmethod
@@ -181,8 +209,8 @@ class AIQueryService:
 
 
 # 全局AI查询服务实例
-# 默认使用Celery，可以通过环境变量配置
+# 默认使用Celery，但在 LOCAL_DEBUG 模式下自动切换到直连模式
 ai_query_service = AIQueryService(use_celery=True)
 
-# 向后兼容的ARQ服务实例
-ai_query_service_arq = AIQueryService(use_celery=False)
+# 本地直连服务实例（不使用 Celery/Redis）
+ai_query_service_local = AIQueryService(use_celery=False)

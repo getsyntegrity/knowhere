@@ -197,7 +197,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
     )
 
 
-async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api"):
+async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api", relative_root=None):
     if mode == "api":
         await upload_and_parse(pdf_path, filename, output_dir)
     else:
@@ -206,6 +206,6 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
     logger.info("✅ PDF parsing step 1 complete: Unzipped and stored as md")
 
     base_llm_paras.update({"doc_name":filename})
-    parsed_df = await parse_md(output_dir, source_type='md', file_path=os.path.join(output_dir, 'full.md'), base_llm_paras=base_llm_paras)
+    parsed_df = await parse_md(output_dir, source_type='md', file_path=os.path.join(output_dir, 'full.md'), base_llm_paras=base_llm_paras, relative_root=relative_root)
     print("✅ PDF parsing step 2 complete: Knowledge data retrieved via md_parser")
     return parsed_df
