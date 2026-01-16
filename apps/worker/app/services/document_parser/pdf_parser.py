@@ -3,6 +3,13 @@ import time
 import asyncio
 import requests
 from typing import Callable, Optional
+from shared.core.exceptions.DomainExceptions import (
+    PDFParsingException,
+    MinerUServiceException,
+    TimeoutException,
+    WorkerHandlingException,
+)
+from shared.core.exceptions.KnowhereException import KnowhereException
 
 from loguru import logger
 
@@ -48,7 +55,11 @@ async def poll_mineru_task(
     while attempt < max_polling_attempts:
         # Check for timeout
         if time.time() - start_time > max_wait_time:
-            raise TimeoutError(f"PDF parsing timed out, exceeded {max_wait_time} seconds")
+            raise TimeoutException(
+                internal_message=f"PDF parsing timed out, exceeded {max_wait_time} seconds",
+                retry_after=60,
+                user_message="PDF parsing timed out. Please try again."
+            )
 
         try:
             logger.debug(
@@ -59,7 +70,9 @@ async def poll_mineru_task(
             if res.status_code == 200:
                 response_json = res.json()
                 if response_json.get("code") != 0:
-                     raise Exception(f"MinerU API Error: {response_json.get('msg')}")
+                     raise MinerUServiceException(
+                         internal_message=f"MinerU API Error: {response_json.get('msg')}"
+                     )
                 
                 status = get_status(response_json)
                 if not status:
@@ -96,9 +109,13 @@ async def poll_mineru_task(
                         logger.info(f"PDF parsing in progress... (Task ID: {task_id})")
 
                 elif state == "failed":
-                    # Parsing failed
+                    # 解析失败
                     error_msg = status.get("err_msg", "Unknown error")
-                    raise Exception(f"MinerU PDF parsing failed: {error_msg}")
+                    raise PDFParsingException(
+                        user_message="Failed to parse PDF file",
+                        reason=error_msg,
+                        internal_message=f"MinerU failed with state 'failed': {error_msg}"
+                    )
 
                 elif state == "pending":
                     # Pending
@@ -129,13 +146,22 @@ async def poll_mineru_task(
             logger.warning(f"Network request failed: {e}")
             await asyncio.sleep(polling_interval * 2)
             attempt += 1
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"Error during PDF parsing: {e}")
-            raise
+            raise PDFParsingException(
+                user_message="An unexpected error occurred while parsing the PDF",
+                reason="UNKNOWN_ERROR",
+                internal_message=str(e),
+                original_exception=e
+            )
 
     if attempt >= max_polling_attempts:
-        raise TimeoutError(
-            f"minerU PDF parsing timed out after {max_polling_attempts} attempts, Task ID: {task_id}"
+        raise TimeoutException(
+            internal_message=f"minerU PDF parsing timed out after {max_polling_attempts} attempts, Task ID: {task_id}",
+            retry_after=60,
+            user_message="PDF parsing timed out. Please try again."
         )
 
 
@@ -154,11 +180,16 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
     logger.info(f"Requesting upload URL for: {filename}")
     res = requests.post(url, headers=headers, json=payload, timeout=MINERU_API_TIMEOUT)
     if res.status_code != 200:
-        raise Exception(f"MinerU Failed to get upload URL: {res.status_code} - {res.text}")
+        raise MinerUServiceException(
+            internal_message=f"Failed to get upload URL: {res.text}",
+            status_code=res.status_code
+        )
 
     result = res.json()
     if result.get("code") != 0:
-        raise Exception(f"MinerU API error: {result.get('msg', 'Unknown error')}")
+        raise MinerUServiceException(
+            internal_message=f"MinerU API error: {result.get('msg', 'Unknown error')}"
+        )
 
     batch_id = result["data"]["batch_id"]
     upload_url = result["data"]["file_urls"][0]
@@ -175,8 +206,9 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
             timeout=MINERU_API_TIMEOUT,
         )
         if upload_res.status_code != 200:
-            raise Exception(
-                f"MinerU Failed to upload file: {upload_res.status_code} - {upload_res.text}"
+            raise MinerUServiceException(
+                internal_message=f"Failed to upload file to MinerU: {upload_res.text}",
+                status_code=upload_res.status_code
             )
 
     logger.info("File uploaded successfully, waiting for parsing...")
@@ -201,7 +233,9 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api")
     if mode == "api":
         await upload_and_parse(pdf_path, filename, output_dir)
     else:
-        raise ValueError(f"Unknown PDF parser mode: {mode}")
+        raise WorkerHandlingException(
+            internal_message=f"Unknown PDF parser mode: {mode}"
+        )
 
     logger.info("✅ PDF parsing step 1 complete: Unzipped and stored as md")
 

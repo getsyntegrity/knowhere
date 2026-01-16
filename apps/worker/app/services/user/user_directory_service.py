@@ -8,26 +8,25 @@ from typing import List
 
 from shared.core.config import settings
 from loguru import logger
+from shared.core.exceptions.DomainExceptions import FileSystemException
 
 
 class UserDirectoryService:
     """用户目录服务类（Worker服务专用）"""
 
     @staticmethod
-    def ensure_user_directories(kb_data_folder: str, kb_vecs_folder: str) -> None:
+    def ensure_user_directories(kb_data_folder: str) -> None:
         """
         确保用户目录结构存在
         
         Args:
             kb_data_folder: 知识库数据文件夹
-            kb_vecs_folder: 知识库向量文件夹
         """
         # 解析默认文件夹配置，处理特殊字符
         subfolders = [folder.strip() for folder in settings.DEFAULT_FOLDERS.split(",") if folder.strip()]
 
         # 创建主目录
         UserDirectoryService._ensure_directory_exists(kb_data_folder, "数据目录")
-        UserDirectoryService._ensure_directory_exists(kb_vecs_folder, "向量目录")
 
         # 创建所有必需的子目录
         UserDirectoryService._create_subfolders(kb_data_folder, subfolders)
@@ -37,9 +36,9 @@ class UserDirectoryService:
             UserDirectoryService._copy_config_files(kb_data_folder)
 
         # 验证目录结构
-        UserDirectoryService._validate_directory_structure(kb_data_folder, kb_vecs_folder, subfolders)
+        UserDirectoryService._validate_directory_structure(kb_data_folder, subfolders)
 
-        logger.info(f"用户目录结构检查完成 - 数据目录: {kb_data_folder}, 向量目录: {kb_vecs_folder}")
+        logger.info(f"用户目录结构检查完成 - 数据目录: {kb_data_folder}")
 
     @staticmethod
     def _ensure_directory_exists(directory_path: str, directory_type: str) -> None:
@@ -52,9 +51,9 @@ class UserDirectoryService:
         """
         if not os.path.exists(directory_path):
             os.makedirs(directory_path, exist_ok=True)
-            logger.debug(f"创建{directory_type}: {directory_path}")
+            logger.debug(f"create directory: {directory_path}")
         else:
-            logger.debug(f"{directory_type}已存在: {directory_path}")
+            logger.debug(f"directory already exists: {directory_path}")
 
     @staticmethod
     def _create_subfolders(parent_folder: str, subfolders: List[str]) -> None:
@@ -125,20 +124,14 @@ class UserDirectoryService:
             logger.warning(f"复制配置文件失败: {str(e)}")
 
     @staticmethod
-    def _validate_directory_structure(kb_data_folder: str, kb_vecs_folder: str, subfolders: List[str]) -> None:
+    def _validate_directory_structure(kb_data_folder: str, subfolders: List[str]) -> None:
         """
         验证目录结构是否完整
 
         Args:
             kb_data_folder: 知识库数据文件夹
-            kb_vecs_folder: 知识库向量文件夹
             subfolders: 子目录名称列表
         """
-        # 验证主目录
-        if not os.path.exists(kb_data_folder):
-            raise Exception(f"无法创建数据目录: {kb_data_folder}")
-        if not os.path.exists(kb_vecs_folder):
-            raise Exception(f"无法创建向量目录: {kb_vecs_folder}")
 
         # 验证子目录
         missing_folders = []

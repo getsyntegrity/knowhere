@@ -16,8 +16,17 @@ from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
 from shared.services.messaging.message_publisher import run_async_publish
 # Exception handling
-from shared.core.exceptions import KnowhereException, UnknownException
-from shared.core.response import ErrorCode
+from shared.core.exceptions.DomainExceptions import (
+    ValidationException,
+    FileSystemException,
+    NotFoundException,
+    StorageServiceException,
+    UnknownException,
+    WorkerHandlingException,
+    SystemSettingMissingException,
+    SystemSettingInvalidException
+)
+from shared.core.exceptions.KnowhereException import KnowhereException
 
 # Get Celery application
 celery_app = get_celery_app()
@@ -51,28 +60,51 @@ class KBBaseTask(Task):
         # so we always refund credits here
         
         # Extract structured error info
+        # SECURITY: Follow same pattern as knowhere_exception_handler in API
         if isinstance(exc, KnowhereException):
             error_code = exc.code.value
-            error_message = exc.message
+            error_message = exc.user_message  # Use user_message for client-facing error
             error_details = exc.details
+            
+            # Log based on severity (same pattern as API exception handler)
+            log_data = exc.to_log_dict()
+            if exc.http_status_code >= 500:
+                # For 5xx, log the internal_message (technical details for debugging)
+                logger.error(
+                    f"[{task_id}] System Error: {exc.code.value} - {exc.internal_message}",
+                    job_id=job_id,
+                    **log_data,
+                )
+                # Log stack trace if we wrapped an unexpected exception
+                if exc.original_exception:
+                    logger.error(f"[{task_id}] Original exception: {einfo}")
+            else:
+                # For 4xx, log the user_message (already sanitized for client)
+                logger.warning(
+                    f"[{task_id}] Client Error: {exc.code.value} - {exc.user_message}",
+                    job_id=job_id,
+                    **log_data,
+                )
+            
             # Stack trace only needed if KnowhereException wraps another exception
             stack_trace = str(einfo) if exc.original_exception else None
-            logger.error(
-                f"KB task failed (KnowhereException): task_id={task_id}, "
-                f"job_id={job_id}, code={error_code}, msg={error_message}"
-            )
         else:
             # Wrap unknown exception
             unknown_exc = UnknownException(original_exception=exc)
             error_code = unknown_exc.code.value
-            error_message = unknown_exc.message  # Safe generic message
+            error_message = unknown_exc.user_message  # Safe generic message
             error_details = None
             stack_trace = str(einfo)
+            
+            # Log as 5xx system error with full details
+            log_data = unknown_exc.to_log_dict()
             logger.error(
-                f"KB task failed (UnknownException): task_id={task_id}, "
-                f"job_id={job_id}, exc_type={type(exc).__name__}, exc={exc}"
+                f"[{task_id}] System Error: {unknown_exc.code.value} - {unknown_exc.internal_message}",
+                job_id=job_id,
+                exc_type=type(exc).__name__,
+                **log_data,
             )
-            logger.error(f"Stack trace: job_id={job_id}\n{stack_trace}")
+            logger.error(f"[{task_id}] Stack trace: {stack_trace}")
         
         # Publish failure message
         if job_id:
@@ -150,8 +182,11 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None
     logger.info(f"Task started: task_id={self.request.id}, job_id={job_id}, user_id={user_id}")
     
     if not job_id:
-        raise ValueError("Missing job_id parameter")
-    
+        raise WorkerHandlingException(
+            message="An unexpected system error occurred",
+            internal_message="Worker task 'upload_url_file_task' called without job_id"
+        )
+
     # Celery doesn't natively support async tasks, so we must manage the event loop manually
     try:
         loop = asyncio.get_event_loop()
@@ -187,14 +222,21 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         if job_metadata:
             # Extract s3_key from metadata (if exists)
             s3_key = job_metadata.get("s3_key")
-            if not s3_key:
-                raise ValueError(f"Job info not found: job_id={job_id}")
         else:
-            raise ValueError(f"Job info not found: job_id={job_id}")
+            raise NotFoundException(
+                resource="JobInfo",
+                resource_id=job_id,
+                internal_message="Job info not found in Redis or Metadata"
+            )
     else:
         s3_key = job_info.get("s3_key")
-        if not s3_key:
-            raise ValueError(f"Missing s3_key in job info: job_id={job_id}")
+
+    if not s3_key:
+        raise NotFoundException(
+            resource="JobInfo",
+            resource_id='s3_key',
+            internal_message=f"Missing s3_key in Redis job info for job_id={job_id}"
+        )
     
     # Publish progress: validating file type
     await message_publisher.publish_progress_update(
@@ -218,10 +260,11 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
     
     if not file_extension or file_extension not in all_supported_extensions:
         supported_formats = ", ".join(sorted(all_supported_extensions))
-        raise ValueError(f"Unsupported file type {file_extension}. Supported formats: {supported_formats}")
-    
-    logger.info(f"URL file type validated: {file_extension}")
-    
+        raise ValidationException(
+            user_message=f"Unsupported file type {file_extension}",
+            violations=[{"field": "file_extension", "description": f"Must be one of: {supported_formats}"}]
+        )
+
     # Publish progress: downloading
     await message_publisher.publish_progress_update(
         job_id=job_id,
@@ -230,8 +273,15 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
     )
     
     # Step 2: Download file to temp directory
-    upload_service = FileUploadService()
-    temp_file_path = await upload_service._download_file_from_url(source_url)
+    try:
+        upload_service = FileUploadService()
+        temp_file_path = await upload_service._download_file_from_url(source_url)
+    except Exception as e:
+        raise ValidationException(
+            user_message=f"Failed to download file from URL",
+            violations=[{"field": "source_url", "description": "Could not download file from the provided URL"}],
+            internal_message=f"Failed to download file from URL: {source_url}, error: {e}"
+        )
     
     try:
         # Publish progress: validating file size
@@ -245,9 +295,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         file_size = os.path.getsize(temp_file_path)
         MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB limit
         if file_size > MAX_FILE_SIZE:
-            raise ValueError(f"File size exceeds limit: {file_size / 1024 / 1024:.2f}MB > {MAX_FILE_SIZE / 1024 / 1024}MB")
-        
-        logger.info(f"File size validated: {file_size / 1024 / 1024:.2f}MB")
+            raise ValidationException(
+                user_message="File size exceeds limit (max 100MB)",
+                violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {MAX_FILE_SIZE} bytes"}]
+            )
         
         # Publish progress: uploading to S3
         await message_publisher.publish_progress_update(
@@ -277,7 +328,10 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
     # Step 5: Verify S3 file exists
     file_info = await upload_service.verify_s3_file_exists(s3_key)
     if not file_info.get("exists"):
-        raise ValueError("S3 file verification failed")
+        raise StorageServiceException(
+            message="We failed to verify your file upload",
+            internal_message=f"S3 file verification failed for {s3_key}"
+        )
     
     # Publish progress: complete
     await message_publisher.publish_progress_update(
@@ -299,16 +353,19 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
 @celery_app.task(
     bind=True,
     base=KBBaseTask,
-    name='app.core.tasks.kb_tasks.parse_and_vectorize_task',
+    name='app.core.tasks.kb_tasks.parse_task',
     autoretry_for=(Exception,),
     retry_kwargs={'countdown': settings.KB_TASK_RETRY_COUNTDOWN, 'max_retries': settings.KB_TASK_MAX_RETRIES}
 )
-def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):
+def parse_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):
     """Parse and vectorize task (file already uploaded to S3)"""
     logger.info(f"Task started: task_id={self.request.id}, job_id={job_id}, user_id={user_id}")
     
     if not job_id:
-        raise ValueError("Missing job_id parameter")
+        raise WorkerHandlingException(
+            message="An unexpected system error occurred",
+            internal_message="Worker task 'parse_task' called without job_id"
+        )
     
     # Celery doesn't natively support async tasks, so we must manage the event loop manually
     try:
@@ -320,7 +377,7 @@ def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: s
         asyncio.set_event_loop(loop)
     
     try:
-        return loop.run_until_complete(_parse_and_vectorize_async(
+        return loop.run_until_complete(_parse_async(
             job_id, user_id
         ))
     finally:
@@ -329,7 +386,7 @@ def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: s
             loop.close()
 
 
-async def _parse_and_vectorize_async(job_id: str, user_id: str):
+async def _parse_async(job_id: str, user_id: str):
     """Async parse and vectorize (file already uploaded to S3)"""
     logger.info(f"Async function started: job_id={job_id}, user_id={user_id}")
     message_publisher = get_message_publisher()
@@ -345,14 +402,20 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
     logger.info(f"job_info获取完成: job_id={job_id}, job_info存在={job_info is not None}")
     
     if not job_info:
-        logger.error(f"Job信息不存在: job_id={job_id}")
-        raise ValueError(f"Job信息不存在: job_id={job_id}")
+        raise NotFoundException(
+            resource="JobInfo",
+            resource_id=job_id,
+            internal_message="job info not found in Redis"
+        )
     
     s3_key = job_info.get("s3_key")
     logger.info(f"s3_key提取完成: job_id={job_id}, s3_key={s3_key}")
     if not s3_key:
-        logger.error(f"Job信息中缺少s3_key: job_id={job_id}, job_info keys={list(job_info.keys()) if job_info else None}")
-        raise ValueError(f"Job信息中缺少s3_key: job_id={job_id}")
+        raise NotFoundException(
+            resource="JobInfo",
+            resource_id='s3_key',
+            internal_message="Missing s3_key in job_info"
+        )
     
     job_user_id = job_info.get("user_id")
     if not job_user_id:
@@ -367,8 +430,11 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
     file_info = await upload_service.verify_s3_file_exists(s3_key)
     logger.info(f"S3文件验证完成: job_id={job_id}, exists={file_info.get('exists')}")
     if not file_info.get("exists"):
-        logger.error(f"S3文件不存在: job_id={job_id}, s3_key={s3_key}")
-        raise ValueError(f"S3文件不存在: {s3_key}")
+        raise NotFoundException(
+            resource="S3File",
+            resource_id=s3_key,
+            internal_message=f"S3 file not found: {s3_key}"
+        )
     
     logger.info(f"S3文件验证成功: {s3_key}")
     
@@ -381,30 +447,48 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
     job_metadata = await metadata_service.get_metadata(job_id)
     logger.info(f"job_metadata获取完成: job_id={job_id}, metadata存在={job_metadata is not None}")
     if not job_metadata:
-        logger.error(f"Job metadata不存在: job_id={job_id}")
-        raise ValueError(f"Job metadata不存在: job_id={job_id}")
+        raise NotFoundException(
+            resource="JobMetadata",
+            resource_id=job_id,
+            internal_message=f"Job metadata not found for job_id={job_id}"
+        )
     
     logger.info(f"开始从job_metadata提取user_config: job_id={job_id}")
     user_config = JobMetadataHelper.get_user_config(job_metadata)
     logger.info(f"user_config提取完成: job_id={job_id}, user_config存在={user_config is not None}")
     
     if not user_config:
-        logger.error(f"Job metadata中缺少用户配置: job_id={job_id}")
-        raise ValueError("Job metadata中缺少用户配置")
+        raise NotFoundException(
+            resource="JobMetadata",
+            resource_id=job_id,
+            internal_message=f"Missing user_config in job_metadata for {job_id}"
+        )
     
     # 强制使用配置的绝对路径
     parent_path = settings.USERS_DATA_PATH
     if not parent_path:
-        raise ValueError("USERS_DATA_PATH 未配置，必须设置用户数据目录的绝对路径")
-    
+        raise SystemSettingMissingException(
+            message="System configuration error",
+            internal_message="USERS_DATA_PATH not configured"
+        )
+
     if not os.path.isabs(parent_path):
-        raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {parent_path}")
+        raise SystemSettingInvalidException(
+            message="System configuration error",
+            internal_message=f"USERS_DATA_PATH must be absolute path, current value: {parent_path}"
+        )
     
     # 验证路径是否存在或可创建
     try:
         os.makedirs(parent_path, exist_ok=True)
     except (OSError, PermissionError) as e:
-        raise ValueError(f"USERS_DATA_PATH 目录无法创建或访问: {parent_path}, 错误: {e}")
+        raise FileSystemException(
+            message="System error preparing storage",
+            path=parent_path,
+            operation="create_directory",
+            internal_message=f"Failed to create directory: {parent_path}",
+            original_exception=e
+        )
     
     # 更新 user_config 中的 parent 路径
     if 'parent' in user_config:
@@ -413,27 +497,27 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         if old_parent != parent_path:
             logger.info(f"路径修复: job_id={job_id}, 旧路径={old_parent}, 新路径={parent_path}")
     
-    # 重新计算 KB_PATH 和 KB_VECS_PATH
+    # 重新计算 KB_PATH 
     if 'KB' in user_config:
         user_config['KB_PATH'] = os.path.join(parent_path, user_config['KB'])
-    if 'kb_vec_term' in user_config and 'user' in user_config:
-        user_config['KB_VECS_PATH'] = os.path.join(
-            parent_path,
-            f"{user_config['kb_vec_term']}_{user_config['user']}"
-        )
+
     
     # 确保用户目录结构存在（Worker服务按需创建）
-    if 'KB_PATH' in user_config and 'KB_VECS_PATH' in user_config:
+    if 'KB_PATH' in user_config:
         from app.services.user.user_directory_service import UserDirectoryService
         try:
             UserDirectoryService.ensure_user_directories(
                 user_config['KB_PATH'],
-                user_config['KB_VECS_PATH']
             )
-            logger.info(f"用户目录结构已确保存在: KB_PATH={user_config['KB_PATH']}, KB_VECS_PATH={user_config['KB_VECS_PATH']}")
+            logger.info(f"用户目录结构已确保存在: KB_PATH={user_config['KB_PATH']}")
         except Exception as e:
-            logger.error(f"创建用户目录结构失败: {e}")
-            raise ValueError(f"无法创建用户目录结构: {e}")
+            raise FileSystemException(
+                message="System error preparing your workspace",
+                path=user_config.get('KB_PATH', 'unknown'),
+                operation="create_directory",
+                internal_message=f"Failed to create user directories: {e}",
+                original_exception=e
+            )
 
     # 发布状态更新消息：开始处理
     logger.info(f"开始发布状态更新消息: job_id={job_id}, status={JobStatus.RUNNING.value}")
@@ -496,7 +580,12 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
 
     if add_contents_df is None:
         logger.error(f"File parsing failed, no content returned: job_id={job_id}, filename={filename}")
-        raise ValueError("File parsing failed, no content returned")
+    if add_contents_df is None:
+        logger.error(f"File parsing failed, no content returned: job_id={job_id}, filename={filename}")
+        raise WorkerHandlingException(
+            message="We could not extract content from your file",
+            internal_message="File parsing failed, no content returned from parser"
+        )
 
     if add_contents_df.empty:
         logger.warning(f"no content returned from file parsing: job_id={job_id}, filename={filename}")
@@ -624,7 +713,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             
 
 
-# store_to_db_task 已移除，逻辑已合并到 parse_and_vectorize_task 中
+# store_to_db_task 已移除，逻辑已合并到 parse_task 中
 
 # Webhook和邮件发送已迁移到API服务处理
 # Worker只负责业务逻辑处理，完成后通过消息通知API服务

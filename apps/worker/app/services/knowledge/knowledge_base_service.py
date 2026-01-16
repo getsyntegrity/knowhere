@@ -44,6 +44,7 @@ from shared.utils.llm_utils import use_llm_api
 from shared.utils.text_utils import remove_duplicates_orderkept
 from loguru import logger
 from openai import OpenAI
+from shared.core.exceptions.DomainExceptions import ValidationException, NotFoundException, WorkerHandlingException
 
 
 async def build_sim_matrix(user, source_node, topk=5, min_threshold=0.2):
@@ -80,7 +81,9 @@ def filter_path(current_df, signal_paths: list, remain_paths: list, mode="delete
             if any(keyword in path for keyword in signal_paths)
         ]
     else:
-        raise ValueError(f"不支持的过滤模式: {mode}")
+        raise WorkerHandlingException(
+            internal_message=f"Unsupported filter mode: {mode}. Must be 'delete' or 'keep'"
+        )
 
     filter_paths = [remain_paths[i] for i in filter_path_ids]
     df_mask = current_df["path"].apply(lambda p: any(fp in p for fp in filter_paths))
@@ -162,7 +165,9 @@ async def checkerboard_find(user, user_message, topk=None, final_topk=-1, rerank
     elif data_type==11: # 不要summary
         target_types = ['PTXT', '_TABLE', '_IMAGE']
     else:
-        raise ValueError(f"不支持的数据类型: {data_type}")
+        raise WorkerHandlingException(
+            internal_message=f"Unknown data_type code: {data_type}"
+        )
 
     path_vecs, all_paths, content_vecs, all_contents_df = checkerboard_filter_kb(user, signal_paths, target_types, filter_mode)
     all_contents = all_contents_df['content'].tolist()
@@ -214,7 +219,11 @@ async def checkerboard_find(user, user_message, topk=None, final_topk=-1, rerank
 def matching_df(sub_path, all_contents_df, USER_SETTINGS, summary_term='-->摘要总结', save_session=False):
     ini_filtered_df = all_contents_df[all_contents_df['path'].str.contains(sub_path, na=False, regex=False)]
     if ini_filtered_df.empty:
-        raise "❌ 未能根据sim paths找到contents_df片段 检查返回的知识路径"
+        raise NotFoundException(
+            resource="ContentFragment",
+            resource_id=sub_path,
+            internal_message="Failed to find contents_df fragment based on sim paths"
+        )
 
     match_dfs = pd.DataFrame(columns=list(all_contents_df.columns))
     summary_texts = []
@@ -490,7 +499,9 @@ async def checkerboard_inject_parse(
         user_redis_service = UserRedisService(redis_service)
         
         if not user_context:
-            raise ValueError("User context is empty")
+            raise WorkerHandlingException(
+                internal_message="User context is missing in background task"
+            )
         
         user_config = await user_redis_service.get_user_config(str(user_context.id))
         if not user_config:
@@ -627,7 +638,9 @@ def read_tb_from_kb(tb_path, return_mode="html"):
     elif return_mode == "md":
         return html_to_md_lines(tb_html)
     else:
-        raise Exception("只能返回html或者md")
+        raise WorkerHandlingException(
+            internal_message=f"Invalid return_mode: {return_mode}. Must be 'html' or 'md'"
+        )
 
 def read_img_from_kb(img_record, img_id, KB_PATH):
     split_char = settings.SPLIT_CHAR or ";"

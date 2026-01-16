@@ -16,6 +16,11 @@ from shared.utils.CommonHelper import is_remote, load_file_bytes
 from shared.utils.file_utils import path_handle
 from loguru import logger
 from openai import OpenAI
+from shared.core.exceptions.DomainExceptions import (
+    LLMServiceException,
+    ImageParsingException,
+)
+from shared.core.exceptions.KnowhereException import KnowhereException
 from PIL import Image
 
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
@@ -113,7 +118,11 @@ async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images"
             return resp
         except Exception as e:
             logger.error(f"理解图像内容失败 原因 {e} 返回结果\n{resp}")
-            return None
+            raise LLMServiceException(
+                internal_message=f"Understanding image content failed: {str(e)}",
+                provider="openai_image",
+                original_exception=e
+            )
     else:
         return None
 
@@ -188,9 +197,16 @@ async def parse_image(image_path, filename=None, kb_dir=None, baseurl="", base_l
             os.rename(img_path, update_img_path)
         else:
             update_img_path = img_path
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f'存储图像失败 因为 {e}...')
-        raise
+        raise ImageParsingException(
+            user_message="Failed to process the image file",
+            reason="IMAGE_STORAGE_FAILED",
+            internal_message=f"Storage error: {str(e)}",
+            original_exception=e
+        )
 
     # 更新并保存本地数据
     img_id = 'IMAGE_' + gen_str_codes(filename + image_content) + '_IMAGE'

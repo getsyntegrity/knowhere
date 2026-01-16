@@ -11,6 +11,7 @@ from table_parser import (extract_tables_by_forms, extract_tb_keywords,
 from txt_parser import clean_texts_by_form
 # from knowledge_generator import process_full_contents
 from utlis import (gen_str_codes, know_df_cols)
+from shared.core.exceptions.DomainExceptions import ValidationException
 
 
 def get_common_keys(json_data):
@@ -159,7 +160,10 @@ def parse_json(file_path, kb_dir, llm_paras, content_key='content', local_summar
     elif isinstance(json_data, dict):
         results.append(dfs_parse(json_data, root_key, [root_key]))
     else:
-        raise ValueError("Input JSON must be a dictionary or a list of dictionaries!")
+        raise ValidationException(
+            user_message="Invalid JSON format: must be a dictionary or list of dictionaries",
+            violations=[{"field": "json_data", "description": "Type mismatch"}]
+        )
             
 
     doc_df = pd.concat(df_list, ignore_index=True)

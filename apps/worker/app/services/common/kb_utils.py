@@ -15,6 +15,7 @@ from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import remove_duplicates_orderkept
 from bs4 import BeautifulSoup
 from loguru import logger
+from shared.core.exceptions.DomainExceptions import WorkerHandlingException, ValidationException
 
 
 def build_tree_from_paths(paths):
@@ -327,7 +328,7 @@ async def gen_sim_matrix(vecs_, self_ids, k=10, use_cosine=True, pre_threshold=0
         logger.error(f"异常类型: {type(e).__name__}")
         import traceback
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise e
+        raise WorkerHandlingException(original_exception=e)
 
 def merge_df(input_df):
     dfs_by_path = list(input_df.groupby('path', sort=False))
@@ -425,7 +426,9 @@ def set_bottom_dic_val(d, path, val, mode='replace'):
     current = modified_dict
     for key in keys[:-1]:  # Traverse to the second-to-last key
         if key not in current or not isinstance(current[key], dict):
-            raise ValueError(f"Invalid path or non-dictionary node encountered at '{key}'")
+            raise WorkerHandlingException(
+                internal_message=f"Invalid path: node '{key}' not found in dictionary for path '{path}'"
+            )
         current = current[key]
     
     if mode=='replace':

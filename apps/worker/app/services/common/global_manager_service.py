@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
+from shared.core.exceptions.DomainExceptions import WorkerHandlingException
 
 
 class GlobalDataFrameManager:
@@ -20,7 +21,9 @@ class GlobalDataFrameManager:
         添加或更新用户的 DataFrame 数据。
         """
         if not isinstance(df, pd.DataFrame):
-            raise TypeError(f"Provided data is not a DataFrame for user '{user_id}'. Received: {type(df)}")
+            raise WorkerHandlingException(
+                internal_message=f"Provided data is not a DataFrame for user '{user_id}'. Received: {type(df)}. Must be a pandas DataFrame."
+            )
 
         if df.empty:
             print(f"Warning: Provided DataFrame for user '{user_id}' is empty. Not added.")
@@ -78,7 +81,9 @@ class GlobalVectorManager:
                 is_empty = True
         else:
             # 如果传入的不是我们预期的List或ndarray类型，可以抛出错误或记录警告
-            raise TypeError(f"Unsupported vector type for user '{user_id}': {type(vector)}. Expected List[float] or np.ndarray.")
+            raise WorkerHandlingException(
+                 internal_message=f"Unsupported vector type for user '{user_id}': {type(vector)}. Expected List[float] or np.ndarray."
+            )
 
         if is_empty:
             print(f"Warning: Provided vector for user '{user_id}' is empty. Vector not added.")
@@ -133,7 +138,9 @@ class GlobalDictManager:
         添加或更新指定用户的字典数据。
         """
         if not isinstance(data, dict):
-            raise TypeError(f"Provided data is not a dictionary for user '{user_id}'. Received: {type(data)}")
+            raise WorkerHandlingException(
+                internal_message=f"Provided data is not a dictionary for user '{user_id}'. Received: {type(data)}. Must be a dictionary."
+            )
 
         if not data:
             print(f"Warning: Provided dictionary for user '{user_id}' is empty. Not added.")

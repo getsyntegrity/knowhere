@@ -57,7 +57,7 @@ class KBOrchestrator:
             # Webhook和邮件发送已迁移到API服务，由消息处理器处理
             from celery import signature
             task_signature = signature(
-                'app.core.tasks.kb_tasks.parse_and_vectorize_task',
+                'app.core.tasks.kb_tasks.parse_task',
                 args=[job_id],
                 kwargs={'user_id': user_id, 'job_type': 'kb_management'}
             ).set(queue=queue_name)
@@ -93,7 +93,7 @@ class KBOrchestrator:
         # 返回单任务签名（任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息）
         # Webhook和邮件发送已迁移到API服务，由消息处理器处理
         return signature(
-            'app.core.tasks.kb_tasks.parse_and_vectorize_task',
+            'app.core.tasks.kb_tasks.parse_task',
             args=[job_id],
             kwargs={'user_id': user_id, 'job_type': 'kb_management'}
         ).set(queue=queue_name)

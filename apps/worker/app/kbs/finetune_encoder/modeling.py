@@ -7,6 +7,7 @@ import torch.distributed as dist
 from torch import Tensor, nn
 from transformers import AutoModel
 from transformers.file_utils import ModelOutput
+from shared.core.exceptions.DomainExceptions import WorkerHandlingException
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,9 @@ class BiEncoderModel(nn.Module):
         self.negatives_cross_device = negatives_cross_device
         if self.negatives_cross_device:
             if not dist.is_initialized():
-                raise ValueError('Distributed training has not been initialized for representation all gather.')
+                raise WorkerHandlingException(
+                    internal_message='Distributed training has not been initialized for representation all gather.'
+                )
             #     logger.info("Run in a single GPU, set negatives_cross_device=False")
             #     self.negatives_cross_device = False
             # else:
