@@ -9,7 +9,7 @@ from LM_Cocktail import mix_models
 from modeling import BiEncoderModel
 from trainer import BiTrainer
 from transformers import AutoConfig, AutoTokenizer, HfArgumentParser, set_seed
-from shared.core.exceptions.DomainExceptions import FileSystemException
+from shared.core.exceptions.domain_exceptions import FileSystemException
 
 logger = logging.getLogger(__name__)
 

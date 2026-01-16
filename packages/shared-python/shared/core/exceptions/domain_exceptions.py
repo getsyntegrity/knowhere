@@ -44,7 +44,7 @@ Usage (5xx - System Error):
 
 from typing import Any, Dict, List, Optional, TypedDict
 
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.response.ErrorCode import ErrorCode, SubCode
 
 

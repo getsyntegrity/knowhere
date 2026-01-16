@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 class GlobalDataFrameManager:

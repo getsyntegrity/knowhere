@@ -12,7 +12,7 @@ import aiohttp
 from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.DomainExceptions import StorageServiceException, KnowhereException
+from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
 
 
 class FileUploadService:

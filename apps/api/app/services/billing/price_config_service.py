@@ -6,7 +6,7 @@ from typing import Optional
 from shared.core.logging import logger
 from app.repositories.stripe_price_config_repository import StripePriceConfigRepository
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import NotFoundException, ValidationException
+from shared.core.exceptions.domain_exceptions import NotFoundException, ValidationException
 
 
 class PriceConfigService:

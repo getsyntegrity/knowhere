@@ -12,7 +12,7 @@ from app.repositories.knowledge_base_repository import (create_directory,
                                                         update_directory)
 from fastapi import APIRouter, Depends
 from starlette import status
-from shared.core.exceptions.DomainExceptions import KnowledgeBaseOperationException
+from shared.core.exceptions.domain_exceptions import KnowledgeBaseOperationException
 
 router = APIRouter(tags=["知识库"])
 

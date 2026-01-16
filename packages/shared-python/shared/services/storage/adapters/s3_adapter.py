@@ -7,7 +7,7 @@ import boto3
 from botocore.exceptions import ClientError
 from loguru import logger
 
-from shared.core.exceptions.DomainExceptions import StorageServiceException
+from shared.core.exceptions.domain_exceptions import StorageServiceException
 from shared.services.storage.storage_adapter import StorageAdapter
 
 

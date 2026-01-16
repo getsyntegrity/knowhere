@@ -8,8 +8,8 @@ from typing import Any, Dict, Optional
 
 from shared.services.redis import RedisServiceFactory
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import ConcurrencyControlException
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.domain_exceptions import ConcurrencyControlException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 
 class ConcurrencyControlService:

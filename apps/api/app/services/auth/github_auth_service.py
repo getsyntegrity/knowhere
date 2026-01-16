@@ -8,7 +8,7 @@ from shared.core.config import settings
 from shared.models.database.user import User
 from app.services.auth.oauth_service import OAuthService
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import SystemSettingMissingException, AuthException
+from shared.core.exceptions.domain_exceptions import SystemSettingMissingException, AuthException
 
 
 class GitHubAuthService(OAuthService):

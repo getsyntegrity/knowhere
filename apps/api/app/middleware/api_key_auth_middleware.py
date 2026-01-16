@@ -4,7 +4,7 @@ API Key 认证中间件
 
 from shared.core.database import get_db
 from app.services.auth.api_key_service import APIKeyService
-from shared.core.exceptions.DomainExceptions import AuthException, KnowhereException
+from shared.core.exceptions.domain_exceptions import AuthException, KnowhereException
 from fastapi import Request, status
 
 

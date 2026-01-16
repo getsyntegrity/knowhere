@@ -13,7 +13,7 @@ from shared.models.schemas.api_key import (APIKeyListResponse, APIKeyResponse,
 from app.services.auth.api_key_service import APIKeyService
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.domain_exceptions import (
     ValidationException,
     NotFoundException,
     APIKeyOperationException

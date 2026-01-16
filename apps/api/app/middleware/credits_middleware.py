@@ -10,7 +10,7 @@ from app.core.dependencies import _authenticate_api_key, _authenticate_jwt
 from app.services.billing.credits_service import CreditsService
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
-from shared.core.exceptions.DomainExceptions import InsufficientCreditsException
+from shared.core.exceptions.domain_exceptions import InsufficientCreditsException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 

@@ -10,7 +10,7 @@ from transformers import (AutoModel, AutoModelForCausalLM,
 from .utils import (compute_weights, get_model_param_dirs,
                     get_model_param_list, load_model, merge_param,
                     merge_param_by_layer)
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 def save_ckpt_for_sentence_transformers(ckpt_dir, pooling_mode: str = 'cls', normalized: bool = True):

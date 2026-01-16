@@ -10,7 +10,7 @@ from shared.models.database.user import User
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import EmailServiceException, ValidationException
+from shared.core.exceptions.domain_exceptions import EmailServiceException, ValidationException
 
 router = APIRouter(tags=["邮件测试"])
 

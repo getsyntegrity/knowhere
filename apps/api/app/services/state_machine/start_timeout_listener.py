@@ -7,7 +7,7 @@ import sys
 from typing import Any, Dict
 
 from shared.core.database import get_db_context
-from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from app.services.state_machine.manager import JobStateMachine
 from loguru import logger
 

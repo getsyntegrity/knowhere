@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 import torch
 from tqdm import tqdm
                           is_torch_npu_available)
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 def load_llm(model_name:str, trust_remote_code:bool):

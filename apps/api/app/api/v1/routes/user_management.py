@@ -10,7 +10,7 @@ from app.services.billing.credits_service import CreditsService
 from app.services.user.user_service import UserService
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 router = APIRouter()
 

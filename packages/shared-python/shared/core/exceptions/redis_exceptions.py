@@ -3,7 +3,7 @@ Redis-related exception definitions
 """
 from typing import Optional
 
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.response.ErrorCode import ErrorCode
 
 

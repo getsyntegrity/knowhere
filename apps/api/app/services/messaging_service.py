@@ -6,7 +6,7 @@ import asyncio
 from typing import Optional
 
 from app.services.messaging.message_consumer import get_message_consumer
-from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from loguru import logger
 
 

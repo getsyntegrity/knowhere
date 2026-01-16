@@ -9,7 +9,7 @@ from typing import Any, Optional
 from celery import current_task
 from loguru import logger
 
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException, KnowhereException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException, KnowhereException
 
 class AIQueryService:
     """AI查询服务"""

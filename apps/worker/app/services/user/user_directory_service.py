@@ -8,7 +8,7 @@ from typing import List
 
 from shared.core.config import settings
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import FileSystemException
+from shared.core.exceptions.domain_exceptions import FileSystemException
 
 
 class UserDirectoryService:

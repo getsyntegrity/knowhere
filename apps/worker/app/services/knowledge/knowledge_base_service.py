@@ -44,7 +44,7 @@ from shared.utils.llm_utils import use_llm_api
 from shared.utils.text_utils import remove_duplicates_orderkept
 from loguru import logger
 from openai import OpenAI
-from shared.core.exceptions.DomainExceptions import ValidationException, NotFoundException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import ValidationException, NotFoundException, WorkerHandlingException
 
 
 async def build_sim_matrix(user, source_node, topk=5, min_threshold=0.2):

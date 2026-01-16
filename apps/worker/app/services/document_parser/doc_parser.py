@@ -27,8 +27,8 @@ from loguru import logger
 from lxml import etree
 from openai import OpenAI
 from tqdm import tqdm
-from shared.core.exceptions.DomainExceptions import DocxParsingException
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.domain_exceptions import DocxParsingException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 
 def get_leaf_dics(node, path=[]):

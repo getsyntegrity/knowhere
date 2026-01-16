@@ -16,7 +16,7 @@ from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
 from shared.services.messaging.message_publisher import run_async_publish
 # Exception handling
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.domain_exceptions import (
     ValidationException,
     FileSystemException,
     NotFoundException,
@@ -26,7 +26,7 @@ from shared.core.exceptions.DomainExceptions import (
     SystemSettingMissingException,
     SystemSettingInvalidException
 )
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 # Get Celery application
 celery_app = get_celery_app()

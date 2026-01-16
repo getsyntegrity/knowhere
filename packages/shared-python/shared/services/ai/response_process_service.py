@@ -3,7 +3,7 @@ import re
 
 from loguru import logger
 
-from shared.core.exceptions.DomainExceptions import LLMServiceException
+from shared.core.exceptions.domain_exceptions import LLMServiceException
 
 
 def process_llm_history(paras, his_k=10): # under development, if we need to parse the history

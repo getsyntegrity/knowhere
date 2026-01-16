@@ -7,7 +7,7 @@ import torch.distributed as dist
 from torch import Tensor, nn
 from transformers import AutoModel
 from transformers.file_utils import ModelOutput
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 logger = logging.getLogger(__name__)
 

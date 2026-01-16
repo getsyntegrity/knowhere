@@ -14,7 +14,7 @@ from app.services.auth.github_auth_service import GitHubAuthService
 from app.services.auth.google_auth_service import GoogleAuthService
 from fastapi import APIRouter, Depends, Query, status
 from fastapi_users import FastAPIUsers
-from shared.core.exceptions.DomainExceptions import AuthException, SystemSettingMissingException
+from shared.core.exceptions.domain_exceptions import AuthException, SystemSettingMissingException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["OAuth Authentication"])

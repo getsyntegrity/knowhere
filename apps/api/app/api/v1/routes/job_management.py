@@ -10,7 +10,7 @@ from app.repositories.job_repository import JobRepository
 from app.services.state_machine import JobStateMachine
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.domain_exceptions import (
     JobOperationException,
     ValidationException,
     NotFoundException,

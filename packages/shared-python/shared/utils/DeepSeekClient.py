@@ -4,7 +4,7 @@ import time
 import httpx
 
 from shared.core.config import settings
-from shared.core.exceptions.DomainExceptions import LLMServiceException, KnowhereException
+from shared.core.exceptions.domain_exceptions import LLMServiceException, KnowhereException
 from shared.services.redis import RedisService, RedisServiceFactory
 from loguru import logger
 

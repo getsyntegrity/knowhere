@@ -24,7 +24,7 @@ WARNING: DO NOT RAISE THIS CLASS DIRECTLY IN YOUR CODE.
 =============================================================================
 
 This is an abstract base class. Always use the domain-specific exceptions
-from `shared.core.exceptions.DomainExceptions`:
+from `shared.core.exceptions.domain_exceptions`:
 
     - ValidationException  (400 - invalid input with violations)
     - AuthException        (401 - authentication failed)
@@ -93,7 +93,7 @@ class KnowhereException(Exception):
     ==========================================================================
 
     WARNING: DO NOT INSTANTIATE OR RAISE THIS CLASS DIRECTLY.
-    Use domain-specific subclasses from DomainExceptions.py instead.
+    Use domain-specific subclasses from domain_exceptions.py instead.
 
     This class provides:
     - to_dict(): Machine-readable JSON for API responses (returns user_message)

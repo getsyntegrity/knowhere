@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from shared.core.config import settings
 from shared.core.logging import logger
-from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from app.repositories.credits_repository import CreditsRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 

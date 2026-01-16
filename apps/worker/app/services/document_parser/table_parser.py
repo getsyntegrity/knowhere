@@ -27,8 +27,8 @@ from docx.table import Table as DocxTable
 from pandasql import sqldf
 
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import TableParsingException
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.domain_exceptions import TableParsingException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 g_tbl_lock = threading.Lock()
 

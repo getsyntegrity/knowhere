@@ -1,7 +1,7 @@
 """Exceptions module for shared exception classes."""
 
-from shared.core.exceptions.KnowhereException import KnowhereException
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.knowhere_exception import KnowhereException
+from shared.core.exceptions.domain_exceptions import (
     ValidationException,
     AuthException,
     PermissionException,

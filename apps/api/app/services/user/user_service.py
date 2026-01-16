@@ -7,7 +7,7 @@ from shared.core.logging import get_logger
 from shared.models.database.user import User
 from shared.models.schemas.user import UserUpdateRequest
 from app.repositories.user_repository import UserRepository
-from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)

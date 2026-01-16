@@ -15,7 +15,7 @@ from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import remove_duplicates_orderkept
 from bs4 import BeautifulSoup
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException, ValidationException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException, ValidationException
 
 
 def build_tree_from_paths(paths):

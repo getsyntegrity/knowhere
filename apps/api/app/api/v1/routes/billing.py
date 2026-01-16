@@ -20,7 +20,7 @@ from app.services.billing.credits_service import CreditsService
 from app.services.billing.stripe_service import StripeService
 from fastapi import APIRouter, Depends, Request, Query, status
 from sqlalchemy import func, select
-from shared.core.exceptions.DomainExceptions import StripeServiceException
+from shared.core.exceptions.domain_exceptions import StripeServiceException
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.models.database.usage_log import UsageLog
 from shared.models.database.job import Job

@@ -9,7 +9,7 @@ from shared.models.schemas.user import UserResponse
 from app.services.auth.api_key_service import APIKeyService
 from fastapi import Depends, Request, status
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import AuthException
+from shared.core.exceptions.domain_exceptions import AuthException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ============================================================================

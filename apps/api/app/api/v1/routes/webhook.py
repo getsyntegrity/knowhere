@@ -14,7 +14,7 @@ from shared.models.schemas.webhook import (WebhookConfigCreate,
 from app.repositories.webhook_repository import WebhookRepository
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import WebhookServiceException
+from shared.core.exceptions.domain_exceptions import WebhookServiceException
 
 # WebhookService已迁移到API服务
 

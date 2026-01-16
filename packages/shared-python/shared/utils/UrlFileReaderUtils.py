@@ -6,7 +6,7 @@ import pandas as pd
 import requests
 
 from shared.core.config import settings
-from shared.core.exceptions.DomainExceptions import ValidationException, UnavailableException
+from shared.core.exceptions.domain_exceptions import ValidationException, UnavailableException
 
 
 class UrlFileReader:

@@ -24,7 +24,7 @@ from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from shared.services.ai.response_process_service import eval_response
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 def build_level_mapping(df, origin_lvls, mode="max"):

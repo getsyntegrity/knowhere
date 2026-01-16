@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from shared.core.config import settings
-from shared.core.exceptions.DomainExceptions import StorageServiceException, NotFoundException, KnowhereException
+from shared.core.exceptions.domain_exceptions import StorageServiceException, NotFoundException, KnowhereException
 from shared.models.schemas.s3_file import FliesDownload
 
 

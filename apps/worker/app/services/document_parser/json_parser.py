@@ -11,7 +11,7 @@ from table_parser import (extract_tables_by_forms, extract_tb_keywords,
 from txt_parser import clean_texts_by_form
 # from knowledge_generator import process_full_contents
 from utlis import (gen_str_codes, know_df_cols)
-from shared.core.exceptions.DomainExceptions import ValidationException
+from shared.core.exceptions.domain_exceptions import ValidationException
 
 
 def get_common_keys(json_data):

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 from PIL import Image
 
-from shared.core.exceptions.DomainExceptions import StorageServiceException, KnowhereException
+from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
 
 
 class ZipResultService:

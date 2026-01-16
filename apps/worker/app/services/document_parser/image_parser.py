@@ -16,11 +16,11 @@ from shared.utils.CommonHelper import is_remote, load_file_bytes
 from shared.utils.file_utils import path_handle
 from loguru import logger
 from openai import OpenAI
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.domain_exceptions import (
     LLMServiceException,
     ImageParsingException,
 )
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 from PIL import Image
 
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'

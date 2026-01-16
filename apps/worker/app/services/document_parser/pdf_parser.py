@@ -3,13 +3,13 @@ import time
 import asyncio
 import requests
 from typing import Callable, Optional
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.domain_exceptions import (
     PDFParsingException,
     MinerUServiceException,
     TimeoutException,
     WorkerHandlingException,
 )
-from shared.core.exceptions.KnowhereException import KnowhereException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 from loguru import logger
 

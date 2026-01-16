@@ -13,7 +13,7 @@ from shared.core.config import settings
 from shared.utils.device_utils import check_device_capabilities
 from shared.utils.file_utils import clean_file, path_handle
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import SystemSettingMissingException, SystemSettingInvalidException, FileSystemException
+from shared.core.exceptions.domain_exceptions import SystemSettingMissingException, SystemSettingInvalidException, FileSystemException
 
 
 class UserConfigService:

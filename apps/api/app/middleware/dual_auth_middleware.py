@@ -9,7 +9,7 @@ from app.core.jwt import jwt_strategy
 from shared.models.database.user import User
 from app.services.auth.api_key_service import APIKeyService
 from fastapi import Request, status
-from shared.core.exceptions.DomainExceptions import AuthException
+from shared.core.exceptions.domain_exceptions import AuthException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from loguru import logger
 

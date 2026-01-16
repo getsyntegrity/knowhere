@@ -17,7 +17,7 @@ from loguru import logger
 from pylab import mpl
 from rank_bm25 import BM25Okapi
 from sentence_transformers import util
-from shared.core.exceptions.DomainExceptions import ValidationException, LLMServiceException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import ValidationException, LLMServiceException, WorkerHandlingException
 
 plt.rcParams['font.sans-serif'] = 'SimHei'
 mpl.rcParams['font.sans-serif'] = ['SimHei']

@@ -23,7 +23,7 @@ from app.services.messaging.message_handlers import (
     handle_job_result,
     handle_job_status_update,
 )
-from shared.core.exceptions.DomainExceptions import WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 class MessageConsumer:

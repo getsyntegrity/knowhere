@@ -5,7 +5,7 @@ from typing import Optional
 
 from shared.core.celery_router import task_router
 # 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
-from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from loguru import logger
 
 

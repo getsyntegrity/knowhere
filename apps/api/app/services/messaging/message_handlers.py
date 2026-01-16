@@ -19,7 +19,7 @@ from shared.services.redis.chunks_redis_service import ChunksRedisService
 from shared.services.redis.task_redis_service import TaskRedisService
 from app.services.state_machine import JobStateMachine
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 
 
 async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, Any]:

@@ -7,7 +7,7 @@ from app.core.jwt import auth_backend
 from app.core.users import get_user_manager
 from fastapi import Depends, status
 from fastapi_users import FastAPIUsers
-from shared.core.exceptions.DomainExceptions import PermissionDeniedException
+from shared.core.exceptions.domain_exceptions import PermissionDeniedException
 
 
 # 延迟导入以避免循环依赖

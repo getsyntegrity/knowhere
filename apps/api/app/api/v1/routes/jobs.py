@@ -22,7 +22,7 @@ from shared.services.storage.file_upload_service import FileUploadService
 from fastapi import APIRouter, Depends, Query, Response, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.domain_exceptions import (
     ValidationException,
     NotFoundException,
     PermissionDeniedException,

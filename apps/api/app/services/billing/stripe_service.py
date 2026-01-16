@@ -19,7 +19,7 @@ from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
-from shared.core.exceptions.DomainExceptions import (
+from shared.core.exceptions.domain_exceptions import (
     SystemSettingMissingException, 
     ValidationException, 
     NotFoundException,

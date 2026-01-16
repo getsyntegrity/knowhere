@@ -11,7 +11,7 @@ from shared.models.database.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
-from shared.core.exceptions.DomainExceptions import ValidationException, NotFoundException, KnowhereException, APIKeyOperationException
+from shared.core.exceptions.domain_exceptions import ValidationException, NotFoundException, KnowhereException, APIKeyOperationException
 
 class APIKeyService:
     """API Key管理服务"""

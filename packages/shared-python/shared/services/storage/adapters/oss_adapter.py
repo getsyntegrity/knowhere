@@ -5,7 +5,7 @@ from typing import Any, BinaryIO, Dict, Iterator, Optional
 
 from loguru import logger
 
-from shared.core.exceptions.DomainExceptions import StorageServiceException
+from shared.core.exceptions.domain_exceptions import StorageServiceException
 from shared.services.storage.storage_adapter import StorageAdapter
 
 
