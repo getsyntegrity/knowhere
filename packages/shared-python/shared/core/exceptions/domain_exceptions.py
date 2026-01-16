@@ -242,26 +242,53 @@ class RateLimitException(KnowhereException):
 
     4xx Error: Developer provides `user_message` that user sees directly.
 
+    Default limits (from docs/limitation.md):
+        - Free tier: 60 RPM
+        - Pro tier: 120 RPM
+        - Ultra tier: 300 RPM
+        - Default retry_after: 15 seconds
+
     Details schema:
-        {"reason": "RATE_LIMIT_EXCEEDED", "retry_after": <seconds>}
+        {
+            "reason": "RATE_LIMIT_EXCEEDED",
+            "retry_after": <seconds>,
+            "limit": <max_requests>,
+            "period": "second" | "minute" | "hour" | "day"
+        }
     """
+
+    # Default values from docs/limitation.md
+    DEFAULT_RETRY_AFTER = 15  # seconds
+    DEFAULT_LIMIT = 60  # requests per minute (free tier)
+    DEFAULT_PERIOD = "minute"
 
     def __init__(
         self,
-        retry_after: int,
-        user_message: str = "Rate limit exceeded. Please slow down.",
+        retry_after: int = DEFAULT_RETRY_AFTER,
+        limit: int = DEFAULT_LIMIT,
+        period: str = DEFAULT_PERIOD,
+        user_message: str = "Rate limit exceeded. Please retry after {retry_after} seconds.",
         internal_message: Optional[str] = None,
     ):
+        # Format user_message with retry_after if placeholder exists
+        formatted_user_message = user_message.format(retry_after=retry_after) if "{retry_after}" in user_message else user_message
+
+        details: Dict[str, Any] = {
+            "reason": SubCode.RATE_LIMIT_EXCEEDED.value,
+            "retry_after": retry_after,
+            "limit": limit,
+            "period": period,
+        }
+
         super().__init__(
             code=ErrorCode.RESOURCE_EXHAUSTED,
-            internal_message=internal_message or f"Rate limit exceeded, retry_after={retry_after}s",
-            user_message=user_message,
-            details={
-                "reason": SubCode.RATE_LIMIT_EXCEEDED.value,
-                "retry_after": retry_after,
-            },
+            internal_message=internal_message or f"Rate limit exceeded: {limit} requests per {period}, retry_after={retry_after}s",
+            user_message=formatted_user_message,
+            details=details,
         )
         self.retry_after = retry_after
+        self.limit = limit
+        self.period = period
 
 
 class QuotaExceededException(KnowhereException):
@@ -309,24 +336,38 @@ class UnavailableException(KnowhereException):
     5xx Error: Auto-defaults to safe user_message.
 
     Details schema:
-        {"retry_after": <seconds>}
+        {
+            "retry_after": <seconds>,
+            "limit": <max_requests> (optional),
+            "period": "second" | "minute" | "hour" | "day" (optional)
+        }
     """
 
     def __init__(
         self,
         internal_message: str,
         retry_after: int,
+        limit: Optional[int] = None,
+        period: Optional[str] = None,
         user_message: Optional[str] = None,
         original_exception: Optional[Exception] = None,
     ):
+        details: Dict[str, Any] = {"retry_after": retry_after}
+        if limit is not None:
+            details["limit"] = limit
+        if period is not None:
+            details["period"] = period
+
         super().__init__(
             code=ErrorCode.UNAVAILABLE,
             internal_message=internal_message,
             user_message=user_message,  # Defaults to generic 5xx message
-            details={"retry_after": retry_after},
+            details=details,
             original_exception=original_exception,
         )
         self.retry_after = retry_after
+        self.limit = limit
+        self.period = period
 
 
 class TimeoutException(KnowhereException):
@@ -336,24 +377,38 @@ class TimeoutException(KnowhereException):
     5xx Error: Auto-defaults to safe user_message.
 
     Details schema:
-        {"retry_after": <seconds>}
+        {
+            "retry_after": <seconds>,
+            "limit": <max_requests> (optional),
+            "period": "second" | "minute" | "hour" | "day" (optional)
+        }
     """
 
     def __init__(
         self,
         internal_message: str,
         retry_after: int,
+        limit: Optional[int] = None,
+        period: Optional[str] = None,
         user_message: Optional[str] = None,
         original_exception: Optional[Exception] = None,
     ):
+        details: Dict[str, Any] = {"retry_after": retry_after}
+        if limit is not None:
+            details["limit"] = limit
+        if period is not None:
+            details["period"] = period
+
         super().__init__(
             code=ErrorCode.DEADLINE_EXCEEDED,
             internal_message=internal_message,
             user_message=user_message,  # Defaults to generic 5xx message
-            details={"retry_after": retry_after},
+            details=details,
             original_exception=original_exception,
         )
         self.retry_after = retry_after
+        self.limit = limit
+        self.period = period
 
 
 class UnknownException(KnowhereException):

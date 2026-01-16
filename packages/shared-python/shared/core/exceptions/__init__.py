@@ -4,7 +4,7 @@ from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.exceptions.domain_exceptions import (
     ValidationException,
     AuthException,
-    PermissionException,
+    PermissionDeniedException,
     NotFoundException,
     ConflictException,
     RateLimitException,
@@ -20,7 +20,7 @@ __all__ = [
     # Client Errors (4xx)
     "ValidationException",
     "AuthException",
-    "PermissionException",
+    "PermissionDeniedException",
     "NotFoundException",
     "ConflictException",
     "RateLimitException",

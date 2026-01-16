@@ -672,11 +672,13 @@ async def get_job_result(
         response.headers["RateLimit-Remaining"] = str(rate_limit_info["remaining"])
         response.headers["RateLimit-Reset"] = str(rate_limit_info["reset"])
 
-        # 如果超过限制，返回429错误
+        # If rate limit exceeded, return 429 error
         if not rate_limit_info["allowed"]:
+            import time
+            retry_after_seconds = max(1, int(rate_limit_info["reset"] - time.time()))
             raise RateLimitException(
                 limit=rate_limit_info["limit"],
-                retry_after=rate_limit_info["reset"]
+                retry_after=retry_after_seconds
             )
 
         job_repo = JobRepository()

@@ -135,8 +135,6 @@ async def retry_job(
         
         # 获取Job
         job = await job_repo.get_job_by_id(db, job_id)
-        # 获取Job
-        job = await job_repo.get_job_by_id(db, job_id)
         if not job:
             raise NotFoundException(
                 resource="Job",
