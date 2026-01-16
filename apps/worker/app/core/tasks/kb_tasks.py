@@ -427,7 +427,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
         
         # 调用修改后的解析逻辑（传入user_config）
         logger.info(f"开始导入解析服务: job_id={job_id}")
-        from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse                                                                     
+        from app.services.document_parser.parse_service import checkerboard_inject_parse                                                                     
         logger.info(f"解析服务导入成功: job_id={job_id}")
         
         doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
