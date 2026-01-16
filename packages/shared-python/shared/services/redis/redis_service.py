@@ -41,7 +41,10 @@ class RedisService:
                         self._health_checker = RedisHealthChecker(self._client)
                         logger.debug("Redis客户端初始化成功")
                     except Exception as e:
-                        raise RedisConnectionError(f"Redis客户端初始化失败: {e}")
+                        raise RedisConnectionError(
+                            internal_message=f"Redis client initialization failed: {str(e)}",
+                            original_exception=e
+                        )
         return self._client
     
     async def _execute_with_retry(self, operation: callable) -> Any:
@@ -81,8 +84,12 @@ class RedisService:
             result = await self._execute_with_retry(_operation)
             return result
         except Exception as e:
-            logger.error(f"Redis SET操作失败: {e}")
-            raise RedisOperationError(f"SET操作失败: {e}")
+            logger.error(f"Redis SET operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"SET operation failed: {str(e)}",
+                operation="SET",
+                original_exception=e
+            )
     
     async def get(self, key: str, default: Any = None) -> Any:
         """获取键值"""
@@ -104,8 +111,12 @@ class RedisService:
             except (json.JSONDecodeError, TypeError):
                 return result
         except Exception as e:
-            logger.error(f"Redis GET操作失败: {e}")
-            raise RedisOperationError(f"GET操作失败: {e}")
+            logger.error(f"Redis GET operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"GET operation failed: {str(e)}",
+                operation="GET",
+                original_exception=e
+            )
     
     async def delete(self, *keys: str) -> int:
         """删除键"""
@@ -118,8 +129,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis DELETE操作失败: {e}")
-            raise RedisOperationError(f"DELETE操作失败: {e}")
+            logger.error(f"Redis DELETE operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"DELETE operation failed: {str(e)}",
+                operation="DELETE",
+                original_exception=e
+            )
     
     async def exists(self, key: str) -> bool:
         """检查键是否存在"""
@@ -133,8 +148,12 @@ class RedisService:
             result = await self._execute_with_retry(_operation)
             return bool(result)
         except Exception as e:
-            logger.error(f"Redis EXISTS操作失败: {e}")
-            raise RedisOperationError(f"EXISTS操作失败: {e}")
+            logger.error(f"Redis EXISTS operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"EXISTS operation failed: {str(e)}",
+                operation="EXISTS",
+                original_exception=e
+            )
     
     async def expire(self, key: str, ttl: int) -> bool:
         """设置键过期时间"""
@@ -147,8 +166,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis EXPIRE操作失败: {e}")
-            raise RedisOperationError(f"EXPIRE操作失败: {e}")
+            logger.error(f"Redis EXPIRE operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"EXPIRE operation failed: {str(e)}",
+                operation="EXPIRE",
+                original_exception=e
+            )
     
     # ==================== 列表操作 ====================
     
@@ -171,8 +194,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis LPUSH操作失败: {e}")
-            raise RedisOperationError(f"LPUSH操作失败: {e}")
+            logger.error(f"Redis LPUSH operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"LPUSH operation failed: {str(e)}",
+                operation="LPUSH",
+                original_exception=e
+            )
     
     async def rpush(self, key: str, *values: Any) -> int:
         """从列表右侧推入元素"""
@@ -193,8 +220,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis RPUSH操作失败: {e}")
-            raise RedisOperationError(f"RPUSH操作失败: {e}")
+            logger.error(f"Redis RPUSH operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"RPUSH operation failed: {str(e)}",
+                operation="RPUSH",
+                original_exception=e
+            )
     
     async def lpop(self, key: str) -> Any:
         """从列表左侧弹出元素"""
@@ -216,8 +247,12 @@ class RedisService:
             except (json.JSONDecodeError, TypeError):
                 return result
         except Exception as e:
-            logger.error(f"Redis LPOP操作失败: {e}")
-            raise RedisOperationError(f"LPOP操作失败: {e}")
+            logger.error(f"Redis LPOP operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"LPOP operation failed: {str(e)}",
+                operation="LPOP",
+                original_exception=e
+            )
     
     async def rpop(self, key: str) -> Any:
         """从列表右侧弹出元素"""
@@ -239,8 +274,12 @@ class RedisService:
             except (json.JSONDecodeError, TypeError):
                 return result
         except Exception as e:
-            logger.error(f"Redis RPOP操作失败: {e}")
-            raise RedisOperationError(f"RPOP操作失败: {e}")
+            logger.error(f"Redis RPOP operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"RPOP operation failed: {str(e)}",
+                operation="RPOP",
+                original_exception=e
+            )
     
     async def lrange(self, key: str, start: int = 0, end: int = -1) -> List[Any]:
         """获取列表范围内的元素"""
@@ -263,8 +302,12 @@ class RedisService:
             
             return parsed_result
         except Exception as e:
-            logger.error(f"Redis LRANGE操作失败: {e}")
-            raise RedisOperationError(f"LRANGE操作失败: {e}")
+            logger.error(f"Redis LRANGE operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"LRANGE operation failed: {str(e)}",
+                operation="LRANGE",
+                original_exception=e
+            )
     
     # ==================== 哈希操作 ====================
     
@@ -293,8 +336,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis HSET操作失败: {e}")
-            raise RedisOperationError(f"HSET操作失败: {e}")
+            logger.error(f"Redis HSET operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"HSET operation failed: {str(e)}",
+                operation="HSET",
+                original_exception=e
+            )
     
     async def hget(self, key: str, field: str, default: Any = None) -> Any:
         """获取哈希字段值"""
@@ -316,8 +363,12 @@ class RedisService:
             except (json.JSONDecodeError, TypeError):
                 return result
         except Exception as e:
-            logger.error(f"Redis HGET操作失败: {e}")
-            raise RedisOperationError(f"HGET操作失败: {e}")
+            logger.error(f"Redis HGET operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"HGET operation failed: {str(e)}",
+                operation="HGET",
+                original_exception=e
+            )
     
     async def hgetall(self, key: str) -> Dict[str, Any]:
         """获取所有哈希字段"""
@@ -340,8 +391,12 @@ class RedisService:
             
             return parsed_result
         except Exception as e:
-            logger.error(f"Redis HGETALL操作失败: {e}")
-            raise RedisOperationError(f"HGETALL操作失败: {e}")
+            logger.error(f"Redis HGETALL operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"HGETALL operation failed: {str(e)}",
+                operation="HGETALL",
+                original_exception=e
+            )
     
     # ==================== 集合操作 ====================
     
@@ -364,8 +419,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis SADD操作失败: {e}")
-            raise RedisOperationError(f"SADD操作失败: {e}")
+            logger.error(f"Redis SADD operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"SADD operation failed: {str(e)}",
+                operation="SADD",
+                original_exception=e
+            )
     
     async def srem(self, key: str, *values: Any) -> int:
         """从集合移除元素"""
@@ -386,8 +445,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis SREM操作失败: {e}")
-            raise RedisOperationError(f"SREM操作失败: {e}")
+            logger.error(f"Redis SREM operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"SREM operation failed: {str(e)}",
+                operation="SREM",
+                original_exception=e
+            )
     
     async def smembers(self, key: str) -> set:
         """获取集合所有成员"""
@@ -401,8 +464,12 @@ class RedisService:
             result = await self._execute_with_retry(_operation)
             return result
         except Exception as e:
-            logger.error(f"Redis SMEMBERS操作失败: {e}")
-            raise RedisOperationError(f"SMEMBERS操作失败: {e}")
+            logger.error(f"Redis SMEMBERS operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"SMEMBERS operation failed: {str(e)}",
+                operation="SMEMBERS",
+                original_exception=e
+            )
     
     async def incr(self, key: str) -> int:
         """递增计数器"""
@@ -415,8 +482,12 @@ class RedisService:
             
             return await self._execute_with_retry(_operation)
         except Exception as e:
-            logger.error(f"Redis INCR操作失败: {e}")
-            raise RedisOperationError(f"INCR操作失败: {e}")
+            logger.error(f"Redis INCR operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"INCR operation failed: {str(e)}",
+                operation="INCR",
+                original_exception=e
+            )
     
     # ==================== 健康检查 ====================
     

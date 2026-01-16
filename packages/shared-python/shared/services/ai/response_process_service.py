@@ -3,6 +3,8 @@ import re
 
 from loguru import logger
 
+from shared.core.exceptions.DomainExceptions import LLMServiceException
+
 
 def process_llm_history(paras, his_k=10): # under development, if we need to parse the history
     his_record = ''
@@ -28,8 +30,11 @@ def eval_response(resp, answer_key=None):
     if isinstance(resp, str):
         cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', resp)
     else:
-        logger.error(f'❌模型返不是字符串 直接返回\n{resp}')
-        raise
+        logger.error(f'Model response is not a string, returning directly\n{resp}')
+        raise LLMServiceException(
+            internal_message=f"LLM response is not a string: {type(resp).__name__}",
+            provider="unknown"
+        )
 
     try:
         # 直接尝试解析 JSON
