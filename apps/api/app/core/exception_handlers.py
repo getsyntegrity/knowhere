@@ -1,6 +1,22 @@
 """
 Global Exception Handlers for the Knowhere API.
 
+=============================================================================
+SECURITY: THE "4xx vs 5xx" MESSAGE PATTERN
+=============================================================================
+
+This module enforces the dual-message pattern for all exceptions:
+
+    - `internal_message`: Technical details for LOGS ONLY. NEVER sent to client.
+    - `user_message`:     Safe message for CLIENT. ALWAYS sent to user.
+
+The `knowhere_exception_handler` is the central point that:
+    1. Logs `internal_message` for debugging (server-side only)
+    2. Returns `user_message` to the client (via to_dict)
+    3. NEVER leaks internal_message to the response
+
+=============================================================================
+
 All exceptions are converted to KnowhereException and handled uniformly.
 This ensures clients always receive a consistent, secure JSON response.
 
@@ -14,7 +30,7 @@ Response Format:
         "success": false,
         "error": {
             "code": "INVALID_ARGUMENT",
-            "message": "Human-readable error",
+            "message": "<user_message>",  // NEVER internal_message
             "request_id": "req_abc123",
             "details": {...}  // Optional, schema varies by exception type
         }
@@ -60,12 +76,25 @@ async def knowhere_exception_handler(
     """
     Central handler for ALL KnowhereException subclasses.
     
+    ==========================================================================
+    SECURITY: DUAL-MESSAGE PATTERN ENFORCEMENT
+    ==========================================================================
+    
+    This handler enforces the separation between:
+    - `internal_message`: Logged for debugging (NEVER in response)
+    - `user_message`: Returned to client (via to_dict)
+    
+    The response ONLY contains `user_message` via exc.to_dict().
+    The logs contain `internal_message` via exc.to_log_dict().
+    
+    ==========================================================================
+    
     This is the ONLY place that builds the actual response.
     All other handlers convert their exceptions and delegate here.
     
     Logging:
-        - 5xx: ERROR level with stack trace (if original_exception exists)
-        - 4xx: WARNING level
+        - 5xx: ERROR level with internal_message and stack trace
+        - 4xx: WARNING level with user_message
     
     The `original_exception` field is used to:
         1. Log the underlying cause for debugging (e.g., Redis timeout)
@@ -75,18 +104,21 @@ async def knowhere_exception_handler(
     request_id = _get_request_id(request)
 
     # Log based on severity
+    # SECURITY: to_log_dict() includes internal_message, to_dict() does NOT
     log_data = exc.to_log_dict()
     if exc.http_status_code >= 500:
+        # For 5xx, log the internal_message (technical details for debugging)
         logger.error(
-            f"[{request_id}] System Error: {exc.code.value} - {exc.message}",
+            f"[{request_id}] System Error: {exc.code.value} - {exc.internal_message}",
             **log_data,
         )
         # Log stack trace if we wrapped an unexpected exception
         if exc.original_exception:
             logger.error(f"[{request_id}] Original exception: {traceback.format_exc()}")
     else:
+        # For 4xx, log the user_message (already sanitized for client)
         logger.warning(
-            f"[{request_id}] Client Error: {exc.code.value} - {exc.message}",
+            f"[{request_id}] Client Error: {exc.code.value} - {exc.user_message}",
             **log_data,
         )
 
@@ -95,6 +127,7 @@ async def knowhere_exception_handler(
     if hasattr(exc, "retry_after") and exc.retry_after:
         headers["Retry-After"] = str(exc.retry_after)
 
+    # SECURITY: to_dict() returns user_message, NEVER internal_message
     return JSONResponse(
         status_code=exc.http_status_code,
         content=exc.to_dict(request_id),
@@ -116,7 +149,7 @@ async def http_exception_handler(
         - 422: Handled separately by validation_exception_handler
     
     Security: HTTPException.detail may contain sensitive info from middleware.
-    We use a generic message and log the original internally.
+    We use a generic user_message and log the original detail internally.
     """
     # Convert HTTP status to ErrorCode using the canonical mapping
     code = ErrorCodeMapper.get_error_code_from_http_status(exc.status_code)
@@ -137,11 +170,11 @@ async def http_exception_handler(
     }
     safe_message = safe_messages.get(exc.status_code, "An error occurred")
     
-    # Create KnowhereException (log original detail internally)
+    # Create KnowhereException with internal_message for logs, user_message for response
     knowhere_exc = KnowhereException(
         code=code,
-        message=safe_message,
-        internal_message=f"HTTPException detail: {exc.detail}",
+        internal_message=f"HTTPException detail: {exc.detail}",  # For logs
+        user_message=safe_message,  # For client
     )
     
     # Delegate to central handler
@@ -160,6 +193,7 @@ async def validation_exception_handler(
         - Type coercion fails (e.g., string where int expected)
     
     The violations array IS safe to expose as it describes client input issues.
+    This is a 4xx error, so user_message is passed directly to client.
     """
     # Transform Pydantic errors into violations format
     violations: List[dict] = []
@@ -170,9 +204,9 @@ async def validation_exception_handler(
             "description": error.get("msg", "Validation failed"),
         })
 
-    # Create ValidationException
+    # Create ValidationException with user_message that client will see
     validation_exc = ValidationException(
-        message="Request validation failed",
+        user_message="Request validation failed",
         violations=violations,
     )
     
@@ -193,6 +227,7 @@ async def general_exception_handler(
     
     Security: NEVER expose exception details to client.
     The `original_exception` is stored for internal logging only.
+    UnknownException auto-generates a safe user_message.
     """
     # Wrap in UnknownException - this logs internally, returns generic message
     unknown_exc = UnknownException(original_exception=exc)
@@ -221,4 +256,4 @@ def setup_exception_handlers(app: FastAPI) -> None:
     # Catch-all for unexpected exceptions (MUST be last conceptually)
     app.add_exception_handler(Exception, general_exception_handler)
 
-    logger.info("Global exception handlers registered (KnowhereException flow enabled)")
+    logger.info("Global exception handlers registered (4xx/5xx message pattern enabled)")
