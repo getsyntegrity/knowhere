@@ -52,6 +52,8 @@ apps/api/users/
 apps/api/tests/
 apps/worker/debug_parse.py
 apps/worker/debug_users/
+apps/worker/app/tmp_data/
+apps/worker/app/tmp_res/
 s3-notification.json
 users/
 test_*.csv
