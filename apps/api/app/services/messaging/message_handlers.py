@@ -340,7 +340,10 @@ async def _handle_failure_async(message: JobFailureMessage):
     state_machine = JobStateMachine()
     
     try:
-        async with get_db_context() as db:
+        from typing import cast
+        from sqlalchemy.ext.asyncio import AsyncSession
+        async with get_db_context() as db_ctx:
+            db = cast(AsyncSession, db_ctx)
             # 更新Job状态为失败
             success = await state_machine.mark_failed(
                 db,
@@ -350,6 +353,34 @@ async def _handle_failure_async(message: JobFailureMessage):
             
             if success:
                 logger.info(f"Job {message.job_id} 标记为失败: {message.error_message}")
+                
+                # 检查是否需要退还Credits
+                if message.metadata and message.metadata.get("refund_credits"):
+                    try:
+                        logger.info(f"检测到退款请求: job_id={message.job_id}")
+                        from app.services.billing.credits_service import CreditsService
+                        from shared.core.config import settings
+                        from app.repositories.job_repository import JobRepository
+                        
+                        job_repo = JobRepository()
+                        job = await job_repo.get_job_by_id(db, message.job_id)
+                        
+                        if job:
+                            credits_service = CreditsService()
+                            refund_amount = getattr(settings, "CREDITS_PER_API_CALL", 0)
+                            if refund_amount > 0:
+                                refund_success = await credits_service.refund_job_credits(
+                                    db,
+                                    str(job.user_id),
+                                    refund_amount,
+                                    message.job_id
+                                )
+                                if refund_success:
+                                    logger.info(f"Credits退款成功: job_id={message.job_id}, amount={refund_amount}")
+                                else:
+                                    logger.info(f"Credits退款跳过或失败: job_id={message.job_id}")
+                    except Exception as e:
+                        logger.error(f"执行Credits退款失败: {e}", exc_info=True)
                 
                 # 记录详细错误信息
                 if message.stack_trace:

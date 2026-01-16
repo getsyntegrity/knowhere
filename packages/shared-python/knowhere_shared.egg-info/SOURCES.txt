@@ -108,6 +108,7 @@ shared/utils/UrlFileReaderUtils.py
 shared/utils/UrlUtils.py
 shared/utils/__init__.py
 shared/utils/device_utils.py
+shared/utils/env.py
 shared/utils/file_utils.py
 shared/utils/gc_utils.py
 shared/utils/json_utils.py

@@ -228,7 +228,8 @@ async def rerank_(rerank_txt, msg, paths4rank, keep_one=False):
             messages=messages,
             user_id=ctx_task_id,
             conversation_id=ctx_task_id,
-            timeout=90
+            timeout=90,
+            max_tokens=max_tokens
         )
         logger.debug(f"AI查询服务返回结果: {str(rerank_seq)[:200]}...")
         

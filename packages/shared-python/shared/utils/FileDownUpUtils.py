@@ -51,7 +51,7 @@ def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, file
 
     # 使用默认值
     if timeout is None:
-        timeout = APIConstants.ZIP_DOWNLOAD_TIMEOUT
+        timeout = APIConstants.S3_FILE_DOWNLOAD_TIMEOUT
     if chunk_size is None:
         chunk_size = ProcessingConstants.IMG_CHUNK_SIZE
         

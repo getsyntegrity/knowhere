@@ -162,6 +162,7 @@ class AIQueryService:
                 temperature=temperature,
                 conversation_id=conversation,
                 model=kwargs.get('model'),
+                max_tokens=kwargs.get('max_tokens'),
                 **api_params
             )
 

@@ -1,5 +1,5 @@
 # 共享包（可编辑安装）
--e ../../packages/shared-python
+-e packages/shared-python
 
 # Web框架
 fastapi==0.115.14

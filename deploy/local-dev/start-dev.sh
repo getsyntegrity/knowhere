@@ -20,21 +20,20 @@ docker-compose -f docker-compose.dev.yml up -d
 echo "⏳ 等待服务启动..."
 sleep 10
 
-# 运行MinIO初始化脚本
-echo "🔧 配置MinIO webhook..."
-docker exec knowhere_minio /docker-entrypoint-initdb.d/setup-webhook.sh
+# 运行LocakStack初始化脚本 (自动运行)
+echo "🔧 LocalStack初始化中..."
 
 # 检查服务状态
 echo "🔍 检查服务状态..."
 echo "PostgreSQL: $(docker exec knowhere_postgres pg_isready -U root -d Knowhere 2>/dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
 echo "Redis: $(docker exec knowhere_redis redis-cli ping 2>/dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
-echo "MinIO: $(curl -s http://localhost:9000/minio/health/live > /dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
+echo "LocalStack: $(curl -s http://localhost:4566/_localstack/health > /dev/null && echo '✅ 运行中' || echo '❌ 未运行')"
 
 echo ""
 echo "🎉 开发环境启动完成！"
 echo ""
 echo "📋 服务访问地址："
-echo "  - MinIO控制台: http://localhost:9001 (minioadmin/minioadmin123)"
+echo "  - LocalStack: http://localhost:4566"
 echo "  - PostgreSQL: localhost:5432 (root/root123)"
 echo "  - Redis: localhost:6379"
 echo "  - RabbitMQ管理: http://localhost:15672 (admin/admin123)"

@@ -37,7 +37,7 @@ class MessagingConfig(BaseModel):
     QUEUE_EXCLUSIVE: bool = Field(default=False, description="队列是否独占")
     
     # 重试配置
-    PUBLISH_RETRY_COUNT: int = Field(default=3, description="消息发布重试次数")
+    PUBLISH_RETRY_COUNT: int = Field(default=1, description="消息发布重试次数")
     PUBLISH_RETRY_DELAY: float = Field(default=1.0, description="消息发布重试延迟（秒）")
     
     # 队列优先级配置

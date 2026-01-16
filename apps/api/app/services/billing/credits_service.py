@@ -1,6 +1,7 @@
 """
 Credits 管理服务
 """
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from shared.core.config import settings
@@ -16,8 +17,22 @@ class CreditsService:
         self.repository = CreditsRepository()
     
     async def check_balance(self, session: AsyncSession, user_id: str) -> int:
-        """检查Credits余额"""
-        return await self.repository.get_balance(session, user_id)
+        """
+        检查Credits余额：
+        - 基于用户当前余额
+        - 限制为最近 N 天（env: CREDITS_VALID_DAYS，默认90天）内支付获得的额度上限
+        - 如果余额超过有效期内额度，会下调并同步更新到数据库
+        """
+        user_balance = await self.repository.get_balance(session, user_id)
+        valid_days = getattr(settings, "CREDITS_VALID_DAYS", 90)
+        recent_credits = await self.repository.get_recent_payment_credits(session, user_id, valid_days)
+        
+        # 余额不能超过有效期内购入的总额度，过期额度视为失效
+        if recent_credits < user_balance:
+            await self.repository.cap_balance(session, user_id, recent_credits)
+            return recent_credits
+        
+        return user_balance
     
     async def get_balance(self, session: AsyncSession, user_id: str) -> int:
         """获取Credits余额（check_balance的别名）"""
@@ -66,7 +81,9 @@ class CreditsService:
         user_id: str, 
         amount: int, 
         reason: str,
-        stripe_payment_id: Optional[str] = None
+        stripe_payment_id: Optional[str] = None,
+        transaction_type: str = "purchase",
+        transaction_metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """增加Credits"""
         # 1. 增加Credits
@@ -79,9 +96,10 @@ class CreditsService:
             transaction = CreditsTransaction(
                 user_id=user_id,
                 credits_amount=amount,
-                transaction_type="purchase",
+                transaction_type=transaction_type,
                 description=reason,
-                stripe_payment_id=stripe_payment_id
+                stripe_payment_id=stripe_payment_id,
+                transaction_metadata=transaction_metadata
             )
             await self.repository.create(session, transaction)
             
@@ -89,6 +107,45 @@ class CreditsService:
             await self._send_credits_added_notification(session, user_id, amount)
         
         return success
+
+    async def refund_job_credits(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        amount: int,
+        job_id: str,
+        reason: str = "Job execution failed"
+    ) -> bool:
+        """
+        退还Job Credits（幂等：同一个job_id只退一次）
+        """
+        from shared.models.database.credits_transaction import CreditsTransaction
+        from sqlalchemy import select, func, String
+        
+        # 检查是否已经退款
+        # 使用 func.json_extract_path_text 提取 job_id (兼容 PostgreSQL)
+        stmt = select(CreditsTransaction).where(
+            CreditsTransaction.user_id == user_id,
+            CreditsTransaction.transaction_type == "refund",
+            func.json_extract_path_text(CreditsTransaction.transaction_metadata, 'job_id') == job_id
+        )
+        
+        result = await session.execute(stmt)
+        existing = result.first()
+        
+        if existing:
+            logger.info(f"Job {job_id} 已经退还过Credits，跳过")
+            return False
+            
+        # 执行退款
+        return await self.add_credits(
+            session=session,
+            user_id=user_id,
+            amount=amount,
+            reason=reason,
+            transaction_type="refund",
+            transaction_metadata={"job_id": job_id}
+        )
     
     async def get_usage_stats(
         self, 

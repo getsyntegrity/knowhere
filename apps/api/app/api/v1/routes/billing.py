@@ -2,8 +2,10 @@
 计费相关 API
 """
 
+from datetime import datetime, timedelta
 from typing import Optional
 
+from pydantic import BaseModel
 from shared.core.database import get_db
 from shared.core.config import settings
 from app.core.dependencies import get_current_user
@@ -17,9 +19,23 @@ from shared.models.schemas.billing import (BuyCreditsRequest,
 from app.services.billing.credits_service import CreditsService
 from app.services.billing.stripe_service import StripeService
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.models.database.usage_log import UsageLog
+from shared.models.database.job import Job
+from shared.models.database.stripe_price_config import StripePriceConfig
+from shared.models.database.credits_transaction import CreditsTransaction
 
 router = APIRouter(tags=["Billing"])
+
+class ParseUsageResponse(BaseModel):
+    """使用概览响应"""
+    request_total: int
+    mom_growth: float
+    credits_used: int
+    estimated_amount: Optional[float]
+    success_rate: float
+    avg_processing_time: float
 
 
 @router.post("/subscribe", summary="订阅计划")
@@ -194,6 +210,101 @@ async def get_usage_stats(
         )
 
 
+@router.get("/parse-usage", summary="获取使用解析概览", response_model=ParseUsageResponse)
+async def parse_usage_overview(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    返回使用概览：
+    - 请求总数
+    - 同比上月增长（最近30天 vs 再前30天）
+    - 已用积分（从credits_transactions表统计，包含usage和refund类型）
+    - 预估金额（取第一个 credits_package 的单价：amount_cents/(100*credits_amount)）
+    - 成功率（jobs: done 占所有状态总数）
+    - 平均处理时间（jobs: updated_at - created_at，秒）
+    """
+    try:
+        user_id = str(current_user.id)
+        now = datetime.utcnow()
+        current_start = now - timedelta(days=30)
+        previous_start = now - timedelta(days=60)
+
+        # 请求总数（从UsageLog表统计）
+        request_row = await db.execute(
+            select(func.count(UsageLog.id))
+            .where(UsageLog.user_id == user_id)
+        )
+        total_requests = request_row.scalar_one() or 0
+
+        # 已用积分：从credits_transactions表统计usage和refund类型
+        # usage类型为负数（扣除），refund类型为正数（退还）
+        # 净消耗 = abs(sum(usage + refund))
+        credits_row = await db.execute(
+            select(func.coalesce(func.sum(CreditsTransaction.credits_amount), 0))
+            .where(CreditsTransaction.user_id == user_id)
+            .where(CreditsTransaction.transaction_type.in_(["usage", "refund"]))
+        )
+        total_credits_used = abs(credits_row.scalar_one() or 0)
+
+        # 同比上月增长：最近30天 vs 前一个30天
+        curr_row = await db.execute(
+            select(func.count(UsageLog.id))
+            .where(UsageLog.user_id == user_id)
+            .where(UsageLog.created_at >= current_start)
+        )
+        prev_row = await db.execute(
+            select(func.count(UsageLog.id))
+            .where(UsageLog.user_id == user_id)
+            .where(UsageLog.created_at >= previous_start)
+            .where(UsageLog.created_at < current_start)
+        )
+        curr_count = curr_row.scalar_one() or 0
+        prev_count = prev_row.scalar_one() or 0
+        mom_growth = ((curr_count - prev_count) / prev_count * 100) if prev_count > 0 else 0.0
+
+        # 成功率 & 平均处理时间
+        job_row = await db.execute(
+            select(
+                func.count().filter(Job.status == "done").label("done_cnt"),
+                func.count().label("total_cnt"),  # 所有状态的总数
+                func.avg(func.extract("epoch", Job.updated_at - Job.created_at)).label("avg_secs"),
+            ).where(Job.user_id == user_id)
+        )
+        job_stats = job_row.first() or (0, 0, 0.0)
+        done_cnt = getattr(job_stats, "done_cnt", 0) or 0
+        total_cnt = getattr(job_stats, "total_cnt", 0) or 0
+        success_rate = (done_cnt / total_cnt * 100) if total_cnt > 0 else 0.0
+        avg_processing_time = round(float(getattr(job_stats, "avg_secs", 0.0) or 0.0), 2)
+
+        # 预估金额：credits_package的第一条配置
+        price_row = await db.execute(
+            select(StripePriceConfig)
+            .where(StripePriceConfig.product_type == "credits_package")
+            .where(StripePriceConfig.is_active.is_(True))
+            .order_by(StripePriceConfig.created_at)
+            .limit(1)
+        )
+        price_cfg = price_row.scalar_one_or_none()
+        estimated_amount = None
+        if price_cfg and price_cfg.credits_amount and price_cfg.credits_amount > 0:
+            estimated_amount = round(price_cfg.amount_cents * total_credits_used / (100 * price_cfg.credits_amount), 4)
+
+        return ParseUsageResponse(
+            request_total=total_requests or 0,
+            mom_growth=round(mom_growth, 2),
+            credits_used=total_credits_used or 0,
+            estimated_amount=estimated_amount,
+            success_rate=round(success_rate, 2),
+            avg_processing_time=avg_processing_time,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取使用解析概览失败: {str(e)}"
+        )
+
+
 @router.get("/history", summary="获取消费历史")
 async def get_transaction_history(
     limit: int = 50,
@@ -345,7 +456,8 @@ async def buy_credits_package(
             user_id=str(current_user.id),
             price_id=request.price_id,
             success_url=success_url,
-            cancel_url=cancel_url
+            cancel_url=cancel_url,
+            quantity=request.quantity
         )
         
         return CheckoutSessionResponse(
