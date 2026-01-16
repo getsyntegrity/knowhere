@@ -125,8 +125,14 @@ async def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, s
 
 async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_paras=None, relative_root=None):
     if md_lines is None and file_path is not None:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            md_lines = file.readlines()
+        from shared.utils.CommonHelper import load_file_bytes, is_remote
+        if is_remote(file_path):
+            file_bytes = await load_file_bytes(file_path)
+            md_content = file_bytes.decode('utf-8')
+            md_lines = md_content.splitlines()
+        else:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                md_lines = file.readlines()
 
     md_lines = [l.strip() for l in md_lines if l.strip() != ""]
     

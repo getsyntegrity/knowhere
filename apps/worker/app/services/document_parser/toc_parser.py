@@ -4,6 +4,7 @@ Migrated from sxjg/app/kbs/toc_parser.py
 
 Provides functionality for:
 - Detecting TOC (Table of Contents) candidates in markdown documents
+- Detecting TOC in DOCX documents (SDT containers, styles, field codes)
 - Using LLM to determine precise TOC boundaries
 - Analyzing TOC hierarchy structure
 - Building nested tree structures from TOC
@@ -12,11 +13,122 @@ Provides functionality for:
 import re
 import pandas as pd
 from loguru import logger
+from lxml import etree
 
 from app.services.document_parser.table_parser import df2html
 from shared.services.ai import ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
+
+
+# ==================== DOCX TOC Detection Functions ====================
+
+def get_toc_level(elem, ns):
+    """
+    检测段落样式是否为 TOC 样式
+    
+    Args:
+        elem: XML 段落元素
+        ns: XML 命名空间
+    
+    Returns:
+        bool: True 如果是 TOC 样式
+    """
+    style = elem.find('.//w:pPr/w:pStyle', namespaces=ns)
+    if style is not None:
+        val = style.get('{%s}val' % ns['w'])
+        if val:
+            val_lower = val.lower().strip()
+            if "toc" in val_lower or "目录" in val:
+                return True
+    return False
+
+
+def detect_sdt_toc(elem, ns):
+    """
+    检测 SDT (Structured Document Tag) 目录容器
+    Word 自动生成的目录通常被包装在 sdt 元素中
+    
+    Args:
+        elem: SDT 元素
+        ns: XML 命名空间
+    
+    Returns:
+        dict: {
+            'is_toc_sdt': bool - 是否是目录 SDT,
+            'gallery_type': str - docPartGallery 类型
+        }
+    """
+    tag = etree.QName(elem.tag).localname if isinstance(elem.tag, str) else None
+    
+    if tag != 'sdt':
+        return {'is_toc_sdt': False, 'gallery_type': None}
+    
+    is_toc_sdt = False
+    gallery_type = None
+    
+    sdt_pr = elem.find('.//w:sdtPr', namespaces=ns)
+    if sdt_pr is not None:
+        doc_part_obj = sdt_pr.find('.//w:docPartObj', namespaces=ns)
+        if doc_part_obj is not None:
+            doc_part_gallery = doc_part_obj.find('.//w:docPartGallery', namespaces=ns)
+            if doc_part_gallery is not None:
+                gallery_type = doc_part_gallery.get('{%s}val' % ns['w'])
+                if gallery_type and 'table of contents' in gallery_type.lower():
+                    is_toc_sdt = True
+    
+    return {
+        'is_toc_sdt': is_toc_sdt,
+        'gallery_type': gallery_type
+    }
+
+
+def detect_doc_tocs(elem, ns):
+    """
+    检测目录区域，支持两种检测方式：
+    1. 段落样式检测 (TOC 样式)
+    2. 域代码检测 (instrText)
+    
+    注意：SDT 容器检测使用 detect_sdt_toc 函数
+    
+    Args:
+        elem: XML 段落元素
+        ns: XML 命名空间
+    
+    Returns:
+        dict: {
+            'is_style': bool - 是否是 TOC 样式,
+            'is_field_start': bool - 是否是 TOC 域开始,
+            'is_field_end': bool - 是否是域结束
+        }
+    """
+    is_style = get_toc_level(elem, ns)
+    is_field_start = False
+
+    instrs = elem.findall('.//w:instrText', namespaces=ns)
+    for instr in instrs:
+        if instr.text:
+            instr_text_lower = instr.text.lower()
+            if 'toc' in instr_text_lower or 'table of contents' in instr_text_lower or '目录' in instr.text:
+                is_field_start = True
+                break
+
+    is_field_end = False
+    if not is_style:
+        fldchars = elem.findall('.//w:fldChar', namespaces=ns)
+        for fld in fldchars:
+            if fld.get('{%s}fldCharType' % ns['w']) == 'end':
+                is_field_end = True
+                break
+    
+    return {
+        'is_style': is_style,
+        'is_field_start': is_field_start,
+        'is_field_end': is_field_end
+    }
+
+
+# ==================== Markdown TOC Detection Functions ====================
 
 
 def normalize_md(s: str) -> str:

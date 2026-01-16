@@ -1,25 +1,23 @@
-import datetime
 import io
 import os
 import re
-import threading
 import uuid
+import datetime
+import threading
+import numpy as np
+import pandas as pd
 from collections import OrderedDict
 from typing import List, Union
 
-import numpy as np
-import pandas as pd
 from shared.core.config import settings
-# ARQ依赖已移除，使用Celery替代
 from shared.services.ai import ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (flatten_dic2paths, gen_str_codes,
                                           get_str_time, process_dup_paths_df,
-                                          remove_duplicates_orderkept,
                                           remove_spaces)
-from shared.utils.text_utils import tokenize2stw_remove
-# TaskRedis依赖已移除，使用Redis直接追踪
+from shared.utils.text_utils import tokenize2stw_remove, remove_duplicates_orderkept
+
 from app.services.document_parser.txt_parser import extract_summary_keywords
 from shared.utils.CommonHelper import load_file_bytes
 from bs4 import BeautifulSoup

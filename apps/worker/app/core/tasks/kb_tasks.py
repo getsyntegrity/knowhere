@@ -8,15 +8,13 @@ from celery import Task
 from loguru import logger
 
 from shared.core.celery_app import get_celery_app
-from shared.core.state_machine.states import JobStatus  # 仅用于状态常量，不直接操作状态机                                                                        
-# Worker 不再直接访问数据库，从 Redis 获取信息
+from shared.core.state_machine.states import JobStatus
 from shared.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService                                                                     
 from shared.services.storage.file_upload_service import FileUploadService
 from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
 from shared.services.messaging.message_publisher import run_async_publish
 
-# 获取Celery应用
 celery_app = get_celery_app()
 
 
