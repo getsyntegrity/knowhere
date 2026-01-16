@@ -8,8 +8,9 @@ from shared.core.config import settings
 from shared.core.database import get_db_context
 from app.core.dependencies import _authenticate_api_key, _authenticate_jwt
 from app.services.billing.credits_service import CreditsService
-from fastapi import HTTPException, Request, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
+from shared.core.exceptions.DomainExceptions import InsufficientCreditsException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -33,27 +34,20 @@ class CreditsMiddleware:
             if not user:
                 return await call_next(request)
             
-            try:
-                # 检查Credits余额
-                balance = await self.credits_service.check_balance(session, str(user.id))
-                if balance < settings.CREDITS_PER_API_CALL:
-                    raise HTTPException(
-                        status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                        detail=f"Credits余额不足，需要 {settings.CREDITS_PER_API_CALL} Credits，当前余额 {balance}"
-                    )
-                
-                # 记录请求开始时间
-                start_time = time.time()
-                
-                # 执行API操作
-                response = await call_next(request)
-            except HTTPException as exc:
-                # BaseHTTPMiddleware 抛出的 HTTPException 会被包装成 ExceptionGroup，需手动转成 Response
-                return JSONResponse(
-                    status_code=exc.status_code,
-                    content={"detail": exc.detail},
-                    headers=getattr(exc, "headers", None) or None,
+            # 检查Credits余额
+            balance = await self.credits_service.check_balance(session, str(user.id))
+            if balance < settings.CREDITS_PER_API_CALL:
+                raise InsufficientCreditsException(
+                    user_message=f"Credits余额不足，需要 {settings.CREDITS_PER_API_CALL} Credits，当前余额 {balance}",
+                    required_credits=settings.CREDITS_PER_API_CALL,
+                    current_balance=balance
                 )
+            
+            # 记录请求开始时间
+            start_time = time.time()
+            
+            # 执行API操作
+            response = await call_next(request)
             
             # 计算响应时间
             response_time = int((time.time() - start_time) * 1000)

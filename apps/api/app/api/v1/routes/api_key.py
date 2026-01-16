@@ -11,8 +11,13 @@ from shared.models.schemas.api_key import (APIKeyListResponse, APIKeyResponse,
                                         RegenerateAPIKeyRequest,
                                         RevokeAPIKeyRequest)
 from app.services.auth.api_key_service import APIKeyService
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.DomainExceptions import (
+    ValidationException,
+    NotFoundException,
+    APIKeyOperationException
+)
 
 router = APIRouter(tags=["API Key Management"])
 
@@ -42,15 +47,13 @@ async def create_api_key(
             expires_at=request.expires_at
         )
         
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+    except ValidationException:
+        raise
+    except NotFoundException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创建API Key失败: {str(e)}"
+        raise APIKeyOperationException(
+            internal_message=f"Failed to create API Key: {str(e)}"
         )
 
 
@@ -85,9 +88,8 @@ async def list_api_keys(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取API Key列表失败: {str(e)}"
+        raise APIKeyOperationException(
+            internal_message=f"Failed to list API Keys: {str(e)}"
         )
 
 
@@ -112,15 +114,11 @@ async def regenerate_api_key(
             "message": "API Key已重新生成"
         }
         
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+    except NotFoundException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"重新生成API Key失败: {str(e)}"
+        raise APIKeyOperationException(
+            internal_message=f"Failed to regenerate API Key: {str(e)}"
         )
 
 
@@ -143,20 +141,17 @@ async def revoke_api_key(
         if success:
             return {"message": "API Key已撤销"}
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="撤销API Key失败"
+            raise APIKeyOperationException(
+                internal_message="Failed to revoke API Key"
             )
             
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+    except NotFoundException:
+        raise
+    except APIKeyOperationException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"撤销API Key失败: {str(e)}"
+        raise APIKeyOperationException(
+            internal_message=f"Failed to revoke API Key: {str(e)}"
         )
 
 
@@ -172,9 +167,10 @@ async def get_api_key(
     try:
         api_key = await api_key_service.get_api_key(db, str(current_user.id), api_key_id)
         if not api_key:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="API Key不存在"
+            raise NotFoundException(
+                resource="APIKey",
+                resource_id=api_key_id,
+                internal_message="API Key not found"
             )
         
         return {
@@ -187,12 +183,11 @@ async def get_api_key(
             "expires_at": api_key.expires_at
         }
         
-    except HTTPException:
+    except NotFoundException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取API Key失败: {str(e)}"
+        raise APIKeyOperationException(
+            internal_message=f"Failed to get API Key: {str(e)}"
         )
 
 
@@ -210,12 +205,12 @@ async def toggle_api_key(
         if success:
             return {"message": "API Key状态更新成功"}
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="API Key状态更新失败"
+            raise APIKeyOperationException(
+                internal_message="Failed to toggle API Key status"
             )
+    except APIKeyOperationException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"更新API Key状态失败: {str(e)}"
+        raise APIKeyOperationException(
+            internal_message=f"Failed to toggle API Key: {str(e)}"
         )

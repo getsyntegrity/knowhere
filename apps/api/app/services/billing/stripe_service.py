@@ -19,13 +19,23 @@ from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
+from shared.core.exceptions.DomainExceptions import (
+    SystemSettingMissingException, 
+    ValidationException, 
+    NotFoundException,
+    StripeServiceException,
+    AuthException
+)
 
 class StripeService:
     """Stripe支付服务"""
     
     def __init__(self):
         if not settings.STRIPE_SECRET_KEY:
-            raise Exception("STRIPE_SECRET_KEY 未配置，请检查环境变量")
+            raise SystemSettingMissingException(
+                setting_name="STRIPE_SECRET_KEY",
+                internal_message="Stripe API key not configured"
+            )
         stripe.api_key = settings.STRIPE_SECRET_KEY
         self.subscription_repo = SubscriptionRepository()
         self.credits_repo = CreditsRepository()
@@ -61,7 +71,9 @@ class StripeService:
             return str(session.url or "")
         except stripe.StripeError as e:
             logger.error(f"创建订阅支付会话失败: {e}")
-            raise Exception(f"创建支付会话失败: {e}")
+            raise StripeServiceException(
+                internal_message=f"Stripe checkout session creation failed: {e}"
+            )
     
     async def create_checkout_session_for_credits_package(
         self,
@@ -77,12 +89,18 @@ class StripeService:
             # 验证价格配置存在
             config = await self.price_config_service.get_price_config(db, price_id)
             if not config.is_credits_package():
-                raise ValueError(f"价格ID {price_id} 不是Credits包类型")
+                raise ValidationException(
+                    user_message="Invalid price configuration",
+                    violations=[{"field": "price_id", "description": f"Price ID {price_id} is not a credits package"}]
+                )
 
-            # 获取用户并处理 Stripe Customer
             user = await self.user_repo.get(db, user_id)
             if not user:
-                raise ValueError(f"用户 {user_id} 不存在")
+                raise NotFoundException(
+                    resource="User",
+                    resource_id=user_id,
+                    internal_message="User not found for credits checkout"
+                )
             
             customer_id = user.stripe_customer_id
             if not customer_id:
@@ -148,7 +166,9 @@ class StripeService:
             return str(session.url or "")
         except stripe.StripeError as e:
             logger.error(f"创建Credits包支付会话失败: {e}")
-            raise Exception(f"创建支付会话失败: {e}")
+            raise StripeServiceException(
+                internal_message=f"Stripe credits checkout session failed: {e}"
+            )
     
     async def create_payment_intent(
         self, 
@@ -174,7 +194,9 @@ class StripeService:
             }
         except stripe.StripeError as e:
             logger.error(f"创建支付意图失败: {e}")
-            raise Exception(f"创建支付意图失败: {e}")
+            raise StripeServiceException(
+                internal_message=f"Stripe payment intent creation failed: {e}"
+            )
     
     async def handle_webhook(self, db: AsyncSession, payload: bytes, sig_header: str) -> Dict[str, Any]:
         """处理Stripe Webhook"""
@@ -185,10 +207,16 @@ class StripeService:
             return await self._process_webhook_event(db, event)
         except ValueError as e:
             logger.error(f"Invalid payload: {e}")
-            raise Exception("Invalid payload")
+            raise ValidationException(
+                user_message="Invalid webhook payload",
+                violations=[{"field": "payload", "description": "Webhook payload is malformed"}]
+            )
         except stripe.SignatureVerificationError as e:
             logger.error(f"Invalid signature: {e}")
-            raise Exception("Invalid signature")
+            raise AuthException(
+                user_message="Invalid webhook signature",
+                reason="WEBHOOK_SIGNATURE_INVALID"
+            )
     
     async def _process_webhook_event(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理Webhook事件"""
@@ -369,12 +397,17 @@ class StripeService:
                 logger.warning(f"未知的支付类型: mode={mode}, type={payment_type}")
                 return {'status': 'ignored', 'message': 'Unknown payment type'}
         
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"处理checkout.session.completed失败: {e}", exc_info=True)
             payment_record.status = 'failed'
             payment_record.extra_metadata = {**(payment_record.extra_metadata or {}), 'error': str(e)}
             await db.commit()
-            raise
+            raise StripeServiceException(
+                internal_message=f"处理checkout.session.completed失败: {str(e)}",
+                original_exception=e
+            )
     
     async def _handle_payment_intent_succeeded(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理PaymentIntent成功事件（用于Credits购买）"""
@@ -467,11 +500,14 @@ class StripeService:
             }
         
         except Exception as e:
-            logger.error(f"处理payment_intent.succeeded失败: {e}", exc_info=True)
+            logger.error(f"Credits购买处理失败: {e}", exc_info=True)
             payment_record.status = 'failed'
             payment_record.extra_metadata = {**(payment_record.extra_metadata or {}), 'error': str(e)}
             await db.commit()
-            raise
+            raise StripeServiceException(
+                internal_message=f"Credits购买处理失败: {str(e)}",
+                original_exception=e
+            )
     
     async def _handle_payment_succeeded(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理支付成功事件（订阅续费）"""
@@ -493,9 +529,14 @@ class StripeService:
                 logger.warning(f"未找到本地订阅记录: stripe_subscription_id={subscription_id}")
             
             return {'status': 'success', 'subscription_id': subscription_id}
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"处理invoice.payment_succeeded失败: {e}", exc_info=True)
-            raise
+            raise StripeServiceException(
+                internal_message=f"处理invoice.payment_succeeded失败: {str(e)}",
+                original_exception=e
+            )
     
     async def _handle_subscription_deleted(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理订阅删除事件"""
@@ -513,9 +554,14 @@ class StripeService:
                 logger.warning(f"未找到本地订阅记录: stripe_subscription_id={stripe_subscription_id}")
             
             return {'status': 'success', 'subscription_id': stripe_subscription_id}
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"处理customer.subscription.deleted失败: {e}", exc_info=True)
-            raise
+            raise StripeServiceException(
+                internal_message=f"处理customer.subscription.deleted失败: {str(e)}",
+                original_exception=e
+            )
 
     async def _handle_charge_refunded(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理退款事件（Stripe 控制台手动退款等）"""
@@ -669,7 +715,9 @@ class StripeService:
             return subscription
         except stripe.StripeError as e:
             logger.error(f"获取订阅信息失败: {e}")
-            raise Exception(f"获取订阅信息失败: {e}")
+            raise StripeServiceException(
+                internal_message=f"Failed to get Stripe subscription: {e}"
+            )
     
     async def cancel_subscription(self, stripe_subscription_id: str) -> Dict[str, Any]:
         """取消订阅"""
@@ -678,4 +726,6 @@ class StripeService:
             return subscription
         except stripe.StripeError as e:
             logger.error(f"取消订阅失败: {e}")
-            raise Exception(f"取消订阅失败: {e}")
+            raise StripeServiceException(
+                internal_message=f"Failed to cancel Stripe subscription: {e}"
+            )

@@ -8,7 +8,8 @@ from shared.core.database import get_db
 from app.core.jwt import jwt_strategy
 from shared.models.database.user import User
 from app.services.auth.api_key_service import APIKeyService
-from fastapi import HTTPException, Request, status
+from fastapi import Request, status
+from shared.core.exceptions.DomainExceptions import AuthException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from loguru import logger
 
@@ -53,7 +54,7 @@ class DualAuthMiddleware:
             # 3. 两种认证都失败
             self._raise_auth_error("Invalid or expired token")
             
-        except HTTPException:
+        except AuthException:
             raise
         except Exception as e:
             logger.error(f"认证过程中发生错误: {e}")
@@ -61,9 +62,8 @@ class DualAuthMiddleware:
     
     def _raise_auth_error(self, detail: str) -> None:
         """抛出认证错误"""
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=detail
+        raise AuthException(
+            user_message=detail
         )
     
     async def _authenticate_jwt(self, request: Request) -> Optional[User]:

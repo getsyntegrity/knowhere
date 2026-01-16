@@ -122,7 +122,38 @@ class AuthException(KnowhereException):
         )
 
 
-class PermissionException(KnowhereException):
+class InsufficientCreditsException(KnowhereException):
+    """
+    Payment required. HTTP 402.
+
+    4xx Error: Developer provides `user_message` that user sees directly.
+
+    Details schema:
+        {"required_credits": 10, "current_balance": 5}
+    """
+
+    def __init__(
+        self,
+        user_message: str,
+        required_credits: Optional[float] = None,
+        current_balance: Optional[float] = None,
+        internal_message: Optional[str] = None,
+    ):
+        details: Dict[str, Any] = {}
+        if required_credits is not None:
+            details["required_credits"] = required_credits
+        if current_balance is not None:
+            details["current_balance"] = current_balance
+            
+        super().__init__(
+            code=ErrorCode.PAYMENT_REQUIRED,
+            internal_message=internal_message or user_message,
+            user_message=user_message,
+            details=details,
+        )
+
+
+class PermissionDeniedException(KnowhereException):
     """
     Permission denied. HTTP 403.
 
@@ -705,5 +736,152 @@ class SystemSettingInvalidException(KnowhereException):
             internal_message=internal_message,
             user_message=user_message,  # Defaults to generic 5xx message
             details={},
+            original_exception=original_exception,
+        )
+
+
+class StripeServiceException(KnowhereException):
+    """
+    Stripe payment service operations failed.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"service": "stripe"},
+            original_exception=original_exception,
+        )
+
+
+class ConcurrencyControlException(KnowhereException):
+    """
+    Concurrency control (locks, state machine) operations failed.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"component": "concurrency_control"},
+            original_exception=original_exception,
+        )
+
+
+class APIKeyOperationException(KnowhereException):
+    """
+    API Key management operations failed.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"component": "api_key_management"},
+            original_exception=original_exception,
+        )
+
+
+class KnowledgeBaseOperationException(KnowhereException):
+    """
+    Knowledge Base directory/file operations failed.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"component": "knowledge_base"},
+            original_exception=original_exception,
+        )
+
+
+class JobOperationException(KnowhereException):
+    """
+    Job management operations failed.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"component": "job_management"},
+            original_exception=original_exception,
+        )
+
+
+class EmailServiceException(KnowhereException):
+    """
+    Email service operations failed.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"service": "email"},
+            original_exception=original_exception,
+        )
+
+
+class WebhookServiceException(KnowhereException):
+    """
+    Webhook service operations failed.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"service": "webhook"},
             original_exception=original_exception,
         )

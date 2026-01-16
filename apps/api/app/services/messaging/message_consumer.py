@@ -23,6 +23,7 @@ from app.services.messaging.message_handlers import (
     handle_job_result,
     handle_job_status_update,
 )
+from shared.core.exceptions.DomainExceptions import WorkerHandlingException
 
 
 class MessageConsumer:
@@ -118,10 +119,15 @@ class MessageConsumer:
             # 等待停止信号
             await self._stop_event.wait()
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"消息消费者启动失败: {e}", exc_info=True)
             self._running = False
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"消息消费者启动失败: {str(e)}",
+                original_exception=e
+            )
     
     async def stop_consuming(self, timeout: float = 10.0):
         """
@@ -297,9 +303,14 @@ class MessageConsumer:
         except asyncio.CancelledError:
             logger.info(f"消费者任务 {message_type} 已取消")
             raise
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"消费队列 {queue.name} 时出错: {e}", exc_info=True)
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"消费队列失败: {str(e)}",
+                original_exception=e
+            )
     
     async def _process_message(
         self,
@@ -312,8 +323,9 @@ class MessageConsumer:
         message_data = await self._parse_message_body(message.body)
         if not message_data:
             logger.warning(f"无法解析消息体: {message_type}")
-            # 无法解析的消息抛出异常，让外层确认
-            raise ValueError(f"无法解析消息体: {message_type}")
+            raise WorkerHandlingException(
+                internal_message=f"Failed to parse message body: {message_type}"
+            )
         
         job_id = message_data.get('job_id', 'unknown')
         logger.info(f"收到消息: {message_type}, job_id={job_id}")
@@ -329,8 +341,9 @@ class MessageConsumer:
             logger.info(f"消息处理成功: {message_type}, job_id={job_id}")
         else:
             logger.warning(f"消息处理失败: {message_type}, job_id={job_id}")
-            # 处理失败时抛出异常，让外层处理确认/拒绝
-            raise Exception(f"消息处理失败: {message_type}, job_id={job_id}")
+            raise WorkerHandlingException(
+                internal_message=f"Message processing failed: {message_type}, job_id={job_id}"
+            )
     
     async def _process_with_retry(
         self,

@@ -7,9 +7,10 @@ from app.core.dependencies import get_current_user, get_db
 from app.services.email import EmailService
 from app.services.email.models import EmailMessage, EmailRecipient, EmailSendResult
 from shared.models.database.user import User
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.DomainExceptions import EmailServiceException, ValidationException
 
 router = APIRouter(tags=["邮件测试"])
 
@@ -74,9 +75,9 @@ async def test_email(
         
         elif request.email_type == "purchase_confirmation":
             if not request.plan_type or request.amount is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="purchase_confirmation类型需要提供plan_type和amount参数"
+                raise ValidationException(
+                    user_message="purchase_confirmation类型需要提供plan_type和amount参数",
+                    violations=[{"field": "plan_type", "description": "Required"}, {"field": "amount", "description": "Required"}]
                 )
             result = await email_service.send_purchase_confirmation_email(
                 user_email=request.to_email,
@@ -89,9 +90,9 @@ async def test_email(
         
         elif request.email_type == "job_completion":
             if not request.job_type or not request.job_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="job_completion类型需要提供job_type和job_id参数"
+                raise ValidationException(
+                    user_message="job_completion类型需要提供job_type和job_id参数",
+                    violations=[{"field": "job_type", "description": "Required"}, {"field": "job_id", "description": "Required"}]
                 )
             result = await email_service.send_job_completion_email(
                 user_email=request.to_email,
@@ -105,9 +106,9 @@ async def test_email(
         
         elif request.email_type == "job_failure":
             if not request.job_type or not request.job_id or not request.error_message:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="job_failure类型需要提供job_type、job_id和error_message参数"
+                raise ValidationException(
+                    user_message="job_failure类型需要提供job_type、job_id和error_message参数",
+                    violations=[{"field": "job_type", "description": "Required"}, {"field": "job_id", "description": "Required"}, {"field": "error_message", "description": "Required"}]
                 )
             result = await email_service.send_job_failure_email(
                 user_email=request.to_email,
@@ -121,9 +122,9 @@ async def test_email(
         
         elif request.email_type == "custom":
             if not request.subject or (not request.html_content and not request.text_content):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="custom类型需要提供subject和html_content或text_content参数"
+                raise ValidationException(
+                    user_message="custom类型需要提供subject和html_content或text_content参数",
+                    violations=[{"field": "subject", "description": "Required"}, {"field": "content", "description": "html_content or text_content required"}]
                 )
             message = EmailMessage(
                 to=[EmailRecipient(email=request.to_email, name=request.user_name)],
@@ -136,9 +137,9 @@ async def test_email(
             result = await email_service.send_email(message, db=db)
         
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"不支持的邮件类型: {request.email_type}"
+            raise ValidationException(
+                user_message=f"不支持的邮件类型: {request.email_type}",
+                violations=[{"field": "email_type", "description": "Unsupported type"}]
             )
         
         return EmailTestResponse(
@@ -148,12 +149,11 @@ async def test_email(
             email_type=request.email_type
         )
         
-    except HTTPException:
+    except ValidationException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"测试邮件发送失败: {str(e)}"
+        raise EmailServiceException(
+            internal_message=f"测试邮件发送失败: {str(e)}"
         )
 
 

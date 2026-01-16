@@ -13,6 +13,7 @@ from shared.core.config import settings
 from shared.utils.device_utils import check_device_capabilities
 from shared.utils.file_utils import clean_file, path_handle
 from loguru import logger
+from shared.core.exceptions.DomainExceptions import SystemSettingMissingException, SystemSettingInvalidException, FileSystemException
 
 
 class UserConfigService:
@@ -35,13 +36,19 @@ class UserConfigService:
         """
         logger.info(f"初始化用户配置: {user_id}")
         
-        # 强制使用配置的绝对路径
         parent_path = settings.USERS_DATA_PATH
         if not parent_path:
-            raise ValueError("USERS_DATA_PATH 未配置，必须设置用户数据目录的绝对路径")
+            raise SystemSettingMissingException(
+                setting_name="USERS_DATA_PATH",
+                internal_message="User data directory path not configured"
+            )
         
         if not os.path.isabs(parent_path):
-            raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {parent_path}")
+            raise SystemSettingInvalidException(
+                setting_name="USERS_DATA_PATH",
+                setting_value=parent_path,
+                internal_message="USERS_DATA_PATH must be an absolute path"
+            )
         
         basic_user_info = {
             "user": user_id,
@@ -172,11 +179,18 @@ class UserConfigService:
             kb_vecs_folder: 知识库向量文件夹
             subfolders: 子目录名称列表
         """
-        # 验证主目录
         if not os.path.exists(kb_data_folder):
-            raise Exception(f"无法创建数据目录: {kb_data_folder}")
+            raise FileSystemException(
+                internal_message=f"Failed to create data directory: {kb_data_folder}",
+                path=kb_data_folder,
+                operation="create"
+            )
         if not os.path.exists(kb_vecs_folder):
-            raise Exception(f"无法创建向量目录: {kb_vecs_folder}")
+            raise FileSystemException(
+                internal_message=f"Failed to create vectors directory: {kb_vecs_folder}",
+                path=kb_vecs_folder,
+                operation="create"
+            )
         
         # 验证子目录
         missing_folders = []

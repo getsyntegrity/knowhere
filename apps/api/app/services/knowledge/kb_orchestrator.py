@@ -5,6 +5,7 @@ from typing import Optional
 
 from shared.core.celery_router import task_router
 # 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
+from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
 from loguru import logger
 
 
@@ -69,9 +70,14 @@ class KBOrchestrator:
             
             return result.id
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"启动知识库管理工作流失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"启动知识库管理工作流失败: {str(e)}",
+                original_exception=e
+            )
     
     def create_workflow_chain(self, job_id: str, user_id: str, queue_name: str = None):
         """

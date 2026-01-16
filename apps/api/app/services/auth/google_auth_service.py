@@ -8,6 +8,7 @@ from shared.core.config import settings
 from shared.models.database.user import User
 from app.services.auth.oauth_service import OAuthService
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.DomainExceptions import SystemSettingMissingException, AuthException
 
 
 class GoogleAuthService(OAuthService):
@@ -17,8 +18,9 @@ class GoogleAuthService(OAuthService):
         super().__init__()
         # 验证配置
         if not settings.is_google_oauth_enabled():
-            raise ValueError(
-                "Google OAuth未启用。请配置GOOGLE_CLIENT_ID和GOOGLE_CLIENT_SECRET"
+            raise SystemSettingMissingException(
+                setting_name="GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET",
+                internal_message="Google OAuth not configured properly"
             )
         self.client_id = settings.GOOGLE_CLIENT_ID
         self.client_secret = settings.GOOGLE_CLIENT_SECRET
@@ -57,13 +59,17 @@ class GoogleAuthService(OAuthService):
             response.raise_for_status()
             token_info = response.json()
             
-            # 验证audience
             if token_info.get("aud") != self.client_id:
-                raise ValueError("Invalid audience")
+                raise AuthException(
+                    user_message="Invalid authentication token",
+                    reason="TOKEN_INVALID_AUDIENCE"
+                )
             
-            # 验证issuer
             if not token_info.get("iss").startswith("https://accounts.google.com"):
-                raise ValueError("Invalid issuer")
+                raise AuthException(
+                    user_message="Invalid authentication token",
+                    reason="TOKEN_INVALID_ISSUER"
+                )
             
             return {
                 "id": token_info["sub"],

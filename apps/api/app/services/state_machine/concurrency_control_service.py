@@ -8,6 +8,8 @@ from typing import Any, Dict, Optional
 
 from shared.services.redis import RedisServiceFactory
 from loguru import logger
+from shared.core.exceptions.DomainExceptions import ConcurrencyControlException
+from shared.core.exceptions.KnowhereException import KnowhereException
 
 
 class ConcurrencyControlService:
@@ -63,18 +65,24 @@ class ConcurrencyControlService:
         lock_acquired = False
         
         try:
-            # 获取锁
             lock_acquired = await self.acquire_job_lock(job_id)
             if not lock_acquired:
-                raise Exception(f"无法获取任务 {job_id} 的锁")
+                raise ConcurrencyControlException(
+                    internal_message=f"Failed to acquire lock for job {job_id}"
+                )
             
             # 执行操作
             result = await operation(*args, **kwargs)
             return result
             
         except Exception as e:
+            if isinstance(e, KnowhereException):
+                raise
             logger.error(f"在锁保护下执行操作失败: {e}")
-            raise
+            raise ConcurrencyControlException(
+                internal_message=f"Operation failed under lock: {e}",
+                original_exception=e
+            )
         finally:
             # 释放锁
             if lock_acquired:
@@ -92,7 +100,12 @@ class ConcurrencyControlService:
             except Exception as e:
                 if attempt == max_retries:
                     logger.error(f"操作重试 {max_retries} 次后仍然失败: {e}")
-                    raise
+                    if isinstance(e, KnowhereException):
+                        raise
+                    raise ConcurrencyControlException(
+                        internal_message=f"Operation failed after retries: {e}",
+                        original_exception=e
+                    )
                 
                 # 计算退避延迟
                 delay = self._base_retry_delay * (2 ** attempt) + random.uniform(0, 0.1)
@@ -100,7 +113,9 @@ class ConcurrencyControlService:
                 
                 await asyncio.sleep(delay)
         
-        raise Exception("重试次数已用完")
+        raise ConcurrencyControlException(
+            internal_message="Retry limit exhausted for operation"
+        )
     
     async def optimistic_update_with_retry(
         self, 
@@ -130,9 +145,16 @@ class ConcurrencyControlService:
                 
                 # 其他错误或重试次数用完
                 logger.error(f"乐观锁更新失败: {e}")
-                raise
+                if isinstance(e, KnowhereException):
+                    raise
+                raise ConcurrencyControlException(
+                    internal_message=f"Optimistic lock update failed: {e}",
+                    original_exception=e
+                )
         
-        raise Exception("乐观锁更新重试次数已用完")
+        raise ConcurrencyControlException(
+            internal_message="Optimistic lock update retry limit exhausted"
+        )
     
     async def check_lock_status(self, job_id: str) -> Dict[str, Any]:
         """检查锁状态"""

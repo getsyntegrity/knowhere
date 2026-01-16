@@ -19,9 +19,16 @@ from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
 from shared.services.storage.file_upload_service import FileUploadService
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.DomainExceptions import (
+    ValidationException,
+    NotFoundException,
+    PermissionDeniedException,
+    RateLimitException,
+    JobOperationException
+)
 
 router = APIRouter(tags=["Jobs"])
 
@@ -92,7 +99,10 @@ async def start_workflow_for_job(
             user_id=user_id,
         )
     else:
-        raise ValueError(f"不支持的任务类型: {job_type}")
+        raise ValidationException(
+            user_message="Unsupported job type",
+            violations=[{"field": "job_type", "description": f"Job type '{job_type}' is not supported"}]
+        )
 
 
 def check_job_permission(job, current_user: User) -> None:
@@ -107,11 +117,16 @@ def check_job_permission(job, current_user: User) -> None:
         HTTPException: 权限不足时抛出异常
     """
     if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+        raise NotFoundException(
+            resource="Job",
+            resource_id=str(current_user.id),
+            internal_message="Job not found"
+        )
 
     if str(job.user_id) != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="无权限访问此任务"
+        raise PermissionDeniedException(
+            user_message="You don't have permission to access this job",
+            resource="Job"
         )
 
 
@@ -228,22 +243,22 @@ async def create_job(
     try:
         # 验证参数
         if request.source_type == "file" and not request.file_name:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="source_type为file时，file_name为必填参数",
+            raise ValidationException(
+                user_message="file_name is required when source_type is 'file'",
+                violations=[{"field": "file_name", "description": "Required for file source type"}]
             )
         if request.source_type == "url" and not request.source_url:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="source_type为url时，source_url为必填参数",
+            raise ValidationException(
+                user_message="source_url is required when source_type is 'url'",
+                violations=[{"field": "source_url", "description": "Required for url source type"}]
             )
 
         # 验证文件类型
         if request.source_type == "file" and not validate_file_type(request.file_name):
             supported_formats = get_supported_formats()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"不支持的文件类型。仅支持以下格式：{supported_formats}",
+            raise ValidationException(
+                user_message=f"Unsupported file type. Supported formats: {supported_formats}",
+                violations=[{"field": "file_name", "description": "File type not supported"}]
             )
         elif request.source_type == "url":
             # 验证URL文件类型
@@ -253,9 +268,9 @@ async def create_job(
             )
             if not validate_file_type(url_file_name):
                 supported_formats = get_supported_formats()
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"URL文件类型不支持。仅支持以下格式：{supported_formats}",
+                raise ValidationException(
+                    user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
+                    violations=[{"field": "source_url", "description": "URL file type not supported"}]
                 )
 
         # 生成job_id
@@ -307,9 +322,8 @@ async def create_job(
             )
 
             if not job:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="创建任务失败",
+                raise JobOperationException(
+                    internal_message="Failed to create job in database"
                 )
 
             # 生成预签名URL
@@ -366,9 +380,9 @@ async def create_job(
                 # 提前验证文件类型（快速失败）
                 if not validate_file_type(source_file_name):
                     supported_formats = get_supported_formats()
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"URL文件类型不支持。仅支持以下格式：{supported_formats}",
+                    raise ValidationException(
+                        user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
+                        violations=[{"field": "source_url", "description": "URL file type not supported"}]
                     )
                 
                 # 生成S3键（在API层面确定，避免异步任务中再更新）
@@ -399,9 +413,8 @@ async def create_job(
                 )
 
                 if not job:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="创建任务失败",
+                    raise JobOperationException(
+                        internal_message="Failed to create URL job in database"
                     )
 
                 # 保存job_metadata到Redis（2小时缓存）
@@ -445,22 +458,24 @@ async def create_job(
 
                 return response
 
-            except HTTPException:
+            except ValidationException:
+                raise
+            except JobOperationException:
                 raise
             except Exception as e:
                 logger.error(f"URL任务创建失败: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"URL任务创建失败: {str(e)}",
+                raise JobOperationException(
+                    internal_message=f"URL job creation failed: {str(e)}"
                 )
 
-    except HTTPException:
+    except ValidationException:
+        raise
+    except JobOperationException:
         raise
     except Exception as e:
         logger.error(f"创建任务失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创建任务失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Job creation failed: {str(e)}"
         )
 
 
@@ -483,9 +498,9 @@ async def list_jobs(
         job_repo = JobRepository()
         
         if recent_days not in (None, 1, 7, 30):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="recent_days 仅支持 1、7、30",
+            raise ValidationException(
+                user_message="recent_days only supports 1, 7, or 30",
+                violations=[{"field": "recent_days", "description": "Invalid value"}]
             )
         created_after = None
         if recent_days:
@@ -493,9 +508,9 @@ async def list_jobs(
             created_after = datetime.now() - timedelta(days=recent_days)
         
         if start_time and end_time and start_time > end_time:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="start_time 不能晚于 end_time",
+            raise ValidationException(
+                user_message="start_time cannot be later than end_time",
+                violations=[{"field": "start_time", "description": "Must be before end_time"}]
             )
         # start_time / end_time 优先于 recent_days
         if start_time:
@@ -623,9 +638,8 @@ async def list_jobs(
 
     except Exception as e:
         logger.error(f"获取任务列表失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取任务列表失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Failed to get job list: {str(e)}"
         )
 
 
@@ -660,9 +674,9 @@ async def get_job_result(
 
         # 如果超过限制，返回429错误
         if not rate_limit_info["allowed"]:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="请求过于频繁，请稍后再试",
+            raise RateLimitException(
+                limit=rate_limit_info["limit"],
+                retry_after=rate_limit_info["reset"]
             )
 
         job_repo = JobRepository()
@@ -756,13 +770,16 @@ async def get_job_result(
 
         return response_data
 
-    except HTTPException:
+    except NotFoundException:
+        raise
+    except PermissionDeniedException:
+        raise
+    except RateLimitException:
         raise
     except Exception as e:
         logger.error(f"获取任务结果失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取任务结果失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Failed to get job result: {str(e)}"
         )
 
 
@@ -796,17 +813,18 @@ async def confirm_upload(
 
         # 验证S3文件存在
         if not job.s3_key:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="任务缺少S3键信息"
+            raise ValidationException(
+                user_message="Job is missing S3 key information",
+                violations=[{"field": "s3_key", "description": "S3 key not set for this job"}]
             )
 
         upload_service = FileUploadService()
         file_info = await upload_service.verify_s3_file_exists(job.s3_key)
 
         if not file_info.get("exists"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="S3文件不存在，请先上传文件",
+            raise ValidationException(
+                user_message="S3 file does not exist, please upload the file first",
+                violations=[{"field": "file", "description": "File not found in S3"}]
             )
 
         # 更新任务状态
@@ -825,11 +843,14 @@ async def confirm_upload(
 
         return {"message": "文件上传确认成功，任务已开始处理"}
 
-    except HTTPException:
+    except NotFoundException:
+        raise
+    except PermissionDeniedException:
+        raise
+    except ValidationException:
         raise
     except Exception as e:
         logger.error(f"确认上传失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"确认上传失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Failed to confirm upload: {str(e)}"
         )

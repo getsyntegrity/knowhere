@@ -7,8 +7,9 @@ from app.core.users import UserManager
 from shared.models.database.user import User
 from shared.models.schemas.user import UserResponse
 from app.services.auth.api_key_service import APIKeyService
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request, status
 from loguru import logger
+from shared.core.exceptions.DomainExceptions import AuthException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ============================================================================
@@ -184,9 +185,8 @@ async def get_current_user_dual_auth(
     # 3. 认证失败
     client_ip = request.client.host if request.client else 'unknown'
     logger.warning(f"双重认证失败：请求来源 {client_ip}")
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required. Please provide valid JWT token or API Key."
+    raise AuthException(
+        user_message="Authentication required. Please provide valid JWT token or API Key."
     )
 
 async def require_api_key_auth(
@@ -198,9 +198,8 @@ async def require_api_key_auth(
     """
     user = await _authenticate_api_key(request, db)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API Key authentication required"
+        raise AuthException(
+            user_message="API Key authentication required"
         )
     return user
 
@@ -225,9 +224,8 @@ async def get_current_user_with_auth_type(
     # 3. 认证失败
     client_ip = request.client.host if request.client else 'unknown'
     logger.warning(f"认证失败：无法确定认证类型，请求来源 {client_ip}")
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required. Please provide valid JWT token or API Key."
+    raise AuthException(
+        user_message="Authentication required. Please provide valid JWT token or API Key."
     )
 
 # ============================================================================
@@ -246,9 +244,8 @@ async def require_jwt_auth(
     if not user:
         client_ip = request.client.host if request.client else 'unknown'
         logger.warning(f"JWT认证失败：请求来源 {client_ip}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT authentication required. Please provide valid JWT token."
+        raise AuthException(
+            user_message="JWT authentication required. Please provide valid JWT token."
         )
     return user
 
@@ -294,7 +291,7 @@ async def get_auth_info(
             "email": user.email,
             "username": user.username
         }
-    except HTTPException:
+    except AuthException:
         return {
             "user": None,
             "auth_type": None,

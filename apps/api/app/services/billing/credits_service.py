@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from shared.core.config import settings
 from shared.core.logging import logger
+from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
 from app.repositories.credits_repository import CreditsRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -189,9 +190,14 @@ class CreditsService:
                 })
             
             return result
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"获取用户交易记录失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"获取用户交易记录失败: {str(e)}",
+                original_exception=e
+            )
     
     async def allocate_free_credits(self, session: AsyncSession, user_id: str, user_type: str = "user") -> bool:
         """分配免费Credits"""

@@ -19,6 +19,7 @@ from shared.services.redis.chunks_redis_service import ChunksRedisService
 from shared.services.redis.task_redis_service import TaskRedisService
 from app.services.state_machine import JobStateMachine
 from loguru import logger
+from shared.core.exceptions.DomainExceptions import KnowhereException, WorkerHandlingException
 
 
 async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -64,7 +65,12 @@ async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, An
             duration_ms
         )
         
-        raise
+        if isinstance(e, KnowhereException):
+            raise
+        raise WorkerHandlingException(
+            internal_message=f"处理状态更新消息失败: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_status_update_async(message: JobStatusUpdateMessage):
@@ -91,9 +97,14 @@ async def _handle_status_update_async(message: JobStatusUpdateMessage):
                 logger.warning(f"Job {message.job_id} 状态更新失败")
                 return {"status": "failed", "job_id": message.job_id, "reason": "状态转换失败"}
                 
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f"处理状态更新消息时出错: {e}")
-        raise
+        raise WorkerHandlingException(
+            internal_message=f"处理状态更新消息时出错: {str(e)}",
+            original_exception=e
+        )
 
 
 async def handle_job_progress_update(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,9 +174,14 @@ async def _handle_progress_update_async(message: JobProgressUpdateMessage):
             logger.warning(f"Job {message.job_id} 进度更新失败")
             return {"status": "failed", "job_id": message.job_id}
             
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f"处理进度更新消息时出错: {e}")
-        raise
+        raise WorkerHandlingException(
+            internal_message=f"处理进度更新消息时出错: {str(e)}",
+            original_exception=e
+        )
 
 
 async def handle_job_result(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -211,7 +227,12 @@ async def handle_job_result(message_data: Dict[str, Any]) -> Dict[str, Any]:
             duration_ms
         )
         
-        raise
+        if isinstance(e, KnowhereException):
+            raise
+        raise WorkerHandlingException(
+            internal_message=f"处理结果消息失败: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_result_async(message: JobResultMessage):
@@ -284,9 +305,14 @@ async def _handle_result_async(message: JobResultMessage):
                 "stored_count": message.stored_count
             }
             
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f"处理结果消息时出错: {e}")
-        raise
+        raise WorkerHandlingException(
+            internal_message=f"处理结果消息时出错: {str(e)}",
+            original_exception=e
+        )
 
 
 async def handle_job_failure(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -332,7 +358,12 @@ async def handle_job_failure(message_data: Dict[str, Any]) -> Dict[str, Any]:
             duration_ms
         )
         
-        raise
+        if isinstance(e, KnowhereException):
+            raise
+        raise WorkerHandlingException(
+            internal_message=f"处理失败消息失败: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_failure_async(message: JobFailureMessage):
@@ -414,9 +445,14 @@ async def _handle_failure_async(message: JobFailureMessage):
                     "reason": "Status update failed"
                 }
                 
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f"Error handling failure message: {e}")
-        raise
+        raise WorkerHandlingException(
+            internal_message=f"Error handling failure message: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_job_completion_notifications(db, job_id: str, job_result: Any):

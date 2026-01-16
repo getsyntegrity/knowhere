@@ -8,6 +8,7 @@ from shared.core.config import settings
 from shared.models.database.user import User
 from app.services.auth.oauth_service import OAuthService
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.DomainExceptions import SystemSettingMissingException, AuthException
 
 
 class GitHubAuthService(OAuthService):
@@ -17,8 +18,9 @@ class GitHubAuthService(OAuthService):
         super().__init__()
         # 验证配置
         if not settings.is_github_oauth_enabled():
-            raise ValueError(
-                "GitHub OAuth未启用。请配置GITHUB_CLIENT_ID和GITHUB_CLIENT_SECRET"
+            raise SystemSettingMissingException(
+                setting_name="GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET",
+                internal_message="GitHub OAuth not configured properly"
             )
         self.client_id = settings.GITHUB_CLIENT_ID
         self.client_secret = settings.GITHUB_CLIENT_SECRET
@@ -104,7 +106,10 @@ class GitHubAuthService(OAuthService):
             token_data = response.json()
             
             if "error" in token_data:
-                raise ValueError(f"GitHub OAuth错误: {token_data['error']}")
+                raise AuthException(
+                    user_message="GitHub authentication failed",
+                    reason=f"GITHUB_OAUTH_ERROR: {token_data['error']}"
+                )
             
             return token_data
     
