@@ -28,8 +28,12 @@ shared/core/constants/api.py
 shared/core/constants/business.py
 shared/core/constants/processing.py
 shared/core/constants/system.py
-shared/core/exceptions/RequestException.py
+shared/core/exceptions/__init__.py
+shared/core/exceptions/domain_exceptions.py
+shared/core/exceptions/knowhere_exception.py
 shared/core/exceptions/redis_exceptions.py
+shared/core/response/ErrorCode.py
+shared/core/response/__init__.py
 shared/core/state_machine/__init__.py
 shared/core/state_machine/config.py
 shared/core/state_machine/states.py

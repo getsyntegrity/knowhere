@@ -292,12 +292,19 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
         )
         
         # Step 3: Validate file size (before S3 upload)
+        # Step 3: Validate file size (before S3 upload)
         file_size = os.path.getsize(temp_file_path)
-        MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB limit
-        if file_size > MAX_FILE_SIZE:
+        
+        # Determine limit based on extension
+        limit = 100 * 1024 * 1024  # Default 100MB (PDF, PPTX)
+        if file_extension in ['.docx', '.xlsx', '.doc', '.xls']:
+            limit = 50 * 1024 * 1024  # 50MB for DOCX/XLSX
+            
+        if file_size > limit:
+            limit_mb = limit // (1024 * 1024)
             raise ValidationException(
-                user_message="File size exceeds limit (max 100MB)",
-                violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {MAX_FILE_SIZE} bytes"}]
+                user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
+                violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {limit} bytes"}]
             )
         
         # Publish progress: uploading to S3
@@ -437,6 +444,22 @@ async def _parse_async(job_id: str, user_id: str):
         )
     
     logger.info(f"S3文件验证成功: {s3_key}")
+
+    # Validate file size
+    file_size = file_info.get("size", 0)
+    file_extension = os.path.splitext(s3_key)[1].lower()
+    
+    limit = 100 * 1024 * 1024  # Default 100MB (PDF, PPTX)
+    if file_extension in ['.docx', '.xlsx', '.doc', '.xls']:
+        limit = 50 * 1024 * 1024  # 50MB for DOCX/XLSX
+        
+    if file_size > limit:
+        limit_mb = limit // (1024 * 1024)
+        logger.warning(f"File size check failed: {file_size} > {limit}, ext={file_extension}")
+        raise ValidationException(
+            user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
+            violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {limit} bytes"}]
+        )
     
     # 从job_metadata获取user_config（创建时已初始化）
     logger.info(f"开始获取job_metadata: job_id={job_id}")
