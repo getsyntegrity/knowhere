@@ -351,7 +351,7 @@ class StateMachineService:
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None
     ):
-        """Update Job error information"""
+        """Update Job error information (DB + Redis)"""
         try:
             # Build values to update
             update_values = {
@@ -368,6 +368,11 @@ class StateMachineService:
                     current_metadata = job.job_metadata or {}
                     current_metadata["error_details"] = error_details
                     update_values["job_metadata"] = current_metadata
+                    
+                    # Also update Redis cache
+                    from shared.services.redis.job_metadata_service import JobMetadataService
+                    metadata_service = JobMetadataService(self.redis)
+                    await metadata_service.update_metadata(job_id, {"error_details": error_details})
             
             await db.execute(
                 update(Job)
