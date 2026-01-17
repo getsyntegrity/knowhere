@@ -27,6 +27,7 @@ from shared.core.exceptions.domain_exceptions import (
     SystemSettingInvalidException
 )
 from shared.core.exceptions.knowhere_exception import KnowhereException
+from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 
 # Get Celery application
 celery_app = get_celery_app()
@@ -44,89 +45,68 @@ class KBBaseTask(Task):
         Task failure callback - Centralized exception handling.
         
         This is a built-in Celery method, automatically called when a task raises an exception.
-        
-        Flow:
-        1. Check if exc is KnowhereException, extract structured error_code
-        2. If not, wrap with UnknownException (returns generic safe message)
-        3. Publish failure message to API service
-        4. Handle refund logic based on retry status
         """
+        import uuid
         import traceback
         
         # Extract job_id from args or kwargs
         job_id = self._extract_job_id(args, kwargs)
+        request_id = str(uuid.uuid4())
         
-        # on_failure is called only after all retries are exhausted
-        # so we always refund credits here
+        # Normalize to KnowhereException
+        knowhere_exc = exc if isinstance(exc, KnowhereException) else UnknownException(original_exception=exc)
         
-        # Extract structured error info
-        # SECURITY: Follow same pattern as knowhere_exception_handler in API
-        if isinstance(exc, KnowhereException):
-            error_code = exc.code.value
-            error_message = exc.user_message  # Use user_message for client-facing error
-            error_details = exc.details
-            
-            # Log based on severity (same pattern as API exception handler)
-            log_data = exc.to_log_dict()
-            if exc.http_status_code >= 500:
-                # For 5xx, log the internal_message (technical details for debugging)
-                logger.error(
-                    f"[{task_id}] System Error: {exc.code.value} - {exc.internal_message}",
-                    job_id=job_id,
-                    **log_data,
-                )
-                # Log stack trace if we wrapped an unexpected exception
-                if exc.original_exception:
-                    logger.error(f"[{task_id}] Original exception: {einfo}")
-            else:
-                # For 4xx, log the user_message (already sanitized for client)
-                logger.warning(
-                    f"[{task_id}] Client Error: {exc.code.value} - {exc.user_message}",
-                    job_id=job_id,
-                    **log_data,
-                )
-            
-            # Stack trace only needed if KnowhereException wraps another exception
-            stack_trace = str(einfo) if exc.original_exception else None
-        else:
-            # Wrap unknown exception
-            unknown_exc = UnknownException(original_exception=exc)
-            error_code = unknown_exc.code.value
-            error_message = unknown_exc.user_message  # Safe generic message
-            error_details = None
-            stack_trace = str(einfo)
-            
-            # Log as 5xx system error with full details
-            log_data = unknown_exc.to_log_dict()
-            logger.error(
-                f"[{task_id}] System Error: {unknown_exc.code.value} - {unknown_exc.internal_message}",
-                job_id=job_id,
-                exc_type=type(exc).__name__,
-                **log_data,
+        # Log based on severity
+        log_data = knowhere_exc.to_log()
+        if knowhere_exc.http_status_code >= 500:
+            logger.bind(**log_data).error(
+                f"[{task_id}] System Error: {knowhere_exc.code.value} - {knowhere_exc.internal_message}"
             )
-            logger.error(f"[{task_id}] Stack trace: {stack_trace}")
+            
+            # Log KnowhereException traceback
+            if knowhere_exc.__traceback__:
+                exc_tb = "".join(traceback.format_exception(type(knowhere_exc), knowhere_exc, knowhere_exc.__traceback__))
+                logger.error(f"[{task_id}] KnowhereException traceback:\n{exc_tb}")
+            
+            # Log original exception traceback if wrapped
+            if knowhere_exc.original_exception and knowhere_exc.original_exception.__traceback__:
+                orig_tb = "".join(traceback.format_exception(
+                    type(knowhere_exc.original_exception),
+                    knowhere_exc.original_exception,
+                    knowhere_exc.original_exception.__traceback__
+                ))
+                logger.error(f"[{task_id}] Original exception traceback:\n{orig_tb}")
+        else:
+            logger.bind(**log_data).warning(
+                f"[{task_id}] Client Error: {knowhere_exc.code.value} - {knowhere_exc.internal_message}"
+            )
+        
+        # Get error info from to_client (reuse the same format)
+        client_response = knowhere_exc.to_client(request_id)
+        error_info = client_response["error"]  # Extract just the error field
         
         # Publish failure message
         if job_id:
             try:
                 message_publisher = get_message_publisher()
-                metadata = {"refund_credits": True}  # Always refund on final failure
-                if error_details:
-                    metadata["details"] = error_details
+                
+                # Include stack trace only for wrapped exceptions
+                stack_trace = str(einfo) if knowhere_exc.original_exception else None
                 
                 run_async_publish(
                     message_publisher.publish_failure(
                         job_id=job_id,
-                        error_message=error_message,
-                        error_code=error_code,
+                        error_message=error_info["message"],
+                        error_code=error_info["code"],
                         error_type=type(exc).__name__,
                         stack_trace=stack_trace,
-                        metadata=metadata
+                        metadata={
+                            "refund_credits": True,
+                            "details": error_info.get("details"),
+                        }
                     )
                 )
-                logger.info(
-                    f"Failure message published: job_id={job_id}, error_code={error_code}"
-                )
+                logger.info(f"Failure message published: job_id={job_id}, error_code={error_info['code']}")
             except Exception as e:
                 logger.error(f"Failed to publish failure message: job_id={job_id}, error={e}")
     
@@ -174,8 +154,8 @@ class KBBaseTask(Task):
     bind=True,
     base=KBBaseTask,
     name='app.core.tasks.kb_tasks.upload_url_file_task',
-    autoretry_for=(Exception,),
-    retry_kwargs={'countdown': 60, 'max_retries': 3}
+    autoretry_for=RETRYABLE_EXCEPTIONS,
+    retry_kwargs={'countdown': settings.KB_TASK_RETRY_COUNTDOWN, 'max_retries': settings.KB_TASK_MAX_RETRIES}
 )
 def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None, job_type: str = None):
     """Download file from URL and upload to S3"""
@@ -361,7 +341,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
     bind=True,
     base=KBBaseTask,
     name='app.core.tasks.kb_tasks.parse_task',
-    autoretry_for=(Exception,),
+    autoretry_for=RETRYABLE_EXCEPTIONS,
     retry_kwargs={'countdown': settings.KB_TASK_RETRY_COUNTDOWN, 'max_retries': settings.KB_TASK_MAX_RETRIES}
 )
 def parse_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):

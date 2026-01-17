@@ -13,6 +13,7 @@ from shared.core.exceptions.domain_exceptions import (
     TimeoutException,
     UnknownException,
 )
+from shared.core.exceptions.retryable_exceptions import RETRYABLE_EXCEPTIONS
 
 __all__ = [
     # Base (do not raise directly)
@@ -29,5 +30,6 @@ __all__ = [
     "UnavailableException",
     "TimeoutException",
     "UnknownException",
+    # Celery retry config
+    "RETRYABLE_EXCEPTIONS",
 ]
-

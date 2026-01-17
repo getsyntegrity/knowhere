@@ -96,12 +96,13 @@ class KnowhereException(Exception):
     Use domain-specific subclasses from domain_exceptions.py instead.
 
     This class provides:
-    - to_dict(): Machine-readable JSON for API responses (returns user_message)
-    - to_log_dict(): Detailed info for internal logging (includes internal_message)
+    - to_client(): Machine-readable JSON for API responses (user_message only)
+    - to_log(): Structured dict for log aggregators (Datadog, Splunk, CloudWatch)
+    - __repr__(): Human-readable string for terminal logs (tail -f server.log)
 
     Adheres to the 3 Rules + Security:
     1. Be Explicit - Use specific domain exceptions
-    2. Machine Readable - to_dict() returns consistent JSON schema
+    2. Machine Readable - to_client() returns consistent JSON schema
     3. Security First - internal_message NEVER in response; only user_message
 
     Attributes:
@@ -155,7 +156,7 @@ class KnowhereException(Exception):
         else:
             self.user_message = user_message or DEFAULT_4XX_USER_MESSAGE
 
-    def to_dict(self, request_id: str) -> Dict[str, Any]:
+    def to_client(self, request_id: str) -> Dict[str, Any]:
         """
         Returns a machine-readable JSON representation for API responses.
         
@@ -175,20 +176,42 @@ class KnowhereException(Exception):
             response["error"]["details"] = self.details
         return response
 
-    def to_log_dict(self) -> Dict[str, Any]:
+    def __repr__(self) -> str:
         """
-        Returns a detailed representation for internal logging.
+        Human-readable string for terminal logs (tail -f server.log).
         
-        Includes internal_message and original_exception info.
-        This data is for server-side logging ONLY, never sent to client.
+        Use this in logger calls: logger.error(f"Error: {exc}")
+        """
+        parts = [
+            f"{self.__class__.__name__}(",
+            f"code={self.code.value!r}",
+            f"http_status={self.http_status_code}",
+            f"user_message={self.user_message!r}",
+            f"internal_message={self.internal_message!r}",
+        ]
+        if self.details:
+            parts.append(f"details={self.details!r}")
+        if self.original_exception:
+            parts.append(f"original={type(self.original_exception).__name__}: {self.original_exception}")
+        return ", ".join(parts) + ")"
+
+    def to_log(self) -> Dict[str, Any]:
+        """
+        Machine-readable dict for structured logging (Datadog, Splunk, CloudWatch).
+        
+        Use with logger.bind(): logger.bind(**exc.to_log()).error("...")
+        
+        This enables log aggregators to index fields for queries like:
+            code:INVALID_ARGUMENT AND http_status:400
         """
         log_data: Dict[str, Any] = {
             "error_code": self.code.value,
-            "user_message": self.user_message,
-            "internal_message": self.internal_message,  # For debugging
             "http_status": self.http_status_code,
-            "details": self.details,
+            "user_message": self.user_message,
+            "internal_message": self.internal_message,
         }
+        if self.details:
+            log_data["details"] = self.details
         if self.original_exception:
             log_data["original_exception"] = {
                 "type": type(self.original_exception).__name__,
@@ -196,10 +219,41 @@ class KnowhereException(Exception):
             }
         return log_data
 
-    def __repr__(self) -> str:
+    def __reduce__(self):
+        """
+        Enable pickle serialization for Celery task exception handling.
+        
+        Celery uses pickle to serialize exceptions for retries and results.
+        Without this method, exceptions get wrapped in UnpickleableExceptionWrapper.
+        
+        Uses factory function to bypass subclass __init__ signature differences.
+        Note: original_exception is NOT serialized (it may contain unpickleable objects).
+        """
         return (
-            f"{self.__class__.__name__}("
-            f"code={self.code.value!r}, "
-            f"user_message={self.user_message!r}, "
-            f"http_status={self.http_status_code})"
+            _reconstruct_knowhere_exception,
+            (self.__class__, self.__getstate__()),
         )
+
+    def __getstate__(self):
+        """Return state for pickling (excludes unpickleable original_exception)."""
+        state = self.__dict__.copy()
+        # original_exception may contain unpickleable objects
+        state["original_exception"] = None
+        return state
+
+    def __setstate__(self, state):
+        """Restore state from pickle."""
+        self.__dict__.update(state)
+        # Re-initialize Exception base class with message
+        Exception.__init__(self, self.internal_message)
+
+
+def _reconstruct_knowhere_exception(cls, state):
+    """
+    Factory function for unpickling KnowhereException subclasses.
+    
+    Bypasses __init__ to handle subclasses with different signatures.
+    """
+    obj = cls.__new__(cls)
+    obj.__setstate__(state)
+    return obj

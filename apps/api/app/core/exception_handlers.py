@@ -74,18 +74,12 @@ async def knowhere_exception_handler(
     request: Request, exc: KnowhereException
 ) -> JSONResponse:
     """
-    Central handler for ALL KnowhereException subclasses.
-    
-    ==========================================================================
-    SECURITY: DUAL-MESSAGE PATTERN ENFORCEMENT
-    ==========================================================================
-    
     This handler enforces the separation between:
     - `internal_message`: Logged for debugging (NEVER in response)
-    - `user_message`: Returned to client (via to_dict)
+    - `user_message`: Returned to client (via to_client)
     
-    The response ONLY contains `user_message` via exc.to_dict().
-    The logs contain `internal_message` via exc.to_log_dict().
+    The response ONLY contains `user_message` via exc.to_client().
+    The logs contain full exception details via repr(exc).
     
     ==========================================================================
     
@@ -104,22 +98,30 @@ async def knowhere_exception_handler(
     request_id = _get_request_id(request)
 
     # Log based on severity
-    # SECURITY: to_log_dict() includes internal_message, to_dict() does NOT
-    log_data = exc.to_log_dict()
+    log_data = exc.to_log()
     if exc.http_status_code >= 500:
-        # For 5xx, log the internal_message (technical details for debugging)
-        logger.error(
-            f"[{request_id}] System Error: {exc.code.value} - {exc.internal_message}",
-            **log_data,
+        # For 5xx, log full exception details for debugging
+        logger.bind(**log_data).error(
+            f"[{request_id}] System Error: {exc.code.value} - {exc.internal_message}"
         )
-        # Log stack trace if we wrapped an unexpected exception
-        if exc.original_exception:
-            logger.error(f"[{request_id}] Original exception: {traceback.format_exc()}")
+        
+        # Log KnowhereException traceback
+        if exc.__traceback__:
+            exc_tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            logger.error(f"[{request_id}] KnowhereException traceback:\n{exc_tb}")
+        
+        # Log original exception traceback if wrapped
+        if exc.original_exception and exc.original_exception.__traceback__:
+            orig_tb = "".join(traceback.format_exception(
+                type(exc.original_exception),
+                exc.original_exception,
+                exc.original_exception.__traceback__
+            ))
+            logger.error(f"[{request_id}] Original exception traceback:\n{orig_tb}")
     else:
-        # For 4xx, log the user_message (already sanitized for client)
-        logger.warning(
-            f"[{request_id}] Client Error: {exc.code.value} - {exc.user_message}",
-            **log_data,
+        # For 4xx, log the exception (includes internal_message and details)
+        logger.bind(**log_data).warning(
+            f"[{request_id}] Client Error: {exc.code.value} - {exc.internal_message}"
         )
 
     # Build response with optional Retry-After header
@@ -127,10 +129,10 @@ async def knowhere_exception_handler(
     if hasattr(exc, "retry_after") and exc.retry_after:
         headers["Retry-After"] = str(exc.retry_after)
 
-    # SECURITY: to_dict() returns user_message, NEVER internal_message
+    # SECURITY: to_client() returns user_message, NEVER internal_message
     return JSONResponse(
         status_code=exc.http_status_code,
-        content=exc.to_dict(request_id),
+        content=exc.to_client(request_id),
         headers=headers if headers else None,
     )
 
