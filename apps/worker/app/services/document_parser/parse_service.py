@@ -6,6 +6,11 @@ import os
 from shared.core.config import settings
 from shared.utils.file_utils import path_handle
 from loguru import logger
+from shared.core.exceptions.domain_exceptions import (
+    ValidationException,
+    WorkerHandlingException,
+)
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 # document_parser imports
 from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
@@ -15,7 +20,6 @@ from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
 from app.services.document_parser.table_parser import parse_xlsx
 from app.services.document_parser.txt_parser import parse_texts
-
 
 async def checkerboard_inject_parse(
     file_full_path: str, 
@@ -57,26 +61,25 @@ async def checkerboard_inject_parse(
     logger.debug(f"baseurl: {baseurl}")
     logger.debug(f"file_full_path: {file_full_path}")
     
-    # ========== 路径处理 ==========
+    # ========== Path handling ==========
     split_char = settings.SPLIT_CHAR or "/"
-    kb_dir = kwargs.get('kb_dir', '默认目录')
+    kb_dir = kwargs.get('kb_dir', 'Default_Root')
     filename = path_handle(filename, mode="clean_single")
     
-    # 构建相对根路径（用于 chunk 的 path 字段）
+    # Develop relative root path for chunk path field
     kb_dir_parts = kb_dir.split(split_char)
     if filename and "images" not in kb_dir_parts:
         relative_root = "/".join(kb_dir_parts + [filename])
     else:
         relative_root = "/".join(kb_dir_parts)
     
-    # 构建完整输出目录（output_dir + relative_root）
+    # Develop full output directory (output_dir + relative_root)
     full_output_dir = os.path.join(output_dir, relative_root.replace("/", os.sep))
     full_output_dir = path_handle(full_output_dir, mode="sanitize")
     os.makedirs(full_output_dir, exist_ok=True)
     
     logger.debug(f"relative_root: {relative_root}")
     logger.debug(f"full_output_dir: {full_output_dir}")
-    # ========== 路径处理结束 ==========
 
     file_path_lower = file_full_path.lower()
     parsed_df = None
@@ -123,6 +126,19 @@ async def checkerboard_inject_parse(
 
     elif '.json' in file_path_lower:
         logger.debug(f"file type is json")
+        # JSON parsing not yet implemented
+        
+    else:
+        # Unsupported file type
+        file_ext = os.path.splitext(file_full_path)[1].lower()
+        supported_types = ['.txt', '.fragment', '.png', '.jpg', '.jpeg', '.pdf', '.docx', '.xlsx', '.pptx', '.md', '.json']
+        raise ValidationException(
+            user_message=f"Unsupported file type: {file_ext}",
+            violations=[{
+                "field": "file_type",
+                "description": f"Must be one of: {', '.join(supported_types)}"
+            }]
+        )
         
     logger.debug(f"full_output_dir: {full_output_dir}")
     

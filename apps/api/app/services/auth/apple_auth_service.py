@@ -9,6 +9,7 @@ from shared.core.config import settings
 from shared.models.database.user import User
 from app.services.auth.oauth_service import OAuthService
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.domain_exceptions import SystemSettingMissingException, AuthException
 
 
 class AppleAuthService(OAuthService):
@@ -18,8 +19,9 @@ class AppleAuthService(OAuthService):
         super().__init__()
         # 验证配置
         if not settings.is_apple_oauth_enabled():
-            raise ValueError(
-                "Apple OAuth未启用。请配置APPLE_CLIENT_ID和APPLE_CLIENT_SECRET"
+            raise SystemSettingMissingException(
+                setting_name="APPLE_CLIENT_ID/APPLE_CLIENT_SECRET",
+                internal_message="Apple OAuth not configured properly"
             )
         self.client_id = settings.APPLE_CLIENT_ID
         self.client_secret = settings.APPLE_CLIENT_SECRET
@@ -55,7 +57,10 @@ class AppleAuthService(OAuthService):
             kid = header.get("kid")
             
             if not kid:
-                raise ValueError("Invalid token header")
+                raise AuthException(
+                    user_message="Invalid authentication token",
+                    reason="TOKEN_MISSING_KID"
+                )
             
             # 找到对应的公钥
             key = None
@@ -65,7 +70,10 @@ class AppleAuthService(OAuthService):
                     break
             
             if not key:
-                raise ValueError("Public key not found")
+                raise AuthException(
+                    user_message="Invalid authentication token",
+                    reason="TOKEN_KEY_NOT_FOUND"
+                )
             
             # 验证并解码token
             payload = jwt.decode(
@@ -97,7 +105,10 @@ class AppleAuthService(OAuthService):
             }
             
         except Exception as e:
-            raise ValueError(f"Apple ID Token验证失败: {e}")
+            raise AuthException(
+                user_message="Apple authentication failed",
+                reason=f"TOKEN_VERIFICATION_FAILED: {str(e)}"
+            )
     
     async def _get_apple_public_keys(self) -> Dict[str, Any]:
         """获取Apple公钥"""

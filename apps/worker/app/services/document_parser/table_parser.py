@@ -25,6 +25,10 @@ from docx.table import Table as DocxTable
 from loguru import logger
 from pandasql import sqldf
 
+from loguru import logger
+from shared.core.exceptions.domain_exceptions import TableParsingException
+from shared.core.exceptions.knowhere_exception import KnowhereException
+
 g_tbl_lock = threading.Lock()
 
 def identify_tables(line):
@@ -98,7 +102,11 @@ def tb_htmlstr_to_df(html_str):
     soup = BeautifulSoup(html_str, "html.parser")
     table = soup.find("table")
     if not table:
-        raise ValueError("No <table> found in the HTML string")
+        raise TableParsingException(
+            user_message="No table structure found in the document",
+            reason="INVALID_FORMAT",
+            internal_message="No <table> found in the HTML string"
+        )
     nested_list = parse_nested_htmltb(table)
     try:
         df = pd.DataFrame(nested_list[1:], columns=nested_list[0])
@@ -496,9 +504,17 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
                 relative_tb_path = f"tables/{tb_name}"
                 df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp])
 
+            except KnowhereException:
+                raise
             except Exception as e:
                 logger.error(f"Table parsing failed: {e}")
-                raise
+                raise TableParsingException(
+                    user_message="Failed to parse Excel table content",
+                    reason="TABLE_PROCESSING_FAILED",
+                    file_type="xlsx", 
+                    internal_message=str(e),
+                    original_exception=e
+                )
 
     all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
     table_df = pd.DataFrame(df_list, columns=all_df_cols)

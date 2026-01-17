@@ -30,6 +30,8 @@ from loguru import logger
 from lxml import etree
 from openai import OpenAI
 from tqdm import tqdm
+from shared.core.exceptions.domain_exceptions import DocxParsingException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 
 def get_leaf_dics(node, path=[]):
@@ -390,7 +392,11 @@ async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras
     # Use relative_root for path construction instead of absolute output_dir
     doc_name = relative_root if relative_root else output_dir.split(os.sep)[-1]
     if len(leaf_dics) == 0:
-        raise '❌PROBABLY EMPTY FILE!'
+        raise DocxParsingException(
+            user_message="Document content could not be extracted",
+            reason="EMPTY_CONTENT",
+            internal_message="Parsed leaf_dics is empty after processing"
+        )
 
     path_keys = []
     time_stamp = get_str_time()
@@ -412,9 +418,16 @@ async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras
             df_list.append(
                 [bottom_content, know_path, match_type, len(bottom_content), keywords, summary, know_id, bottom_tokens,
                  "", time_stamp])
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.debug(f"❌Failed to parse docx document: {e}")
-            raise
+            raise DocxParsingException(
+                user_message="Failed to process document content",
+                reason="CONTENT_PROCESSING_FAILED",
+                internal_message=str(e),
+                original_exception=e
+            )
 
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     doc_df = process_dup_paths_df(doc_df)

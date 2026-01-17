@@ -12,8 +12,9 @@ from shared.models.schemas.webhook import (WebhookConfigCreate,
                                         WebhookTestRequest,
                                         WebhookTestResponse)
 from app.repositories.webhook_repository import WebhookRepository
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.domain_exceptions import WebhookServiceException
 
 # WebhookService已迁移到API服务
 
@@ -45,9 +46,8 @@ async def create_webhook_config(
         return response
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创建Webhook配置失败: {str(e)}"
+        raise WebhookServiceException(
+            internal_message=f"创建Webhook配置失败: {str(e)}"
         )
 
 
@@ -75,9 +75,8 @@ async def get_webhook_config(
         return response
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取Webhook配置失败: {str(e)}"
+        raise WebhookServiceException(
+            internal_message=f"获取Webhook配置失败: {str(e)}"
         )
 
 
@@ -134,9 +133,8 @@ async def get_webhook_logs(
         return response
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取Webhook日志失败: {str(e)}"
+        raise WebhookServiceException(
+            internal_message=f"获取Webhook日志失败: {str(e)}"
         )
 
 
@@ -161,9 +159,8 @@ async def get_webhook_stats(
         return response
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取Webhook统计失败: {str(e)}"
+        raise WebhookServiceException(
+            internal_message=f"获取Webhook统计失败: {str(e)}"
         )
 
 
@@ -208,7 +205,6 @@ async def test_webhook(
         return response
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"测试Webhook失败: {str(e)}"
+        raise WebhookServiceException(
+            internal_message=f"测试Webhook失败: {str(e)}"
         )

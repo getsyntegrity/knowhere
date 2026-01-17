@@ -67,8 +67,8 @@ class JobResultMessage(BaseMessage):
 class JobFailureMessage(BaseMessage):
     """Job失败消息"""
     message_type: str = Field(default="job_failure", description="消息类型")
+    error_code: str = Field(default="UNKNOWN", description="规范错误代码 (e.g., INVALID_ARGUMENT, INTERNAL_ERROR)")
     error_message: str = Field(..., description="错误消息")
-    error_type: Optional[str] = Field(None, description="错误类型")
-    stack_trace: Optional[str] = Field(None, description="堆栈跟踪")
+    error_type: Optional[str] = Field(None, description="错误类型 (Python exception class name)")
+    stack_trace: Optional[str] = Field(None, description="堆栈跟踪 (仅内部日志)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="错误元数据")
-

@@ -14,9 +14,14 @@ from shared.services.storage.file_upload_service import FileUploadService
 from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
 from shared.services.messaging.message_publisher import run_async_publish
+from shared.core.exceptions.domain_exceptions import (
+    NotFoundException,
+    SystemSettingMissingException,
+    SystemSettingInvalidException,
+    FileSystemException,
+)
 
 celery_app = get_celery_app()
-
 
 class KBBaseTask(Task):
     """知识库基础任务类"""
@@ -66,7 +71,6 @@ class KBBaseTask(Task):
 
 
 # 文件上传任务已移除 - 文件通过S3直传处理
-
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.upload_url_file_task')                                                               
 def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None, job_type: str = None):                                                        
@@ -322,69 +326,47 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
         
         logger.info(f"S3文件验证成功: {s3_key}")
         
-        # 从job_metadata获取user_config（创建时已初始化）
+        # 从job_metadata获取解析参数
         logger.info(f"开始获取job_metadata: job_id={job_id}")
         from shared.models.schemas.job_metadata import JobMetadataHelper
         
         metadata_service = JobMetadataService(redis_service)
-        logger.info(f"metadata_service创建成功，开始获取metadata: job_id={job_id}")
         job_metadata = await metadata_service.get_metadata(job_id)
-        logger.info(f"job_metadata获取完成: job_id={job_id}, metadata存在={job_metadata is not None}")
         if not job_metadata:
-            logger.error(f"Job metadata不存在: job_id={job_id}")
-            raise ValueError(f"Job metadata不存在: job_id={job_id}")
-        
-        logger.info(f"开始从job_metadata提取user_config: job_id={job_id}")
-        user_config = JobMetadataHelper.get_user_config(job_metadata)
-        logger.info(f"user_config提取完成: job_id={job_id}, user_config存在={user_config is not None}")
-        
-        if not user_config:
-            logger.error(f"Job metadata中缺少用户配置: job_id={job_id}")
-            raise ValueError("Job metadata中缺少用户配置")
-        
-        # 强制使用配置的绝对路径
-        parent_path = settings.USERS_DATA_PATH
-        if not parent_path:
-            raise ValueError("USERS_DATA_PATH 未配置，必须设置用户数据目录的绝对路径")
-        
-        if not os.path.isabs(parent_path):
-            raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {parent_path}")
-        
-        # 验证路径是否存在或可创建
-        try:
-            os.makedirs(parent_path, exist_ok=True)
-        except (OSError, PermissionError) as e:
-            raise ValueError(f"USERS_DATA_PATH 目录无法创建或访问: {parent_path}, 错误: {e}")
-        
-        # 更新 user_config 中的 parent 路径
-        if 'parent' in user_config:
-            old_parent = user_config.get('parent', '')
-            user_config['parent'] = parent_path
-            if old_parent != parent_path:
-                logger.info(f"路径修复: job_id={job_id}, 旧路径={old_parent}, 新路径={parent_path}")
-        
-        # 重新计算 KB_PATH 和 KB_VECS_PATH
-        if 'KB' in user_config:
-            user_config['KB_PATH'] = os.path.join(parent_path, user_config['KB'])
-        if 'kb_vec_term' in user_config and 'user' in user_config:
-            user_config['KB_VECS_PATH'] = os.path.join(
-                parent_path,
-                f"{user_config['kb_vec_term']}_{user_config['user']}"
+            raise NotFoundException(
+                resource="JobMetadata",
+                resource_id=job_id,
+                internal_message=f"Job metadata not found for job_id={job_id}"
             )
         
-        # 确保用户目录结构存在（Worker服务按需创建）
-        if 'KB_PATH' in user_config and 'KB_VECS_PATH' in user_config:
-            from app.services.user.user_directory_service import UserDirectoryService
-            try:
-                UserDirectoryService.ensure_user_directories(
-                    user_config['KB_PATH'],
-                    user_config['KB_VECS_PATH']
-                )
-                logger.info(f"用户目录结构已确保存在: KB_PATH={user_config['KB_PATH']}, KB_VECS_PATH={user_config['KB_VECS_PATH']}")
-            except Exception as e:
-                logger.error(f"创建用户目录结构失败: {e}")
-                raise ValueError(f"无法创建用户目录结构: {e}")
+        # use USERS_DATA_PATH + user_id as output directory
+        parent_path = settings.USERS_DATA_PATH
+        if not parent_path:
+            raise SystemSettingMissingException(
+                message="System configuration error",
+                internal_message="USERS_DATA_PATH not configured"
+            )
         
+        if not os.path.isabs(parent_path):
+            raise SystemSettingInvalidException(
+                message="System configuration error",
+                internal_message=f"USERS_DATA_PATH must be absolute path, current value: {parent_path}"
+            )
+        
+        output_dir = os.path.join(parent_path, f"kb_{job_user_id}")
+        
+        # Ensure output directory exists
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Output directory ready: {output_dir}")
+        except (OSError, PermissionError) as e:
+            raise FileSystemException(
+                message="System error preparing storage",
+                path=output_dir,
+                operation="create_directory",
+                internal_message=f"Failed to create directory: {output_dir}",
+                original_exception=e
+            )
         
         # 发布状态更新消息：开始处理
         logger.info(f"开始发布状态更新消息: job_id={job_id}, status={JobStatus.RUNNING.value}")
@@ -423,7 +405,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
         filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
         logger.info(f"filename提取完成: job_id={job_id}, filename={filename}")
         
-        # 调用修改后的解析逻辑（传入user_config）
+        # 调用解析逻辑（传入简化的output_dir）
         logger.info(f"开始导入解析服务: job_id={job_id}")
         from app.services.document_parser.parse_service import checkerboard_inject_parse                                                                     
         logger.info(f"解析服务导入成功: job_id={job_id}")
@@ -434,8 +416,8 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt
         add_dir, add_contents_df = await checkerboard_inject_parse(
             file_full_path=file_url,
             filename=filename,
-            output_dir=user_config['KB_PATH'],  # 直接传入输出目录
-            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),                                                                     
+            output_dir=output_dir,
+            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),                                                                     
             doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
             smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
             summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             

@@ -1,24 +1,13 @@
-"""
-Knowledge Base Utilities
-精简版：只保留解析流程中实际使用的函数
-
-已删除的函数（未被使用）:
-- build_tree_from_paths, clean_contents, get_node_level, cal_levenshtein_dis
-- create_reply, unify_key, expand_summary_paths, extract_nested_dic_vals
-- extract_know, extract_window, extract_keylevels, file_lst, find_frequent
-- find_similar_bychars, flatten_dict, gen_sim_matrix, text_list2md
-- set_bottom_dic_val, split_path_by_node, truncate_paths
-"""
-
 import os
 import re
 import uuid
 from datetime import datetime
-
 import pandas as pd
 from shared.core.config import settings
 from shared.utils.file_utils import path_handle
 from bs4 import BeautifulSoup
+from loguru import logger
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException, ValidationException
 
 
 def count_cn_en(text: str):
@@ -33,18 +22,15 @@ def count_cn_en(text: str):
     number_count = len(numbers)
     return cn_counts + en_counts + number_count
 
-
 def gen_str_codes(input_string):
     """生成字符串的UUID5编码"""
     namespace = uuid.NAMESPACE_DNS
     return str(uuid.uuid5(namespace, input_string))
 
-
 def get_str_time():
     """获取当前时间字符串"""
     now = datetime.now()
     return now.strftime("%Y-%m-%d %H:%M:%S")
-
 
 def find_images(folder_path):
     """查找文件夹中的图片文件"""
@@ -57,7 +43,6 @@ def find_images(folder_path):
             if os.path.splitext(file)[1].lower() in image_extensions:
                 image_files.append(file)
     return image_files
-
 
 def find_matches_parsing(content, path):
     """解析内容中的表格和图片标记"""
@@ -75,7 +60,6 @@ def find_matches_parsing(content, path):
         match_type = ('SUMMARY_' + parent_path + '_SUMMARY')
     return match_type
 
-
 def flatten_list(nested_list):
     """将嵌套列表展平"""
     flat_list = []
@@ -85,7 +69,6 @@ def flatten_list(nested_list):
         else:
             flat_list.append(item)
     return flat_list
-
 
 def flatten_dic2paths(d, current_path=None, result=None):
     """将嵌套字典展平为路径列表"""
@@ -104,7 +87,6 @@ def flatten_dic2paths(d, current_path=None, result=None):
             split_char = settings.SPLIT_CHAR or ";"
             result.append(split_char.join(new_path))
     return result
-
 
 def merge_df(input_df):
     """合并同路径的DataFrame行"""
@@ -134,12 +116,10 @@ def merge_df(input_df):
     final_df = pd.concat(processed_dfs, axis=0, ignore_index=True)
     return final_df
 
-
 def process_path_texts(path_, last=50):
     """处理路径文本"""
     temp_path = path_handle(path_, mode='sanitize')
     return '_'.join(temp_path.split(os.sep))[:last]
-
 
 def process_dup_paths_df(df):
     """处理重复路径的DataFrame"""
@@ -148,7 +128,6 @@ def process_dup_paths_df(df):
         df['path'] = df.apply(lambda x: f"{x['path']}_{x['count']}" if x['count'] > 1 else x['path'], axis=1)
         df.drop(columns=['count'], inplace=True)
     return df
-
 
 def remove_spaces(text, handle_punctuation=False):
     """移除中文之间的空格，保留英文单词间的空格"""
@@ -164,7 +143,6 @@ def remove_spaces(text, handle_punctuation=False):
     res_text = re.sub(r'\s+', ' ', res_text)
     return res_text.strip()
 
-
 def traverse_dict(d, parent=None):
     """遍历字典生成描述文本"""
     dic_texts = []
@@ -175,7 +153,6 @@ def traverse_dict(d, parent=None):
             dic_texts.append(text)
             dic_texts.extend(traverse_dict(value, key))
     return dic_texts
-
 
 def restore_graph_by_paths(paths):
     """从路径列表重建图结构"""
@@ -190,7 +167,6 @@ def restore_graph_by_paths(paths):
             current_dict = current_dict[node]
     dic_texts = traverse_dict(root_dict)
     return root_dict, dic_texts
-
 
 def html2txt(html_text):
     """将HTML转换为纯文本"""

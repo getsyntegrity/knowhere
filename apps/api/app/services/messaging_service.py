@@ -6,6 +6,7 @@ import asyncio
 from typing import Optional
 
 from app.services.messaging.message_consumer import get_message_consumer
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from loguru import logger
 
 
@@ -31,10 +32,15 @@ class MessagingService:
             self.consumer_task = asyncio.create_task(self.consumer.start_consuming())
             logger.info("消息消费者已在事件循环中启动")
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"启动消息消费者失败: {e}")
             self._running = False
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"启动消息消费者失败: {str(e)}",
+                original_exception=e
+            )
     
     async def stop(self):
         """停止消息消费者（异步）"""

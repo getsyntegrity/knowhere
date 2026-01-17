@@ -8,8 +8,14 @@ from app.core.dependencies import get_current_user, get_db
 from shared.models.database.user import User
 from app.repositories.job_repository import JobRepository
 from app.services.state_machine import JobStateMachine
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.domain_exceptions import (
+    JobOperationException,
+    ValidationException,
+    NotFoundException,
+    PermissionDeniedException
+)
 
 router = APIRouter(tags=["Job管理"])
 
@@ -27,9 +33,10 @@ async def list_all_jobs(
     try:
         # 检查用户权限（这里简化处理，实际应该检查管理员权限）
         if not current_user.is_superuser():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="需要管理员权限"
+        if not current_user.is_superuser():
+            raise PermissionDeniedException(
+                resource="Job",
+                user_message="需要管理员权限"
             )
         
         job_repo = JobRepository()
@@ -67,12 +74,11 @@ async def list_all_jobs(
             "page_size": page_size
         }
         
-    except HTTPException:
+    except PermissionDeniedException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取Jobs失败: {str(e)}"
+        raise JobOperationException(
+            internal_message=f"获取Jobs失败: {str(e)}"
         )
 
 
@@ -112,9 +118,8 @@ async def get_job_stats(
         return stats
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取统计信息失败: {str(e)}"
+        raise JobOperationException(
+            internal_message=f"获取统计信息失败: {str(e)}"
         )
 
 
@@ -131,23 +136,24 @@ async def retry_job(
         # 获取Job
         job = await job_repo.get_job_by_id(db, job_id)
         if not job:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Job不存在"
+            raise NotFoundException(
+                resource="Job",
+                resource_id=job_id,
+                internal_message="Job not found"
             )
         
         # 检查权限
         if str(job.user_id) != str(current_user.id) and not current_user.is_superuser():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="无权限操作此Job"
+            raise PermissionDeniedException(
+                resource="Job",
+                user_message="无权限操作此Job"
             )
         
         # 检查Job状态
         if job.status != "failed":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="只能重试失败的Job"
+            raise ValidationException(
+                user_message="只能重试失败的Job",
+                violations=[{"field": "status", "description": "Job status is not failed"}]
             )
         
         # 重置Job状态
@@ -170,9 +176,9 @@ async def retry_job(
                 user_id=str(job.user_id)
             )
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"不支持的任务类型: {job.job_type}"
+            raise ValidationException(
+                user_message=f"不支持的任务类型: {job.job_type}",
+                violations=[{"field": "job_type", "description": "Unsupported job type"}]
             )
         
         return {
@@ -181,12 +187,11 @@ async def retry_job(
             "message": "Job重试已启动"
         }
         
-    except HTTPException:
+    except (NotFoundException, PermissionDeniedException, ValidationException):
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"重试Job失败: {str(e)}"
+        raise JobOperationException(
+            internal_message=f"重试Job失败: {str(e)}"
         )
 
 
@@ -200,9 +205,9 @@ async def delete_job(
     try:
         # 检查管理员权限
         if not current_user.is_superuser():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="需要管理员权限"
+            raise PermissionDeniedException(
+                resource="Job",
+                user_message="需要管理员权限"
             )
         
         job_repo = JobRepository()
@@ -210,9 +215,10 @@ async def delete_job(
         # 获取Job
         job = await job_repo.get_job_by_id(db, job_id)
         if not job:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Job不存在"
+            raise NotFoundException(
+                resource="Job",
+                resource_id=job_id,
+                internal_message="Job not found"
             )
         
         # 删除Job（级联删除相关记录）
@@ -225,10 +231,9 @@ async def delete_job(
             "message": "Job已删除"
         }
         
-    except HTTPException:
+    except (PermissionDeniedException, NotFoundException):
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除Job失败: {str(e)}"
+        raise JobOperationException(
+            internal_message=f"删除Job失败: {str(e)}"
         )

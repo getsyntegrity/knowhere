@@ -10,7 +10,9 @@ from typing import Any, Optional
 from celery import current_task
 from loguru import logger
 
-# 本地调试模式：设置环境变量 LOCAL_DEBUG=1 启用
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException, KnowhereException
+
+# Local debug mode: set LOCAL_DEBUG=1 to enable
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
 class AIQueryService:
@@ -97,11 +99,18 @@ class AIQueryService:
 
             if result.get("status") == "success":
                 return result.get("result", {})
-            raise Exception(f"Celery任务失败: {result.get('error', '未知错误')}")
+            raise WorkerHandlingException(
+                internal_message=f"Celery任务失败: {result.get('error', '未知错误')}"
+            )
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"Celery AI查询失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"Celery AI查询失败: {str(e)}",
+                original_exception=e
+            )
 
     async def _execute_direct(
         self,
@@ -111,21 +120,21 @@ class AIQueryService:
         conversation_id: Optional[str],
         **kwargs
     ) -> Any:
-        """本地直连模式：直接调用 OpenAI API，不依赖 Redis/Celery"""
+        """Local direct mode: call OpenAI API directly without Redis/Celery"""
         from shared.utils.OpenAICompatibleClient import OpenAICompatibleClient
 
         conversation = conversation_id or f"ai_query_{user_id}_{int(time.time())}"
 
-        # 创建OpenAI兼容客户端
+        # Create OpenAI compatible client
         ai_client = OpenAICompatibleClient(
-            redis_service=None,  # 本地模式不需要 Redis
+            redis_service=None,  # Local mode doesn't need Redis
             api_key=kwargs.get('api_key'),
             api_url=kwargs.get('api_url'),
             default_model=kwargs.get('model'),
             timeout=kwargs.get('timeout', 300)
         )
         
-        # 过滤掉已经单独处理的参数，避免重复传递
+        # Filter out params that are already handled separately
         excluded_params = {'api_key', 'api_url', 'timeout', 'user_id', 'model', 'max_tokens'}
         api_params = {k: v for k, v in kwargs.items() if k not in excluded_params}
         
@@ -139,9 +148,14 @@ class AIQueryService:
                 **api_params
             )
             return result
-        except Exception as exc:
-            logger.error(f"本地直连 AI 查询失败: {exc}")
+        except KnowhereException:
             raise
+        except Exception as exc:
+            logger.error(f"Local direct AI query failed: {exc}")
+            raise WorkerHandlingException(
+                internal_message=f"Local direct AI query failed: {str(exc)}",
+                original_exception=exc
+            )
 
     @staticmethod
     def _running_inside_celery_worker() -> bool:
@@ -203,14 +217,20 @@ class AIQueryService:
                 },
             )
             return result
-        except Exception as exc:  # pragma: no cover - redis failure cases
+        except KnowhereException:
             await task_service.mark_task_failed(user_id, str(exc))
             raise
+        except Exception as exc:  # pragma: no cover - redis failure cases
+            await task_service.mark_task_failed(user_id, str(exc))
+            raise WorkerHandlingException(
+                internal_message=f"AI查询执行失败: {str(exc)}",
+                original_exception=exc
+            )
 
 
-# 全局AI查询服务实例
-# 默认使用Celery，但在 LOCAL_DEBUG 模式下自动切换到直连模式
+# ai service instance
+# default use celery, but switch to direct mode in LOCAL_DEBUG mode
 ai_query_service = AIQueryService(use_celery=True)
 
-# 本地直连服务实例（不使用 Celery/Redis）
+# local direct service instance (not using Celery/Redis)
 ai_query_service_local = AIQueryService(use_celery=False)

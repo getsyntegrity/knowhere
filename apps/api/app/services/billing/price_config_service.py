@@ -1,54 +1,68 @@
 """
-Stripe价格配置服务
+Stripe Price Configuration Service
 """
 from typing import Optional
 
 from shared.core.logging import logger
+from shared.core.exceptions.domain_exceptions import NotFoundException, ValidationException
 from app.repositories.stripe_price_config_repository import StripePriceConfigRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class PriceConfigService:
-    """价格配置服务"""
+    """Price configuration service"""
     
     def __init__(self):
         self.repository = StripePriceConfigRepository()
     
     async def get_price_config(self, session: AsyncSession, price_id: str):
-        """根据价格ID获取配置"""
+        """Get configuration by price ID"""
         config = await self.repository.get_by_price_id(session, price_id)
         if not config:
-            raise ValueError(f"未找到价格配置: {price_id}")
+            raise NotFoundException(
+                resource="PriceConfig",
+                resource_id=price_id,
+                internal_message=f"Price configuration not found: {price_id}"
+            )
         return config
     
     async def get_plan_price_id(self, session: AsyncSession, plan_id: str) -> str:
-        """根据计划ID获取价格ID（订阅类型）"""
+        """Get price ID by plan ID (subscription type)"""
         config = await self.repository.get_by_plan_id(session, plan_id)
         if not config:
-            raise ValueError(f"未找到计划配置: {plan_id}")
+            raise NotFoundException(
+                resource="PlanConfig",
+                resource_id=plan_id,
+                internal_message=f"Plan configuration not found: {plan_id}"
+            )
         return config.price_id
     
     async def get_credits_by_price_id(self, session: AsyncSession, price_id: str) -> int:
-        """根据价格ID获取Credits数量"""
+        """Get credits amount by price ID"""
         config = await self.get_price_config(session, price_id)
         if not config.is_credits_package():
-            raise ValueError(f"价格ID {price_id} 不是Credits包类型")
+            raise ValidationException(
+                user_message=f"Price ID {price_id} is not a credits package type",
+                violations=[{"field": "price_id", "description": "Not a credits package"}]
+            )
         if config.credits_amount <= 0:
-            raise ValueError(f"价格ID {price_id} 的Credits数量未配置或无效")
+            raise ValidationException(
+                user_message=f"Price ID {price_id} has invalid credits amount",
+                violations=[{"field": "credits_amount", "description": "Credits amount not configured or invalid"}]
+            )
         return config.credits_amount
     
     async def validate_price_amount(self, session: AsyncSession, price_id: str, amount_cents: int) -> bool:
-        """验证金额是否正确"""
+        """Validate if the amount is correct"""
         config = await self.get_price_config(session, price_id)
         if config.amount_cents <= 0:
-            logger.warning(f"价格ID {price_id} 的金额未配置或为0，跳过验证")
+            logger.warning(f"Price ID {price_id} amount is not configured or is 0, skipping validation")
             return True
         if config.amount_cents != amount_cents:
-            logger.error(f"金额不匹配: 配置金额={config.amount_cents}, 实际金额={amount_cents}")
+            logger.error(f"Amount mismatch: configured={config.amount_cents}, actual={amount_cents}")
             return False
         return True
     
     async def get_all_credits_packages(self, session: AsyncSession):
-        """获取所有Credits包配置"""
+        """Get all credits package configurations"""
         return await self.repository.get_credits_packages(session)
-

@@ -10,8 +10,9 @@ from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDt
 from app.repositories.knowledge_base_repository import (create_directory,
                                                         delete_directory,
                                                         update_directory)
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from starlette import status
+from shared.core.exceptions.domain_exceptions import KnowledgeBaseOperationException
 
 router = APIRouter(tags=["知识库"])
 
@@ -29,11 +30,17 @@ async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: User 
         async with get_db_context() as db:
             if await create_directory(db, request_data):
                 return {"message": "创建目录成功"}
-        raise HTTPException(status_code=400, detail="创建目录失败")
+        raise KnowledgeBaseOperationException(
+            internal_message="Failed to create directory"
+        )
+    except KnowledgeBaseOperationException:
+        raise
     except Exception as e:
         from loguru import logger
         logger.error(f"创建目录失败:{e}")
-        raise HTTPException(status_code=400, detail="创建目录失败")
+        raise KnowledgeBaseOperationException(
+            internal_message=f"Failed to create directory: {str(e)}"
+        )
 
 @router.post('/delete_directory', status_code=status.HTTP_201_CREATED, summary="删除SQL路径",description="用户删除知识路径")
 async def delete_sql_path(request_data: FileDirectoryDto, current_user: User = Depends(get_current_user)):
@@ -46,11 +53,17 @@ async def delete_sql_path(request_data: FileDirectoryDto, current_user: User = D
         async with get_db_context() as db:
             if await delete_directory(db, request_data.id):
                 return {"message": "删除目录成功"}
-        raise HTTPException(status_code=400, detail="删除目录失败")
+        raise KnowledgeBaseOperationException(
+            internal_message="Failed to delete directory"
+        )
+    except KnowledgeBaseOperationException:
+        raise
     except Exception as e:
         from loguru import logger
         logger.error(f"删除目录失败:{e}")
-        raise HTTPException(status_code=400, detail="删除目录失败")
+        raise KnowledgeBaseOperationException(
+            internal_message=f"Failed to delete directory: {str(e)}"
+        )
 
 @router.post('/update_directory', status_code=status.HTTP_201_CREATED, summary="更新SQL路径",description="用户更新知识路径")
 async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: User = Depends(get_current_user)):
@@ -63,11 +76,17 @@ async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: Us
         async with get_db_context() as db:
             if await update_directory(db, request_data):
                 return {"message": "更新目录成功"}
-        raise HTTPException(status_code=400, detail="更新目录失败")
+        raise KnowledgeBaseOperationException(
+            internal_message="Failed to update directory"
+        )
+    except KnowledgeBaseOperationException:
+        raise
     except Exception as e:
         from loguru import logger
         logger.error(f"更新目录失败:{e}")
-        raise HTTPException(status_code=400, detail="更新目录失败")
+        raise KnowledgeBaseOperationException(
+            internal_message=f"Failed to update directory: {str(e)}"
+        )
 
 @router.post('/get_directory', status_code=status.HTTP_201_CREATED, summary="获取用户知识库路径",description="用户获取知识路径")
 async def get_sql_path(current_user: User = Depends(get_current_user)):
@@ -96,15 +115,21 @@ async def get_sql_path(current_user: User = Depends(get_current_user)):
                 if not success:
                     from loguru import logger
                     logger.error(f"创建默认目录失败: user_id={current_user.id}")
-                    raise HTTPException(status_code=400, detail="创建默认目录失败")
+                    raise KnowledgeBaseOperationException(
+                        internal_message="Failed to create default directory"
+                    )
             
             # 获取目录树结构
             directories = await get_directories(db, current_user.id)
             return directories
+    except KnowledgeBaseOperationException:
+        raise
     except Exception as e:
         from loguru import logger
         logger.error(f"获取目录失败:{e}")
-        raise HTTPException(status_code=400, detail="获取目录失败")
+        raise KnowledgeBaseOperationException(
+            internal_message=f"Failed to get directory: {str(e)}"
+        )
 
 @router.post('/list_directory', status_code=status.HTTP_201_CREATED, summary="知识详情",description="根据用户路径获取知识点")
 async def list_directory(request_data: FileDirectoryListDto, current_user: User = Depends(get_current_user)):
@@ -121,7 +146,9 @@ async def list_directory(request_data: FileDirectoryListDto, current_user: User 
     except Exception as e:
         from loguru import logger
         logger.error(f"获取目录内容失败:{e}")
-        raise HTTPException(status_code=400, detail="获取目录内容失败")
+        raise KnowledgeBaseOperationException(
+            internal_message=f"Failed to get directory contents: {str(e)}"
+        )
 
 # 添加知识库路径API
 @router.post('/add_kb', status_code=status.HTTP_201_CREATED, summary="添加知识库路径", description="添加知识库路径")
@@ -146,11 +173,17 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
             if success:
                 return {"message": "知识库路径添加成功"}
             else:
-                raise HTTPException(status_code=400, detail="知识库路径添加失败")
+                raise KnowledgeBaseOperationException(
+                    internal_message="Failed to add knowledge base path"
+                )
+    except KnowledgeBaseOperationException:
+        raise
     except Exception as e:
         from loguru import logger
         logger.error(f"添加知识库路径失败: {e}")
-        raise HTTPException(status_code=400, detail="添加知识库路径失败")
+        raise KnowledgeBaseOperationException(
+            internal_message=f"Failed to add knowledge base path: {str(e)}"
+        )
 
 # 临时文件上传API已移除，请使用统一的 /v1/jobs 接口
 
@@ -194,15 +227,23 @@ async def delete_knowledge_content(
                 if success:
                     return {"message": "目录删除成功"}
                 else:
-                    raise HTTPException(status_code=400, detail="目录删除失败")
+                    raise KnowledgeBaseOperationException(
+                        internal_message="Failed to delete directory"
+                    )
             else:
                 # 删除内容
                 success = await delete_kb_content(db, content_id)
                 if success:
                     return {"message": "内容删除成功"}
                 else:
-                    raise HTTPException(status_code=400, detail="内容删除失败")
+                    raise KnowledgeBaseOperationException(
+                        internal_message="Failed to delete content"
+                    )
+    except KnowledgeBaseOperationException:
+        raise
     except Exception as e:
         from loguru import logger
         logger.error(f"删除知识库内容失败: {e}")
-        raise HTTPException(status_code=400, detail="删除失败")
+        raise KnowledgeBaseOperationException(
+            internal_message=f"Failed to delete knowledge base content: {str(e)}"
+        )

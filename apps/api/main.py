@@ -19,7 +19,6 @@ from shared.models.schemas.user import UserCreate, UserUpdate, UserRead
 from loguru import logger
 from contextlib import asynccontextmanager
 from app.api.api_router import api_router
-from app.services.user.user_config_service import UserConfigService
 from app.core.middleware import setup_cors, LoggingMiddleware
 from app.core.users import get_user_manager
 from app.core.jwt import auth_backend

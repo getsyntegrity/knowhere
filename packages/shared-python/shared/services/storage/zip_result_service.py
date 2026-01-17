@@ -17,6 +17,8 @@ from PIL import Image
 if TYPE_CHECKING:
     import pandas as pd
 
+from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
+
 
 class ZipResultService:
     """ZIP 结果包生成服务"""
@@ -159,9 +161,15 @@ class ZipResultService:
 
             return zip_file_path, checksum, statistics, zip_size
 
-        except Exception as e:
-            logger.error(f"生成 ZIP 包失败: {e}")
+        except KnowhereException:
             raise
+        except Exception as e:
+            logger.error(f"Failed to generate ZIP package: {e}")
+            raise StorageServiceException(
+                internal_message=f"Failed to generate ZIP package: {str(e)}",
+                operation="generate_zip_package",
+                original_exception=e
+            )
 
     def _calculate_statistics(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
         """计算统计信息"""

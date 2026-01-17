@@ -1,64 +1,261 @@
 """
-全局异常处理器
-"""
-import traceback
+Global Exception Handlers for the Knowhere API.
 
-from fastapi import HTTPException, Request
+=============================================================================
+SECURITY: THE "4xx vs 5xx" MESSAGE PATTERN
+=============================================================================
+
+This module enforces the dual-message pattern for all exceptions:
+
+    - `internal_message`: Technical details for LOGS ONLY. NEVER sent to client.
+    - `user_message`:     Safe message for CLIENT. ALWAYS sent to user.
+
+The `knowhere_exception_handler` is the central point that:
+    1. Logs `internal_message` for debugging (server-side only)
+    2. Returns `user_message` to the client (via to_dict)
+    3. NEVER leaks internal_message to the response
+
+=============================================================================
+
+All exceptions are converted to KnowhereException and handled uniformly.
+This ensures clients always receive a consistent, secure JSON response.
+
+Architecture:
+    1. Each handler converts its exception type to a KnowhereException subclass
+    2. All handlers delegate to `knowhere_exception_handler` for actual response
+    3. Internal details are logged but NEVER sent to client
+
+Response Format:
+    {
+        "success": false,
+        "error": {
+            "code": "INVALID_ARGUMENT",
+            "message": "<user_message>",  // NEVER internal_message
+            "request_id": "req_abc123",
+            "details": {...}  // Optional, schema varies by exception type
+        }
+    }
+
+Exception Sources:
+    - KnowhereException: Raised explicitly by our code (domain exceptions)
+    - HTTPException: Raised by FastAPI/Starlette for HTTP-level errors
+        - 401: Missing/invalid auth header
+        - 403: Permission denied by middleware
+        - 404: Route not found
+        - 405: Method not allowed
+    - RequestValidationError: Raised by Pydantic when request body/params invalid
+    - Exception: Unexpected errors (bugs, syntax errors, external failures)
+"""
+
+import uuid
+import traceback
+from typing import List
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from shared.core.exceptions import (
+    KnowhereException,
+    ValidationException,
+    UnknownException,
+)
+from shared.core.response import ErrorCode, ErrorCodeMapper
 
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """HTTP异常处理器"""
-    logger.error(f"HTTP异常: {exc.status_code} - {exc.detail} - 路径: {request.url}")
+
+def _get_request_id(request: Request) -> str:
+    """Extract or generate a request ID for tracing."""
+    return request.headers.get("X-Request-ID", str(uuid.uuid4()))
+
+
+async def knowhere_exception_handler(
+    request: Request, exc: KnowhereException
+) -> JSONResponse:
+    """
+    This handler enforces the separation between:
+    - `internal_message`: Logged for debugging (NEVER in response)
+    - `user_message`: Returned to client (via to_client)
+    
+    The response ONLY contains `user_message` via exc.to_client().
+    The logs contain full exception details via repr(exc).
+    
+    ==========================================================================
+    
+    This is the ONLY place that builds the actual response.
+    All other handlers convert their exceptions and delegate here.
+    
+    Logging:
+        - 5xx: ERROR level with internal_message and stack trace
+        - 4xx: WARNING level with user_message
+    
+    The `original_exception` field is used to:
+        1. Log the underlying cause for debugging (e.g., Redis timeout)
+        2. Include stack trace in logs without exposing to client
+        3. Wrap unexpected exceptions while preserving debug info
+    """
+    request_id = _get_request_id(request)
+
+    # Log based on severity
+    log_data = exc.to_log()
+    if exc.http_status_code >= 500:
+        # For 5xx, log full exception details for debugging
+        logger.bind(**log_data).error(
+            f"[{request_id}] System Error: {exc.code.value} - {exc.internal_message}"
+        )
+        
+        # Log KnowhereException traceback
+        if exc.__traceback__:
+            exc_tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            logger.error(f"[{request_id}] KnowhereException traceback:\n{exc_tb}")
+        
+        # Log original exception traceback if wrapped
+        if exc.original_exception and exc.original_exception.__traceback__:
+            orig_tb = "".join(traceback.format_exception(
+                type(exc.original_exception),
+                exc.original_exception,
+                exc.original_exception.__traceback__
+            ))
+            logger.error(f"[{request_id}] Original exception traceback:\n{orig_tb}")
+    else:
+        # For 4xx, log the exception (includes internal_message and details)
+        logger.bind(**log_data).warning(
+            f"[{request_id}] Client Error: {exc.code.value} - {exc.internal_message}"
+        )
+
+    # Build response with optional Retry-After header
+    headers = {}
+    if hasattr(exc, "retry_after") and exc.retry_after:
+        headers["Retry-After"] = str(exc.retry_after)
+
+    # SECURITY: to_client() returns user_message, NEVER internal_message
     return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail, "status_code": exc.status_code}
+        status_code=exc.http_status_code,
+        content=exc.to_client(request_id),
+        headers=headers if headers else None,
     )
 
 
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """请求验证异常处理器"""
-    logger.error(f"请求验证异常: {exc.errors()} - 路径: {request.url}")
-    return JSONResponse(
-        status_code=422,
-        content={"detail": "请求参数验证失败", "errors": exc.errors()}
-    )
-
-
-async def general_exception_handler(request: Request, exc: Exception):
-    """通用异常处理器"""
-    # 记录详细的异常信息
-    logger.error(
-        f"未处理的异常: {type(exc).__name__}: {str(exc)} - 路径: {request.url}",
-        exc_info=True
+async def http_exception_handler(
+    request: Request, exc: HTTPException
+) -> JSONResponse:
+    """
+    Convert FastAPI/Starlette HTTPException to KnowhereException.
+    
+    When does HTTPException occur?
+        - 401: Auth middleware rejects request (missing/invalid token)
+        - 403: Permission check fails
+        - 404: No route matches the path
+        - 405: HTTP method not allowed for this route
+        - 422: Handled separately by validation_exception_handler
+    
+    Security: HTTPException.detail may contain sensitive info from middleware.
+    We use a generic user_message and log the original detail internally.
+    """
+    # Convert HTTP status to ErrorCode using the canonical mapping
+    code = ErrorCodeMapper.get_error_code_from_http_status(exc.status_code)
+    
+    # Generic safe messages for each status (no detail leak)
+    safe_messages = {
+        400: "Bad request",
+        401: "Authentication required",
+        403: "Permission denied",
+        404: "Resource not found",
+        405: "Method not allowed",
+        409: "Conflict",
+        429: "Too many requests",
+        500: "Internal server error",
+        502: "Bad gateway",
+        503: "Service unavailable",
+        504: "Gateway timeout",
+    }
+    safe_message = safe_messages.get(exc.status_code, "An error occurred")
+    
+    # Create KnowhereException with internal_message for logs, user_message for response
+    knowhere_exc = KnowhereException(
+        code=code,
+        internal_message=f"HTTPException detail: {exc.detail}",  # For logs
+        user_message=safe_message,  # For client
     )
     
-    # 记录完整的堆栈跟踪
-    logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
+    # Delegate to central handler
+    return await knowhere_exception_handler(request, knowhere_exc)
+
+
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """
+    Convert Pydantic validation errors to ValidationException.
     
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "服务器内部错误",
-            "status_code": 500,
-            "error_type": type(exc).__name__
-        }
+    When does RequestValidationError occur?
+        - Request body doesn't match Pydantic model
+        - Query/path parameters fail validation
+        - Type coercion fails (e.g., string where int expected)
+    
+    The violations array IS safe to expose as it describes client input issues.
+    This is a 4xx error, so user_message is passed directly to client.
+    """
+    # Transform Pydantic errors into violations format
+    violations: List[dict] = []
+    for error in exc.errors():
+        field = ".".join(str(loc) for loc in error.get("loc", []))
+        violations.append({
+            "field": field,
+            "description": error.get("msg", "Validation failed"),
+        })
+
+    # Create ValidationException with user_message that client will see
+    validation_exc = ValidationException(
+        user_message="Request validation failed",
+        violations=violations,
     )
+    
+    # Delegate to central handler
+    return await knowhere_exception_handler(request, validation_exc)
 
 
-def setup_exception_handlers(app):
-    """设置异常处理器"""
-    # 添加HTTP异常处理器
+async def general_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """
+    Catch-all for unexpected exceptions.
+    
+    When does this occur?
+        - Syntax errors, bugs in code
+        - Unhandled third-party library exceptions
+        - Database/Redis connection failures not wrapped by our code
+    
+    Security: NEVER expose exception details to client.
+    The `original_exception` is stored for internal logging only.
+    UnknownException auto-generates a safe user_message.
+    """
+    # Wrap in UnknownException - this logs internally, returns generic message
+    unknown_exc = UnknownException(original_exception=exc)
+    
+    # Delegate to central handler
+    return await knowhere_exception_handler(request, unknown_exc)
+
+
+def setup_exception_handlers(app: FastAPI) -> None:
+    """
+    Register all exception handlers with the FastAPI app.
+    
+    Order of registration doesn't matter - FastAPI matches by exception type.
+    More specific types (KnowhereException subclasses) are matched before base.
+    """
+    # KnowhereException and all subclasses
+    app.add_exception_handler(KnowhereException, knowhere_exception_handler)
+
+    # FastAPI/Starlette HTTP exceptions (convert then delegate)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-    
-    # 添加请求验证异常处理器
+
+    # Pydantic validation errors (convert then delegate)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
-    
-    # 添加通用异常处理器（捕获所有未处理的异常）
+
+    # Catch-all for unexpected exceptions (MUST be last conceptually)
     app.add_exception_handler(Exception, general_exception_handler)
-    
-    logger.info("全局异常处理器已设置")
+
+    logger.info("Global exception handlers registered (4xx/5xx message pattern enabled)")

@@ -5,6 +5,7 @@ from typing import Optional
 
 from shared.core.celery_router import task_router
 # 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from loguru import logger
 
 
@@ -57,7 +58,7 @@ class KBOrchestrator:
             # Webhook和邮件发送已迁移到API服务，由消息处理器处理
             from celery import signature
             task_signature = signature(
-                'app.core.tasks.kb_tasks.parse_and_vectorize_task',
+                'app.core.tasks.kb_tasks.parse_task',
                 args=[job_id],
                 kwargs={'user_id': user_id, 'job_type': 'kb_management'}
             ).set(queue=queue_name)
@@ -69,9 +70,14 @@ class KBOrchestrator:
             
             return result.id
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"启动知识库管理工作流失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"启动知识库管理工作流失败: {str(e)}",
+                original_exception=e
+            )
     
     def create_workflow_chain(self, job_id: str, user_id: str, queue_name: str = None):
         """
@@ -93,7 +99,7 @@ class KBOrchestrator:
         # 返回单任务签名（任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息）
         # Webhook和邮件发送已迁移到API服务，由消息处理器处理
         return signature(
-            'app.core.tasks.kb_tasks.parse_and_vectorize_task',
+            'app.core.tasks.kb_tasks.parse_task',
             args=[job_id],
             kwargs={'user_id': user_id, 'job_type': 'kb_management'}
         ).set(queue=queue_name)
