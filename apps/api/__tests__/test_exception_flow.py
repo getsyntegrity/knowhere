@@ -260,8 +260,8 @@ class TestRateLimitExceptions:
         assert exc.period == "minute"
         assert exc.http_status_code == 429
         
-        # Verify to_dict() output format
-        result = exc.to_dict("test_request_id")
+        # Verify to_client() output format
+        result = exc.to_client("test_request_id")
         assert result["success"] is False
         assert result["error"]["code"] == "RESOURCE_EXHAUSTED"
         assert "retry_after" in result["error"]["details"]

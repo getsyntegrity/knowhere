@@ -260,6 +260,8 @@ async def create_job(
                 user_message=f"Unsupported file type. Supported formats: {supported_formats}",
                 violations=[{"field": "file_name", "description": "File type not supported"}]
             )
+        # TODO, we need to obtain the resource file name from the header, the url may do not have
+        # the file name
         elif request.source_type == "url":
             # 验证URL文件类型
             parsed_url = urlparse(request.source_url)
