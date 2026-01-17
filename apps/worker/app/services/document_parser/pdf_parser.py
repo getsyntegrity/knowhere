@@ -18,7 +18,8 @@ from shared.core.constants import APIConstants
 from app.services.document_parser.md_parser import parse_md
 from shared.utils.FileDownUpUtils import s3_download_extract_zip
 
-MINERU_API_TIMEOUT = 60
+MINERU_API_TIMEOUT = 60       # For API calls (get status, etc.)
+MINERU_UPLOAD_TIMEOUT = 600   # For large file uploads (10 min max)
 
 def get_mineru_headers() -> dict:
     return {
@@ -191,23 +192,31 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
 
     batch_id = result["data"]["batch_id"]
     upload_url = result["data"]["file_urls"][0]
-    logger.info(f"Got batch_id: {batch_id}")
 
-    logger.info(f"Streaming file from {pdf_url} to MinerU...")
-    with requests.get(
-        pdf_url, stream=True, timeout=APIConstants.S3_FILE_DOWNLOAD_TIMEOUT
-    ) as download_response:
-        download_response.raise_for_status()
-        upload_res = requests.put(
-            upload_url,
-            data=download_response.iter_content(chunk_size=8192),
-            timeout=MINERU_API_TIMEOUT,
+    logger.info(f"Transferring file {filename} from S3 to MinerU via temp file...")
+    
+    from shared.utils.file_transfer import stream_download_and_upload, DownloadError, UploadError
+    try:
+        upload_res = stream_download_and_upload(
+            source_url=pdf_url,
+            target_url=upload_url,
+            download_timeout=APIConstants.S3_FILE_DOWNLOAD_TIMEOUT,
+            upload_timeout=MINERU_UPLOAD_TIMEOUT,
+            upload_method="PUT",
         )
         if upload_res.status_code != 200:
             raise MinerUServiceException(
                 internal_message=f"Failed to upload file to MinerU: {upload_res.text}",
                 status_code=upload_res.status_code
             )
+    except DownloadError as e:
+        raise StorageServiceException(
+            internal_message=f"Failed to download file from S3: {e}"
+        )
+    except UploadError as e:
+        raise MinerUServiceException(
+            internal_message=f"Failed to upload file to MinerU: {e}"
+        )
 
     logger.info(f"File: {filename} uploaded successfully, waiting for parsing...")
 
