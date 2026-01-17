@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 import torch
 from tqdm import tqdm
-                          is_torch_npu_available)
+from transformers.utils import is_torch_npu_available
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
