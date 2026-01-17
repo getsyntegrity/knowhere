@@ -18,8 +18,9 @@ from shared.models.schemas.billing import (BuyCreditsRequest,
                                         UsageStatsResponse, BuyCreditsPackageRequest)
 from app.services.billing.credits_service import CreditsService
 from app.services.billing.stripe_service import StripeService
-from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
+from fastapi import APIRouter, Depends, Request, Query, status
 from sqlalchemy import func, select
+from shared.core.exceptions.domain_exceptions import StripeServiceException
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.models.database.usage_log import UsageLog
 from shared.models.database.job import Job
@@ -67,9 +68,8 @@ async def subscribe_plan(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"创建订阅失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"创建订阅失败: {str(e)}"
         )
 
 
@@ -100,9 +100,8 @@ async def buy_credits(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"购买Credits失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"购买Credits失败: {str(e)}"
         )
 
 
@@ -142,9 +141,8 @@ async def get_current_subscription(
         }
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取订阅信息失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"获取订阅信息失败: {str(e)}"
         )
 
 
@@ -176,9 +174,8 @@ async def get_credits_balance(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取Credits余额失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"获取Credits余额失败: {str(e)}"
         )
 
 
@@ -204,9 +201,8 @@ async def get_usage_stats(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取使用统计失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"获取使用统计失败: {str(e)}"
         )
 
 
@@ -299,9 +295,8 @@ async def parse_usage_overview(
             avg_processing_time=avg_processing_time,
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取使用解析概览失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"获取使用解析概览失败: {str(e)}"
         )
 
 
@@ -331,9 +326,8 @@ async def get_transaction_history(
         return transaction_list
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取消费历史失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"获取消费历史失败: {str(e)}"
         )
 
 
@@ -430,9 +424,8 @@ async def get_price_configs(
             }
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取价格配置失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"获取价格配置失败: {str(e)}"
         )
 
 
@@ -466,9 +459,8 @@ async def buy_credits_package(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"创建Credits包购买失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"创建Credits包购买失败: {str(e)}"
         )
 
 
@@ -498,9 +490,8 @@ async def stripe_webhook(
         return result
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Webhook处理失败: {str(e)}"
+        raise StripeServiceException(
+            internal_message=f"Webhook处理失败: {str(e)}"
         )
 
 

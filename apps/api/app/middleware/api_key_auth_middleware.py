@@ -4,7 +4,8 @@ API Key 认证中间件
 
 from shared.core.database import get_db
 from app.services.auth.api_key_service import APIKeyService
-from fastapi import HTTPException, Request, status
+from shared.core.exceptions.domain_exceptions import AuthException, KnowhereException
+from fastapi import Request, status
 
 
 class APIKeyAuthMiddleware:
@@ -19,9 +20,8 @@ class APIKeyAuthMiddleware:
             # 获取API Key
             api_key = request.headers.get("X-API-Key")
             if not api_key:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="API Key required"
+                raise AuthException(
+                    user_message="API Key required"
                 )
             
             # 验证API Key
@@ -29,22 +29,21 @@ class APIKeyAuthMiddleware:
                 async with get_db() as db:
                     user = await self.api_key_service.validate_api_key(db, api_key)
                     if not user:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Invalid API Key"
+                        raise AuthException(
+                            user_message="Invalid API Key"
                         )
                     
                     # 将用户信息添加到请求状态
                     request.state.user = user
                     request.state.auth_type = "api_key"
                     request.state.api_key = api_key
-            except HTTPException:
+            except KnowhereException:
                 raise
             except Exception as e:
                 print(f"API Key认证失败: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="API Key authentication failed"
+                raise AuthException(
+                    user_message="API Key authentication failed",
+                    internal_message=f"API Key authentication failed: {str(e)}"
                 )
         
         # 继续处理请求

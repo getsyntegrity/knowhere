@@ -10,6 +10,7 @@ from transformers import (AutoModel, AutoModelForCausalLM,
 from .utils import (compute_weights, get_model_param_dirs,
                     get_model_param_list, load_model, merge_param,
                     merge_param_by_layer)
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 def save_ckpt_for_sentence_transformers(ckpt_dir, pooling_mode: str = 'cls', normalized: bool = True):
@@ -155,7 +156,9 @@ def mix_models_by_layers(model_names_or_paths: List[str],
         elif model_type == 'reranker':
             model = AutoModelForSequenceClassification.from_pretrained(model_names_or_paths[0], trust_remote_code=True)
         else:
-            raise NotImplementedError(f"not support this model_type: {model_type}")
+            raise WorkerHandlingException(
+                internal_message=f"Model type {model_type} not supported for mixing"
+            )
 
     device_map = {name: "cpu" for name, _ in meta_model.named_modules()}
     model = load_checkpoint_and_dispatch(meta_model, checkpoint=temp_file_path, device_map=device_map)

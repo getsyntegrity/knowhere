@@ -19,6 +19,7 @@ from shared.services.redis.chunks_redis_service import ChunksRedisService
 from shared.services.redis.task_redis_service import TaskRedisService
 from app.services.state_machine import JobStateMachine
 from loguru import logger
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 
 
 async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -64,7 +65,12 @@ async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, An
             duration_ms
         )
         
-        raise
+        if isinstance(e, KnowhereException):
+            raise
+        raise WorkerHandlingException(
+            internal_message=f"处理状态更新消息失败: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_status_update_async(message: JobStatusUpdateMessage):
@@ -91,9 +97,14 @@ async def _handle_status_update_async(message: JobStatusUpdateMessage):
                 logger.warning(f"Job {message.job_id} 状态更新失败")
                 return {"status": "failed", "job_id": message.job_id, "reason": "状态转换失败"}
                 
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f"处理状态更新消息时出错: {e}")
-        raise
+        raise WorkerHandlingException(
+            internal_message=f"处理状态更新消息时出错: {str(e)}",
+            original_exception=e
+        )
 
 
 async def handle_job_progress_update(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,9 +174,14 @@ async def _handle_progress_update_async(message: JobProgressUpdateMessage):
             logger.warning(f"Job {message.job_id} 进度更新失败")
             return {"status": "failed", "job_id": message.job_id}
             
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f"处理进度更新消息时出错: {e}")
-        raise
+        raise WorkerHandlingException(
+            internal_message=f"处理进度更新消息时出错: {str(e)}",
+            original_exception=e
+        )
 
 
 async def handle_job_result(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -211,7 +227,12 @@ async def handle_job_result(message_data: Dict[str, Any]) -> Dict[str, Any]:
             duration_ms
         )
         
-        raise
+        if isinstance(e, KnowhereException):
+            raise
+        raise WorkerHandlingException(
+            internal_message=f"处理结果消息失败: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_result_async(message: JobResultMessage):
@@ -284,9 +305,14 @@ async def _handle_result_async(message: JobResultMessage):
                 "stored_count": message.stored_count
             }
             
+    except KnowhereException:
+        raise
     except Exception as e:
         logger.error(f"处理结果消息时出错: {e}")
-        raise
+        raise WorkerHandlingException(
+            internal_message=f"处理结果消息时出错: {str(e)}",
+            original_exception=e
+        )
 
 
 async def handle_job_failure(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -332,11 +358,16 @@ async def handle_job_failure(message_data: Dict[str, Any]) -> Dict[str, Any]:
             duration_ms
         )
         
-        raise
+        if isinstance(e, KnowhereException):
+            raise
+        raise WorkerHandlingException(
+            internal_message=f"处理失败消息失败: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_failure_async(message: JobFailureMessage):
-    """异步处理失败消息"""
+    """Async handle failure message"""
     state_machine = JobStateMachine()
     
     try:
@@ -344,20 +375,31 @@ async def _handle_failure_async(message: JobFailureMessage):
         from sqlalchemy.ext.asyncio import AsyncSession
         async with get_db_context() as db_ctx:
             db = cast(AsyncSession, db_ctx)
-            # 更新Job状态为失败
+            
+            # Get error_code from message (defaults to "UNKNOWN" if not provided)
+            error_code = message.error_code or "UNKNOWN"
+            
+            # Extract error_details from metadata (structured data like violations, retry_after)
+            error_details = None
+            if message.metadata and message.metadata.get("details"):
+                error_details = message.metadata.get("details")
+            
+            # Update Job status to failed with error_code and error_details
             success = await state_machine.mark_failed(
                 db,
                 message.job_id,
-                message.error_message
+                message.error_message,
+                error_code=error_code,
+                error_details=error_details
             )
             
             if success:
-                logger.info(f"Job {message.job_id} 标记为失败: {message.error_message}")
+                logger.info(f"Job {message.job_id} marked as failed: code={error_code}, msg={message.error_message}")
                 
-                # 检查是否需要退还Credits
+                # Check if credits refund is needed
                 if message.metadata and message.metadata.get("refund_credits"):
                     try:
-                        logger.info(f"检测到退款请求: job_id={message.job_id}")
+                        logger.info(f"Refund request detected: job_id={message.job_id}")
                         from app.services.billing.credits_service import CreditsService
                         from shared.core.config import settings
                         from app.repositories.job_repository import JobRepository
@@ -376,35 +418,41 @@ async def _handle_failure_async(message: JobFailureMessage):
                                     message.job_id
                                 )
                                 if refund_success:
-                                    logger.info(f"Credits退款成功: job_id={message.job_id}, amount={refund_amount}")
+                                    logger.info(f"Credits refund successful: job_id={message.job_id}, amount={refund_amount}")
                                 else:
-                                    logger.info(f"Credits退款跳过或失败: job_id={message.job_id}")
+                                    logger.info(f"Credits refund skipped or failed: job_id={message.job_id}")
                     except Exception as e:
-                        logger.error(f"执行Credits退款失败: {e}", exc_info=True)
+                        logger.error(f"Credits refund failed: {e}", exc_info=True)
                 
-                # 记录详细错误信息
+                # Log detailed error information
                 if message.stack_trace:
-                    logger.error(f"Job {message.job_id} 堆栈跟踪:\n{message.stack_trace}")
+                    logger.error(f"Job {message.job_id} stack trace:\n{message.stack_trace}")
                 
-                # 处理失败Webhook和邮件发送（如果启用）
-                await _handle_job_failure_notifications(db, message.job_id, message.error_message, message.error_type)
+                # Handle failure webhook and email notifications (if enabled)
+                await _handle_job_failure_notifications(db, message.job_id, message.error_message, message.error_type, error_code)
                 
                 return {
                     "status": "success",
                     "job_id": message.job_id,
+                    "error_code": error_code,
                     "error_message": message.error_message
                 }
             else:
-                logger.warning(f"Job {message.job_id} 标记失败状态失败")
+                logger.warning(f"Job {message.job_id} failed to mark as failed")
                 return {
                     "status": "failed",
                     "job_id": message.job_id,
-                    "reason": "状态更新失败"
+                    "reason": "Status update failed"
                 }
                 
-    except Exception as e:
-        logger.error(f"处理失败消息时出错: {e}")
+    except KnowhereException:
         raise
+    except Exception as e:
+        logger.error(f"Error handling failure message: {e}")
+        raise WorkerHandlingException(
+            internal_message=f"Error handling failure message: {str(e)}",
+            original_exception=e
+        )
 
 
 async def _handle_job_completion_notifications(db, job_id: str, job_result: Any):
@@ -474,8 +522,8 @@ async def _handle_job_completion_notifications(db, job_id: str, job_result: Any)
         logger.error(f"处理Job完成通知失败: {e}")
 
 
-async def _handle_job_failure_notifications(db, job_id: str, error_message: str, error_type: str = None):
-    """处理Job失败的通知（Webhook和邮件）"""
+async def _handle_job_failure_notifications(db, job_id: str, error_message: str, error_type: str = None, error_code: str = "UNKNOWN"):
+    """Handle Job failure notifications (Webhook and email)"""
     try:
         from app.repositories.job_repository import JobRepository
         from app.services.email.job_email_service import JobEmailService
@@ -486,10 +534,10 @@ async def _handle_job_failure_notifications(db, job_id: str, error_message: str,
         job = await job_repo.get_job_by_id(db, job_id)
         
         if not job:
-            logger.warning(f"Job {job_id} 不存在，跳过通知")
+            logger.warning(f"Job {job_id} does not exist, skipping notification")
             return
         
-        # 检查是否需要发送Webhook
+        # Check if webhook notification is needed
         if job.webhook_enabled and job.webhook_url:
             webhook_handler = WebhookHandlerService()
             webhook_result = await webhook_handler.handle_job_failure_webhook(
@@ -497,9 +545,10 @@ async def _handle_job_failure_notifications(db, job_id: str, error_message: str,
                 job_id=job_id,
                 error_message=error_message,
                 error_type=error_type,
+                error_code=error_code,
                 webhook_url=job.webhook_url
             )
-            logger.info(f"Job失败Webhook发送结果: job_id={job_id}, result={webhook_result}")
+            logger.info(f"Job failure webhook result: job_id={job_id}, result={webhook_result}")
         
         # 发送邮件（如果需要）
         try:

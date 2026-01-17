@@ -8,9 +8,10 @@ from urllib.parse import urljoin
 import aiohttp
 import requests
 from botocore.exceptions import ClientError
-from fastapi import HTTPException, UploadFile
+from fastapi import UploadFile
 
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import StorageServiceException, NotFoundException, KnowhereException
 from shared.models.schemas.s3_file import FliesDownload
 
 
@@ -41,9 +42,15 @@ def s3_upload_file(file: UploadFile , prefix: str ):
         }
         return content
 
+    except KnowhereException:
+        raise
     except Exception as e:
         # 捕获存储上传错误
-        raise HTTPException(status_code=500, detail=f"存储上传失败: {e}")
+        raise StorageServiceException(
+            internal_message=f"存储上传失败: {str(e)}",
+            operation="upload",
+            original_exception=e
+        )
 
 def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, filename: str = "parsed.zip", headers: Optional[dict] = None,
         timeout: int = None, chunk_size: int = None, keep_exts: tuple[str, ...] = (".md", ".json"), clean_empty_dirs: bool = True):
@@ -109,7 +116,11 @@ def s3_get_download_url(file_key: str, expires_in: int = 3600):
 
     except ClientError as e:
         # 如果文件不存在，boto3 不会立即报错，但生成的链接访问时会404
-        raise HTTPException(status_code=404,detail=f"无法生成URL。检查文件是否正确或S3配置是否有效: {e}")
+        raise NotFoundException(
+            resource="File",
+            resource_id=file_key,
+            internal_message=f"无法生成URL。检查文件是否正确或S3配置是否有效: {str(e)}"
+        )
 
 def get_url_file(path):
     file_sig = s3_get_download_url(path, expires_in=3600)
@@ -168,8 +179,16 @@ async def download_and_upload_image(img_url: str, prefix: str="images/", temp_st
         os.remove(local_file_path)
         return result
 
+    except KnowhereException:
+        if local_file_path.exists():
+            os.remove(local_file_path)
+        raise
     except Exception as e:
         # 确保即使出错也删除本地文件
         if local_file_path.exists():
             os.remove(local_file_path)
-        raise HTTPException(status_code=500, detail=f"下载并上传图片失败: {e}")
+        raise StorageServiceException(
+            internal_message=f"下载并上传图片失败: {str(e)}",
+            operation="download_and_upload",
+            original_exception=e
+        )

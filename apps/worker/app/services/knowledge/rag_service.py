@@ -17,6 +17,7 @@ from loguru import logger
 from pylab import mpl
 from rank_bm25 import BM25Okapi
 from sentence_transformers import util
+from shared.core.exceptions.domain_exceptions import ValidationException, LLMServiceException, WorkerHandlingException
 
 plt.rcParams['font.sans-serif'] = 'SimHei'
 mpl.rcParams['font.sans-serif'] = ['SimHei']
@@ -143,9 +144,8 @@ async def find_closest(texts, text_vectors, q_vec, topk, msg=None, add_identifie
         
     except Exception as e:
         logger.error(f"相似度搜索过程中发生异常: {str(e)}")
-        logger.error(f"异常类型: {type(e).__name__}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise e
+        raise WorkerHandlingException(original_exception=e)
 
 def merge_paths_soft(zips_pa, zips_con, con_weight=3):
     """
@@ -196,9 +196,8 @@ def merge_paths_soft(zips_pa, zips_con, con_weight=3):
         
     except Exception as e:
         logger.error(f"合并路径得分过程中发生异常: {str(e)}")
-        logger.error(f"异常类型: {type(e).__name__}")
         logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise e
+        raise WorkerHandlingException(original_exception=e)
 
 async def rerank_(rerank_txt, msg, paths4rank, keep_one=False):
     logger.debug(f"开始重新排序，路径数量: {len(paths4rank)}, 保留一个: {keep_one}")
@@ -246,9 +245,10 @@ async def rerank_(rerank_txt, msg, paths4rank, keep_one=False):
         
     except Exception as e:
         logger.error(f"重新排序过程中发生异常: {str(e)}")
-        logger.error(f"异常类型: {type(e).__name__}")
-        logger.error(f"异常堆栈: {traceback.format_exc()}")
-        raise e
+        raise LLMServiceException(
+            internal_message=f"Rerank service failed: {str(e)}",
+            original_exception=e
+        )
 
 def vectorize_texts(texts, encoder_=None, use_tensor=False, client=None):
     logger.debug(f"开始向量化处理，文本数量: {len(texts) if texts else 0}")
@@ -298,7 +298,11 @@ def qwen_embeddings(client, texts, batch_size=10):
     
     if client is None:
         logger.error("Qwen客户端为None，无法进行向量化")
-        raise ValueError("Qwen客户端未初始化")
+    if client is None:
+        logger.error("Qwen客户端为None，无法进行向量化")
+        raise WorkerHandlingException(
+            internal_message="Client cannot be None in qwen_embeddings"
+        )
     
     all_embeddings = []
     total_batches = math.ceil(len(texts) / batch_size)
@@ -321,8 +325,10 @@ def qwen_embeddings(client, texts, batch_size=10):
             logger.debug(f"第 {batch_num} 批次处理成功，获得 {len(embeddings)} 个向量")
         except Exception as e:
             logger.error(f"第 {batch_num} 批次处理失败: {str(e)}")
-            logger.error(f"批次内容预览: {batch[:2] if len(batch) > 2 else batch}")
-            raise e
+            raise LLMServiceException(
+                internal_message=f"Embedding service failed: {str(e)}",
+                original_exception=e
+            )
     
     result = np.array(all_embeddings, dtype=np.float32)
     logger.debug(f"Qwen向量化完成，总向量数: {len(result)}, 向量维度: {result.shape[1] if len(result) > 0 else 0}")

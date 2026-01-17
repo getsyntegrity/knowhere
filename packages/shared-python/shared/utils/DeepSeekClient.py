@@ -4,6 +4,7 @@ import time
 import httpx
 
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import LLMServiceException, KnowhereException
 from shared.services.redis import RedisService, RedisServiceFactory
 from loguru import logger
 
@@ -107,7 +108,10 @@ class DeepSeekRedisStreamClient:
 
             choices = data.get("choices", [])
             if not choices:
-                raise Exception("AI返回结果为空")
+                raise LLMServiceException(
+                    internal_message="AI returned empty result",
+                    provider="deepseek"
+                )
 
             message = choices[0].get("message", {})
             content = message.get("content", "")
@@ -131,11 +135,24 @@ class DeepSeekRedisStreamClient:
             conversation_state["status"] = "failed"
             await self.update_conversation_state(conversation_state)
             logger.error(f"API Error Response: {e.response.text}")
-            raise Exception(f"API请求失败: {str(e)}") from e
+            raise LLMServiceException(
+                internal_message=f"API request failed: {str(e)}",
+                provider="deepseek",
+                status_code=e.response.status_code,
+                original_exception=e
+            )
+        except KnowhereException:
+            conversation_state["status"] = "failed"
+            await self.update_conversation_state(conversation_state)
+            raise
         except Exception as e:
             conversation_state["status"] = "failed"
             await self.update_conversation_state(conversation_state)
-            raise Exception(f"处理请求时发生未知错误: {str(e)}") from e
+            raise LLMServiceException(
+                internal_message=f"Unexpected error during request: {str(e)}",
+                provider="deepseek",
+                original_exception=e
+            )
 
     async def reset_conversation(self, conversation_id="default"):
         key = f"deepseek:{conversation_id}"

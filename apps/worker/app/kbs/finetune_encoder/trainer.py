@@ -1,5 +1,6 @@
 from sentence_transformers import SentenceTransformer, models
 from transformers.trainer import *
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 def save_ckpt_for_sentence_transformers(ckpt_dir, pooling_mode: str = 'cls', normlized: bool=True):
@@ -21,9 +22,9 @@ class BiTrainer(Trainer):
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
         if not hasattr(self.model, 'save'):
-            raise NotImplementedError(
-                f'MODEL {self.model.__class__.__name__} '
-                f'does not support save interface')
+            raise WorkerHandlingException(
+                internal_message=f'MODEL {self.model.__class__.__name__} does not support save interface'
+            )
         else:
             self.model.save(output_dir)
         if self.tokenizer is not None and self.is_world_process_zero():

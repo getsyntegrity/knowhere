@@ -46,9 +46,10 @@ class Job(Base):
     webhook_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     webhook_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
-    # 元数据和错误信息
-    job_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # JSON存储
+    # Metadata and error information
+    job_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # JSON storage
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Canonical error code (e.g., INVALID_ARGUMENT, INTERNAL_ERROR)
     
     # 版本控制（乐观锁）
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

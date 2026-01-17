@@ -12,8 +12,9 @@ from shared.models.schemas.oauth import (AppleLoginRequest, GitHubLoginRequest,
 from app.services.auth.apple_auth_service import AppleAuthService
 from app.services.auth.github_auth_service import GitHubAuthService
 from app.services.auth.google_auth_service import GoogleAuthService
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi_users import FastAPIUsers
+from shared.core.exceptions.domain_exceptions import AuthException, SystemSettingMissingException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["OAuth Authentication"])
@@ -32,25 +33,23 @@ async def google_login(
     
     # 检查是否启用Google OAuth
     if not settings.is_google_oauth_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google OAuth未启用。请配置GOOGLE_CLIENT_ID和GOOGLE_CLIENT_SECRET。"
+        raise SystemSettingMissingException(
+            internal_message="Google OAuth is not enabled"
         )
     
     try:
         google_service = GoogleAuthService()
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e)
+        raise SystemSettingMissingException(
+            internal_message=str(e)
         )
     
     try:
         user = await google_service.authenticate_user(db, request.id_token)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Google认证失败"
+            raise AuthException(
+                user_message="Google认证失败",
+                internal_message="Google user not found"
             )
         
         # 生成JWT令牌 - 使用FastAPI Users的JWT策略
@@ -71,9 +70,9 @@ async def google_login(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Google登录失败: {str(e)}"
+        raise AuthException(
+            user_message=f"Google登录失败: {str(e)}",
+            internal_message=f"Google login failed: {str(e)}"
         )
 
 
@@ -87,25 +86,23 @@ async def apple_login(
     
     # 检查是否启用Apple OAuth
     if not settings.is_apple_oauth_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Apple OAuth未启用。请配置APPLE_CLIENT_ID和APPLE_CLIENT_SECRET。"
+        raise SystemSettingMissingException(
+            internal_message="Apple OAuth is not enabled"
         )
     
     try:
         apple_service = AppleAuthService()
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e)
+        raise SystemSettingMissingException(
+            internal_message=str(e)
         )
     
     try:
         user = await apple_service.authenticate_user(db, request.id_token)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Apple认证失败"
+            raise AuthException(
+                user_message="Apple认证失败",
+                internal_message="Apple user not found"
             )
         
         # 生成JWT令牌 - 使用FastAPI Users的JWT策略
@@ -126,9 +123,9 @@ async def apple_login(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Apple登录失败: {str(e)}"
+        raise AuthException(
+            user_message=f"Apple登录失败: {str(e)}",
+            internal_message=f"Apple login failed: {str(e)}"
         )
 
 
@@ -142,25 +139,23 @@ async def github_login(
     
     # 检查是否启用GitHub OAuth
     if not settings.is_github_oauth_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="GitHub OAuth未启用。请配置GITHUB_CLIENT_ID和GITHUB_CLIENT_SECRET。"
+        raise SystemSettingMissingException(
+            internal_message="GitHub OAuth is not enabled"
         )
     
     try:
         github_service = GitHubAuthService()
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e)
+        raise SystemSettingMissingException(
+            internal_message=str(e)
         )
     
     try:
         user = await github_service.authenticate_user(db, request.code)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="GitHub认证失败"
+            raise AuthException(
+                user_message="GitHub认证失败",
+                internal_message="GitHub user not found"
             )
         
         # 生成JWT令牌 - 使用FastAPI Users的JWT策略
@@ -181,7 +176,7 @@ async def github_login(
         )
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"GitHub登录失败: {str(e)}"
+        raise AuthException(
+            user_message=f"GitHub登录失败: {str(e)}",
+            internal_message=f"GitHub login failed: {str(e)}"
         )

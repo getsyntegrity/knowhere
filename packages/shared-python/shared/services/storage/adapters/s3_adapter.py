@@ -7,6 +7,7 @@ import boto3
 from botocore.exceptions import ClientError
 from loguru import logger
 
+from shared.core.exceptions.domain_exceptions import StorageServiceException
 from shared.services.storage.storage_adapter import StorageAdapter
 
 
@@ -40,8 +41,12 @@ class S3StorageAdapter(StorageAdapter):
                 "status": "success"
             }
         except ClientError as e:
-            logger.error(f"S3上传失败: {e}")
-            raise
+            logger.error(f"S3 upload failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"S3 upload failed: {str(e)}",
+                operation="upload_file",
+                original_exception=e
+            )
     
     def upload_fileobj(self, file_obj: BinaryIO, key: str, bucket: Optional[str] = None,
                       content_type: Optional[str] = None) -> Dict[str, Any]:
@@ -65,8 +70,12 @@ class S3StorageAdapter(StorageAdapter):
                 "status": "success"
             }
         except ClientError as e:
-            logger.error(f"S3上传文件对象失败: {e}")
-            raise
+            logger.error(f"S3 upload file object failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"S3 upload file object failed: {str(e)}",
+                operation="upload_fileobj",
+                original_exception=e
+            )
     
     def download_file(self, key: str, local_path: str, bucket: Optional[str] = None) -> str:
         """从S3下载文件到本地"""
@@ -76,8 +85,12 @@ class S3StorageAdapter(StorageAdapter):
             logger.debug(f"S3下载成功: {bucket_name}/{key} -> {local_path}")
             return local_path
         except ClientError as e:
-            logger.error(f"S3下载失败: {e}")
-            raise
+            logger.error(f"S3 download failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"S3 download failed: {str(e)}",
+                operation="download_file",
+                original_exception=e
+            )
     
     def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
         """从S3下载文件对象"""
@@ -86,8 +99,12 @@ class S3StorageAdapter(StorageAdapter):
             response = self.s3_client.get_object(Bucket=bucket_name, Key=key)
             return response['Body'].read()
         except ClientError as e:
-            logger.error(f"S3下载文件对象失败: {e}")
-            raise
+            logger.error(f"S3 download file object failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"S3 download file object failed: {str(e)}",
+                operation="download_fileobj",
+                original_exception=e
+            )
     
     def delete_object(self, key: str, bucket: Optional[str] = None) -> bool:
         """删除S3中的对象"""
@@ -142,8 +159,12 @@ class S3StorageAdapter(StorageAdapter):
             logger.debug(f"S3生成预签名URL成功: {key}")
             return url
         except ClientError as e:
-            logger.error(f"S3生成预签名URL失败: {e}")
-            raise
+            logger.error(f"S3 generate presigned URL failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"S3 generate presigned URL failed: {str(e)}",
+                operation="generate_presigned_url",
+                original_exception=e
+            )
     
     def exists(self, key: str, bucket: Optional[str] = None) -> bool:
         """检查S3中的对象是否存在"""
@@ -154,7 +175,11 @@ class S3StorageAdapter(StorageAdapter):
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
                 return False
-            raise
+            raise StorageServiceException(
+                internal_message=f"S3 check object exists failed: {str(e)}",
+                operation="exists",
+                original_exception=e
+            )
     
     def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:
         """获取S3对象大小"""
@@ -165,6 +190,10 @@ class S3StorageAdapter(StorageAdapter):
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
                 return None
-            logger.error(f"S3获取对象大小失败: {e}")
-            raise
+            logger.error(f"S3 get object size failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"S3 get object size failed: {str(e)}",
+                operation="get_object_size",
+                original_exception=e
+            )
 

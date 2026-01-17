@@ -6,9 +6,8 @@ from typing import Any, Dict, List
 
 import torch
 from tqdm import tqdm
-from transformers import (AutoModel, AutoModelForCausalLM,
-                          AutoModelForSequenceClassification,
-                          is_torch_npu_available)
+from transformers.utils import is_torch_npu_available
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 def load_llm(model_name:str, trust_remote_code:bool):
@@ -34,7 +33,9 @@ def load_model(model_name:str, model_type:str, trust_remote_code:bool=True):
     elif model_type == 'reranker':
         model = load_reranker(model_name, trust_remote_code=trust_remote_code)
     else:
-        raise NotImplementedError(f"not support this model_type: {model_type}")
+        raise WorkerHandlingException(
+            internal_message=f"Model type {model_type} not supported"
+        )
     return model
 
 

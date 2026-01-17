@@ -52,19 +52,17 @@ AsyncSessionFactory = sessionmaker(
 )
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """获取数据库会话，包含完善的错误处理"""
-    session = None
-    try:
-        session = AsyncSessionFactory()
-        yield session
-    except Exception as e:
-        if session:
+    """
+    获取数据库会话 (SQLAlchemy 2.0+ async with pattern)
+    
+    Uses AsyncSession as context manager for automatic cleanup.
+    """
+    async with AsyncSessionFactory() as session:
+        try:
+            yield session
+        except Exception:
             await session.rollback()
-        logger.error(f"Database session error: {e}")
-        raise
-    finally:
-        if session:
-            await session.close()
+            raise
 # 创建一个App上下文管理器，用于在无法传入db参数时执行数据库操作
 @asynccontextmanager
 async def get_db_context():

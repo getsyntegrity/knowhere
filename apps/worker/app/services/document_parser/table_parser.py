@@ -26,6 +26,10 @@ from bs4 import BeautifulSoup
 from docx.table import Table as DocxTable
 from pandasql import sqldf
 
+from loguru import logger
+from shared.core.exceptions.domain_exceptions import TableParsingException
+from shared.core.exceptions.knowhere_exception import KnowhereException
+
 g_tbl_lock = threading.Lock()
 
 def identify_tables(line):
@@ -99,7 +103,11 @@ def tb_htmlstr_to_df(html_str):
     soup = BeautifulSoup(html_str, "html.parser")
     table = soup.find("table")
     if not table:
-        raise ValueError("No <table> found in the HTML string")
+        raise TableParsingException(
+            user_message="No table structure found in the document",
+            reason="INVALID_FORMAT",
+            internal_message="No <table> found in the HTML string"
+        )
     nested_list = parse_nested_htmltb(table)
     try:
         df = pd.DataFrame(nested_list[1:], columns=nested_list[0])
@@ -206,11 +214,11 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
                 header_id = header_res['answer'][-1]
                 header_rows = list(range(header_id+1))
             except Exception as e:
-                print(f"⚠️ 可能无表头被识别到  {e}")
+                logger.warning(f"⚠️ 可能无表头被识别到  {e}")
                 raise
 
         except Exception as e:
-            print(f"❌智能解析表头失败 原因 {e}\t采用传统模式解析...")
+            logger.warning(f"❌智能解析表头失败 原因 {e}\t采用传统模式解析...")
             header_rows = parse_headers_nonsmart(df_temp)
     else:
         header_rows = parse_headers_nonsmart(df_temp)
@@ -414,7 +422,7 @@ async def table_scope_analyze(query, tb_path, paras, num_row=7):
         tb_context = sqldf(tb_query, env={'df': tb_df})
         tb_context = df2html(tb_context)
     except Exception as e:
-        print(f'自动生成表格查询失败 原因：{e}')
+        logger.warning(f'自动生成表格查询失败 原因：{e}')
         tb_context = None
     return tb_context
 
@@ -478,9 +486,17 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
                 tb_path = split_char.join(tb_path.split(os.sep))
                 df_list.append([tb_bottom_content, tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp])
 
-            except Exception as e:
-                print(f'parse table fails, because {e}')
+            except KnowhereException:
                 raise
+            except Exception as e:
+                logger.error(f'parse table fails, because {e}')
+                raise TableParsingException(
+                    user_message="Failed to parse Excel table content",
+                    reason="TABLE_PROCESSING_FAILED",
+                    file_type="xlsx", 
+                    internal_message=str(e),
+                    original_exception=e
+                )
 
     all_df_cols = (settings.ALL_DF_COLS or "path,content,summary,type,addtime").split(',')
     table_df = pd.DataFrame(df_list, columns=all_df_cols)

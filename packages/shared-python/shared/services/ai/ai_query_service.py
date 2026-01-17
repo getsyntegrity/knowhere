@@ -9,6 +9,8 @@ from typing import Any, Optional
 from celery import current_task
 from loguru import logger
 
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException, KnowhereException
+
 class AIQueryService:
     """AI查询服务"""
 
@@ -91,11 +93,18 @@ class AIQueryService:
 
             if result.get("status") == "success":
                 return result.get("result", {})
-            raise Exception(f"Celery任务失败: {result.get('error', '未知错误')}")
+            raise WorkerHandlingException(
+                internal_message=f"Celery任务失败: {result.get('error', '未知错误')}"
+            )
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"Celery AI查询失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"Celery AI查询失败: {str(e)}",
+                original_exception=e
+            )
 
     async def _query_with_arq(
         self,
@@ -113,7 +122,10 @@ class AIQueryService:
 
         except Exception as e:
             logger.error(f"ARQ AI查询失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"ARQ AI查询失败: {str(e)}",
+                original_exception=e
+            )
 
     @staticmethod
     def _running_inside_celery_worker() -> bool:
@@ -160,9 +172,15 @@ class AIQueryService:
                 },
             )
             return result
-        except Exception as exc:  # pragma: no cover - redis failure cases
+        except KnowhereException:
             await task_service.mark_task_failed(user_id, str(exc))
             raise
+        except Exception as exc:  # pragma: no cover - redis failure cases
+            await task_service.mark_task_failed(user_id, str(exc))
+            raise WorkerHandlingException(
+                internal_message=f"AI查询执行失败: {str(exc)}",
+                original_exception=exc
+            )
 
 
 # 全局AI查询服务实例

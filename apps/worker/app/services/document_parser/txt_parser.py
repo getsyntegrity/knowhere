@@ -150,7 +150,7 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
             return resp
 
     except Exception as e:
-        print(f"❌ 摘要或提取关键词失败 将返回空字符串 因为 {e}")
+        logger.error(f"❌ 摘要或提取关键词失败 将返回空字符串 因为 {e}")
         return ""
 
 async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key='content', summary_len=None):

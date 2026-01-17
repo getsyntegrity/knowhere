@@ -9,6 +9,7 @@ from LM_Cocktail import mix_models
 from modeling import BiEncoderModel
 from trainer import BiTrainer
 from transformers import AutoConfig, AutoTokenizer, HfArgumentParser, set_seed
+from shared.core.exceptions.domain_exceptions import FileSystemException
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,10 @@ def main():
             and training_args.do_train
             and not training_args.overwrite_output_dir
     ):
-        raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome."
+        raise FileSystemException(
+            internal_message=f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome.",
+            path=training_args.output_dir,
+            operation="check_output_dir"
         )
 
     # Setup logging

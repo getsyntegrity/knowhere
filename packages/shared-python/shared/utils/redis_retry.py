@@ -52,8 +52,11 @@ class RedisRetry:
                 last_exception = e
                 
                 if attempt == max_retries:
-                    logger.error(f"Redis操作失败，已重试{max_retries}次: {e}")
-                    raise RedisOperationError(f"Redis操作失败，已重试{max_retries}次: {e}")
+                    logger.error(f"Redis operation failed after {max_retries} retries: {e}")
+                    raise RedisOperationError(
+                        internal_message=f"Redis operation failed after {max_retries} retries: {str(e)}",
+                        original_exception=e
+                    )
                 
                 # 计算延迟时间
                 delay = min(base_delay * (exponential_base ** attempt), max_delay)
@@ -62,11 +65,14 @@ class RedisRetry:
                 if jitter:
                     delay *= (0.5 + random.random() * 0.5)
                 
-                logger.warning(f"Redis操作失败，{delay:.2f}秒后重试 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
+                logger.warning(f"Redis operation failed, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries + 1}): {e}")
                 await asyncio.sleep(delay)
         
-        # 理论上不会到达这里
-        raise RedisOperationError(f"Redis操作失败: {last_exception}")
+        # Should not reach here
+        raise RedisOperationError(
+            internal_message=f"Redis operation failed: {str(last_exception)}",
+            original_exception=last_exception
+        )
     
     @staticmethod
     async def with_circuit_breaker(
@@ -117,7 +123,7 @@ class RedisHealthChecker:
             self._last_check = current_time
             return True
         except Exception as e:
-            logger.error(f"Redis健康检查失败: {e}")
+            logger.error(f"Redis health check failed: {e}")
             self._is_healthy = False
             self._last_check = current_time
             return False

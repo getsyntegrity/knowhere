@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import ValidationException, UnavailableException
 
 
 class UrlFileReader:
@@ -20,7 +21,10 @@ class UrlFileReader:
         :param url: 文件的完整 URL。
         """
         if not url:
-            raise ValueError("URL 不能为空")
+            raise ValidationException(
+                user_message="URL cannot be empty",
+                violations=[{"field": "url", "description": "URL is required"}]
+            )
         self.url = url
         self.file_type = self._get_file_type()
 
@@ -46,7 +50,11 @@ class UrlFileReader:
             # 返回二进制内容，因为 Excel 和 Docx 是二进制文件
             return response.content
         except requests.exceptions.RequestException as e:
-            raise ConnectionError(f"从 URL 获取内容失败: {e}") from e
+            raise UnavailableException(
+                internal_message=f"Failed to fetch content from URL: {str(e)}",
+                retry_after=30,
+                original_exception=e
+            )
 
     def _read_text(self, content: bytes):
         """以utf8读取并返回纯文本内容。"""
@@ -72,8 +80,10 @@ class UrlFileReader:
         :return: 解析后的文件内容 (str, pandas.DataFrame, etc.)
         """
         if self.file_type not in self._readers:
-            raise ValueError(f"不支持的文件类型: '{self.file_type}'. "
-                             f"支持的类型: {list(self._readers.keys())}")
+            raise ValidationException(
+                user_message=f"Unsupported file type: '{self.file_type}'. Supported types: {list(self._readers.keys())}",
+                violations=[{"field": "file_type", "description": f"'{self.file_type}' is not supported"}]
+            )
 
         # 1. 获取文件内容
         content_bytes = self._fetch_content()

@@ -8,8 +8,9 @@ from shared.models.database.user import User
 from shared.models.schemas.user import UserResponse, UserUpdateRequest
 from app.services.billing.credits_service import CreditsService
 from app.services.user.user_service import UserService
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 router = APIRouter()
 
@@ -28,9 +29,8 @@ async def get_profile(
         user_data = await user_service.get_user_profile(db, current_user.id)
         return UserResponse.model_validate(user_data)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取用户资料失败: {str(e)}"
+        raise WorkerHandlingException(
+            internal_message=f"获取用户资料失败: {str(e)}"
         )
 
 
@@ -47,9 +47,8 @@ async def update_profile(
         )
         return UserResponse.model_validate(updated_user)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"更新用户资料失败: {str(e)}"
+        raise WorkerHandlingException(
+            internal_message=f"更新用户资料失败: {str(e)}"
         )
 
 
@@ -63,9 +62,8 @@ async def get_credits_balance(
         balance = await credits_service.get_balance(db, current_user.id)
         return {"user_id": current_user.id, "credits_balance": balance}
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取Credits余额失败: {str(e)}"
+        raise WorkerHandlingException(
+            internal_message=f"获取Credits余额失败: {str(e)}"
         )
 
 
@@ -88,9 +86,8 @@ async def get_credits_transactions(
             "offset": offset
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取交易记录失败: {str(e)}"
+        raise WorkerHandlingException(
+            internal_message=f"获取交易记录失败: {str(e)}"
         )
 
 
@@ -105,12 +102,10 @@ async def delete_account(
         if success:
             return {"message": "账户删除成功"}
         else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="删除账户失败"
+            raise WorkerHandlingException(
+                internal_message="删除账户失败"
             )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除账户失败: {str(e)}"
+        raise WorkerHandlingException(
+            internal_message=f"删除账户失败: {str(e)}"
         )

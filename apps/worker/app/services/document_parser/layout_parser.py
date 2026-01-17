@@ -22,7 +22,9 @@ from shared.services.ai import ai_query_service
 # TaskRedis依赖已移除，使用Redis直接追踪
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
+from shared.services.ai.response_process_service import eval_response
 from loguru import logger
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 
 def build_level_mapping(df, origin_lvls, mode="max"):
@@ -45,7 +47,9 @@ def build_level_mapping(df, origin_lvls, mode="max"):
         elif mode == "freq":
             mapped_lvl = counts.most_common(1)[0][0]
         else:
-            raise "wrong input mode"
+            raise WorkerHandlingException(
+                internal_message=f"wrong input mode: {mode}. Must be 'max' or 'freq'"
+            )
 
         processed_mapping[reason] = {
             "lvls": lvls,
