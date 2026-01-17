@@ -38,7 +38,7 @@ class CreditsMiddleware:
             balance = await self.credits_service.check_balance(session, str(user.id))
             if balance < settings.CREDITS_PER_API_CALL:
                 raise InsufficientCreditsException(
-                    user_message=f"Credits余额不足，需要 {settings.CREDITS_PER_API_CALL} Credits，当前余额 {balance}",
+                    user_message=f"Insufficient Credits, need {settings.CREDITS_PER_API_CALL} Credits, current balance {balance}",
                     required_credits=settings.CREDITS_PER_API_CALL,
                     current_balance=balance
                 )

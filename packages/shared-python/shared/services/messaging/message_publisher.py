@@ -49,15 +49,14 @@ class MessagePublisher:
             return
         
         try:
-            logger.info("开始初始化消息发布器")
-            logger.info("步骤1: 获取通道")
+            logger.debug("步骤1: 获取通道")
             # get_channel()内部已经有超时处理，这里不需要再设置超时
             # connect()有30秒超时，channel创建有5秒超时
             channel = await self._connection_manager.get_channel()
-            logger.info(f"通道获取成功: channel_closed={channel.is_closed}")
+            logger.debug(f"通道获取成功: channel_closed={channel.is_closed}")
             
             # 声明交换器
-            logger.info("步骤2: 声明交换器")
+            logger.debug("步骤2: 声明交换器")
             exchange_config = get_exchange_config()
             self._exchange = await asyncio.wait_for(
                 channel.declare_exchange(
@@ -68,10 +67,10 @@ class MessagePublisher:
                 ),
                 timeout=10.0
             )
-            logger.info(f"交换器声明成功: exchange={exchange_config['name']}")
+            logger.debug(f"交换器声明成功: exchange={exchange_config['name']}")
             
             self._initialized = True
-            logger.info("消息发布器已初始化")
+            logger.debug("消息发布器已初始化")
             
         except asyncio.TimeoutError as e:
             logger.error(f"初始化消息发布器超时: {e}")
@@ -100,27 +99,27 @@ class MessagePublisher:
             bool: 是否发布成功
         """
         try:
-            logger.info(f"开始发布消息: type={message.message_type}, job_id={message.job_id}, routing_key={routing_key}, queue={queue_name}")
+            logger.debug(f"开始发布消息: type={message.message_type}, job_id={message.job_id}, routing_key={routing_key}, queue={queue_name}")
             
-            logger.info(f"步骤1: 确保初始化 - job_id={message.job_id}")
+            logger.debug(f"步骤1: 确保初始化 - job_id={message.job_id}")
             # _ensure_initialized()内部已经有超时处理（connect 30秒，channel 5秒，exchange 10秒）
             # 总超时时间应该足够，这里设置35秒以确保连接建立和初始化完成
             await asyncio.wait_for(self._ensure_initialized(), timeout=35.0)
-            logger.info(f"初始化完成 - job_id={message.job_id}")
+            logger.debug(f"初始化完成 - job_id={message.job_id}")
             
             # 如果没有指定优先级，根据消息类型自动设置
             if priority is None:
                 priority = messaging_config.get_message_priority(message.message_type)
-            logger.info(f"消息优先级: job_id={message.job_id}, priority={priority}")
+            logger.debug(f"消息优先级: job_id={message.job_id}, priority={priority}")
             
             # 确保队列存在
-            logger.info(f"步骤2: 获取通道 - job_id={message.job_id}")
+            logger.debug(f"步骤2: 获取通道 - job_id={message.job_id}")
             # get_channel()内部已经有超时处理，这里不需要再设置超时
             channel = await self._connection_manager.get_channel()
-            logger.info(f"通道获取成功 - job_id={message.job_id}, channel_closed={channel.is_closed}")
+            logger.debug(f"通道获取成功 - job_id={message.job_id}, channel_closed={channel.is_closed}")
             
             queue_config = get_queue_config(queue_name)
-            logger.info(f"步骤3: 声明队列 - job_id={message.job_id}, queue={queue_name}")
+            logger.debug(f"步骤3: 声明队列 - job_id={message.job_id}, queue={queue_name}")
             queue = await asyncio.wait_for(
                 channel.declare_queue(
                 queue_name,
@@ -131,21 +130,21 @@ class MessagePublisher:
                 ),
                 timeout=10.0
             )
-            logger.info(f"队列声明成功 - job_id={message.job_id}, queue={queue_name}")
+            logger.debug(f"队列声明成功 - job_id={message.job_id}, queue={queue_name}")
             
             # 绑定队列到交换器
-            logger.info(f"步骤4: 绑定队列到交换器 - job_id={message.job_id}, routing_key={routing_key}")
+            logger.debug(f"步骤4: 绑定队列到交换器 - job_id={message.job_id}, routing_key={routing_key}")
             await asyncio.wait_for(
                 queue.bind(self._exchange, routing_key=routing_key),
                 timeout=10.0
             )
-            logger.info(f"队列绑定成功 - job_id={message.job_id}")
+            logger.debug(f"队列绑定成功 - job_id={message.job_id}")
             
             # 序列化消息
-            logger.info(f"步骤5: 序列化消息 - job_id={message.job_id}")
+            logger.debug(f"步骤5: 序列化消息 - job_id={message.job_id}")
             message_dict = message.model_dump(mode='json')
             message_body = json.dumps(message_dict).encode('utf-8')
-            logger.info(f"消息序列化完成 - job_id={message.job_id}, body_size={len(message_body)}")
+            logger.debug(f"消息序列化完成 - job_id={message.job_id}, body_size={len(message_body)}")
             
             # 获取消息属性
             message_props = get_message_properties(priority=priority)
@@ -158,7 +157,7 @@ class MessagePublisher:
                 delivery_mode = DeliveryMode.NOT_PERSISTENT
             
             # 发布消息
-            logger.info(f"步骤6: 发布消息到交换器 - job_id={message.job_id}, routing_key={routing_key}")
+            logger.debug(f"步骤6: 发布消息到交换器 - job_id={message.job_id}, routing_key={routing_key}")
             await asyncio.wait_for(
                 self._exchange.publish(
                 aio_pika.Message(
@@ -171,7 +170,7 @@ class MessagePublisher:
                 ),
                 timeout=10.0
             )
-            logger.info(f"消息发布成功: {message.message_type}, job_id={message.job_id}, routing_key={routing_key}")
+            logger.debug(f"消息发布成功: {message.message_type}, job_id={message.job_id}, routing_key={routing_key}")
             
             # 记录监控指标
             message_monitoring.record_message_published(
