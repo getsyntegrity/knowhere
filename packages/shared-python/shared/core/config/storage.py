@@ -56,15 +56,10 @@ class StorageConfig(BaseModel):
         if not os.path.isabs(self.USERS_DATA_PATH):
             raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {self.USERS_DATA_PATH}")
         
-        # 检查目录是否存在，如果不存在则尝试创建
-        try:
-            os.makedirs(self.USERS_DATA_PATH, exist_ok=True)
-        except (OSError, PermissionError) as e:
-            raise ValueError(f"USERS_DATA_PATH 目录无法创建或访问: {self.USERS_DATA_PATH}, 错误: {e}")
-        
-        # 检查目录是否可写
-        if not os.access(self.USERS_DATA_PATH, os.W_OK):
-            raise ValueError(f"USERS_DATA_PATH 目录不可写: {self.USERS_DATA_PATH}")
+        # 只在目录已存在时检查可写性（不自动创建）
+        if os.path.exists(self.USERS_DATA_PATH):
+            if not os.access(self.USERS_DATA_PATH, os.W_OK):
+                raise ValueError(f"USERS_DATA_PATH 目录不可写: {self.USERS_DATA_PATH}")
         
         return self
     

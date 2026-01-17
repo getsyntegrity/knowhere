@@ -9,6 +9,7 @@ from loguru import logger
 
 # document_parser imports
 from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
+from app.services.document_parser.fragment_parser import parse_fragment
 from app.services.document_parser.image_parser import parse_image
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
@@ -57,7 +58,7 @@ async def checkerboard_inject_parse(
     logger.debug(f"file_full_path: {file_full_path}")
     
     # ========== 路径处理 ==========
-    split_char = settings.SPLIT_CHAR or ";"
+    split_char = settings.SPLIT_CHAR or "/"
     kb_dir = kwargs.get('kb_dir', '默认目录')
     filename = path_handle(filename, mode="clean_single")
     
@@ -80,10 +81,14 @@ async def checkerboard_inject_parse(
     file_path_lower = file_full_path.lower()
     parsed_df = None
     
-    if '.txt' in file_path_lower or ".fragment" in file_path_lower:
-        logger.debug(f"file type is txt or fragment")
-        fragment_content = kwargs.get('fragment_content')
-        txt_lines = await parse_texts(file_path=file_full_path, fragment_content=fragment_content, baseurl=baseurl)
+    if ".fragment" in file_path_lower:
+        logger.debug("file type is fragment")
+        fragment_content = kwargs.get('fragment_content', '')
+        full_output_dir, relative_root, parsed_df = await parse_fragment(fragment_content, filename=filename, output_dir=output_dir, kb_dir=kb_dir, base_llm_paras=base_llm_paras)
+
+    elif '.txt' in file_path_lower:
+        logger.debug("file type is txt")
+        txt_lines = await parse_texts(file_path=file_full_path, baseurl=baseurl)
         parsed_df = await parse_md(full_output_dir, source_type='md', md_lines=txt_lines, base_llm_paras=base_llm_paras, relative_root=relative_root)
 
     elif ('.png' in file_path_lower or '.jpg' in file_path_lower or '.jpeg' in file_path_lower):
@@ -122,3 +127,4 @@ async def checkerboard_inject_parse(
     logger.debug(f"full_output_dir: {full_output_dir}")
     
     return full_output_dir, parsed_df
+

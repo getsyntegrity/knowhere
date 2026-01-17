@@ -154,7 +154,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
     os.makedirs(img_dir, exist_ok=True)
 
     # initialize vars
-    split_char = settings.SPLIT_CHAR or "-->"
+    split_char = settings.SPLIT_CHAR or "/"
     df_list = []
     path_stack = []  # sxjg: uses (heading, level) tuples
     inner_paths = []
@@ -179,12 +179,12 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
 
     time_stamp = get_str_time()
     for i, line in tqdm(enumerate(lines_with_heading), total=len(lines_with_heading), desc="Parsing md data..."):
-        if '<!--' in line and '-->' in line: # 注释信息
+        if '<!--' in line and '-->' in line:
             if 'page' in line or 'Slide number' in line: 
                 current_pg_num += 1
                 continue
 
-        last_context = find_surround_context(lines_with_heading, i) # 记录当前line的上下各一个非 image/table的line
+        last_context = find_surround_context(lines_with_heading, i) # record the previous and next line which is not table/image
         current_heading, current_heading_level = md_heading_match(line, as_is=False)
         if not current_heading_level==-1: # indicate a new path should be evaluated or added
             if not content.strip()=='': # record contents of the last path and reset content
@@ -206,13 +206,13 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
             # Use relative_root as prefix
             path_parts = [relative_root] if relative_root else []
             path_parts.extend(heading_names)
-            path = split_char.join(path_parts)
             inner_paths.append(split_char.join(heading_names))
+            path = split_char.join(path_parts) # path with relative root
 
         else: # no path change, remain in the same hierarchy
             # a. handle lines containing images
             img_name = path_handle(last_context[:10], mode="clean_single")
-            img_name = f"图-{str(img_count)}-{img_name}"
+            img_name = f"image-{str(img_count)}-{img_name}"
             imgs = await detect_summary_img_md(line, img_name, output_dir, mode=base_llm_paras['summary_image'])
 
             for img_path, img_summary in imgs:
@@ -237,9 +237,9 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
                 if i+1 >= len(lines_with_heading):
                     tb_bool_next = False
                 else:
-                    tb_bool_next, _, _ = identify_tables(lines_with_heading[i+1].strip()) # 可以用来做跨页表优化
+                    tb_bool_next, _, _ = identify_tables(lines_with_heading[i+1].strip()) #TODO can be used for cross-page table optimization
 
-                if not tb_bool_next or i==len(lines_with_heading)-1: # 如果是html形式下一行自然不是table_line
+                if not tb_bool_next or i==len(lines_with_heading)-1: # if it is html, the next line is not table_line
                     if form=='md':
                         cleaned_table_lines, error_lines = clean_md_table_lines(table_lines, start_line_num=i)
                         tb_str = '\n'.join(cleaned_table_lines)
@@ -257,7 +257,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
                         tb_summary = (last_context + " " + tb_name.strip()).strip()
                         tb_name = tb_name[:20]
 
-                    tb_name = path_handle(f"表{str(table_count)}-{tb_name}", mode="clean_single")
+                    tb_name = path_handle(f"table-{str(table_count)}-{tb_name}", mode="clean_single")
                     table_id = 'TABLE_' + gen_str_codes(tb_str) + '_TABLE'
                     table_kid = gen_str_codes(table_id + str(uuid.uuid4()))
                     tb_content = ('\n' + table_id + '\n' + tb_summary + '\n')

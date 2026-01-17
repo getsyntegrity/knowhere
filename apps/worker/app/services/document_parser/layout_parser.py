@@ -574,7 +574,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
 
 
 async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len=8192):
-    """使用LLM分析层级结构"""
+    """Apply LLM to analyze the hierarchy of headings"""
     level_html = df2html(df)
     ot_limit = int(len(level_html) * 1.2)
     ot_limit = min(ot_limit, max_len)
@@ -905,7 +905,7 @@ def outline_to_markdown(nodes, level=0, path=""):
     rows = []
     def traverse(node_list, level, path_prefix):
         for node in node_list:
-            split_char = settings.SPLIT_CHAR or "-->"
+            split_char = settings.SPLIT_CHAR or "/"
             current_path = f"{path_prefix} {split_char} {node['chapter']}" if path_prefix else node['chapter']
             rows.append({
                 "path": current_path,

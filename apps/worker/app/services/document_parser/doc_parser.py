@@ -75,9 +75,9 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
     if smart_summary:
         image_summary = await ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
         if image_summary is None:
-            image_summary = f"图像所在章节: {current_heading}\n图像上下文: {last_context}"
+            image_summary = f"Image Section: {current_heading}\nImage Context: {last_context}"
     else:
-        image_summary = f"图像所在章节: {current_heading}\n图像上下文: {last_context}"
+        image_summary = f"Image Section: {current_heading}\nImage Context: {last_context}"
 
     img_name = process_path_texts(f"图-{current_heading} {image_summary}", last=30) + str(img_count)
     img_path = os.path.join(img_dir, f'{img_name}{img_ext}')
@@ -85,7 +85,7 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
 
     img_id = 'IMAGE_' + gen_str_codes(image_summary) + '_IMAGE'
     img_kid = gen_str_codes(img_id + str(uuid.uuid4()))
-    img_bottom_content = img_id + '\n上图内容总结:\n' + image_summary + '\n'
+    img_bottom_content = img_id + '\nImage Summary:\n' + image_summary + '\n'
     # Use relative path for images (avoid absolute path in path column)
     img_path = f"images/{img_name}{img_ext}"
 
@@ -105,19 +105,19 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     except:
         last_context = ''
 
-    raw_tb_name = ' '.join([cell.text.strip() for cell in block.rows[0].cells]) if block.rows else f"表格{table_count}表头"
+    raw_tb_name = ' '.join([cell.text.strip() for cell in block.rows[0].cells]) if block.rows else f"Table_{table_count}_Header"
     tb_keywords = extract_tb_keywords(tb_html_str)
     if smart_summary:
         tb_summary = await extract_summary_keywords(tb_html_str, type_="summary")
         if tb_summary is None:
-            tb_summary = f"表格所在章节: {current_heading}\n表格上下文: {last_context}\n表头信息: {raw_tb_name}"
+            tb_summary = f"Table Section: {current_heading}\nTable Context: {last_context}\nHeader Info: {raw_tb_name}"
     else:
-        tb_summary = f"表格所在章节: {current_heading}\n表格上下文: {last_context}\n表头信息: {raw_tb_name}"
+        tb_summary = f"Table Section: {current_heading}\nTable Context: {last_context}\nHeader Info: {raw_tb_name}"
 
     tb_name = process_path_texts(f"表-{raw_tb_name} {tb_summary}", last=30) + str(table_count)
     table_id = 'TABLE_' + gen_str_codes(tb_html_str) + '_TABLE'
     table_kid = gen_str_codes(table_id + str(uuid.uuid4()))
-    tb_bottom_content = table_id + '\n上表内容总结:\n' + tb_summary + '\n'
+    tb_bottom_content = table_id + '\nTable Summary:\n' + tb_summary + '\n'
     tb_path = os.path.join(tb_dir, f'{tb_name}.html')
 
     soup = BeautifulSoup(tb_html_str, features='html.parser')
@@ -366,7 +366,7 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
             image_count += 1
             current_heading = last_heading_before_block
 
-        elif label == 'TABLE': #TODO 处理跨页表格
+        elif label == 'TABLE': # TODO: handle cross-page tables
             headings_stack, df_list = await handle_table(
                 df_list, block, tb_dir, headings_stack,
                 current_heading, table_count, llm_paras["summary_table"]
@@ -374,7 +374,7 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
             table_count += 1
             current_heading = last_heading_before_block
 
-        else: #TODO latex...
+        else: # TODO: handle latex, etc.
             pass
 
     # record training data
@@ -383,7 +383,7 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
     return {'content' : doc_structure}, df_list
 
 async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, relative_root=None):
-    split_char = settings.SPLIT_CHAR
+    split_char = settings.SPLIT_CHAR or "/"
     leaf_dics = get_leaf_dics(parsed_structure)
     leaf_dics = await postprocess_leaf_dics(leaf_dics, base_llm_paras)
 
@@ -413,7 +413,7 @@ async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras
                 [bottom_content, know_path, match_type, len(bottom_content), keywords, summary, know_id, bottom_tokens,
                  "", time_stamp])
         except Exception as e:
-            logger.debug(f"❌解析docx文档失败 因为{e}")
+            logger.debug(f"❌Failed to parse docx document: {e}")
             raise
 
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))

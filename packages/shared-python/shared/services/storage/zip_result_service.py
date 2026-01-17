@@ -229,8 +229,8 @@ class ZipResultService:
             # 获取 content
             content = chunk.get("text") or chunk.get("content", "")
 
-            # 清理 path（移除文件系统路径，只保留逻辑路径）
-            path = self._clean_path(chunk.get("path", ""))
+            # 直接使用原始 path，与 kb.csv 保持一致
+            path = chunk.get("path", "")
 
             # 获取或构建基础 metadata
             existing_metadata = chunk.get("metadata", {})
@@ -257,43 +257,34 @@ class ZipResultService:
             elif chunk_type == "image":
                 # 从 existing_metadata 或 image_files_map 获取图片信息
                 file_path = existing_metadata.get("file_path")
-                original_name = existing_metadata.get("original_name")
                 
                 if not file_path:
                     # 从 image_files_map 获取图片信息
                     img_info = image_files_map.get(chunk_id)
                     if img_info:
                         file_path = img_info["file_path"]
-                        original_name = img_info["original_name"]
                     else:
                         # 从path提取或使用默认值
-                        img_name = path.split("-->")[-1] if "-->" in path else f"image_{chunk_id}.jpg"
+                        img_name = path.split("/")[-1] if "/" in path else f"image_{chunk_id}.jpg"
                         file_path = f"images/{img_name}"
-                        original_name = img_name
                 
                 metadata["file_path"] = file_path
-                metadata["original_name"] = original_name
-                metadata["alt_text"] = metadata["summary"]
                 
             elif chunk_type == "table":
                 # 从 existing_metadata 或 table_files_map 获取表格信息
                 file_path = existing_metadata.get("file_path")
-                original_name = existing_metadata.get("original_name")
                 
                 if not file_path:
                     # 从 table_files_map 获取表格信息
                     tb_info = table_files_map.get(chunk_id)
                     if tb_info:
                         file_path = tb_info["file_path"]
-                        original_name = tb_info["original_name"]
                     else:
                         # 从path提取或使用默认值
-                        tbl_name = path.split("-->")[-1] if "-->" in path else f"table_{chunk_id}.html"
+                        tbl_name = path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"
                         file_path = f"tables/{tbl_name}"
-                        original_name = tbl_name
                 
                 metadata["file_path"] = file_path
-                metadata["original_name"] = original_name
                 metadata["table_type"] = existing_metadata.get("table_type")
 
             formatted_chunk = {
@@ -560,26 +551,24 @@ class ZipResultService:
         has_hierarchy: bool = False,
     ) -> Dict[str, Any]:
         """生成 manifest.json"""
-        # 准备 images 数组（移除内部字段）
+        # 准备 images 数组（只保留必要字段：id, file_path, size_bytes, format, width, height）
         images = []
         for img_info in image_files_info:
             images.append({
                 "id": img_info["id"],
                 "file_path": img_info["file_path"],
-                "original_name": img_info["original_name"],
                 "size_bytes": img_info["size_bytes"],
                 "format": img_info["format"],
                 "width": img_info.get("width"),
                 "height": img_info.get("height"),
             })
 
-        # 准备 tables 数组（移除内部字段）
+        # 准备 tables 数组（只保留必要字段：id, file_path, size_bytes, format）
         tables = []
         for table_info in table_files_info:
             tables.append({
                 "id": table_info["id"],
                 "file_path": table_info["file_path"],
-                "original_name": table_info["original_name"],
                 "size_bytes": table_info["size_bytes"],
                 "format": table_info["format"],
             })

@@ -38,7 +38,7 @@ def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
     if max_size is None:
         max_size = ProcessingConstants.IMG_MAX_SIZE
     if not path.exists():
-        logger.warning(f"找不到当前图片路径 {path}")
+        logger.warning(f"Image path not found: {path}")
         return None
 
     if cut:
@@ -90,7 +90,7 @@ async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images"
 
     if task == "summary-images":
         image_model = settings.IMAGE_MODEL or "gpt-4-vision-preview"
-    else: # 图像提问 和 OCR 使用更好的模型
+    else: # Image Q&A and OCR use better models
         image_model = settings.IMAGE_MODEL_MAX or "gpt-4-vision-preview"
 
     if len(urls_)>0:
@@ -122,11 +122,11 @@ async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images"
                 top_p=top_p
             )
             resp = resp.choices[0].message.content
-            logger.debug(f"图像理解响应: {resp}")
+            logger.debug(f"Image understanding response: {resp}")
             resp = eval_response(resp)
             return resp
         except Exception as e:
-            logger.error(f"理解图像内容失败 原因 {e} 返回结果\n{resp}")
+            logger.error(f"Failed to understand image content: {e}\nResponse: {resp}")
             return None
     else:
         return None
@@ -151,25 +151,25 @@ async def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     return imgs
 
 async def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm_paras=None, auto_rename=True, relative_root=None):
-    split_char = settings.SPLIT_CHAR or "-->"
+    split_char = settings.SPLIT_CHAR or "/"
     df_list = []
     time_stamp = get_str_time()
     os.makedirs(output_dir, exist_ok=True)
 
     try:
-        # 临时保存图像到本地 默认使用filename
+        # Save image to local directory temporarily, use filename by default
         img_path = os.path.join(output_dir, filename)
         img_bytes = await load_file_bytes(image_path, file_url=baseurl)
         img_obj = Image.open(io.BytesIO(img_bytes))
         img_obj.save(img_path)
 
-        # 提取图像内容
+        # Extract image content
         client = OpenAI(
             api_key=settings.ALI_API_KEY,
             base_url=settings.ALI_URL
         )
 
-        ## 判断图像类别和任务
+        ## Determine image category and task
         img_task = "summary-images"
         from shared.core.constants import ProcessingConstants
         img_max_tokens = ProcessingConstants.IMG_MAX_TOKENS
@@ -180,7 +180,7 @@ async def parse_image(image_path, filename=None, output_dir=None, baseurl="", ba
                 img_task = "ocr-image"
                 img_max_tokens = ProcessingConstants.IMG_OCR_MAX_TOKENS
 
-        if base_llm_paras['summary_image']: # 留出增加上下文的空间 文字辅助理解图
+        if base_llm_paras['summary_image']: # Leave room for context to help understand the image
             image_content = await ask_image(client, output_dir, paths_=[filename], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
             if image_content is None:
                 image_content = filename
@@ -194,7 +194,7 @@ async def parse_image(image_path, filename=None, output_dir=None, baseurl="", ba
         else:
             image_summary = image_content
 
-        # 2. 根据图像内容和文件名决定是否重命名
+        # 2. Decide whether to rename based on image content and filename
         img_name = path_handle(image_summary[:20], mode="sanitize")
         img_suffix = os.path.splitext(img_path)[-1]
         if auto_rename:
@@ -206,20 +206,20 @@ async def parse_image(image_path, filename=None, output_dir=None, baseurl="", ba
             update_img_path = img_path
             final_img_name = filename
     except Exception as e:
-        logger.error(f'存储图像失败 因为 {e}...')
+        logger.error(f'Failed to save image: {e}...')
         raise
 
-    # 更新并保存本地数据
+    # Update and save local data
     img_id = 'IMAGE_' + gen_str_codes(filename + image_content) + '_IMAGE'
     if type_resp["answer"]=="text":
         match_type = '\n'.join([img_id, 'PTXT'])
     else:
         match_type = img_id
 
-    img_bottom_content = f"{img_id}\n上图内容\n{image_content}"
+    img_bottom_content = f"{img_id}\nImage Content:\n{image_content}"
     know_id = gen_str_codes(img_bottom_content + str(uuid.uuid4()))
-    # Use relative path for images
-    relative_img_path = final_img_name
+    # Use relative path with relative_root prefix
+    relative_img_path = f"{relative_root}{split_char}{final_img_name}" if relative_root else final_img_name
     df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, know_id, "", "", time_stamp])
 
     all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
