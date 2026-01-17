@@ -489,7 +489,6 @@ class PDFParsingException(KnowhereException):
     def __init__(
         self,
         user_message: str,
-        reason: str = "PARSING_FAILED",
         internal_message: Optional[str] = None,
         original_exception: Optional[Exception] = None,
     ):
@@ -497,7 +496,6 @@ class PDFParsingException(KnowhereException):
             code=ErrorCode.INVALID_ARGUMENT,
             internal_message=internal_message or user_message,
             user_message=user_message,
-            details={"file_type": "pdf", "reason": reason},
             original_exception=original_exception,
         )
 

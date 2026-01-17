@@ -112,8 +112,7 @@ async def poll_mineru_task(
                     # 解析失败
                     error_msg = status.get("err_msg", "Unknown error")
                     raise PDFParsingException(
-                        user_message="Failed to parse PDF file",
-                        reason=error_msg,
+                        user_message=error_msg or "Failed to parse PDF file",
                         internal_message=f"MinerU failed with state 'failed': {error_msg}"
                     )
 
@@ -152,7 +151,6 @@ async def poll_mineru_task(
             logger.error(f"Error during PDF parsing: {e}")
             raise PDFParsingException(
                 user_message="An unexpected error occurred while parsing the PDF",
-                reason="UNKNOWN_ERROR",
                 internal_message=str(e),
                 original_exception=e
             )
@@ -211,7 +209,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
                 status_code=upload_res.status_code
             )
 
-    logger.info("File uploaded successfully, waiting for parsing...")
+    logger.info(f"File: {filename} uploaded successfully, waiting for parsing...")
 
     status_url = f"{base_url}/extract-results/batch/{batch_id}"
 
