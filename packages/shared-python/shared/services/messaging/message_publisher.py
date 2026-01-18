@@ -373,8 +373,47 @@ class MessagePublisher:
             get_queue_name('job_failure')
         )
     
+    async def publish_workload_metrics(
+        self,
+        job_id: str,
+        page_count: int,
+        user_id: str,
+        filename: Optional[str] = None
+    ) -> bool:
+        """
+        Publish workload metrics message.
+        
+        Worker reports workload metrics (e.g., page count).
+        API handles billing based on this information.
+        Worker has NO knowledge of billing/credits.
+        
+        Args:
+            job_id: Job ID
+            page_count: Document page count (workload metric)
+            user_id: User ID
+            filename: Filename
+            
+        Returns:
+            bool: Whether publish succeeded
+        """
+        from shared.models.schemas.messages import JobWorkloadMetricsMessage
+        
+        message = JobWorkloadMetricsMessage(
+            job_id=job_id,
+            page_count=page_count,
+            user_id=user_id,
+            filename=filename
+        )
+        
+        # Use progress queue
+        return await self._publish(
+            message,
+            get_routing_key('job_progress_update'),
+            get_queue_name('job_progress_update')
+        )
+    
     async def close(self):
-        """关闭连接（清理资源）"""
+        """Close connection (cleanup resources)"""
         await self._connection_manager.close()
         self._initialized = False
 
