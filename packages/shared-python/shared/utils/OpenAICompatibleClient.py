@@ -1,6 +1,6 @@
 """
-OpenAI兼容的通用AI客户端
-支持任何符合OpenAI API规范的模型（DeepSeek、Qwen、GLM等）
+OpenAI-compatible universal AI client
+Supports any model that follows the OpenAI API specification (DeepSeek, Qwen, GLM, etc.)
 """
 import json
 import os
@@ -11,15 +11,19 @@ import httpx
 from loguru import logger
 
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import (
+    LLMServiceException,
+    UnknownException,
+)
 
-# 本地调试模式：不使用 Redis
+# Local debug mode: do not use Redis
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
 
 class OpenAICompatibleClient:
     """
-    OpenAI兼容的通用客户端
-    支持DeepSeek、Qwen、GLM等所有符合OpenAI API规范的模型
+    OpenAI-compatible universal client
+    Supports DeepSeek, Qwen, GLM and all models that follow the OpenAI API specification
     """
     
     def __init__(
@@ -32,34 +36,34 @@ class OpenAICompatibleClient:
         skip_redis: bool = False
     ):
         """
-        初始化客户端
+        Initialize the client
         
         Args:
-            redis_service: Redis服务实例，用于会话管理（可选）
-            api_key: API密钥，默认使用settings.DS_KEY
-            api_url: API URL，默认使用settings.DS_URL
-            default_model: 默认模型名称，默认使用settings.NORMOL_MODEL
-            timeout: 请求超时时间（秒）
-            skip_redis: 是否跳过Redis（本地调试模式）
+            redis_service: Redis service instance for session management (optional)
+            api_key: API key, defaults to settings.DS_KEY
+            api_url: API URL, defaults to settings.DS_URL
+            default_model: Default model name, defaults to settings.NORMOL_MODEL
+            timeout: Request timeout in seconds
+            skip_redis: Whether to skip Redis (local debug mode)
         """
-        # 本地调试模式或显式跳过：不使用 Redis
+        # Local debug mode or explicit skip: do not use Redis
         if LOCAL_DEBUG or skip_redis or redis_service is None:
             self.redis_service = None
         else:
             from shared.services.redis import RedisServiceFactory
             self.redis_service = redis_service or RedisServiceFactory.get_service()
         
-        # 支持自定义配置，如果没有则使用默认配置
+        # Support custom configuration, use defaults if not provided
         self.api_key = api_key or settings.DS_KEY
         self.api_url = api_url or settings.DS_URL
         self.default_model = default_model or getattr(settings, 'NORMOL_MODEL', 'deepseek-chat')
         self.timeout = timeout
         
-        logger.debug(f"初始化OpenAI兼容客户端: URL={self.api_url}, Model={self.default_model}, Redis={'启用' if self.redis_service else '禁用'}")
+        logger.debug(f"Initializing OpenAI-compatible client: URL={self.api_url}, Model={self.default_model}, Redis={'enabled' if self.redis_service else 'disabled'}")
 
     async def get_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
-        """从Redis获取指定对话的状态"""
-        # 无 Redis 模式：返回空状态
+        """Get the state of a specific conversation from Redis"""
+        # No Redis mode: return empty state
         if self.redis_service is None:
             return {
                 "id": conversation_id,
@@ -93,8 +97,8 @@ class OpenAICompatibleClient:
         }
 
     async def update_conversation_state(self, conversation_state: Dict[str, Any]):
-        """更新Redis中的对话状态"""
-        # 无 Redis 模式：跳过
+        """Update conversation state in Redis"""
+        # No Redis mode: skip
         if self.redis_service is None:
             return
             
@@ -119,43 +123,43 @@ class OpenAICompatibleClient:
         **kwargs
     ) -> str:
         """
-        非流式聊天补全（兼容OpenAI格式）
+        Non-streaming chat completion (OpenAI format compatible)
         
         Args:
-            messages: 消息内容，可以是字符串或消息列表
-            conversation_id: 对话ID，用于保存会话历史
-            model: 模型名称，如果不指定则使用默认模型
-            temperature: 温度参数
-            max_tokens: 最大生成token数
-            top_p: nucleus sampling参数
-            stream: 是否流式输出（当前仅支持非流式）
-            **kwargs: 其他参数
+            messages: Message content, can be a string or message list
+            conversation_id: Conversation ID for saving session history
+            model: Model name, uses default model if not specified
+            temperature: Temperature parameter
+            max_tokens: Maximum number of tokens to generate
+            top_p: Nucleus sampling parameter
+            stream: Whether to stream output (currently only non-streaming is supported)
+            **kwargs: Other parameters
         
         Returns:
-            str: 模型生成的响应内容
+            str: Model-generated response content
         """
         conversation_state = await self.get_conversation_state(conversation_id)
 
-        # 统一处理消息格式，兼容字符串与列表输入
+        # Unified message format handling, compatible with string and list inputs
         if isinstance(messages, list):
             incoming_messages = messages
         else:
             incoming_messages = [{"role": "user", "content": str(messages)}]
 
-        # 无 Redis 模式：不使用历史消息
+        # No Redis mode: do not use history messages
         if self.redis_service is None:
             all_messages = incoming_messages
         else:
             previous_messages = conversation_state.get("messages", []) or []
             all_messages = previous_messages + incoming_messages
 
-        # 构建请求头
+        # Build request headers
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
         
-        # 构建请求体
+        # Build request body
         payload = {
             "model": model or self.default_model,
             "messages": all_messages,
@@ -164,7 +168,7 @@ class OpenAICompatibleClient:
             "max_tokens": max_tokens
         }
         
-        # 添加可选参数
+        # Add optional parameters
         if top_p is not None:
             payload["top_p"] = top_p
         
@@ -174,13 +178,13 @@ class OpenAICompatibleClient:
             'response_format', 'logprobs', 'top_logprobs'
         }
         
-        # 过滤并添加额外的 API 参数
+        # Filter and add extra API parameters
         for key, value in kwargs.items():
             if key in allowed_api_params:
                 payload[key] = value
 
         try:
-            logger.info(f"🌐 开始HTTP请求到 {self.api_url} (模型: {payload['model']}, 超时: {self.timeout}s)...")
+            logger.info(f"🌐 Starting HTTP request to {self.api_url} (model: {payload['model']}, timeout: {self.timeout}s)...")
             request_start = time.time()
             
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -189,18 +193,21 @@ class OpenAICompatibleClient:
                 data = response.json()
 
             request_duration = time.time() - request_start
-            logger.info(f"✅ AI请求完成，耗时: {request_duration:.2f}s")
+            logger.info(f"✅ AI request completed, duration: {request_duration:.2f}s")
 
             choices = data.get("choices", [])
             if not choices:
-                raise Exception("AI返回结果为空")
+                raise LLMServiceException(
+                    internal_message="AI returned empty result",
+                    provider=self.default_model,
+                )
 
             message = choices[0].get("message", {})
             content = message.get("content", "")
             if content is None:
                 content = ""
 
-            # 更新会话状态（仅在有 Redis 时）
+            # Update session state (only when Redis is available)
             if self.redis_service is not None:
                 if message:
                     assistant_message = {"role": message.get("role", "assistant"), "content": content}
@@ -218,20 +225,32 @@ class OpenAICompatibleClient:
             if self.redis_service is not None:
                 conversation_state["status"] = "failed"
                 await self.update_conversation_state(conversation_state)
-            logger.error(f"❌ API请求失败: {str(e)}, Response: {e.response.text if hasattr(e, 'response') else 'N/A'}")
-            raise Exception(f"API请求失败: {str(e)}") from e
+            logger.error(f"❌ API request failed: {str(e)}, Response: {e.response.text if hasattr(e, 'response') else 'N/A'}")
+            raise LLMServiceException(
+                internal_message=f"API request failed: {str(e)}",
+                provider=self.default_model,
+                status_code=e.response.status_code if hasattr(e, 'response') else None,
+                original_exception=e,
+            ) from e
         except httpx.TimeoutException as e:
             if self.redis_service is not None:
                 conversation_state["status"] = "failed"
                 await self.update_conversation_state(conversation_state)
-            logger.error(f"⏱️ API请求超时: {str(e)}")
-            raise Exception(f"API请求超时: {str(e)}") from e
+            logger.error(f"⏱️ API request timeout: {str(e)}")
+            raise LLMServiceException(
+                internal_message=f"API request timeout: {str(e)}",
+                provider=self.default_model,
+                original_exception=e,
+            ) from e
+        except LLMServiceException:
+            # Re-raise LLMServiceException without wrapping
+            raise
         except Exception as e:
             if self.redis_service is not None:
                 conversation_state["status"] = "failed"
                 await self.update_conversation_state(conversation_state)
-            logger.error(f"❌ 处理请求时发生未知错误: {str(e)}")
-            raise Exception(f"处理请求时发生未知错误: {str(e)}") from e
+            logger.error(f"❌ Unknown error during request processing: {str(e)}")
+            raise UnknownException(original_exception=e) from e
 
     async def reset_conversation(self, conversation_id: str = "default"):
         """重置对话历史"""
