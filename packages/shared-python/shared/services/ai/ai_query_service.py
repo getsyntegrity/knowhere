@@ -1,8 +1,9 @@
 """
 AI查询服务
-统一处理AI查询任务，支持Celery和ARQ两种模式
+统一处理AI查询任务，支持Celery和本地直连模式
 """
 import asyncio
+import os
 import time
 from typing import Any, Optional
 
@@ -10,6 +11,9 @@ from celery import current_task
 from loguru import logger
 
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException, KnowhereException
+
+# Local debug mode: set LOCAL_DEBUG=1 to enable
+LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
 class AIQueryService:
     """AI查询服务"""
@@ -19,9 +23,9 @@ class AIQueryService:
         初始化AI查询服务
 
         Args:
-            use_celery: 是否使用Celery，False则使用ARQ
+            use_celery: 是否使用Celery，False则使用本地直连模式
         """
-        self.use_celery = use_celery
+        self.use_celery = use_celery and not LOCAL_DEBUG
 
     async def query_ai(
         self,
@@ -46,14 +50,16 @@ class AIQueryService:
         Returns:
             AI查询结果
         """
-        if self.use_celery:
-            return await self._query_with_celery(
-                messages, user_id, temperature, conversation_id, timeout, **kwargs
+        # 本地调试模式：直接调用 LLM
+        if LOCAL_DEBUG or not self.use_celery:
+            return await self._execute_direct(
+                messages, user_id, temperature, conversation_id, **kwargs
             )
-        else:
-            return await self._query_with_arq(
-                messages, user_id, temperature, conversation_id, timeout, **kwargs
-            )
+        
+        # 生产模式：使用 Celery
+        return await self._query_with_celery(
+            messages, user_id, temperature, conversation_id, timeout, **kwargs
+        )
 
     async def _query_with_celery(
         self,
@@ -106,25 +112,49 @@ class AIQueryService:
                 original_exception=e
             )
 
-    async def _query_with_arq(
+    async def _execute_direct(
         self,
         messages: Any,
         user_id: str,
         temperature: float,
         conversation_id: Optional[str],
-        timeout: int,
         **kwargs
     ) -> Any:
-        """使用ARQ执行AI查询（向后兼容）"""
-        try:
-            # 提交ARQ任务（已弃用，仅用于向后兼容）
-            raise NotImplementedError("ARQ模式已弃用，请使用Celery模式")
+        """Local direct mode: call OpenAI API directly without Redis/Celery"""
+        from shared.utils.OpenAICompatibleClient import OpenAICompatibleClient
 
-        except Exception as e:
-            logger.error(f"ARQ AI查询失败: {e}")
+        conversation = conversation_id or f"ai_query_{user_id}_{int(time.time())}"
+
+        # Create OpenAI compatible client
+        ai_client = OpenAICompatibleClient(
+            redis_service=None,  # Local mode doesn't need Redis
+            api_key=kwargs.get('api_key'),
+            api_url=kwargs.get('api_url'),
+            default_model=kwargs.get('model'),
+            timeout=kwargs.get('timeout', 300)
+        )
+        
+        # Filter out params that are already handled separately
+        excluded_params = {'api_key', 'api_url', 'timeout', 'user_id', 'model', 'max_tokens'}
+        api_params = {k: v for k, v in kwargs.items() if k not in excluded_params}
+        
+        try:
+            result = await ai_client.chat_completion(
+                messages=messages,
+                temperature=temperature,
+                conversation_id=conversation,
+                model=kwargs.get('model'),
+                max_tokens=kwargs.get('max_tokens'),
+                **api_params
+            )
+            return result
+        except KnowhereException:
+            raise
+        except Exception as exc:
+            logger.error(f"Local direct AI query failed: {exc}")
             raise WorkerHandlingException(
-                internal_message=f"ARQ AI查询失败: {str(e)}",
-                original_exception=e
+                internal_message=f"Local direct AI query failed: {str(exc)}",
+                original_exception=exc
             )
 
     @staticmethod
@@ -145,7 +175,7 @@ class AIQueryService:
     ) -> Any:
         """在当前Celery任务内直接执行AI查询，避免嵌套子任务阻塞"""
         from shared.services.redis import RedisServiceFactory, TaskRedisService
-        from shared.utils.DeepSeekClient import DeepSeekRedisStreamClient
+        from shared.utils.OpenAICompatibleClient import OpenAICompatibleClient
 
         redis_service = RedisServiceFactory.get_service()
         task_service = TaskRedisService(redis_service)
@@ -154,13 +184,28 @@ class AIQueryService:
 
         await task_service.set_task_status(user_id, "正在连接AI大模型...")
 
-        ai_client = DeepSeekRedisStreamClient(redis_service)
+        # 创建OpenAI兼容客户端，支持自定义配置
+        ai_client = OpenAICompatibleClient(
+            redis_service=redis_service,
+            api_key=kwargs.get('api_key'),
+            api_url=kwargs.get('api_url'),
+            default_model=kwargs.get('model'),
+            timeout=kwargs.get('timeout', 300)
+        )
+        
+        # 只传递 API 相关参数，不传递客户端配置参数
+        # 过滤掉客户端配置参数
+        client_config_params = {'api_key', 'api_url', 'timeout', 'user_id'}
+        api_params = {k: v for k, v in kwargs.items() if k not in client_config_params}
+        
         try:
             result = await ai_client.chat_completion(
                 messages=messages,
                 temperature=temperature,
                 conversation_id=conversation,
-                max_tokens=kwargs.get("max_tokens"),
+                model=kwargs.get('model'),
+                max_tokens=kwargs.get('max_tokens'),
+                **api_params
             )
 
             await task_service.save_task_result(
@@ -183,9 +228,9 @@ class AIQueryService:
             )
 
 
-# 全局AI查询服务实例
-# 默认使用Celery，可以通过环境变量配置
+# ai service instance
+# default use celery, but switch to direct mode in LOCAL_DEBUG mode
 ai_query_service = AIQueryService(use_celery=True)
 
-# 向后兼容的ARQ服务实例
-ai_query_service_arq = AIQueryService(use_celery=False)
+# local direct service instance (not using Celery/Redis)
+ai_query_service_local = AIQueryService(use_celery=False)

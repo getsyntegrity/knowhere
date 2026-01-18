@@ -1,12 +1,8 @@
-import io
 import re
 import uuid
-
 import pandas as pd
 from shared.core.config import settings
-# ARQ依赖已移除，使用Celery替代
 from shared.services.ai import ai_query_service
-# TaskRedis依赖已移除，使用Redis直接追踪
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from shared.utils.CommonHelper import load_file_bytes
@@ -21,64 +17,14 @@ def clean_texts_by_form(text, form='html'):
     # try other formats
     return text
 
-def detect_tocs_in_texts(md_lines):
-    def normalize_md(s):
-        s = re.sub(r"^\s*#+\s*", "", s)
-        s = re.sub(r"\s+", "", s)
-        return s.lower()
-
-    #TODO only detect the first area should consider more areas in texts, maybe changed to vlm page detection?
-    toc_titles = {"目录", "目次", "tableofcontents", "contents"}
-
-    start_idx = None
-    for i, line in enumerate(md_lines):
-        if normalize_md(line) in toc_titles:
-            start_idx = i
-            break
-    if start_idx is None:
-        return None
-
-    # Step 2 find the pivot line
-    pivot_line = None
-    pivot_idx = None
-    for j in range(start_idx + 1, len(md_lines)):
-        text = md_lines[j].strip()
-        if text:
-            pivot_line = normalize_md(text)
-            pivot_idx = j
-            break
-    if pivot_line is None:
-        return None
-
-    end_idx = pivot_idx
-    for k in range(pivot_idx + 1, len(md_lines)):
-        text = md_lines[k].strip()
-        repeated = (normalize_md(text) in pivot_line) or (pivot_line in normalize_md(text))
-        if text and repeated:
-            break
-        end_idx = k
-
-    toc_lines = md_lines[start_idx:end_idx + 1]
-    return start_idx, end_idx, toc_lines
-
-async def parse_texts(file_path=None, fragment_content=None, baseurl=""): #base_llm_paras=None
-    if not ".fragment" in file_path:
-        txt_bytes = await load_file_bytes(file_path, file_url=baseurl)
-        text = txt_bytes.decode("utf-8")
-        f = io.StringIO(text)
-        txt_lines = []
-        for line in f:
-            line = re.sub(r'\s', '', line)
-            txt_lines.append(line)
-    else:
-        try:
-            if fragment_content is None:
-                txt_lines = []
-            else:
-                txt_lines = fragment_content.splitlines()
-        except Exception as e:
-            logger.error(f"解析fragment_content失败: {e}")
-            txt_lines = []
+async def parse_texts(file_path: str, baseurl: str = "") -> list:
+    """Parse text file and return lines list."""
+    txt_bytes = await load_file_bytes(file_path, file_url=baseurl)
+    text = txt_bytes.decode("utf-8")
+    txt_lines = []
+    for line in text.splitlines():
+        line = re.sub(r'\s', '', line)
+        txt_lines.append(line)
     return txt_lines
 
 def divide_long_contents(texts, max_threshold=None, min_threshold=None):
@@ -123,18 +69,18 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
             prompt, temperature, top_p, max_tokens = build_prompt(task='summary-keywords', texts=texts, query="", paras={'max_tokens': int(keywords_num*20), 'kw_num': keywords_num})
 
         messages = [
-            {"role": "system", "content": "你是一个有帮助的助手"},
+            {"role": "system", "content": "you are a helpful assistant"},
             {"role": "user", "content": prompt}
         ]
 
         ctx_task_id = str(uuid.uuid4())
         
-        # 使用Redis直接追踪任务状态，无需数据库持久化
-        from shared.services.redis import RedisServiceFactory
-        redis_service = RedisServiceFactory.get_service()
-        await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
+        import os
+        if os.getenv("LOCAL_DEBUG", "0") != "1":
+            from shared.services.redis import RedisServiceFactory
+            redis_service = RedisServiceFactory.get_service()
+            await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
 
-        # 使用统一的AI查询服务
         resp = await ai_query_service.query_ai(
             messages=messages,
             user_id=ctx_task_id,
@@ -145,23 +91,23 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
         resp = eval_response(resp)
 
         if type_ == "keywords":
-            return resp['answer']
+            if isinstance(resp, dict):
+                return resp.get('answer', resp)
+            return resp
         else:
             return resp
 
     except Exception as e:
-        logger.error(f"❌ 摘要或提取关键词失败 将返回空字符串 因为 {e}")
+        print(f"❌ failed to extract summary or keywords {e}")
         return ""
 
 async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key='content', summary_len=None):
     from shared.core.constants import ProcessingConstants
     if summary_len is None:
         summary_len = ProcessingConstants.POSTPROCESS_SUMMARY_LEN
-    '''
-        :function 1 merge bottom-level contents with the same key (heading)
-    '''
+    
     merged_dict = {}
-    split_char = settings.SPLIT_CHAR or "-->"
+    split_char = settings.SPLIT_CHAR or "/"
     for identifier, d in dict_list:
         identifier = split_char.join(identifier)
             
@@ -175,7 +121,7 @@ async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', conte
     merge_df['path'] = merge_df['path_identifier'].apply(lambda x:x.split(split_char))
     merge_df = merge_df[['path', 'content_lst', 'path_identifier']]    
 
-    # 分割长文本（后续需要按段落语义分）
+    # TODO rough dividing of contents (need more smart dividing)
     df_with_divides = pd.DataFrame(columns=['path', 'content_lst', 'path_identifier'])
     for i, row in merge_df.iterrows():
         if len(row['path'])==0:
@@ -192,12 +138,12 @@ async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', conte
         else:
             head = row['path_identifier']
             if not head:
-                head = '序言'
+                head = '**Preface**'
             for k in range(num):
-                sub_head = head + split_char + head.split(split_char)[-1] + " 第" + str(k+1) + "部分"
+                sub_head = head + split_char + head.split(split_char)[-1] + " part " + str(k+1)
                 df_with_divides.loc[len(df_with_divides)] = {'path':sub_head.split(split_char), 'content_lst':sublists[k], 'path_identifier':sub_head}
 
-    # 生成底层节点的summary和关键词
+    # generate summary and keywords for bottom nodes
     df_with_labels = pd.DataFrame(columns=['path', 'content_lst', 'path_identifier', 'keywords', 'local_summary'])
     pattern = re.compile(r'(TABLE_.*?_TABLE|IMAGE_.*?_IMAGE)')
     for i, row in df_with_divides.iterrows():
@@ -206,7 +152,7 @@ async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', conte
         summary = ""
 
         if len(contents4summary)>summary_len and llm_paras["summary_txt"] and (not llm_paras['doc_type'] in "templates"):
-            summary = await extract_summary_keywords(contents4summary, type_="summary") # 这个就不用再细分了 因为做了divide不会超过窗口限制
+            summary = await extract_summary_keywords(contents4summary, type_="summary")
             keywords = await extract_summary_keywords(contents4summary, type_="keywords")
 
         df_with_labels.loc[len(df_with_labels)] = {'path': row['path'],

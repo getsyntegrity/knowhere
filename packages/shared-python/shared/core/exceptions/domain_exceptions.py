@@ -793,6 +793,30 @@ class SystemSettingInvalidException(KnowhereException):
         )
 
 
+class DependencyMissingException(KnowhereException):
+    """
+    Required Python dependency is not installed.
+
+    5xx Error: Auto-defaults to safe user_message.
+
+    Details schema: {} (empty for security)
+    """
+
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,  # Defaults to generic 5xx message
+            details={},
+            original_exception=original_exception,
+        )
+
+
 class StripeServiceException(KnowhereException):
     """
     Stripe payment service operations failed.

@@ -79,6 +79,7 @@ shared/models/schemas/webhook.py
 shared/models/schemas/word.py
 shared/services/ai/__init__.py
 shared/services/ai/ai_query_service.py
+shared/services/ai/direct_ai_client.py
 shared/services/ai/prompt_service.py
 shared/services/ai/response_process_service.py
 shared/services/messaging/__init__.py
@@ -108,6 +109,7 @@ shared/services/storage/adapters/s3_adapter.py
 shared/utils/CommonHelper.py
 shared/utils/DeepSeekClient.py
 shared/utils/FileDownUpUtils.py
+shared/utils/OpenAICompatibleClient.py
 shared/utils/S3Utiles.py
 shared/utils/UrlFileReaderUtils.py
 shared/utils/UrlUtils.py
@@ -119,6 +121,7 @@ shared/utils/gc_utils.py
 shared/utils/json_utils.py
 shared/utils/llm_utils.py
 shared/utils/math_utils.py
+shared/utils/model_configs.py
 shared/utils/redis_key_builder.py
 shared/utils/redis_retry.py
 shared/utils/text_utils.py

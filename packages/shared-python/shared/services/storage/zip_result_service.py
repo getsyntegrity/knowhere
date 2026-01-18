@@ -3,15 +3,19 @@ ZIP 结果包生成服务
 根据 Knowhere-API-ZIP-Spec.md 规范生成 ZIP 包
 """
 import hashlib
+import io
 import json
 import os
 import tempfile
 import zipfile
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from loguru import logger
 from PIL import Image
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
 
@@ -30,6 +34,7 @@ class ZipResultService:
         source_file_name: str,
         data_id: Optional[str],
         job_metadata: Dict[str, Any],
+        parsed_df: Optional["pd.DataFrame"] = None,
     ) -> Tuple[str, Dict[str, str], Dict[str, Any], int]:
         """
         生成 ZIP 结果包
@@ -41,6 +46,7 @@ class ZipResultService:
             source_file_name: 源文件名
             data_id: 用户自定义ID
             job_metadata: 任务元数据
+            parsed_df: 可选，解析后的 DataFrame，用于生成 kb.csv 和 hierarchy.json
 
         Returns:
             Tuple[zip_file_path, checksum, statistics, zip_size]:
@@ -105,7 +111,29 @@ class ZipResultService:
                     else:
                         logger.warning(f"表格文件不存在: {source_path}")
 
-                # 5. 生成 manifest.json（不包含 checksum，checksum 存储在数据库中）
+                # 5. 生成 kb.csv 和 hierarchy.json（如果提供了 parsed_df）
+                has_kb_csv = False
+                has_hierarchy = False
+                if parsed_df is not None and len(parsed_df) > 0:
+                    # 5a. 生成 kb.csv（使用 UTF-8 with BOM 编码，确保中英文 Excel 都能正确打开）
+                    csv_buffer = io.StringIO()
+                    parsed_df.to_csv(csv_buffer, index=False, encoding='utf-8')
+                    # 添加 BOM 头 (\ufeff) 确保 Excel 正确识别 UTF-8
+                    csv_content = '\ufeff' + csv_buffer.getvalue()
+                    zip_file.writestr("kb.csv", csv_content.encode("utf-8"))
+                    has_kb_csv = True
+                    logger.info(f"已添加 kb.csv，共 {len(parsed_df)} 行")
+                    
+                    # 5b. 从 parsed_df 的 path 列生成 hierarchy.json
+                    if 'path' in parsed_df.columns:
+                        path_list = parsed_df['path'].dropna().tolist()
+                        hierarchy_dict = self._restore_graph_by_paths(path_list)
+                        hierarchy_json = json.dumps(hierarchy_dict, ensure_ascii=False, indent=4)
+                        zip_file.writestr("hierarchy.json", hierarchy_json.encode("utf-8"))
+                        has_hierarchy = True
+                        logger.info(f"已添加 hierarchy.json")
+
+                # 6. 生成 manifest.json（不包含 checksum，checksum 存储在数据库中）
                 manifest = self._generate_manifest(
                     job_id=job_id,
                     data_id=data_id,
@@ -114,6 +142,8 @@ class ZipResultService:
                     image_files_info=image_files_info,
                     table_files_info=table_files_info,
                     has_markdown=markdown_path is not None,
+                    has_kb_csv=has_kb_csv,
+                    has_hierarchy=has_hierarchy,
                 )
                 manifest_json = json.dumps(manifest, ensure_ascii=False, indent=2)
                 zip_file.writestr("manifest.json", manifest_json.encode("utf-8"))
@@ -207,8 +237,8 @@ class ZipResultService:
             # 获取 content
             content = chunk.get("text") or chunk.get("content", "")
 
-            # 清理 path（移除文件系统路径，只保留逻辑路径）
-            path = self._clean_path(chunk.get("path", ""))
+            # 直接使用原始 path，与 kb.csv 保持一致
+            path = chunk.get("path", "")
 
             # 获取或构建基础 metadata
             existing_metadata = chunk.get("metadata", {})
@@ -235,43 +265,34 @@ class ZipResultService:
             elif chunk_type == "image":
                 # 从 existing_metadata 或 image_files_map 获取图片信息
                 file_path = existing_metadata.get("file_path")
-                original_name = existing_metadata.get("original_name")
                 
                 if not file_path:
                     # 从 image_files_map 获取图片信息
                     img_info = image_files_map.get(chunk_id)
                     if img_info:
                         file_path = img_info["file_path"]
-                        original_name = img_info["original_name"]
                     else:
                         # 从path提取或使用默认值
-                        img_name = path.split("-->")[-1] if "-->" in path else f"image_{chunk_id}.jpg"
+                        img_name = path.split("/")[-1] if "/" in path else f"image_{chunk_id}.jpg"
                         file_path = f"images/{img_name}"
-                        original_name = img_name
                 
                 metadata["file_path"] = file_path
-                metadata["original_name"] = original_name
-                metadata["alt_text"] = metadata["summary"]
                 
             elif chunk_type == "table":
                 # 从 existing_metadata 或 table_files_map 获取表格信息
                 file_path = existing_metadata.get("file_path")
-                original_name = existing_metadata.get("original_name")
                 
                 if not file_path:
                     # 从 table_files_map 获取表格信息
                     tb_info = table_files_map.get(chunk_id)
                     if tb_info:
                         file_path = tb_info["file_path"]
-                        original_name = tb_info["original_name"]
                     else:
                         # 从path提取或使用默认值
-                        tbl_name = path.split("-->")[-1] if "-->" in path else f"table_{chunk_id}.html"
+                        tbl_name = path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"
                         file_path = f"tables/{tbl_name}"
-                        original_name = tbl_name
                 
                 metadata["file_path"] = file_path
-                metadata["original_name"] = original_name
                 metadata["table_type"] = existing_metadata.get("table_type")
 
             formatted_chunk = {
@@ -534,28 +555,28 @@ class ZipResultService:
         image_files_info: List[Dict[str, Any]],
         table_files_info: List[Dict[str, Any]],
         has_markdown: bool = False,
+        has_kb_csv: bool = False,
+        has_hierarchy: bool = False,
     ) -> Dict[str, Any]:
         """生成 manifest.json"""
-        # 准备 images 数组（移除内部字段）
+        # 准备 images 数组（只保留必要字段：id, file_path, size_bytes, format, width, height）
         images = []
         for img_info in image_files_info:
             images.append({
                 "id": img_info["id"],
                 "file_path": img_info["file_path"],
-                "original_name": img_info["original_name"],
                 "size_bytes": img_info["size_bytes"],
                 "format": img_info["format"],
                 "width": img_info.get("width"),
                 "height": img_info.get("height"),
             })
 
-        # 准备 tables 数组（移除内部字段）
+        # 准备 tables 数组（只保留必要字段：id, file_path, size_bytes, format）
         tables = []
         for table_info in table_files_info:
             tables.append({
                 "id": table_info["id"],
                 "file_path": table_info["file_path"],
-                "original_name": table_info["original_name"],
                 "size_bytes": table_info["size_bytes"],
                 "format": table_info["format"],
             })
@@ -570,6 +591,8 @@ class ZipResultService:
             "files": {
                 "chunks": "chunks.json",
                 "markdown": "full.md" if has_markdown else None,
+                "kb_csv": "kb.csv" if has_kb_csv else None,
+                "hierarchy": "hierarchy.json" if has_hierarchy else None,
                 "images": images,
                 "tables": tables,
             },
@@ -585,3 +608,31 @@ class ZipResultService:
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest().lower()
 
+    def _restore_graph_by_paths(self, paths: List[str]) -> Dict[str, Any]:
+        """
+        从路径列表重建层级结构
+        
+        Args:
+            paths: 路径列表，如 ["dir/file.pdf/第一章/第一节", "dir/file.pdf/第二章"]
+        
+        Returns:
+            嵌套字典结构，如 {"dir": {"file.pdf": {"第一章": {"第一节": {}}, "第二章": {}}}}
+        """
+        root_dict: Dict[str, Any] = {}
+        
+        # 支持多种分隔符
+        for path in paths:
+            if not path:
+                continue
+            
+            # 统一分隔符：支持 "-->", "/", "\\"
+            normalized_path = path.replace("-->", "/").replace("\\", "/")
+            nodes = [n.strip() for n in normalized_path.split("/") if n.strip()]
+            
+            current_dict = root_dict
+            for node in nodes:
+                if node not in current_dict:
+                    current_dict[node] = {}
+                current_dict = current_dict[node]
+        
+        return root_dict

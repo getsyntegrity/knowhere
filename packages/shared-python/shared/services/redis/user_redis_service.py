@@ -15,30 +15,7 @@ class UserRedisService:
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
     
-    async def save_user_config(self, user_id: str, config: Dict[str, Any]) -> bool:
-        """保存用户配置"""
-        try:
-            config_key = redis_key_builder.user_config(user_id)
-            await self.redis.set(config_key, config, ttl=redis_key_builder.get_key_ttl(RedisKeyType.USER))
-            
-            # 更新用户活动时间
-            await self.update_user_activity(user_id)
-            
-            logger.info(f"用户 {user_id} 配置保存成功")
-            return True
-        except Exception as e:
-            logger.error(f"保存用户 {user_id} 配置失败: {e}")
-            return False
-    
-    async def get_user_config(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """获取用户配置"""
-        try:
-            config_key = redis_key_builder.user_config(user_id)
-            config = await self.redis.get(config_key)
-            return config
-        except Exception as e:
-            logger.error(f"获取用户 {user_id} 配置失败: {e}")
-            return None
+    # save_user_config 和 get_user_config 已移除（不再需要在Redis中存储用户配置）
     
     async def update_user_session(self, user_id: str, session_data: Dict[str, Any]) -> bool:
         """更新用户会话"""

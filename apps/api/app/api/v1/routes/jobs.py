@@ -280,27 +280,14 @@ async def create_job(
 
         job_type = "kb_management"
 
-        # 1. 获取用户配置（1天缓存）
-        import json
-
+        # 简化版：不再在API层获取user_config，Worker直接使用settings.USERS_DATA_PATH
         from shared.services.redis import RedisServiceFactory
-        from shared.services.redis.user_redis_service import UserRedisService
-        from app.services.user.user_config_service import UserConfigService
         
         redis_service = RedisServiceFactory.get_service()
-        user_redis_service = UserRedisService(redis_service)
         
-        user_config = await user_redis_service.get_user_config(str(current_user.id))
-        if not user_config:
-            user_config_str = UserConfigService.init_user(str(current_user.id))
-            user_config = json.loads(user_config_str)
-            await user_redis_service.save_user_config(str(current_user.id), user_config)
-    
-        logger.debug(f"user_config: {user_config}")
-        
-        # 2. 构建job_metadata（包含user_config）
+        # 构建job_metadata（不再包含user_config）
         from shared.models.schemas.job_metadata import JobMetadataHelper
-        job_metadata = JobMetadataHelper.create_from_request(request, user_config)
+        job_metadata = JobMetadataHelper.create_from_request(request)
 
         if request.source_type == "file":
             # 文件上传模式 - 申请萝卜坑

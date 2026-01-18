@@ -7,6 +7,12 @@ import boto3
 from botocore.config import Config
 from pydantic import BaseModel, Field, model_validator
 
+from shared.core.exceptions.domain_exceptions import (
+    DependencyMissingException,
+    SystemSettingInvalidException,
+    SystemSettingMissingException,
+)
+
 # Storage适配器延迟导入，避免循环依赖
 # from shared.services.storage.adapters import S3StorageAdapter
 # OSSStorageAdapter延迟导入，只在S3_TYPE=oss时导入
@@ -50,21 +56,22 @@ class StorageConfig(BaseModel):
     def _validate_users_data_path(self):
         """验证 USERS_DATA_PATH 配置"""
         if not self.USERS_DATA_PATH:
-            raise ValueError("USERS_DATA_PATH 必须配置，不能为空")
+            raise SystemSettingMissingException(
+                internal_message="USERS_DATA_PATH must be configured, cannot be empty"
+            )
         
         # 检查是否为绝对路径
         if not os.path.isabs(self.USERS_DATA_PATH):
-            raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {self.USERS_DATA_PATH}")
+            raise SystemSettingInvalidException(
+                internal_message=f"USERS_DATA_PATH must be an absolute path, current value: {self.USERS_DATA_PATH}"
+            )
         
-        # 检查目录是否存在，如果不存在则尝试创建
-        try:
-            os.makedirs(self.USERS_DATA_PATH, exist_ok=True)
-        except (OSError, PermissionError) as e:
-            raise ValueError(f"USERS_DATA_PATH 目录无法创建或访问: {self.USERS_DATA_PATH}, 错误: {e}")
-        
-        # 检查目录是否可写
-        if not os.access(self.USERS_DATA_PATH, os.W_OK):
-            raise ValueError(f"USERS_DATA_PATH 目录不可写: {self.USERS_DATA_PATH}")
+        # 只在目录已存在时检查可写性（不自动创建）
+        if os.path.exists(self.USERS_DATA_PATH):
+            if not os.access(self.USERS_DATA_PATH, os.W_OK):
+                raise SystemSettingInvalidException(
+                    internal_message=f"USERS_DATA_PATH directory is not writable: {self.USERS_DATA_PATH}"
+                )
         
         return self
     
@@ -121,12 +128,15 @@ class StorageConfig(BaseModel):
         try:
             import oss2
         except ImportError as e:
-            raise ImportError(
-                "oss2模块未安装。当S3_TYPE=oss时，请先安装: pip install oss2>=2.18.0"
+            raise DependencyMissingException(
+                internal_message="oss2 module is not installed. When S3_TYPE=oss, please install: pip install oss2>=2.18.0",
+                original_exception=e,
             ) from e
         
         if not self.OSS_ENDPOINT:
-            raise ValueError("OSS_ENDPOINT is required when S3_TYPE=oss")
+            raise SystemSettingMissingException(
+                internal_message="OSS_ENDPOINT is required when S3_TYPE=oss"
+            )
         
         auth = oss2.Auth(self.S3_ACCESS_KEY_ID, self.S3_SECRET_ACCESS_KEY)
         bucket = oss2.Bucket(auth, self.OSS_ENDPOINT, self.S3_BUCKET_NAME)

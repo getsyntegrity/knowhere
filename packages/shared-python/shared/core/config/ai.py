@@ -41,7 +41,7 @@ class AIConfig(BaseModel):
     META_PATH: str = Field(default="app/core/config/Meta_setting.csv", description="元数据路径（兼容性字段）")
     IMG_TBL_PATTERN: str = Field(default="", description="图像表格模式（兼容性字段）")
     PATH_IMAGE_PATTERN: str = Field(default="", description="路径图像模式（兼容性字段）")
-    SPLIT_CHAR: str = Field(default="", description="分隔符（兼容性字段）")
+    SPLIT_CHAR: str = Field(default="/", description="路径分隔符")
     LIBER_OFFICE: str = Field(default="", description="LibreOffice（兼容性字段）")
     PROD_URL: str = Field(default="", description="生产URL（兼容性字段）")
     

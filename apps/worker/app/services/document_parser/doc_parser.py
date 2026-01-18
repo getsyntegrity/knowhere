@@ -14,6 +14,9 @@ from app.services.document_parser.image_parser import ask_image
 from app.services.document_parser.layout_parser import pred_titles
 from app.services.document_parser.table_parser import (extract_tb_keywords,
                                                        table2html)
+from app.services.document_parser.toc_parser import (detect_doc_tocs,
+                                                     detect_sdt_toc,
+                                                     get_toc_level)
 from app.services.document_parser.txt_parser import (extract_summary_keywords,
                                                      postprocess_leaf_dics)
 from shared.utils.CommonHelper import load_file_bytes
@@ -49,40 +52,7 @@ def get_leaf_dics(node, path=[]):
         leaf_dic_paths.append((path, iso_node))
     return leaf_dic_paths
 
-def get_toc_level(elem, ns):
-    style = elem.find('.//w:pPr/w:pStyle', namespaces=ns)
-    if style is not None:
-        val = style.get('{%s}val' % ns['w'])
-        if val:
-            val_lower = val.lower().strip()
-            if "toc" in val_lower or "目录" in val:
-                return True
-    return False
 
-def detect_doc_tocs(elem, ns):
-    is_style = get_toc_level(elem, ns)
-    is_field_start = False
-
-    instrs = elem.findall('.//w:instrText', namespaces=ns)
-    for instr in instrs:
-        if instr.text:
-            instr_text_lower = instr.text.lower()
-            if 'toc' in instr_text_lower or 'table of contents' in instr_text_lower or '目录' in instr.text:
-                is_field_start = True
-                break
-
-    is_field_end = False
-    if not is_style:
-        fldchars = elem.findall('.//w:fldChar', namespaces=ns)
-        for fld in fldchars:
-            if fld.get('{%s}fldCharType' % ns['w']) == 'end':
-                is_field_end = True
-                break
-    return {
-        'is_style': is_style,
-        'is_field_start': is_field_start,
-        'is_field_end': is_field_end
-    }
 
 async def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, img_count, smart_summary=False):
     time_stamp = get_str_time()
@@ -107,9 +77,9 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
     if smart_summary:
         image_summary = await ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
         if image_summary is None:
-            image_summary = f"图像所在章节: {current_heading}\n图像上下文: {last_context}"
+            image_summary = f"Image Section: {current_heading}\nImage Context: {last_context}"
     else:
-        image_summary = f"图像所在章节: {current_heading}\n图像上下文: {last_context}"
+        image_summary = f"Image Section: {current_heading}\nImage Context: {last_context}"
 
     img_name = process_path_texts(f"图-{current_heading} {image_summary}", last=30) + str(img_count)
     img_path = os.path.join(img_dir, f'{img_name}{img_ext}')
@@ -117,8 +87,9 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
 
     img_id = 'IMAGE_' + gen_str_codes(image_summary) + '_IMAGE'
     img_kid = gen_str_codes(img_id + str(uuid.uuid4()))
-    img_bottom_content = img_id + '\n上图内容总结:\n' + image_summary + '\n'
-    img_path = settings.SPLIT_CHAR.join(img_dir.split(os.sep) + [f"{img_name}{img_ext}"])
+    img_bottom_content = img_id + '\nImage Summary:\n' + image_summary + '\n'
+    # Use relative path for images (avoid absolute path in path column)
+    img_path = f"images/{img_name}{img_ext}"
 
     headings_stack[-1]['content'].append(img_bottom_content)
     df_list.append([img_bottom_content, img_path, img_id, len(img_bottom_content), "", image_summary, img_kid, "", "", time_stamp])
@@ -136,19 +107,19 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     except:
         last_context = ''
 
-    raw_tb_name = ' '.join([cell.text.strip() for cell in block.rows[0].cells]) if block.rows else f"表格{table_count}表头"
+    raw_tb_name = ' '.join([cell.text.strip() for cell in block.rows[0].cells]) if block.rows else f"Table_{table_count}_Header"
     tb_keywords = extract_tb_keywords(tb_html_str)
     if smart_summary:
         tb_summary = await extract_summary_keywords(tb_html_str, type_="summary")
         if tb_summary is None:
-            tb_summary = f"表格所在章节: {current_heading}\n表格上下文: {last_context}\n表头信息: {raw_tb_name}"
+            tb_summary = f"Table Section: {current_heading}\nTable Context: {last_context}\nHeader Info: {raw_tb_name}"
     else:
-        tb_summary = f"表格所在章节: {current_heading}\n表格上下文: {last_context}\n表头信息: {raw_tb_name}"
+        tb_summary = f"Table Section: {current_heading}\nTable Context: {last_context}\nHeader Info: {raw_tb_name}"
 
     tb_name = process_path_texts(f"表-{raw_tb_name} {tb_summary}", last=30) + str(table_count)
     table_id = 'TABLE_' + gen_str_codes(tb_html_str) + '_TABLE'
     table_kid = gen_str_codes(table_id + str(uuid.uuid4()))
-    tb_bottom_content = table_id + '\n上表内容总结:\n' + tb_summary + '\n'
+    tb_bottom_content = table_id + '\nTable Summary:\n' + tb_summary + '\n'
     tb_path = os.path.join(tb_dir, f'{tb_name}.html')
 
     soup = BeautifulSoup(tb_html_str, features='html.parser')
@@ -156,7 +127,8 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     with open(tb_path, 'w', encoding='utf-8') as f:
         f.write(tb_html_str)
 
-    tb_path = settings.SPLIT_CHAR.join(tb_dir.split(os.sep) + [f"{tb_name}.html"])
+    # Use relative path for tables (avoid absolute path in path column)
+    tb_path = f"tables/{tb_name}.html"
     headings_stack[-1]['content'].append(tb_bottom_content)
     df_list.append([tb_bottom_content, tb_path, table_id, len(tb_bottom_content), tb_keywords, tb_summary, table_kid, "", "", time_stamp])
     return headings_stack, df_list
@@ -191,11 +163,36 @@ def iter_block_items(doc_data):
         toc_field_active = False
 
         for elem in body.iterchildren():
-            # 跳过注释节点（Comment）和处理指令（PI） 注释节点的 tag 是一个函数对象，不是字符串
             if not isinstance(elem.tag, str):
                 continue
             
             tag = etree.QName(elem.tag).localname
+
+            # --- SDT (Structured Document Tag) container ---
+            # TOC generated by MS Word is usually in sdt
+            if tag == 'sdt':
+                sdt_toc_info = detect_sdt_toc(elem, ns)
+                is_toc_sdt = sdt_toc_info['is_toc_sdt']
+                
+                sdt_content = elem.find('.//w:sdtContent', namespaces=ns)
+                if sdt_content is not None:
+                    for p_elem in sdt_content.findall('.//w:p', namespaces=ns):
+                        texts = p_elem.xpath('.//w:t/text()', namespaces=ns)
+                        text = ''.join(texts).strip()
+                        
+                        if is_toc_sdt:
+                            label = 'TOC-AREA'
+                        else:
+                            toc_info = detect_doc_tocs(p_elem, ns)
+                            if toc_info['is_style'] or toc_info['is_field_start']:
+                                label = 'TOC-AREA'
+                            else:
+                                label = 'PTXT'
+                        
+                        if text:
+                            yield ele_num, text, label, None
+                            ele_num += 1
+                continue
 
             # --- text paras ---
             if tag == 'p':
@@ -280,7 +277,7 @@ def iter_block_items(doc_data):
             ele_num += 1
             map_index += 1
 
-async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url="", start_text="", end_text=""):
+async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", start_text="", end_text="", relative_root=None):
     doc_data = await load_file_bytes(docx_path, file_url=file_url)
 
     doc_structure = []
@@ -288,9 +285,9 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     headings_stack = [{'level': -1, 'content': doc_structure}]
     current_heading = ''
 
-    tb_dir = os.path.join(kb_dir, "tables")
+    tb_dir = os.path.join(output_dir, "tables")
     os.makedirs(tb_dir, exist_ok=True)
-    img_dir = os.path.join(kb_dir, "images")
+    img_dir = os.path.join(output_dir, "images")
     os.makedirs(img_dir, exist_ok=True)
 
     block_tuples = list(iter_block_items(doc_data))
@@ -309,7 +306,8 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     outline_dic = {-1:-1}
     smart_title_parse = llm_paras['smart_title_parse']
     if not llm_paras['doc_type'] in "templates":
-        heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse)
+        model_name = llm_paras.get("model_name", "deepseek-chat") if llm_paras else "deepseek-chat"
+        heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name)
 
     if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique
@@ -370,7 +368,7 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
             image_count += 1
             current_heading = last_heading_before_block
 
-        elif label == 'TABLE': #TODO 处理跨页表格
+        elif label == 'TABLE': # TODO: handle cross-page tables
             headings_stack, df_list = await handle_table(
                 df_list, block, tb_dir, headings_stack,
                 current_heading, table_count, llm_paras["summary_table"]
@@ -378,7 +376,7 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
             table_count += 1
             current_heading = last_heading_before_block
 
-        else: #TODO latex...
+        else: # TODO: handle latex, etc.
             pass
 
     # record training data
@@ -386,12 +384,13 @@ async def parse_docx(docx_path, llm_paras, kb_dir=None, filename="", file_url=""
     # heading_data.to_csv(os.path.join(kb_dir, 'table_train.csv'), encoding='utf-8-sig')
     return {'content' : doc_structure}, df_list
 
-async def convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras):
-    split_char = settings.SPLIT_CHAR
+async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, relative_root=None):
+    split_char = settings.SPLIT_CHAR or "/"
     leaf_dics = get_leaf_dics(parsed_structure)
     leaf_dics = await postprocess_leaf_dics(leaf_dics, base_llm_paras)
 
-    doc_name = kb_dir.split(os.sep)[-1]  # 允许带上.docx方便graph后续建构
+    # Use relative_root for path construction instead of absolute output_dir
+    doc_name = relative_root if relative_root else output_dir.split(os.sep)[-1]
     if len(leaf_dics) == 0:
         raise DocxParsingException(
             user_message="Document content could not be extracted",
@@ -413,14 +412,16 @@ async def convert_doc2dics(parsed_structure, df_list, kb_dir, base_llm_paras):
             keywords = row['keywords']
             summary = row['local_summary']
             know_id = gen_str_codes(bottom_content + str(uuid.uuid4()))
-            know_path = split_char.join(kb_dir.split(os.sep) + ([key] if key.strip() else []))
+            # Use relative_root for path instead of absolute kb_dir
+            path_suffix = key if key.strip() else ""
+            know_path = split_char.join([relative_root, path_suffix]) if relative_root and path_suffix else (relative_root or path_suffix)
             df_list.append(
                 [bottom_content, know_path, match_type, len(bottom_content), keywords, summary, know_id, bottom_tokens,
                  "", time_stamp])
         except KnowhereException:
             raise
         except Exception as e:
-            logger.debug(f"❌解析docx文档失败 因为{e}")
+            logger.debug(f"❌Failed to parse docx document: {e}")
             raise DocxParsingException(
                 user_message="Failed to process document content",
                 reason="CONTENT_PROCESSING_FAILED",

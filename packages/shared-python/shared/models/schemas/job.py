@@ -18,7 +18,7 @@ class ParsingParams(BaseModel):
     """解析参数"""
     model: Literal["base", "advanced"] = Field("base", description="使用的模型")
     ocr_enabled: bool = Field(False, description="是否启用OCR")
-    kb_dir: Optional[str] = Field("默认目录", description="知识库目录")
+    kb_dir: Optional[str] = Field("Default_Root", description="知识库目录")
     doc_type: Literal["auto", "pdf", "docx", "txt", "md"] = Field("auto", description="文档类型")
     smart_title_parse: bool = Field(True, description="智能标题解析")
     summary_image: bool = Field(True, description="是否生成图片摘要")
