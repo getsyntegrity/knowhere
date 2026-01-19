@@ -69,7 +69,7 @@ def build_prompt(task, texts, query, **kwargs):
         max_tokens = kwargs['paras']['max_tokens']
 
         prompt = f"""
-        You are a document structure correction expert. You will receive an HTML table with multiple rows of text, where each row may be a heading or body text, including:
+        You are a document structure auditing expert. You will receive an HTML table with multiple rows of text, where each row may be a heading or body text, including:
         1. id column: line number
         2. heading column: text content
         3. level column: preliminary estimated level (may be inaccurate), as follows:
@@ -100,6 +100,55 @@ def build_prompt(task, texts, query, **kwargs):
         - Output only standard JSON, do not add any format wrappers (e.g., do not add ```json)
         - Do not add escaped newlines or other control characters
         - Do not add any explanations, comments, or descriptive text
+        """
+
+    # ==================== TOC Heading Evaluation Prompts ====================
+
+    elif task == 'eval-toc-headings':
+        temperature = 0
+        top_p = 0.01
+        max_depth = kwargs['paras']['max_depth']
+        max_tokens = kwargs['paras']['max_tokens']
+
+        prompt = f"""
+        You are a document structure auditing expert specializing in Table of Contents (TOC) analysis. You will receive an HTML table representing a TOC extracted from a document. Each row is a TOC entry, including:
+        1. id column: line number (integer)
+        2. heading column: the TOC entry text content
+        3. level column: preliminary estimated level (may be inaccurate or "Not Sure")
+
+        Data:
+        '''
+        {texts}
+        '''
+
+        ***Critical Context***:
+        This is a Table of Contents (TOC), NOT body text. In a TOC:
+        - ALL rows are heading entries pointing to document sections
+        - There is NO body text in a TOC - every line represents a chapter, section, or subsection title
+        - Level -1 (body text marker) is NOT applicable in TOC context
+
+        ***Your Task***:
+        Analyze the hierarchical structure of this TOC and assign the correct level (1 to {max_depth}) to each entry.
+
+        ***Hierarchy Rules***:
+        1. Top-level chapters (e.g., "Chapter 1", "Part I", "一、", "第一章", Roman numerals like "I.", "II.") should be level 1
+        2. Numbered items under a chapter (e.g., "1.", "2.", "1.1", "(1)") are typically level 2 or deeper
+        3. Sub-items with deeper numbering (e.g., "1.1.1", "(a)", "①") indicate level 3 or deeper
+        4. Levels between consecutive entries cannot skip (e.g., jumping from level 1 to level 3 is invalid)
+        5. When entries share the same numbering pattern, they should have the same level
+        
+        ***Output Requirements***:
+        - Output MUST be a JSON array only
+        - Each element must contain exactly these fields in order:
+            - "id": original line number (integer)
+            - "level": the corrected level for that entry (integer from 1 to {max_depth})
+        - DO NOT use level -1 (this is a TOC, not body text)
+        - If uncertain about a level, estimate based on the numbering pattern and context
+
+        ***Format Requirements***:
+        - Output only valid JSON, no markdown code fences (no ```json)
+        - No escaped newlines or control characters
+        - No explanations, comments, or descriptive text
         """
 
     # ==================== Image Processing Prompts ====================
