@@ -637,7 +637,7 @@ async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len
         layout_res = eval_response(answer)
         return layout_res
     except Exception as e:
-        logger.error(f"hiearchy_llm failed: {e}")
+        logger.error(f"detect hierarchy by LLM failed: {e}")
         raise
 
 
@@ -662,32 +662,29 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
     elif doc_type == "md":
         raw_preds = filter_md_headings(infos)
     elif doc_type == "docx":
-        logger.debug("过滤docx标题候选...")
         raw_preds = filter_doc_headings(infos, enable_regx)
-        logger.debug(f"过滤完成，保留 {len(raw_preds)} 个候选标题")
     else:
         raw_preds = pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
     # 2. parse smart/not smart
-    # Save raw_preds as preds_1 (原始候选标题, 经过filter_*_headings处理后)
+    # Save raw_preds as preds_1
     save_intermediate_csv(raw_preds, output_dir, "preds_1_raw_filtered")
     heading_preds = est_hierarchies_naive(raw_preds, smart_parse, output_dir=output_dir)
-    # Save heading_preds as preds_2 (经过naive处理后的预测结果)
+    # Save heading_preds as preds_2
     save_intermediate_csv(heading_preds, output_dir, "preds_2_naive_processed")
 
     if smart_parse:
         heading_preds = await est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name, output_dir=output_dir)
-        logger.info("✅ 智能解析完成")
+        logger.info("✅ LLM hierarchy parsing completed")
 
     # 3. final polishing for certain types
     if doc_type in ["docx"]:
-        logger.debug("对docx标题进行后处理优化...")
         heading_preds = postprocess_headings(heading_preds, task="merge_continuous")
         heading_preds = postprocess_headings(heading_preds, task="merge_short")
         heading_preds = postprocess_headings(heading_preds, task="judge_negs")
-        logger.debug("后处理完成")
+        logger.debug("Docx hiearchy detection postprocessing completed")
 
-    if heading_preds["level"].eq(-1).all():  # non are estimated as headings
+    if heading_preds["level"].eq(-1).all(): # if non are estimated as headings
         logger.warning("⚠️ No valid headings estimated")
         heading_preds = pd.DataFrame()
     else:
@@ -703,18 +700,18 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
         
         logger.info(f"✅ Heading parsing completed, final {len(heading_preds[heading_preds['level'] > 0])} valid headings")
     
-    # Save heading_preds as preds_5 (最终输出结果, 经过所有后处理)
+    # Save heading_preds as preds_5
     save_intermediate_csv(heading_preds, output_dir, "preds_5_final_output")
     return heading_preds
 
 
 def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
-    """非LLM层级解析
+    """Detect hierarchies by non-LLM
     
     Args:
-        raw_preds: 原始预测DataFrame
-        proceed_smart: 是否继续进行LLM解析
-        output_dir: 输出目录，用于保存中间结果CSV
+        raw_preds: raw data
+        proceed_smart: whether to proceed with smart parsing
+        output_dir: output directory, used to save intermediate results CSV
     """
     logger.debug("🚀 non-llm parsing => recursive processing")
     save_preds = raw_preds.copy()
@@ -770,7 +767,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
         base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
         logger.debug(f"层级映射构建完成: {len(lvl_mapping)} 个映射规则")
 
-        # Save base_preds as preds_3 (LLM解析后的基础预测, 包含层级映射)
+        # Save base_preds as preds_3
         save_intermediate_csv(base_preds, output_dir, "preds_3_llm_base")
 
         if len(level_dfs) > 1:
@@ -785,7 +782,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
         full_preds['heading'] = raw_headings
         
         full_preds.drop("origin_level", axis=1, inplace=True)
-        logger.info(f"✅ 文档层级结构解析完成，共识别 {len(full_preds)} 个标题")
+        save_intermediate_csv(full_preds, output_dir, "preds_4_llm_final")
 
     except Exception as e:
         logger.warning(f"LLM-based parsing fails due to {e}, using non-llm pipeline...")
