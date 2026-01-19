@@ -22,7 +22,7 @@ class BillingConfig(BaseSettings):
     PRO_PLAN_CREDITS: int = Field(default=10000, description="Pro计划每月Credits")
     
     # Credits 配置
-    CREDITS_PER_API_CALL: int = Field(default=1, description="每次API调用消耗的Credits")
+    CREDITS_PER_PAGE: int = Field(default=1, description="credits per page usage", env="CREDITS_PER_PAGE")
     LOW_BALANCE_THRESHOLD: int = Field(default=10, description="低余额预警阈值")
     CREDITS_VALID_DAYS: int = Field(default=90, env="CREDITS_VALID_DAYS", description="Credits有效期（天），过期点数失效")
     

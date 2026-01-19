@@ -307,7 +307,7 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
     smart_title_parse = llm_paras['smart_title_parse']
     if not llm_paras['doc_type'] in "templates":
         model_name = llm_paras.get("model_name", "deepseek-chat") if llm_paras else "deepseek-chat"
-        heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name)
+        heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name, output_dir=output_dir)
 
     if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique

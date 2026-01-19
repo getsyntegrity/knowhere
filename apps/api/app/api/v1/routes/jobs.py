@@ -611,7 +611,7 @@ async def list_jobs(
                     model=model,
                     ocr_enabled=ocr_enabled,
                     duration_seconds=duration_seconds,
-                    credits_spent=settings.CREDITS_PER_API_CALL,
+                    credits_spent=job.credits_charged if hasattr(job, "credits_charged") else 0,
                 )
             )
 
@@ -757,6 +757,7 @@ async def get_job_result(
             model=model,
             ocr_enabled=ocr_enabled,
             duration_seconds=(job.updated_at - job.created_at).total_seconds() if job.updated_at and job.created_at else None,
+            credits_spent=job.credits_charged if hasattr(job, "credits_charged") else 0,
         )
 
         return response_data

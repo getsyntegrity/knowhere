@@ -194,8 +194,8 @@ class AIQueryService:
         )
         
         # 只传递 API 相关参数，不传递客户端配置参数
-        # 过滤掉客户端配置参数
-        client_config_params = {'api_key', 'api_url', 'timeout', 'user_id'}
+        # 过滤掉客户端配置参数和已显式传递的参数
+        client_config_params = {'api_key', 'api_url', 'timeout', 'user_id', 'model', 'max_tokens'}
         api_params = {k: v for k, v in kwargs.items() if k not in client_config_params}
         
         try:
