@@ -114,16 +114,14 @@ class ChunksRedisService:
             # 根据类型添加特定字段
             if chunk_type == "image":
                 img_name = (
-                    path.split("-->")[-1] if "-->" in path else f"image_{chunk_id}.jpg"
+                    path.split("/")[-1] if "/" in path else f"image_{chunk_id}.jpg"
                 )
                 metadata["file_path"] = f"images/{img_name}"
-                metadata["original_name"] = img_name
             elif chunk_type == "table":
                 tbl_name = (
-                    path.split("-->")[-1] if "-->" in path else f"table_{chunk_id}.html"
+                    path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"
                 )
                 metadata["file_path"] = f"tables/{tbl_name}"
-                metadata["original_name"] = tbl_name
 
             # 构建chunk对象
             chunk = {

@@ -197,7 +197,7 @@ export EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-v4}
 export NORMAL_MODEL=${NORMAL_MODEL:-deepseek-chat}
 export IMAGE_MODEL=${IMAGE_MODEL:-qwen-vl-plus}
 export IMAGE_MODEL_MAX=${IMAGE_MODEL_MAX:-qwen-vl-max}
-export MINERU_URL=${MINERU_URL:-https://mineru.net/api/v4/extract/task}
+export MINERU_URL=${MINERU_URL:-https://mineru.net/api/v4}
 
 # OAuth和支付配置（可选，默认为空）
 export USERS_VERIFY_TOKEN_SECRET=${USERS_VERIFY_TOKEN_SECRET:-}

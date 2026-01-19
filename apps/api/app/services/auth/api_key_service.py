@@ -10,7 +10,8 @@ from shared.models.database.api_key import APIKey
 from shared.models.database.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from loguru import logger
+from shared.core.exceptions.domain_exceptions import ValidationException, NotFoundException, KnowhereException, APIKeyOperationException
 
 class APIKeyService:
     """API Key管理服务"""
@@ -36,12 +37,17 @@ class APIKeyService:
         # 1. 检查用户API Key数量限制
         key_count = await self.repository.count_by_user(session, user_id)
         if key_count >= 10:  # 限制每个用户最多10个API Key
-            raise ValueError("API Key数量已达上限")
+            raise ValidationException(
+                user_message="Maximum API Key limit reached (10)",
+                violations=[{"field": "api_keys", "description": "User has reached the maximum API Key limit"}]
+            )
         
-        # 2. 检查名称是否重复
         existing_key = await self.repository.get_by_user_and_name(session, user_id, name)
         if existing_key:
-            raise ValueError("API Key名称已存在")
+            raise ValidationException(
+                user_message="API Key name already exists",
+                violations=[{"field": "name", "description": f"An API Key with name '{name}' already exists"}]
+            )
         
         # 3. 生成安全的API Key (sk_ + UUID的32位字符串，不包含连字符)
         api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
@@ -88,37 +94,36 @@ class APIKeyService:
         return await self._get_user_by_id(session, str(api_key_record.user_id))
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
-        """撤销API Key"""
-        print(f"撤销API密钥: api_key_id={api_key_id}, user_id={user_id}")
+        """撤销API Key（直接删除）"""
+        logger.info(f"撤销API密钥: api_key_id={api_key_id}, user_id={user_id}")
         
         # 1. 验证API Key属于该用户
         api_key = await self.repository.get_by_id(session, api_key_id)
-        print(f"找到API密钥: {api_key}")
         
         if not api_key:
-            print("API密钥不存在")
+            logger.warning("API密钥不存在")
             return False
             
         if str(api_key.user_id) != user_id:
-            print(f"用户ID不匹配: api_key.user_id={api_key.user_id}, user_id={user_id}")
+            logger.warning(f"用户ID不匹配: api_key.user_id={api_key.user_id}, user_id={user_id}")
             return False
         
-        # 2. 标记为已撤销
-        success = await self.repository.deactivate(session, api_key_id)
-        print(f"停用结果: {success}")
+        # 2. 直接删除API Key
+        success = await self.repository.delete_by_id(session, api_key_id)
+        logger.info(f"删除结果: {success}")
         
         # 3. 提交事务
         if success:
             await session.commit()
-            print("事务已提交")
+            logger.info("事务已提交")
             # 4. 清理缓存
             await self._remove_cached_api_key(api_key_id)
         
         return success
     
     async def list_user_api_keys(self, session: AsyncSession, user_id: str) -> List[dict]:
-        """获取用户API Key列表"""
-        api_keys = await self.repository.get_active_by_user_id(session, user_id)
+        """获取用户API Key列表（有效期内的，包含禁用的）"""
+        api_keys = await self.repository.get_unexpired_by_user_id(session, user_id)
         return [
             {
                 "id": str(api_key.id),
@@ -135,10 +140,13 @@ class APIKeyService:
     
     async def regenerate_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> str:
         """重新生成API Key"""
-        # 1. 验证API Key属于该用户
         api_key = await self.repository.get_by_id(session, api_key_id)
         if not api_key or api_key.user_id != user_id:
-            raise ValueError("API Key不存在或不属于该用户")
+            raise NotFoundException(
+                resource="APIKey",
+                resource_id=api_key_id,
+                internal_message="API Key not found or does not belong to user"
+            )
         
         # 2. 生成新的API Key (sk_ + UUID的32位字符串，不包含连字符)
         new_api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
@@ -200,15 +208,20 @@ class APIKeyService:
             if api_key and api_key.user_id == user_id:
                 return api_key
             return None
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"获取API Key失败: {e}")
-            raise
+            raise APIKeyOperationException(
+                internal_message=f"获取API Key失败: {str(e)}",
+                original_exception=e
+            )
     
     async def toggle_api_key(self, session: AsyncSession, user_id: str, api_key_id: str) -> bool:
         """启用/禁用API Key"""
         try:
             api_key = await self.repository.get(session, api_key_id)
-            if not api_key or api_key.user_id != user_id:
+            if not api_key or str(api_key.user_id) != user_id:
                 return False
             
             api_key.is_active = not api_key.is_active
@@ -217,7 +230,12 @@ class APIKeyService:
             
             logger.info(f"API Key状态切换成功: {api_key_id}, 新状态: {api_key.is_active}")
             return True
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"切换API Key状态失败: {e}")
             await session.rollback()
-            raise
+            raise APIKeyOperationException(
+                internal_message=f"切换API Key状态失败: {str(e)}",
+                original_exception=e
+            )

@@ -1,30 +1,33 @@
-import datetime
 import io
 import os
 import re
-import threading
 import uuid
+import datetime
+import threading
+import numpy as np
+import pandas as pd
 from collections import OrderedDict
 from typing import List, Union
 
-import numpy as np
-import pandas as pd
 from shared.core.config import settings
-# ARQ依赖已移除，使用Celery替代
 from shared.services.ai import ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (flatten_dic2paths, gen_str_codes,
                                           get_str_time, process_dup_paths_df,
-                                          remove_duplicates_orderkept,
                                           remove_spaces)
-from shared.utils.text_utils import tokenize2stw_remove
-# TaskRedis依赖已移除，使用Redis直接追踪
+from shared.utils.text_utils import tokenize2stw_remove, remove_duplicates_orderkept
+
 from app.services.document_parser.txt_parser import extract_summary_keywords
 from shared.utils.CommonHelper import load_file_bytes
 from bs4 import BeautifulSoup
 from docx.table import Table as DocxTable
+from loguru import logger
 from pandasql import sqldf
+
+from loguru import logger
+from shared.core.exceptions.domain_exceptions import TableParsingException
+from shared.core.exceptions.knowhere_exception import KnowhereException
 
 g_tbl_lock = threading.Lock()
 
@@ -76,11 +79,11 @@ def table2html(table: DocxTable) -> str:
     html += "</table>"
     return html
 
-def html2df(tb_html_path): # 这是处理html path 下面是处理html字符串
+def html2df(tb_html_path): # Process HTML file path, below is for HTML string
     dfs = pd.read_html(tb_html_path, encoding='utf-8')
     df = dfs[0]
     if isinstance(df.columns, pd.MultiIndex):
-        # 将嵌套表头合并成扁平字符串列名
+        # Flatten nested headers into single-level column names
         df.columns = ['-'.join(filter(None, map(str, col))) for col in df.columns]
     return df
 
@@ -95,11 +98,15 @@ def html2df(tb_html_path): # 这是处理html path 下面是处理html字符串
     # return df
 
 def tb_htmlstr_to_df(html_str):
-    """将 HTML 字符串中的第一个表格转换成 DataFrame"""
+    """Convert first table in HTML string to DataFrame"""
     soup = BeautifulSoup(html_str, "html.parser")
     table = soup.find("table")
     if not table:
-        raise ValueError("No <table> found in the HTML string")
+        raise TableParsingException(
+            user_message="No table structure found in the document",
+            reason="INVALID_FORMAT",
+            internal_message="No <table> found in the HTML string"
+        )
     nested_list = parse_nested_htmltb(table)
     try:
         df = pd.DataFrame(nested_list[1:], columns=nested_list[0])
@@ -170,7 +177,7 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
         header_rows = list(range(header_id+1))
         return header_rows
 
-    if not pd.isna(df_temp.columns).all(): # 如果本身表头全是nan 无必要多加1行
+    if not pd.isna(df_temp.columns).all(): # If columns are not all NaN, no need to add extra row
         df_temp.loc[-1] = df_temp.columns
         df_temp.index = df_temp.index + 1
         df_temp = df_temp.sort_index()
@@ -183,18 +190,20 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
             prompt, temperature, top_p, max_tokens = build_prompt(task="detect-table-headers", texts=tb_small_str, query="", paras=paras)
 
             messages = [
-                {"role": "system", "content": "你是一个有帮助的助手"},
+                {"role": "system", "content": "You are a helpful assistant"},
                 {"role": "user", "content": prompt}
             ]
 
             ctx_task_id = gen_str_codes((str(uuid.uuid4()) + tb_small_str))
             
-            # 使用Redis直接追踪任务状态，无需数据库持久化
-            from shared.services.redis import RedisServiceFactory
-            redis_service = RedisServiceFactory.get_service()
-            await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
+            # Track task status via Redis (skip in LOCAL_DEBUG mode)
+            import os
+            if os.getenv("LOCAL_DEBUG", "0") != "1":
+                from shared.services.redis import RedisServiceFactory
+                redis_service = RedisServiceFactory.get_service()
+                await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
             
-            # 使用统一的AI查询服务
+            # Use unified AI service
             header_res = await ai_query_service.query_ai(
                 messages=messages,
                 user_id=ctx_task_id,
@@ -202,22 +211,37 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
                 timeout=60
             )
             header_res = eval_response(header_res)
-            try:
-                header_id = header_res['answer'][-1]
-                header_rows = list(range(header_id+1))
-            except Exception as e:
-                print(f"⚠️ 可能无表头被识别到  {e}")
-                raise
+            # Extract answer field
+            if isinstance(header_res, dict):
+                answer = header_res.get('answer', [])
+            else:
+                answer = header_res if isinstance(header_res, list) else []
+            
+            # Check if answer is empty list
+            if not answer or len(answer) == 0:
+                logger.warning("AI returned empty list, cannot identify headers, falling back to traditional mode...")
+                header_rows = parse_headers_nonsmart(df_temp)
+            else:
+                try:
+                    header_id = answer[-1]
+                    header_rows = list(range(header_id + 1))
+                except Exception as e:
+                    logger.warning(f"Failed to parse header row number: {e}, falling back to traditional mode...")
+                    header_rows = parse_headers_nonsmart(df_temp)
 
         except Exception as e:
-            print(f"❌智能解析表头失败 原因 {e}\t采用传统模式解析...")
+            logger.warning(f"Smart header parsing failed: {e}, falling back to traditional mode...")
             header_rows = parse_headers_nonsmart(df_temp)
     else:
         header_rows = parse_headers_nonsmart(df_temp)
 
-    # 根据得到的header rows优化table
+    # improve table structure based on header rows
     if len(header_rows)==0 or (all(h is None for h in header_rows)):
-        return None
+        logger.warning("No valid headers detected, fallback to using row 0 as header")
+        new_header = df_temp.iloc[0].ffill().bfill().tolist()
+        df_temp.columns = new_header
+        df_temp = df_temp.iloc[1:].reset_index(drop=True)
+        return df_temp
     elif len(header_rows)>1:
         head_lst = []
         for i in range(0, len(header_rows)):
@@ -241,13 +265,13 @@ def extract_tb_keywords(tb_str, form="html"):
     tb_keywords = parse_tb_keywords(tb_df)
     return tb_keywords
 
-def parse_tb_keywords(tb_df, kw_spit=">>>"): # 基于表头获取关键词（也可以考虑再加上由大模型提取的）
+def parse_tb_keywords(tb_df, kw_spit=">>>"):  # Extract keywords from headers (can also add LLM extraction)
     def parse_single_level_(cols, keywords):
         cols = [str(c) for c in cols]
         for col in cols:
             if kw_spit in col:
                 tmp_kw = col.split(">>>")[0]
-            else: # 可能是第一次出现
+            else:  # May be first occurrence
                 tmp_kw = col
             if tmp_kw not in keywords:
                 keywords.append(col)
@@ -258,7 +282,7 @@ def parse_tb_keywords(tb_df, kw_spit=">>>"): # 基于表头获取关键词（也
     if isinstance(tb_df.columns, pd.MultiIndex):
         multi_cols = tb_df.columns
         cols_df = pd.DataFrame(multi_cols.tolist(), columns=[f"level_{i}" for i in range(multi_cols.nlevels)])
-        for i in range(multi_cols.nlevels): # 每列提取为 list
+        for i in range(multi_cols.nlevels):  # Extract each level as list
             level_kws = []
             level_kws = parse_single_level_(cols_df[f"level_{i}"].tolist(), level_kws)
             tb_keywords.extend(level_kws)
@@ -323,13 +347,13 @@ def multiindex_to_tree(multiindex):
 
 def postprocess_tb(df, drop=False):
     if drop:
-        # 删除全为空的行列
+        # Drop rows and columns that are all empty
         before_cols = set(df.columns)
         df = df.dropna(how='all')
         df = df.dropna(axis=1, how='all')
         after_cols = set(df.columns)
         dropped_columns = before_cols - after_cols
-        print("被删除的列:", list(dropped_columns))
+        logger.debug(f"Dropped columns: {list(dropped_columns)}")
         df.reset_index(drop=True, inplace=True)
 
     df.columns = [str(col).replace('\n', '') for col in df.columns] # Replace '\n' in column headers which can cause unexpected errors
@@ -360,15 +384,15 @@ def process_duplicate_cols(columns):
 
 def format_tb_scope(df, num):
     if len(df) > int(num*3+1):
-        # 取前&后num行
+        # Get head and tail rows
         head_df = df.head(num)
         tail_df = df.tail(num)
-        # 排除前后行后的中间部分
+        # Middle portion excluding head and tail
         middle_df = df.iloc[num:len(df)-num]
 
         if len(middle_df) >= num:
             mid_sample_df = middle_df.sample(n=num, random_state=42)
-        else: # 若中间不足num行，则直接取全部
+        else:  # If middle has less than num rows, take all
             mid_sample_df = middle_df
         scope_df = pd.concat(objs=[head_df, mid_sample_df, tail_df], ignore_index=True)
     else:
@@ -379,24 +403,26 @@ def format_tb_scope(df, num):
 
 # tabular agent
 async def table_scope_analyze(query, tb_path, paras, num_row=7):
-    # 提取原始表格html
+    # Extract original table HTML
     tb_df = html2df(tb_path)
     scope_str = format_tb_scope(tb_df, num_row)
 
     prompt, temperature, top_p, max_tokens = build_prompt(task="gen-table-query", texts=scope_str, query=query, paras=paras)
     messages = [
-        {"role": "system", "content": "你是一个有帮助的助手"},
+        {"role": "system", "content": "You are a helpful assistant"},
         {"role": "user", "content": prompt}
     ]
 
     ctx_task_id = gen_str_codes((str(uuid.uuid4()) + query))
     
-    # 使用Redis直接追踪任务状态，无需数据库持久化
-    from shared.services.redis import RedisServiceFactory
-    redis_service = RedisServiceFactory.get_service()
-    await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
+    # Track task status via Redis (skip in LOCAL_DEBUG mode)
+    import os
+    if os.getenv("LOCAL_DEBUG", "0") != "1":
+        from shared.services.redis import RedisServiceFactory
+        redis_service = RedisServiceFactory.get_service()
+        await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
     
-    # 使用统一的AI查询服务
+    # Use unified AI query service
     scope_res = await ai_query_service.query_ai(
         messages=messages,
         user_id=ctx_task_id,
@@ -407,19 +433,19 @@ async def table_scope_analyze(query, tb_path, paras, num_row=7):
     if not scope_res['answer']=="null":
         tb_query = scope_res['answer']
     else:
-        print("当前表格中无合适行列")
+        logger.warning("No suitable rows/columns found in current table")
         return None
 
     try:
         tb_context = sqldf(tb_query, env={'df': tb_df})
         tb_context = df2html(tb_context)
     except Exception as e:
-        print(f'自动生成表格查询失败 原因：{e}')
+        logger.error(f"Auto table query generation failed: {e}")
         tb_context = None
     return tb_context
 
-async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None, window_h=10):
-    split_char = settings.SPLIT_CHAR or "-->"
+async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, window_h=10, relative_root=None):
+    split_char = settings.SPLIT_CHAR or "/"
     time_stamp = get_str_time()
     df_list = []
 
@@ -428,9 +454,8 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
     sheets_dict = pd.read_excel(table_stream, sheet_name=None)
 
     all_sheets = sheets_dict.items()
-    print(f'该xlsx文件包含{len(all_sheets)}个sheet表')
 
-    tb_dir = os.path.join(kb_dir, "tables")
+    tb_dir = os.path.join(output_dir, "tables")
     os.makedirs(tb_dir, exist_ok=True)
     all_tb_paths = []
     exist_sheets = []
@@ -440,9 +465,9 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
         if sheet_name in exist_sheets:
             sheet_name = sheet_name + str(len(exist_sheets))
         else:
-            exist_sheets.append(sheet_name)  # 避免重名sheet
+            exist_sheets.append(sheet_name)
 
-        # ****UNDER DEVELOPMENT**** analyzing table structure vertical/horizontal, get sub tables (multiple tables in one sheet)
+        # TODO get sub tables (multiple tables in one sheet)
         sheet_tbs = [sheet_content]
         for tb in sheet_tbs:
             try:
@@ -450,19 +475,19 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
                 if len(tb) == 0 or tb.empty or tb.isna().all().all():
                     continue
 
-                # 解析表头 支持智能和传统规则模式
+                # Parse headers with smart or traditional mode
                 tb = await parse_headers(tb, paras=base_llm_paras)
                 tb_paths, tb_strs = parse_tb_contents(tb, parent_dic={file_name: {sheet_name: {}}}, file_name=file_name, sheet_name=sheet_name)
                 tb_keywords = parse_tb_keywords(tb)
 
                 if base_llm_paras['summary_table']:
                     summary_context = format_tb_scope(tb, window_h)
-                    summary_context = f"表格列名如下:\n{tb_keywords}\n\n表格前{window_h}行内容如下:\n{summary_context}"
+                    summary_context = f"Table columns:\n{tb_keywords}\n\nFirst {window_h} rows:\n{summary_context}"
                     tb_summary = await extract_summary_keywords(summary_context, type_="summary", summary_len=100)
                 else:
                     tb_summary = tb_keywords
 
-                tb_name = remove_spaces('表-' + sheet_name) + '.html'
+                tb_name = remove_spaces('table-' + sheet_name) + '.html'
                 tb_path = os.path.join(tb_dir, tb_name)
                 soup = BeautifulSoup(tb_strs, features='html.parser')
                 tb_html_str = soup.prettify()
@@ -470,42 +495,29 @@ async def parse_xlsx(file_path, file_name, kb_dir, baseurl, base_llm_paras=None,
                     f.write(tb_html_str)
 
                 tb_id = 'TABLE_' + gen_str_codes(tb_strs) + '_TABLE'
-                tb_bottom_content = f"{tb_id}\n上表主要内容如下:\n{tb_summary}\n表内主要列名如下:\n{tb_keywords}"
+                tb_bottom_content = f"{tb_id}\nTable summary:\n{tb_summary}\nMain columns:\n{tb_keywords}"
                 know_id = gen_str_codes(tb_bottom_content + str(uuid.uuid4()))
                 bottom_tokens = tokenize2stw_remove([tb_bottom_content], base_llm_paras['stopwords'])
 
                 all_tb_paths.extend(tb_paths)
-                tb_path = split_char.join(tb_path.split(os.sep))
-                df_list.append([tb_bottom_content, tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp])
+                # Use relative path for tables: "tables/xxx.html"
+                relative_tb_path = f"tables/{tb_name}"
+                df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp])
 
-            except Exception as e:
-                print(f'parse table fails, because {e}')
+            except KnowhereException:
                 raise
+            except Exception as e:
+                logger.error(f"Table parsing failed: {e}")
+                raise TableParsingException(
+                    user_message="Failed to parse Excel table content",
+                    reason="TABLE_PROCESSING_FAILED",
+                    file_type="xlsx", 
+                    internal_message=str(e),
+                    original_exception=e
+                )
 
-    all_df_cols = (settings.ALL_DF_COLS or "path,content,summary,type,addtime").split(',')
+    all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
     table_df = pd.DataFrame(df_list, columns=all_df_cols)
     table_df = process_dup_paths_df(table_df)
-
-    # tb_graph, _ = restore_graph_by_paths(all_tb_paths)
-    # graph_path = os.path.join(kb_dir, 'graph.json')
-    table_df.to_csv(os.path.join(kb_dir, 'KB_PTXT.csv'), encoding='utf-8', index=False)
-    #     with open(graph_path, 'w', encoding='utf-8') as f:
-    #         json.dump(tb_graph, f, ensure_ascii=False, indent=4)
-    # return tb_graph
-
-
-# def table_structure_recog(filename=None, tb_path=None):
-#     # tb_path = os.path.join(USER_SETTINGS['KB_PATH'], 'templates', filename)
-#     df_temp = parse_headers(tb_path=tb_path, mode='fill')
-#     _, tb_paths, search_keys = parse_tb_contents(df_temp, mode='fill', return_lst=True)
-#     tb_structure, _ = restore_graph_by_paths(tb_paths)
-#     return search_keys, tb_structure
-
-# def process_nan4records(df):
-#     df = process_datetime_cells(df)
-#     df = df.astype(object)
-#     df = df.where(pd.notnull(df), None)
-#     tb_json = df.to_dict(orient="records")
-#     return tb_json
-
+    return table_df
 

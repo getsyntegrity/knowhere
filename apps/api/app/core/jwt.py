@@ -12,7 +12,7 @@ SECRET = settings.SECRET_KEY
 LIFETIME = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
 # JWT 传输
-jwt_transport = BearerTransport(tokenUrl="auth/jwt/login")
+jwt_transport = BearerTransport(tokenUrl="v1/jwt/login")
 
 # JWT 认证策略
 jwt_strategy = JWTStrategy(

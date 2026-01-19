@@ -7,6 +7,7 @@ import sys
 from typing import Any, Dict
 
 from shared.core.database import get_db_context
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from app.services.state_machine.manager import JobStateMachine
 from loguru import logger
 
@@ -33,9 +34,14 @@ class TimeoutListener:
             # 使用状态机管理器的启动方法
             await self.state_machine.start_timeout_listener()
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"启动监听器失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"启动监听器失败: {str(e)}",
+                original_exception=e
+            )
     
     async def stop(self):
         """停止监听器"""

@@ -12,6 +12,7 @@ import aiohttp
 from loguru import logger
 
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
 
 
 class FileUploadService:
@@ -46,9 +47,15 @@ class FileUploadService:
             logger.info(f"文件直传成功: {file_path} -> {s3_key}")
             return s3_key
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"文件直传失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"文件直传失败: {str(e)}",
+                operation="direct_upload",
+                original_exception=e
+            )
 
     async def handle_url_upload(self, file_url: str, job_id: str) -> str:
         """
@@ -81,9 +88,15 @@ class FileUploadService:
                 if os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"URL文件处理失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"URL文件处理失败: {str(e)}",
+                operation="url_upload",
+                original_exception=e
+            )
 
     async def generate_upload_url(
         self, job_id: str, file_extension: str = ""
@@ -120,9 +133,15 @@ class FileUploadService:
                 "upload_headers": {"Content-Type": content_type},
             }
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"生成上传URL失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"生成上传URL失败: {str(e)}",
+                operation="generate_upload_url",
+                original_exception=e
+            )
 
     async def generate_download_url(
         self, s3_key: str, bucket: Optional[str] = None, expires_in: int = 3600
@@ -147,9 +166,15 @@ class FileUploadService:
 
             return {"download_url": download_url, "expires_in": expires_in}
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"生成下载URL失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"生成下载URL失败: {str(e)}",
+                operation="generate_download_url",
+                original_exception=e
+            )
 
     async def get_file_info(
         self, s3_key: str, bucket: Optional[str] = None
@@ -184,10 +209,11 @@ class FileUploadService:
             if '404' in str(e) or 'not found' in str(e).lower():
                 return None
             logger.error(f"获取文件信息失败: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"获取文件信息失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"获取文件信息失败: {str(e)}",
+                operation="get_file_info",
+                original_exception=e
+            )
 
     async def upload_result_file(
         self, local_file_path: str, job_id: str, file_extension: str = ""
@@ -210,9 +236,15 @@ class FileUploadService:
             logger.info(f"结果文件上传成功: {local_file_path} -> {s3_key}")
             return s3_key
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"结果文件上传失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"结果文件上传失败: {str(e)}",
+                operation="upload_result_file",
+                original_exception=e
+            )
 
     async def upload_json_result(
         self,
@@ -234,9 +266,15 @@ class FileUploadService:
             )
             logger.info(f"结果JSON上传成功: job_id={job_id}, key={s3_key}")
             return s3_key
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"上传结果JSON失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"上传结果JSON失败: {str(e)}",
+                operation="upload_json_result",
+                original_exception=e
+            )
 
     async def upload_zip_result(
         self,
@@ -257,9 +295,15 @@ class FileUploadService:
                 logger.warning(f"清理临时ZIP文件失败: {e}")
             
             return s3_key
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"上传结果ZIP失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"上传结果ZIP失败: {str(e)}",
+                operation="upload_zip_result",
+                original_exception=e
+            )
 
     def _ensure_bucket_exists(self, bucket_name: str) -> bool:
         """
@@ -317,7 +361,10 @@ class FileUploadService:
         """上传文件到S3"""
         # 确保存储桶存在
         if not await self._ensure_bucket_exists_async(bucket):
-            raise Exception(f"无法确保存储桶 {bucket} 存在")
+            raise StorageServiceException(
+                internal_message=f"无法确保存储桶 {bucket} 存在",
+                operation="ensure_bucket"
+            )
 
         def _upload():
             self.adapter.upload_file(local_file_path, s3_key, bucket)
@@ -353,11 +400,19 @@ class FileUploadService:
 
             return temp_file_path
 
+        except KnowhereException:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            raise
         except Exception as e:
             # 清理临时文件
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-            raise Exception(f"从S3下载文件失败: {e}")
+            raise StorageServiceException(
+                internal_message=f"从S3下载文件失败: {str(e)}",
+                operation="download_from_s3",
+                original_exception=e
+            )
 
     async def _download_file_from_url(self, file_url: str) -> str:
         """从URL下载文件到临时目录"""
@@ -385,7 +440,10 @@ class FileUploadService:
             ) as session:
                 async with session.get(file_url) as response:
                     if response.status != 200:
-                        raise Exception(f"下载失败，状态码: {response.status}")
+                        raise StorageServiceException(
+                            internal_message=f"下载失败，状态码: {response.status}",
+                            operation="download_from_url"
+                        )
 
                     # 使用更大的chunk大小提高下载速度
                     with open(temp_file_path, "wb") as f:
@@ -394,11 +452,19 @@ class FileUploadService:
 
             return temp_file_path
 
+        except KnowhereException:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            raise
         except Exception as e:
             # 清理临时文件
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-            raise Exception(f"下载文件失败: {e}")
+            raise StorageServiceException(
+                internal_message=f"下载文件失败: {str(e)}",
+                operation="download_from_url",
+                original_exception=e
+            )
 
     async def verify_s3_file_exists(
         self, s3_key: str, bucket: Optional[str] = None
@@ -435,7 +501,11 @@ class FileUploadService:
             if '404' in str(e) or 'not found' in str(e).lower():
                 return {"exists": False}
             logger.error(f"验证文件存在性失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"验证文件存在性失败: {str(e)}",
+                operation="verify_s3_file_exists",
+                original_exception=e
+            )
 
     def get_content_type(self, file_extension: str) -> str:
         """
@@ -502,9 +572,15 @@ class FileUploadService:
             logger.info(f"生成文件URL成功: {s3_key} -> {file_url}")
             return file_url
 
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"获取文件URL失败: {e}")
-            raise
+            raise StorageServiceException(
+                internal_message=f"获取文件URL失败: {str(e)}",
+                operation="get_file_url",
+                original_exception=e
+            )
 
     def generate_s3_key(
         self, job_id: str, file_extension: str = "", prefix: str = "uploads"

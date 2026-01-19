@@ -6,7 +6,7 @@ on:
     tags:
       - 'v*'
   pull_request:
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch:
     inputs:
       target_environment:
@@ -76,6 +76,7 @@ jobs:
     outputs:
       environment: ${{ steps.env.outputs.environment }}
       image_tag: ${{ steps.tags.outputs.image_tag }}
+      is_pr: ${{ steps.check-event.outputs.is_pr }}
     
     steps:
       - name: Checkout code
@@ -83,6 +84,16 @@ jobs:
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      
+      - name: Check event type
+        id: check-event
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "is_pr=true" >> $GITHUB_OUTPUT
+            echo "PR event detected"
+          else
+            echo "is_pr=false" >> $GITHUB_OUTPUT
+          fi
       
       - name: Determine target environment
         id: env
@@ -93,8 +104,19 @@ jobs:
             echo "environment=prod" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
             echo "environment=staging" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            # PR事件时，根据目标分支确定环境
+            PR_TARGET_BRANCH="${{ github.base_ref }}"
+            if [ "$PR_TARGET_BRANCH" == "main" ]; then
+              echo "environment=prod" >> $GITHUB_OUTPUT
+            elif [ "$PR_TARGET_BRANCH" == "staging" ]; then
+              echo "environment=staging" >> $GITHUB_OUTPUT
+            else
+              # 默认使用staging环境进行PR构建
+              echo "environment=staging" >> $GITHUB_OUTPUT
+            fi
           else
-            # PR或其他分支推送到staging环境
+            # 其他情况推送到staging环境
             echo "environment=staging" >> $GITHUB_OUTPUT
           fi
           echo "Environment determined: ${{ steps.env.outputs.environment }}"
@@ -105,10 +127,15 @@ jobs:
         run: |
           ENVIRONMENT="${{ steps.env.outputs.environment }}"
           SHORT_SHA=${GITHUB_SHA:0:8}
+          IS_PR="${{ steps.check-event.outputs.is_pr }}"
           
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             GIT_TAG=$(echo "${{ github.ref }}" | sed 's|refs/tags/||')
             IMAGE_TAG="${GIT_TAG}-${ENVIRONMENT}"
+          elif [ "$IS_PR" == "true" ]; then
+            # PR构建使用特定的标签格式，包含PR编号
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            IMAGE_TAG="pr-${PR_NUMBER}-${SHORT_SHA}"
           else
             IMAGE_TAG="${ENVIRONMENT}-${SHORT_SHA}"
           fi
@@ -123,6 +150,7 @@ jobs:
           ENVIRONMENT="${{ steps.env.outputs.environment }}"
           IMAGE_TAG="${{ steps.tags.outputs.image_tag }}"
           LATEST_TAG="${{ steps.tags.outputs.latest_tag }}"
+          IS_PR="${{ steps.check-event.outputs.is_pr }}"
           
           # 获取当前服务的配置
           SERVICE="${{ matrix.service }}"
@@ -135,34 +163,44 @@ jobs:
           # GHCR镜像URI（强制小写）
           GHCR_URI="${{ env.REGISTRY }}/$OWNER_LOWERCASE/$IMAGE_NAME_LOWERCASE"
           echo "ghcr_image_uri=$GHCR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "ghcr_latest_uri=$GHCR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          # PR时只推送到GHCR，不推送到ACR和ECR的latest标签
+          if [ "$IS_PR" == "false" ]; then
+            echo "ghcr_latest_uri=$GHCR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "ghcr_latest_uri=" >> $GITHUB_OUTPUT
+          fi
           
           # ACR镜像URI（如果配置了ACR）
-          if [ -n "${{ env.ACR_REGISTRY }}" ]; then
+          if [ -n "${{ env.ACR_REGISTRY }}" ] && [ "$IS_PR" == "false" ]; then
+            # PR时跳过ACR推送
             ACR_NAMESPACE_LOWERCASE=$(echo "${{ env.ACR_NAMESPACE }}" | tr '[:upper:]' '[:lower:]')
             ACR_URI="${{ env.ACR_REGISTRY }}/$ACR_NAMESPACE_LOWERCASE/$IMAGE_NAME_LOWERCASE"
             echo "acr_image_uri=$ACR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
             echo "acr_latest_uri=$ACR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "acr_image_uri=" >> $GITHUB_OUTPUT
+            echo "acr_latest_uri=" >> $GITHUB_OUTPUT
           fi
           
           # ECR镜像URI（AWS不需要web服务的ECR镜像）
-          if [ "$SERVICE" != "web" ]; then
-            # API和worker服务推送到ECR
+          if [ "$SERVICE" != "web" ] && [ "$IS_PR" == "false" ]; then
+            # API和worker服务推送到ECR，但PR时不推送
             ECR_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/$ECR_REPO_NAME"
             echo "ecr_image_uri=$ECR_URI:$IMAGE_TAG" >> $GITHUB_OUTPUT
             echo "ecr_latest_uri=$ECR_URI:$LATEST_TAG" >> $GITHUB_OUTPUT
           else
-            # Web服务不推送到ECR，因为AWS不需要
+            # Web服务不推送到ECR，或者PR时跳过ECR推送
             echo "ecr_image_uri=" >> $GITHUB_OUTPUT
             echo "ecr_latest_uri=" >> $GITHUB_OUTPUT
           fi
           
           # 为当前服务保存镜像URI到文件，供后续步骤使用
           echo "GHCR_URI=$GHCR_URI:$IMAGE_TAG" >> $GITHUB_ENV
-          if [ -n "${{ env.ACR_REGISTRY }}" ]; then
+          if [ -n "${{ env.ACR_REGISTRY }}" ] && [ "$IS_PR" == "false" ]; then
             echo "ACR_URI=$ACR_URI:$IMAGE_TAG" >> $GITHUB_ENV
           fi
-          if [ "$SERVICE" != "web" ]; then
+          if [ "$SERVICE" != "web" ] && [ "$IS_PR" == "false" ]; then
             echo "ECR_URI=$ECR_URI:$IMAGE_TAG" >> $GITHUB_ENV
           fi
       
@@ -188,18 +226,7 @@ jobs:
           name: ${{ matrix.service }}-image-uris
           path: ${{ env.ENV_FILE }}
       
-      - name: Skip build for PR
-        id: should-build
-        run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "should_build=false" >> $GITHUB_OUTPUT
-            echo "PR build, skipping push"
-          else
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          fi
-      
       - name: Login to GitHub Container Registry
-        if: steps.should-build.outputs.should_build == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -207,7 +234,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Login to Alibaba Cloud Container Registry
-        if: steps.should-build.outputs.should_build == 'true' && env.ACR_REGISTRY != ''
+        if: env.ACR_REGISTRY != '' && steps.check-event.outputs.is_pr == 'false'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ACR_REGISTRY }}
@@ -215,7 +242,7 @@ jobs:
           password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
       
       - name: Configure AWS credentials for ECR
-        if: steps.should-build.outputs.should_build == 'true'
+        if: steps.check-event.outputs.is_pr == 'false'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -223,7 +250,7 @@ jobs:
           aws-region: us-east-1  # ECR所在区域
       
       - name: Login to AWS ECR
-        if: steps.should-build.outputs.should_build == 'true'
+        if: steps.check-event.outputs.is_pr == 'false'
         id: login-ecr
         run: |
           # 使用aws cli登录ECR
@@ -231,7 +258,6 @@ jobs:
           echo "✅ Logged in to AWS ECR"
       
       - name: Build and push to registries
-        if: steps.should-build.outputs.should_build == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -251,29 +277,42 @@ jobs:
             BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # 过滤掉空的tag（对于PR事件，ACR和ECR的tag可能为空）
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image_name }}
+            org.opencontainers.image.description=${{ matrix.service }} service for Knowhere application
+            org.opencontainers.image.version=${{ steps.tags.outputs.image_tag }}
+            org.opencontainers.image.created=${{ steps.build-time.outputs.time }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
       
       - name: Record build summary
-        if: steps.should-build.outputs.should_build == 'true'
         run: |
           echo "=== Build Summary ==="
           echo "Service: ${{ matrix.service }}"
           echo "Environment: ${{ steps.env.outputs.environment }}"
           echo "Image Tag: ${{ steps.tags.outputs.image_tag }}"
+          echo "Event Type: ${{ github.event_name }}"
+          echo "Is PR: ${{ steps.check-event.outputs.is_pr }}"
           echo "GHCR Image: ${{ steps.image-uris.outputs.ghcr_image_uri }}"
           if [ -n "${{ steps.image-uris.outputs.acr_image_uri }}" ]; then
             echo "ACR Image: ${{ steps.image-uris.outputs.acr_image_uri }}"
+          else
+            echo "ACR Image: (not pushed for PR event)"
           fi
           if [ -n "${{ steps.image-uris.outputs.ecr_image_uri }}" ]; then
             echo "ECR Image: ${{ steps.image-uris.outputs.ecr_image_uri }}"
           else
-            echo "ECR Image: (not pushed for web service)"
+            echo "ECR Image: (not pushed for web service or PR event)"
           fi
 
   # Job 2: 环境部署
   deploy:
     runs-on: ubuntu-latest
     needs: build-and-push
-    if: github.event.inputs.simulate_only != 'true'
+    if: |
+      github.event.inputs.simulate_only != 'true' &&
+      (github.event_name != 'pull_request' || github.event.inputs.target_environment != '')
     
     strategy:
       # 部署矩阵：阿里云环境需要部署所有服务，AWS环境只部署api和worker
@@ -290,6 +329,15 @@ jobs:
         run: |
           INPUT_SERVICE="${{ github.event.inputs.service }}"
           CURRENT_SERVICE="${{ matrix.service }}"
+          IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
+          
+          # 如果是PR事件，默认不自动部署，除非手动触发指定了环境
+          if [ "$IS_PR" == "true" ] && [ -z "${{ github.event.inputs.target_environment }}" ]; then
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "⏭️  PR事件不自动部署，跳过服务: $CURRENT_SERVICE"
+            exit 0
+          fi
+          
           if [[ -z "$INPUT_SERVICE" || "$INPUT_SERVICE" == "all" || "$INPUT_SERVICE" == "$CURRENT_SERVICE" ]]; then
             echo "should_deploy=true" >> $GITHUB_OUTPUT
             echo "✅ Will deploy service: $CURRENT_SERVICE"
@@ -336,6 +384,13 @@ jobs:
         run: |
           ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
           SERVICE="${{ matrix.service }}"
+          IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
+          
+          # 如果是PR事件且手动指定了环境，使用指定环境
+          if [ "$IS_PR" == "true" ] && [ -n "${{ github.event.inputs.target_environment }}" ]; then
+            ENVIRONMENT="${{ github.event.inputs.target_environment }}"
+            echo "PR事件使用手动指定环境: $ENVIRONMENT"
+          fi
           
           # 确定部署类型（基于环境和平台策略）
           if [ "$ENVIRONMENT" == "prod" ]; then
@@ -379,7 +434,10 @@ jobs:
       
       # 阿里云 ACK 部署步骤
       - name: Deploy to Aliyun ACK (生产环境)
-        if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
+        if: |
+          steps.deploy-type.outputs.deploy_type == 'k8s' && 
+          steps.check-deploy.outputs.should_deploy == 'true' &&
+          github.event_name != 'pull_request'
         env:
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
@@ -422,7 +480,10 @@ jobs:
       
       # AWS EKS 部署步骤 - 统一处理生产和预发布
       - name: Deploy to AWS EKS
-        if: steps.check-deploy.outputs.should_deploy == 'true' && steps.deploy-type.outputs.skip_aws_deploy == 'false'
+        if: |
+          steps.check-deploy.outputs.should_deploy == 'true' && 
+          steps.deploy-type.outputs.skip_aws_deploy == 'false' &&
+          github.event_name != 'pull_request'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -486,7 +547,9 @@ jobs:
 
       # 阿里云 ECS 部署步骤（仅预发布环境）
       - name: Deploy to Aliyun ECS via Docker Compose (预发布环境)
-        if: steps.deploy-type.outputs.deploy_type == 'mixed' && steps.check-deploy.outputs.should_deploy == 'true'
+        if: |
+          steps.deploy-type.outputs.deploy_type == 'mixed' && 
+          steps.check-deploy.outputs.should_deploy == 'true'
         env:
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
@@ -580,12 +643,17 @@ jobs:
         run: |
           ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
           SERVICE="${{ matrix.service }}"
+          IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
           
           echo "🎉 Deployment Summary"
           echo "====================================="
           echo "Service: $SERVICE"
           echo "Environment: $ENVIRONMENT"
           echo "Deployment Type: ${{ steps.deploy-type.outputs.deploy_type }}"
+          echo "Event Type: ${{ github.event_name }}"
+          if [ "$IS_PR" == "true" ]; then
+            echo "PR Number: ${{ github.event.pull_request.number }}"
+          fi
           
           if [ "$SERVICE" == "web" ] && [ "${{ steps.deploy-type.outputs.skip_aws_deploy }}" == "true" ]; then
             echo "⚠️ Web服务仅在阿里云环境部署，AWS环境已跳过"

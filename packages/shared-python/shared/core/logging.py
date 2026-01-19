@@ -34,7 +34,7 @@ def setup_logging():
         sys.stdout, 
         colorize=True,
         level=log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level> <cyan>{extra}</cyan>"
     )
     
     # 创建日志目录
@@ -47,7 +47,7 @@ def setup_logging():
         retention="30 days",  # 生产日志保留30天
         compression="zip", 
         level="INFO",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message} {extra}",
         filter=lambda record: record["level"].name in ["INFO", "WARNING", "ERROR", "CRITICAL"]
     )
     
@@ -58,7 +58,7 @@ def setup_logging():
         retention="7 days",   # 调试日志只保留7天
         compression="zip", 
         level="DEBUG",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message} {extra}",
         filter=lambda record: record["level"].name == "DEBUG"
     )
     
@@ -69,7 +69,7 @@ def setup_logging():
         retention="90 days",  # 错误日志保留90天
         compression="zip", 
         level="ERROR",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message} {extra}",
         filter=lambda record: record["level"].name in ["ERROR", "CRITICAL"]
     )
 

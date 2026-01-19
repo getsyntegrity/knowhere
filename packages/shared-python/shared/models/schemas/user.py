@@ -67,6 +67,7 @@ class UserResponse(UserBase):
     """用户响应"""
     id: str = Field(..., description="用户ID")
     credits_balance: int = Field(0, description="Credits余额")
+    stripe_customer_id: Optional[str] = Field(None, description="Stripe客户ID")
     provider_type: Optional[str] = Field(None, description="认证提供商类型")
     create_time: Optional[datetime] = Field(None, description="创建时间")
     is_active: bool = Field(True, description="是否激活")

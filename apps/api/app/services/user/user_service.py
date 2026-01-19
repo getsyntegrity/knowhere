@@ -7,6 +7,7 @@ from shared.core.logging import get_logger
 from shared.models.database.user import User
 from shared.models.schemas.user import UserUpdateRequest
 from app.repositories.user_repository import UserRepository
+from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
@@ -26,9 +27,14 @@ class UserService:
                 logger.warning(f"用户不存在: {user_id}")
                 return None
             return user
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"获取用户资料失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"获取用户资料失败: {str(e)}",
+                original_exception=e
+            )
     
     async def update_user_profile(
         self, 
@@ -60,10 +66,15 @@ class UserService:
             logger.info(f"用户资料更新成功: {user_id}")
             return user
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"更新用户资料失败: {e}")
             await session.rollback()
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"更新用户资料失败: {str(e)}",
+                original_exception=e
+            )
     
     async def delete_user(self, session: AsyncSession, user_id: str) -> bool:
         """删除用户账户"""
@@ -84,28 +95,43 @@ class UserService:
             
             return success
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"删除用户失败: {e}")
             await session.rollback()
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"删除用户失败: {str(e)}",
+                original_exception=e
+            )
     
     async def get_user_by_email(self, session: AsyncSession, email: str) -> Optional[User]:
         """根据邮箱获取用户"""
         try:
             user = await self.user_repository.get_by_field(session, "email", email)
             return user
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"根据邮箱获取用户失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"根据邮箱获取用户失败: {str(e)}",
+                original_exception=e
+            )
     
     async def get_user_by_username(self, session: AsyncSession, username: str) -> Optional[User]:
         """根据用户名获取用户"""
         try:
             user = await self.user_repository.get_by_field(session, "username", username)
             return user
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"根据用户名获取用户失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"根据用户名获取用户失败: {str(e)}",
+                original_exception=e
+            )
     
     async def update_user_credits_balance(
         self, 
@@ -128,10 +154,15 @@ class UserService:
             logger.info(f"用户Credits余额更新成功: {user_id}, 新余额: {user.credits_balance}")
             return True
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"更新用户Credits余额失败: {e}")
             await session.rollback()
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"更新用户Credits余额失败: {str(e)}",
+                original_exception=e
+            )
     
     async def get_user_stats(self, session: AsyncSession, user_id: str) -> dict:
         """获取用户统计信息"""
@@ -160,6 +191,11 @@ class UserService:
                 "updated_at": user.updated_at
             }
             
+        except KnowhereException:
+            raise
         except Exception as e:
             logger.error(f"获取用户统计信息失败: {e}")
-            raise
+            raise WorkerHandlingException(
+                internal_message=f"获取用户统计信息失败: {str(e)}",
+                original_exception=e
+            )

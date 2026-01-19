@@ -88,9 +88,8 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
     # 设置任务状态
     await task_service.set_task_status(context.user_id, "正在连接AI大模型...")
     
-    # 延迟导入DeepSeek客户端
-    from shared.utils.DeepSeekClient import DeepSeekRedisStreamClient
-    ai_client = DeepSeekRedisStreamClient(redis_service)
+    # 使用统一的AI查询服务
+    from shared.services.ai import ai_query_service
     
     # 设置对话ID
     if not conversation_id:
@@ -110,13 +109,21 @@ async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
             operator_type="system"
         )
         
-        logger.info("[Celery Worker Async] 🤖 开始调用AI客户端...")
+        logger.info("[Celery Worker Async] 🤖 开始调用AI服务...")
         import time as time_module
         start_time = time_module.time()
-        result = await ai_client.chat_completion(
-            messages=prompt,
-            temperature=temperature,
+        
+        # 构建消息格式
+        if isinstance(prompt, str):
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            messages = prompt
+        
+        result = await ai_query_service.query_ai(
+            messages=messages,
+            user_id=user_id,
             conversation_id=conversation_id,
+            temperature=temperature,
         )
         logger.debug(f'process_ai_query_async result: {result}')
         

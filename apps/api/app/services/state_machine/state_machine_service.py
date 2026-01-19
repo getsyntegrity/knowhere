@@ -135,17 +135,22 @@ class StateMachineService:
         db: AsyncSession, 
         job_id: str, 
         error_message: str,
+        error_code: str = "UNKNOWN",
+        error_details: Optional[Dict[str, Any]] = None,
         operator_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """标记Job为失败状态"""
+        """Mark Job as failed state"""
         try:
-            # 更新错误信息
-            await self._update_job_error(db, job_id, error_message)
+            # Update error information
+            await self._update_job_error(db, job_id, error_message, error_code, error_details)
             
-            # 执行状态转换
+            # Execute state transition
             transition_metadata = (metadata or {}).copy()
             transition_metadata["error_message"] = error_message
+            transition_metadata["error_code"] = error_code
+            if error_details:
+                transition_metadata["error_details"] = error_details
             return await self.transition(
                 db, job_id, JobStatus.FAILED.value, 
                 "mark_failed", operator_id, "system",
@@ -153,7 +158,7 @@ class StateMachineService:
             )
             
         except Exception as e:
-            logger.error(f"标记Job {job_id} 失败状态时出错: {e}")
+            logger.error(f"Failed to mark Job {job_id} as failed: {e}")
             return False
     
     async def mark_completed(
@@ -338,16 +343,44 @@ class StateMachineService:
             logger.error(f"更新Job状态失败: {e}")
             return False
     
-    async def _update_job_error(self, db: AsyncSession, job_id: str, error_message: str):
-        """更新Job错误信息"""
+    async def _update_job_error(
+        self, 
+        db: AsyncSession, 
+        job_id: str, 
+        error_message: str, 
+        error_code: str = "UNKNOWN",
+        error_details: Optional[Dict[str, Any]] = None
+    ):
+        """Update Job error information (DB + Redis)"""
         try:
+            # Build values to update
+            update_values = {
+                "error_message": error_message,
+                "error_code": error_code
+            }
+            
+            # If error_details provided, merge into job_metadata
+            if error_details:
+                # Get current job_metadata first
+                result = await db.execute(select(Job).where(Job.job_id == job_id))
+                job = result.scalar_one_or_none()
+                if job:
+                    current_metadata = job.job_metadata or {}
+                    current_metadata["error_details"] = error_details
+                    update_values["job_metadata"] = current_metadata
+                    
+                    # Also update Redis cache
+                    from shared.services.redis.job_metadata_service import JobMetadataService
+                    metadata_service = JobMetadataService(self.redis)
+                    await metadata_service.update_metadata(job_id, {"error_details": error_details})
+            
             await db.execute(
                 update(Job)
                 .where(Job.job_id == job_id)
-                .values(error_message=error_message)
+                .values(**update_values)
             )
         except Exception as e:
-            logger.error(f"更新Job错误信息失败: {e}")
+            logger.error(f"Failed to update Job error info: {e}")
     
     async def _update_redis_cache(self, job_id: str, status: str, metadata: Optional[Dict[str, Any]]):
         """更新Redis缓存"""

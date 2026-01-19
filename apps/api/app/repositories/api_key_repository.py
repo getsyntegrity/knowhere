@@ -3,9 +3,10 @@ API Key 数据访问层
 """
 from typing import List, Optional
 
+from datetime import datetime
 from shared.models.database.api_key import APIKey
 from app.repositories.base_repository import BaseRepository
-from sqlalchemy import select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -38,6 +39,22 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         )
         return result.scalars().all()
     
+    async def get_unexpired_by_user_id(self, session: AsyncSession, user_id: str) -> List[APIKey]:
+        """获取用户的所有未过期API Key（包含禁用的）"""
+        now = datetime.utcnow()
+        result = await session.execute(
+            select(APIKey)
+            .where(APIKey.user_id == user_id)
+            .where(
+                or_(
+                    APIKey.expires_at.is_(None),  # 永不过期
+                    APIKey.expires_at > now       # 未过期
+                )
+            )
+            .order_by(APIKey.created_at.desc())
+        )
+        return result.scalars().all()
+    
     async def get_active_by_user_id(self, session: AsyncSession, user_id: str) -> List[APIKey]:
         """获取用户的所有活跃API Key"""
         result = await session.execute(
@@ -65,6 +82,14 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
             update(APIKey)
             .where(APIKey.id == api_key_id)
             .values(is_active=False)
+        )
+        return result.rowcount > 0
+    
+    async def delete_by_id(self, session: AsyncSession, api_key_id: str) -> bool:
+        """删除API Key"""
+        result = await session.execute(
+            delete(APIKey)
+            .where(APIKey.id == api_key_id)
         )
         return result.rowcount > 0
     

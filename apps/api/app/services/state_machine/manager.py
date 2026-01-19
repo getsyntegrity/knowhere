@@ -67,13 +67,15 @@ class JobStateMachine:
         db: AsyncSession, 
         job_id: str, 
         error_message: str,
+        error_code: str = "UNKNOWN",
+        error_details: Optional[Dict[str, Any]] = None,
         operator_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """标记Job为失败状态"""
         try:
             result = await self.state_machine.mark_failed(
-                db, job_id, error_message, operator_id, metadata
+                db, job_id, error_message, error_code, error_details, operator_id, metadata
             )
             
             # 失败后清除超时

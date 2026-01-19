@@ -22,7 +22,7 @@ class BuyCreditsRequest(BaseModel):
 class BuyCreditsPackageRequest(BaseModel):
     """通过价格ID购买Credits包请求"""
     price_id: str = Field(..., description="Stripe价格ID")
-
+    quantity: int = Field(default=1, gt=0, description="购买数量")
 
 class SubscriptionResponse(BaseModel):
     """订阅信息响应"""

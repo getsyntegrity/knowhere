@@ -2,6 +2,7 @@
 Job仓储层
 """
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 from shared.models.database.job import Job
 from shared.models.database.job_state_history import JobStateHistory
@@ -83,7 +84,9 @@ class JobRepository:
         db: AsyncSession, 
         user_id: str, 
         limit: int = 50, 
-        offset: int = 0
+        offset: int = 0,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None
     ) -> List[Job]:
         """获取用户的Jobs"""
         try:
@@ -95,11 +98,36 @@ class JobRepository:
                 .limit(limit)
                 .offset(offset)
             )
+            if created_after:
+                stmt = stmt.where(Job.created_at >= created_after)
+            if created_before:
+                stmt = stmt.where(Job.created_at <= created_before)
             result = await db.execute(stmt)
             return result.scalars().all()
         except Exception as e:
             logger.error(f"获取用户 {user_id} Jobs失败: {e}")
             return []
+    
+    async def count_jobs_by_user(
+        self, 
+        db: AsyncSession, 
+        user_id: str,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None
+    ) -> int:
+        """获取用户的Jobs总数"""
+        try:
+            from sqlalchemy import func
+            stmt = select(func.count()).select_from(Job).where(Job.user_id == user_id)
+            if created_after:
+                stmt = stmt.where(Job.created_at >= created_after)
+            if created_before:
+                stmt = stmt.where(Job.created_at <= created_before)
+            result = await db.execute(stmt)
+            return result.scalar() or 0
+        except Exception as e:
+            logger.error(f"获取用户 {user_id} Jobs总数失败: {e}")
+            return 0
     
     async def update_job_state(
         self, 

@@ -23,7 +23,7 @@ def pptx2md_lines(pptx_path, kb_dir):
     for i, slide in enumerate(prs.slides, start=1):
         md_lines.append(f"# 第{i}页")
 
-        # --- 文本 ---
+        # --- texts ---
         texts = []
         for shape in slide.shapes:
             if shape.has_text_frame:
@@ -31,21 +31,21 @@ def pptx2md_lines(pptx_path, kb_dir):
                 if txt:
                     texts.append(txt)
         if texts:
-            md_lines.append("## 文本")
+            md_lines.append("## texts")
             for t in texts:
                 md_lines.append(f"- {t}")
 
-        # --- 图片 ---
+        # --- images ---
         imgs = []
         for shape in slide.shapes:
-            if shape.shape_type == 13:  # PICTURE
-                imgs.append("图片对象 (已提取)")
+            if shape.shape_type == 13:
+                imgs.append("image object (extracted)")
         if imgs:
-            md_lines.append("## 图片")
+            md_lines.append("## images")
             for idx, _ in enumerate(imgs, start=1):
-                md_lines.append(f"- 第{i}页的图片 {idx}")
+                md_lines.append(f"- image {idx}")
 
-        # --- 表格 ---
+        # --- tables ---
         tables = []
         for shape in slide.shapes:
             if shape.has_table:
@@ -56,13 +56,13 @@ def pptx2md_lines(pptx_path, kb_dir):
                     rows.append(" | ".join(row_texts))
                 tables.append(rows)
         if tables:
-            md_lines.append("## 表格")
+            md_lines.append("## tables")
             for tid, rows in enumerate(tables, start=1):
-                md_lines.append(f"- 表格{tid}:")
+                md_lines.append(f"- table {tid}:")
                 for row in rows:
                     md_lines.append(f"  - {row}")
 
-        # --- 注释 ---
+        # --- notes ---
         if slide.has_notes_slide:
             notes_slide = slide.notes_slide
             notes = []
@@ -72,13 +72,11 @@ def pptx2md_lines(pptx_path, kb_dir):
                     if n:
                         notes.append(n)
             if notes:
-                md_lines.append("## 注释")
+                md_lines.append("## notes")
                 for note in notes:
                     md_lines.append(f"- {note}")
 
-        md_lines.append("")  # 页尾空行
-
-
+        md_lines.append("")
     return ""
 
 def pptx_to_pdf(pptx_path, outdir="."):
@@ -99,12 +97,11 @@ async def parse_pptx2md(raw_file_path, filename, baseurl, kb_dir, temp_md_path, 
     pptx_data = await load_file_bytes(raw_file_path, file_url=baseurl)
     pptx_source_path = os.path.join(temp_source_dir, filename)
     pptx_source_path = path_handle(pptx_source_path, mode="sanitize")
-    with open(pptx_source_path, "wb") as f:
-        f.write(pptx_data)
+    # with open(pptx_source_path, "wb") as f:
+    #     f.write(pptx_data)
 
-    # 不管采用何种策略 核心都是把ppt变成md_lines
     if strategy == "to_md":
-        # 使用pptx2md包提取图片内容
+        # Use pptx2md package to extract image content
         convert(
             ConversionConfig(
                 pptx_path=pptx_source_path,
@@ -113,11 +110,11 @@ async def parse_pptx2md(raw_file_path, filename, baseurl, kb_dir, temp_md_path, 
             )
         )
 
-        # 使用 MS markitdown 提取文本内容
+        # Use MS markitdown to extract text content
         md = MarkItDown(enable_plugins=False)
         result = md.convert(raw_file_path)
 
-        # 对齐图片和文本内容
+        # Align images and text content
         pattern = r'^!\[.*?\]\(.*?\.(?:png|jpe?g)\)$'
         md_imgs = find_images(kb_dir)
         lines = result.text_content.splitlines()
@@ -128,13 +125,13 @@ async def parse_pptx2md(raw_file_path, filename, baseurl, kb_dir, temp_md_path, 
             if image_index < len(md_imgs):
 
                 if re.match(pattern, line.strip(), re.IGNORECASE):
-                    line = f"![图像{image_index + 1}]({md_imgs[image_index]})"
+                    line = f"![image{image_index + 1}]({md_imgs[image_index]})"
                     image_index += 1
             ppt_md_lines.append(line)
 
-        # 如果有剩余图像未插入（说明文本中没有足够占位符），追加到末尾
+        # If there are remaining images that were not inserted (indicating insufficient placeholders in the text), append them to the end
         while image_index < len(md_imgs):
-            ppt_md_lines.append(f"![图像{image_index + 1}]({md_imgs[image_index]})")
+            ppt_md_lines.append(f"![image{image_index + 1}]({md_imgs[image_index]})")
             image_index += 1
 
         doc_graph = await parse_md(kb_dir, source_type="pptx", md_lines=ppt_md_lines, base_llm_paras=base_llm_paras)

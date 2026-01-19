@@ -5,6 +5,7 @@ from typing import Any, BinaryIO, Dict, Iterator, Optional
 
 from loguru import logger
 
+from shared.core.exceptions.domain_exceptions import StorageServiceException
 from shared.services.storage.storage_adapter import StorageAdapter
 
 
@@ -17,7 +18,7 @@ def _import_oss2():
         return oss2, OssError, NoSuchKey, NotFound
     except ImportError as e:
         raise ImportError(
-            "oss2模块未安装。当S3_TYPE=oss时，请安装oss2: pip install oss2>=2.18.0"
+            "oss2 module not installed. When S3_TYPE=oss, please install oss2: pip install oss2>=2.18.0"
         ) from e
 
 
@@ -60,8 +61,12 @@ class OSSStorageAdapter(StorageAdapter):
                 "etag": result.etag
             }
         except OssError as e:
-            logger.error(f"OSS上传失败: {e}")
-            raise
+            logger.error(f"OSS upload failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"OSS upload failed: {str(e)}",
+                operation="upload_file",
+                original_exception=e
+            )
     
     def upload_fileobj(self, file_obj: BinaryIO, key: str, bucket: Optional[str] = None,
                       content_type: Optional[str] = None) -> Dict[str, Any]:
@@ -83,8 +88,12 @@ class OSSStorageAdapter(StorageAdapter):
                 "etag": result.etag
             }
         except OssError as e:
-            logger.error(f"OSS上传文件对象失败: {e}")
-            raise
+            logger.error(f"OSS upload file object failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"OSS upload file object failed: {str(e)}",
+                operation="upload_fileobj",
+                original_exception=e
+            )
     
     def download_file(self, key: str, local_path: str, bucket: Optional[str] = None) -> str:
         """从OSS下载文件到本地"""
@@ -95,8 +104,12 @@ class OSSStorageAdapter(StorageAdapter):
             logger.debug(f"OSS下载成功: {bucket_name}/{key} -> {local_path}")
             return local_path
         except OssError as e:
-            logger.error(f"OSS下载失败: {e}")
-            raise
+            logger.error(f"OSS download failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"OSS download failed: {str(e)}",
+                operation="download_file",
+                original_exception=e
+            )
     
     def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
         """从OSS下载文件对象"""
@@ -106,8 +119,12 @@ class OSSStorageAdapter(StorageAdapter):
             result = self.bucket.get_object(key)
             return result.read()
         except OssError as e:
-            logger.error(f"OSS下载文件对象失败: {e}")
-            raise
+            logger.error(f"OSS download file object failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"OSS download file object failed: {str(e)}",
+                operation="download_fileobj",
+                original_exception=e
+            )
     
     def delete_object(self, key: str, bucket: Optional[str] = None) -> bool:
         """删除OSS中的对象"""
@@ -147,8 +164,12 @@ class OSSStorageAdapter(StorageAdapter):
             logger.debug(f"OSS生成预签名URL成功: {key}")
             return url
         except OssError as e:
-            logger.error(f"OSS生成预签名URL失败: {e}")
-            raise
+            logger.error(f"OSS generate presigned URL failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"OSS generate presigned URL failed: {str(e)}",
+                operation="generate_presigned_url",
+                original_exception=e
+            )
     
     def exists(self, key: str, bucket: Optional[str] = None) -> bool:
         """检查OSS中的对象是否存在"""
@@ -170,5 +191,9 @@ class OSSStorageAdapter(StorageAdapter):
         except (NoSuchKey, NotFound):
             return None
         except OssError as e:
-            logger.error(f"OSS获取对象大小失败: {e}")
-            raise
+            logger.error(f"OSS get object size failed: {e}")
+            raise StorageServiceException(
+                internal_message=f"OSS get object size failed: {str(e)}",
+                operation="get_object_size",
+                original_exception=e
+            )

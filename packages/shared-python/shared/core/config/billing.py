@@ -24,6 +24,7 @@ class BillingConfig(BaseSettings):
     # Credits 配置
     CREDITS_PER_API_CALL: int = Field(default=1, description="每次API调用消耗的Credits")
     LOW_BALANCE_THRESHOLD: int = Field(default=10, description="低余额预警阈值")
+    CREDITS_VALID_DAYS: int = Field(default=90, env="CREDITS_VALID_DAYS", description="Credits有效期（天），过期点数失效")
     
     # 订阅计划价格（美分）
     PLUS_PLAN_PRICE: int = Field(default=999, description="Plus计划价格（美分）")

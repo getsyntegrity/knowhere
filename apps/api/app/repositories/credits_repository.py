@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from shared.models.database.credits_transaction import CreditsTransaction
+from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user import User
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import func, select
@@ -46,6 +47,21 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
         )
         balance = result.scalar_one_or_none()
         return balance or 0
+    
+    async def cap_balance(self, session: AsyncSession, user_id: str, max_balance: int) -> bool:
+        """
+        如果用户当前余额高于 max_balance，则将余额调整为 max_balance。
+        返回值表示是否发生了更新。
+        """
+        from sqlalchemy import update
+        result = await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .where(User.credits_balance > max_balance)
+            .values(credits_balance=max_balance)
+        )
+        await session.commit()
+        return result.rowcount > 0
     
     async def add_credits(self, session: AsyncSession, user_id: str, amount: int) -> bool:
         """增加Credits"""
@@ -129,3 +145,15 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
             .limit(limit)
         )
         return result.scalars().all()
+
+    async def get_recent_payment_credits(self, session: AsyncSession, user_id: str, days: int) -> int:
+        """获取最近 N 天支付获得的总 Credits（仅成功记录，忽略空值）"""
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        result = await session.execute(
+            select(func.coalesce(func.sum(PaymentRecord.credits_amount), 0))
+            .where(PaymentRecord.user_id == user_id)
+            .where(PaymentRecord.status == "succeeded")
+            .where(PaymentRecord.credits_amount.isnot(None))
+            .where(PaymentRecord.created_at >= cutoff)
+        )
+        return result.scalar_one() or 0

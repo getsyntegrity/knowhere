@@ -33,15 +33,13 @@ class JobMetadataHelper:
     """Job元数据辅助类"""
     
     @staticmethod
-    def create_from_request(request, user_config: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        """从JobCreate请求创建metadata（包含user_config）"""
+    def create_from_request(request, **kwargs) -> Dict[str, Any]:
+        """从JobCreate请求创建metadata（精简版，不再包含user_config）"""
         metadata = {
             "original_request": request.model_dump(),
             "parsing_params": request.parsing_params.model_dump() if request.parsing_params else None,
             "data_id": request.data_id,
             "webhook": request.webhook.model_dump() if request.webhook else None,
-            # result_mode 已移除，不再支持
-            "user_config": user_config,
         }
         metadata.update(kwargs)
         return metadata
@@ -71,11 +69,7 @@ class JobMetadataHelper:
         return default
     
     @staticmethod
-    def get_user_config(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """获取user_config"""
-        return JobMetadataHelper.get_field(metadata, "user_config")
-    
-    @staticmethod
     def get_webhook(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """获取webhook配置"""
         return JobMetadataHelper.get_field(metadata, "webhook")
+

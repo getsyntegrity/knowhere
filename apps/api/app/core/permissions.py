@@ -5,8 +5,9 @@ from uuid import UUID
 
 from app.core.jwt import auth_backend
 from app.core.users import get_user_manager
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, status
 from fastapi_users import FastAPIUsers
+from shared.core.exceptions.domain_exceptions import PermissionDeniedException
 
 
 # 延迟导入以避免循环依赖
@@ -25,9 +26,8 @@ def require_user_type(user_type):
     """要求特定用户类型"""
     def permission_checker(user = Depends(current_user)):
         if user.user_type != user_type.value:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"需要 {user_type.value} 权限"
+            raise PermissionDeniedException(
+                user_message=f"需要 {user_type.value} 权限"
             )
         return user
     return permission_checker

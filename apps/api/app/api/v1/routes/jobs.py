@@ -4,22 +4,31 @@
 
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
 from shared.core.constants.system import SystemConstants
+from shared.core.config import settings
 from app.core.dependencies import get_current_user_dual_auth, get_db
 from shared.core.state_machine.states import JobStatus
 from shared.models.database.user import User
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
-                                    JobResponse, JobResult)
+                                    JobResponse, JobResult, JobResultResponse)
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
 from shared.services.storage.file_upload_service import FileUploadService
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.exceptions.domain_exceptions import (
+    ValidationException,
+    NotFoundException,
+    PermissionDeniedException,
+    RateLimitException,
+    JobOperationException
+)
 
 router = APIRouter(tags=["Jobs"])
 
@@ -90,7 +99,10 @@ async def start_workflow_for_job(
             user_id=user_id,
         )
     else:
-        raise ValueError(f"不支持的任务类型: {job_type}")
+        raise ValidationException(
+            user_message="Unsupported job type",
+            violations=[{"field": "job_type", "description": f"Job type '{job_type}' is not supported"}]
+        )
 
 
 def check_job_permission(job, current_user: User) -> None:
@@ -105,13 +117,50 @@ def check_job_permission(job, current_user: User) -> None:
         HTTPException: 权限不足时抛出异常
     """
     if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
-
-    if str(job.user_id) != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="无权限访问此任务"
+        raise NotFoundException(
+            resource="Job",
+            resource_id=str(current_user.id),
+            internal_message="Job not found"
         )
 
+    if str(job.user_id) != str(current_user.id):
+        raise PermissionDeniedException(
+            user_message="You don't have permission to access this job",
+            resource="Job"
+        )
+
+
+def _build_error_response(job, job_metadata: Optional[dict] = None) -> Optional[dict]:
+    """
+    Build StandardErrorObject dict for embedded error pattern.
+    
+    This returns the same error structure as synchronous API errors,
+    enabling clients to use the same error handling for both sync
+    and async (job) errors.
+    
+    Args:
+        job: Job object with job_id, error_code, and error_message
+        job_metadata: Job metadata dict that may contain error_details
+        
+    Returns:
+        dict: StandardErrorObject (code, message, request_id, details) or None
+    """
+    if not job.error_message:
+        return None
+        
+    error_response = {
+        "code": job.error_code or "UNKNOWN",
+        "message": job.error_message,
+        "request_id": job.job_id  # Use job_id as request_id for tracing
+    }
+    
+    # Extract error_details from job_metadata if present
+    if job_metadata and isinstance(job_metadata, dict):
+        error_details = job_metadata.get("error_details")
+        if error_details:
+            error_response["details"] = error_details
+    
+    return error_response
 
 def create_job_response(
     job_id: str,
@@ -172,6 +221,15 @@ def validate_file_type(file_name: str) -> bool:
     return file_extension in all_supported_extensions
 
 
+def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """确保返回UTC时间"""
+    if not dt:
+        return None
+    if dt.tzinfo:
+        return dt.astimezone(timezone.utc)
+    return dt.replace(tzinfo=timezone.utc)
+
+
 @router.post("", response_model=JobResponse, summary="创建解析任务")
 @router.post("/", include_in_schema=False)
 async def create_job(
@@ -185,23 +243,25 @@ async def create_job(
     try:
         # 验证参数
         if request.source_type == "file" and not request.file_name:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="source_type为file时，file_name为必填参数",
+            raise ValidationException(
+                user_message="file_name is required when source_type is 'file'",
+                violations=[{"field": "file_name", "description": "Required for file source type"}]
             )
         if request.source_type == "url" and not request.source_url:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="source_type为url时，source_url为必填参数",
+            raise ValidationException(
+                user_message="source_url is required when source_type is 'url'",
+                violations=[{"field": "source_url", "description": "Required for url source type"}]
             )
 
         # 验证文件类型
         if request.source_type == "file" and not validate_file_type(request.file_name):
             supported_formats = get_supported_formats()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"不支持的文件类型。仅支持以下格式：{supported_formats}",
+            raise ValidationException(
+                user_message=f"Unsupported file type. Supported formats: {supported_formats}",
+                violations=[{"field": "file_name", "description": "File type not supported"}]
             )
+        # TODO, we need to obtain the resource file name from the header, the url may do not have
+        # the file name
         elif request.source_type == "url":
             # 验证URL文件类型
             parsed_url = urlparse(request.source_url)
@@ -210,9 +270,9 @@ async def create_job(
             )
             if not validate_file_type(url_file_name):
                 supported_formats = get_supported_formats()
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"URL文件类型不支持。仅支持以下格式：{supported_formats}",
+                raise ValidationException(
+                    user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
+                    violations=[{"field": "source_url", "description": "URL file type not supported"}]
                 )
 
         # 生成job_id
@@ -220,27 +280,14 @@ async def create_job(
 
         job_type = "kb_management"
 
-        # 1. 获取用户配置（1天缓存）
-        import json
-
+        # 简化版：不再在API层获取user_config，Worker直接使用settings.USERS_DATA_PATH
         from shared.services.redis import RedisServiceFactory
-        from shared.services.redis.user_redis_service import UserRedisService
-        from app.services.user.user_config_service import UserConfigService
         
         redis_service = RedisServiceFactory.get_service()
-        user_redis_service = UserRedisService(redis_service)
         
-        user_config = await user_redis_service.get_user_config(str(current_user.id))
-        if not user_config:
-            user_config_str = UserConfigService.init_user(str(current_user.id))
-            user_config = json.loads(user_config_str)
-            await user_redis_service.save_user_config(str(current_user.id), user_config)
-    
-        logger.debug(f"user_config: {user_config}")
-        
-        # 2. 构建job_metadata（包含user_config）
+        # 构建job_metadata（不再包含user_config）
         from shared.models.schemas.job_metadata import JobMetadataHelper
-        job_metadata = JobMetadataHelper.create_from_request(request, user_config)
+        job_metadata = JobMetadataHelper.create_from_request(request)
 
         if request.source_type == "file":
             # 文件上传模式 - 申请萝卜坑
@@ -264,9 +311,8 @@ async def create_job(
             )
 
             if not job:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="创建任务失败",
+                raise JobOperationException(
+                    internal_message="Failed to create job in database"
                 )
 
             # 生成预签名URL
@@ -323,9 +369,9 @@ async def create_job(
                 # 提前验证文件类型（快速失败）
                 if not validate_file_type(source_file_name):
                     supported_formats = get_supported_formats()
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"URL文件类型不支持。仅支持以下格式：{supported_formats}",
+                    raise ValidationException(
+                        user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
+                        violations=[{"field": "source_url", "description": "URL file type not supported"}]
                     )
                 
                 # 生成S3键（在API层面确定，避免异步任务中再更新）
@@ -356,9 +402,8 @@ async def create_job(
                 )
 
                 if not job:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="创建任务失败",
+                    raise JobOperationException(
+                        internal_message="Failed to create URL job in database"
                     )
 
                 # 保存job_metadata到Redis（2小时缓存）
@@ -402,31 +447,36 @@ async def create_job(
 
                 return response
 
-            except HTTPException:
+            except ValidationException:
+                raise
+            except JobOperationException:
                 raise
             except Exception as e:
                 logger.error(f"URL任务创建失败: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"URL任务创建失败: {str(e)}",
+                raise JobOperationException(
+                    internal_message=f"URL job creation failed: {str(e)}"
                 )
 
-    except HTTPException:
+    except ValidationException:
+        raise
+    except JobOperationException:
         raise
     except Exception as e:
         logger.error(f"创建任务失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创建任务失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Job creation failed: {str(e)}"
         )
 
 
 @router.get("/page", response_model=JobList, summary="获取任务列表")
 async def list_jobs(
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=10000, description="每页数量"),
     job_status: Optional[str] = Query(None, description="状态过滤"),
     job_type: Optional[str] = Query(None, description="任务类型过滤"),
+    recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
+    start_time: Optional[datetime] = Query(None, description="开始时间，ISO格式"),
+    end_time: Optional[datetime] = Query(None, description="结束时间，ISO格式"),
     current_user: User = Depends(get_current_user_dual_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -435,6 +485,34 @@ async def list_jobs(
     """
     try:
         job_repo = JobRepository()
+        
+        if recent_days not in (None, 1, 7, 30):
+            raise ValidationException(
+                user_message="recent_days only supports 1, 7, or 30",
+                violations=[{"field": "recent_days", "description": "Invalid value"}]
+            )
+        created_after = None
+        if recent_days:
+            from datetime import datetime, timedelta
+            created_after = datetime.now() - timedelta(days=recent_days)
+        
+        if start_time and end_time and start_time > end_time:
+            raise ValidationException(
+                user_message="start_time cannot be later than end_time",
+                violations=[{"field": "start_time", "description": "Must be before end_time"}]
+            )
+        # start_time / end_time 优先于 recent_days
+        if start_time:
+            created_after = start_time
+        created_before = end_time
+
+        # 获取符合条件的总记录数
+        total_count = await job_repo.count_jobs_by_user(
+            db=db,
+            user_id=str(current_user.id),
+            created_after=created_after,
+            created_before=created_before,
+        )
 
         # 获取任务列表
         jobs = await job_repo.get_jobs_by_user(
@@ -442,6 +520,8 @@ async def list_jobs(
             user_id=str(current_user.id),
             limit=page_size,
             offset=(page - 1) * page_size,
+            created_after=created_after,
+            created_before=created_before,
         )
 
         # 类型过滤
@@ -489,37 +569,71 @@ async def list_jobs(
                     expires_in = result_url_info.get("expires_in", 3600)
                     result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
+            original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
+            source_url = original_request.get("source_url") if isinstance(original_request, dict) else None
+            file_name = None
+            if source_url:
+                parsed_source = urlparse(source_url)
+                file_name = os.path.basename(parsed_source.path) or None
+            if not file_name and isinstance(original_request, dict):
+                file_name = original_request.get("file_name")
+            file_extension = None
+            if file_name:
+                ext = os.path.splitext(file_name)[1]
+                file_extension = ext[1:].upper() if ext else None
+            
+            parsing_params = {}
+            if isinstance(original_request, dict):
+                parsing_params = original_request.get("parsing_params") or {}
+            if not parsing_params and isinstance(job_metadata, dict):
+                parsing_params = job_metadata.get("parsing_params") or {}
+            model = parsing_params.get("model") if isinstance(parsing_params, dict) else None
+            ocr_enabled = parsing_params.get("ocr_enabled") if isinstance(parsing_params, dict) else None
+            
+            duration_seconds = None
+            if job.updated_at and job.created_at:
+                duration_seconds = (job.updated_at - job.created_at).total_seconds()
+            
             job_responses.append(
                 JobResult(
                     job_id=job.job_id,
                     status=status_for_api,
                     source_type=job.source_type,
                     data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-                    created_at=job.created_at,
+                    created_at=ensure_utc(job.created_at),
                     progress=None,  # 任务列表不显示详细进度
-                    error={"message": job.error_message} if job.error_message else None,
+                    error=_build_error_response(job, job_metadata),
                     result=result,
                     result_url=result_url,
-                    result_url_expires_at=result_url_expires_at,
+                    result_url_expires_at=ensure_utc(result_url_expires_at),
+                    file_name=file_name,
+                    file_extension=file_extension,
+                    model=model,
+                    ocr_enabled=ocr_enabled,
+                    duration_seconds=duration_seconds,
+                    credits_spent=settings.CREDITS_PER_API_CALL,
                 )
             )
 
+        # 计算总页数
+        import math
+        total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
+
         response = JobList(
-            jobs=job_responses, total=len(job_responses), page=page, page_size=page_size
+            jobs=job_responses, total=total_count, page=page, page_size=page_size, total_pages=total_pages
         )
 
         return response
 
     except Exception as e:
         logger.error(f"获取任务列表失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取任务列表失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Failed to get job list: {str(e)}"
         )
 
 
 @router.get(
-    "/{job_id}", response_model=JobResult, summary="获取任务结果"
+    "/{job_id}", response_model=JobResultResponse, summary="获取任务结果"
 )
 async def get_job_result(
     job_id: str,
@@ -547,11 +661,13 @@ async def get_job_result(
         response.headers["RateLimit-Remaining"] = str(rate_limit_info["remaining"])
         response.headers["RateLimit-Reset"] = str(rate_limit_info["reset"])
 
-        # 如果超过限制，返回429错误
+        # If rate limit exceeded, return 429 error
         if not rate_limit_info["allowed"]:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="请求过于频繁，请稍后再试",
+            import time
+            retry_after_seconds = max(1, int(rate_limit_info["reset"] - time.time()))
+            raise RateLimitException(
+                limit=rate_limit_info["limit"],
+                retry_after=retry_after_seconds
             )
 
         job_repo = JobRepository()
@@ -604,28 +720,57 @@ async def get_job_result(
                 from datetime import datetime, timedelta
                 result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
-        response_data = JobResult(
+        original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
+        source_url = original_request.get("source_url") if isinstance(original_request, dict) else None
+        file_name = None
+        if source_url:
+            parsed_source = urlparse(source_url)
+            file_name = os.path.basename(parsed_source.path) or None
+        if not file_name and isinstance(original_request, dict):
+            file_name = original_request.get("file_name")
+        file_extension = None
+        if file_name:
+            ext = os.path.splitext(file_name)[1]
+            file_extension = ext[1:].upper() if ext else None
+        
+        parsing_params = {}
+        if isinstance(original_request, dict):
+            parsing_params = original_request.get("parsing_params") or {}
+        if not parsing_params and isinstance(job_metadata, dict):
+            parsing_params = job_metadata.get("parsing_params") or {}
+        model = parsing_params.get("model") if isinstance(parsing_params, dict) else None
+        ocr_enabled = parsing_params.get("ocr_enabled") if isinstance(parsing_params, dict) else None
+        
+        response_data = JobResultResponse(
             job_id=job.job_id,
             status=status_for_api,
             source_type=job.source_type,
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-            created_at=job.created_at,
+            created_at=ensure_utc(job.created_at),
             progress=progress,
-            error={"message": job.error_message} if job.error_message else None,
+            error=_build_error_response(job, job_metadata),
             result=result,
             result_url=result_url,
-            result_url_expires_at=result_url_expires_at,
+            result_url_expires_at=ensure_utc(result_url_expires_at),
+            file_name=file_name,
+            file_extension=file_extension,
+            model=model,
+            ocr_enabled=ocr_enabled,
+            duration_seconds=(job.updated_at - job.created_at).total_seconds() if job.updated_at and job.created_at else None,
         )
 
         return response_data
 
-    except HTTPException:
+    except NotFoundException:
+        raise
+    except PermissionDeniedException:
+        raise
+    except RateLimitException:
         raise
     except Exception as e:
         logger.error(f"获取任务结果失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取任务结果失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Failed to get job result: {str(e)}"
         )
 
 
@@ -659,17 +804,18 @@ async def confirm_upload(
 
         # 验证S3文件存在
         if not job.s3_key:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="任务缺少S3键信息"
+            raise ValidationException(
+                user_message="Job is missing S3 key information",
+                violations=[{"field": "s3_key", "description": "S3 key not set for this job"}]
             )
 
         upload_service = FileUploadService()
         file_info = await upload_service.verify_s3_file_exists(job.s3_key)
 
         if not file_info.get("exists"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="S3文件不存在，请先上传文件",
+            raise ValidationException(
+                user_message="S3 file does not exist, please upload the file first",
+                violations=[{"field": "file", "description": "File not found in S3"}]
             )
 
         # 更新任务状态
@@ -688,11 +834,14 @@ async def confirm_upload(
 
         return {"message": "文件上传确认成功，任务已开始处理"}
 
-    except HTTPException:
+    except NotFoundException:
+        raise
+    except PermissionDeniedException:
+        raise
+    except ValidationException:
         raise
     except Exception as e:
         logger.error(f"确认上传失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"确认上传失败: {str(e)}",
+        raise JobOperationException(
+            internal_message=f"Failed to confirm upload: {str(e)}"
         )

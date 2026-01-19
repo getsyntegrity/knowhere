@@ -8,17 +8,20 @@ from celery import Task
 from loguru import logger
 
 from shared.core.celery_app import get_celery_app
-from shared.core.state_machine.states import JobStatus  # 仅用于状态常量，不直接操作状态机                                                                        
-# Worker 不再直接访问数据库，从 Redis 获取信息
+from shared.core.state_machine.states import JobStatus
 from shared.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService                                                                     
 from shared.services.storage.file_upload_service import FileUploadService
 from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
 from shared.services.messaging.message_publisher import run_async_publish
+from shared.core.exceptions.domain_exceptions import (
+    NotFoundException,
+    SystemSettingMissingException,
+    SystemSettingInvalidException,
+    FileSystemException,
+)
 
-# 获取Celery应用
 celery_app = get_celery_app()
-
 
 class KBBaseTask(Task):
     """知识库基础任务类"""
@@ -68,7 +71,6 @@ class KBBaseTask(Task):
 
 
 # 文件上传任务已移除 - 文件通过S3直传处理
-
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.upload_url_file_task')                                                               
 def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None, job_type: str = None):                                                        
@@ -234,7 +236,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
 
 @celery_app.task(bind=True, base=KBBaseTask, name='app.core.tasks.kb_tasks.parse_and_vectorize_task')                                                           
 def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):                                                          
-    """解析并向量化任务（文件已通过S3直传）"""
+    """解析任务（文件已通过S3直传） """
     logger.info(f"任务开始执行: task_id={self.request.id}, job_id={job_id}, user_id={user_id}, job_type={job_type}")
     try:
         if not job_id:
@@ -258,8 +260,14 @@ def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: s
         
         try:
             logger.info(f"开始执行异步函数: task_id={self.request.id}, job_id={job_id}")
+            
+            # 计算是否为最后一次重试
+            max_retries = settings.KB_TASK_MAX_RETRIES
+            is_final_attempt = self.request.retries >= max_retries
+            logger.info(f"Retry status: current={self.request.retries}, max={max_retries}, is_final={is_final_attempt}")
+            
             result = loop.run_until_complete(_parse_and_vectorize_async(
-                job_id, user_id
+                job_id, user_id, is_final_attempt=is_final_attempt
             ))
             logger.info(f"异步函数执行完成: task_id={self.request.id}, job_id={job_id}, result keys={list(result.keys()) if isinstance(result, dict) else None}")
             return result
@@ -271,12 +279,12 @@ def parse_and_vectorize_task(self, job_id: str, user_id: str = None, job_type: s
             
     except Exception as e:
         logger.error(f"解析并向量化任务失败: task_id={self.request.id}, job_id={job_id}, error={e}", exc_info=True)
-        raise self.retry(exc=e, countdown=120, max_retries=2)
+        raise self.retry(exc=e, countdown=settings.KB_TASK_RETRY_COUNTDOWN, max_retries=settings.KB_TASK_MAX_RETRIES)
 
 
-async def _parse_and_vectorize_async(job_id: str, user_id: str):
+async def _parse_and_vectorize_async(job_id: str, user_id: str, is_final_attempt: bool = False):
     """异步解析并向量化（文件已通过S3直传）"""
-    logger.info(f"异步函数开始执行: job_id={job_id}, user_id={user_id}")
+    logger.info(f"异步函数开始执行: job_id={job_id}, user_id={user_id}, is_final_attempt={is_final_attempt}")
     message_publisher = get_message_publisher()
     logger.info(f"消息发布器获取成功: job_id={job_id}")
     
@@ -318,96 +326,47 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         
         logger.info(f"S3文件验证成功: {s3_key}")
         
-        # 从job_metadata获取user_config（创建时已初始化）
+        # 从job_metadata获取解析参数
         logger.info(f"开始获取job_metadata: job_id={job_id}")
         from shared.models.schemas.job_metadata import JobMetadataHelper
         
         metadata_service = JobMetadataService(redis_service)
-        logger.info(f"metadata_service创建成功，开始获取metadata: job_id={job_id}")
         job_metadata = await metadata_service.get_metadata(job_id)
-        logger.info(f"job_metadata获取完成: job_id={job_id}, metadata存在={job_metadata is not None}")
         if not job_metadata:
-            logger.error(f"Job metadata不存在: job_id={job_id}")
-            raise ValueError(f"Job metadata不存在: job_id={job_id}")
-        
-        logger.info(f"开始从job_metadata提取user_config: job_id={job_id}")
-        user_config = JobMetadataHelper.get_user_config(job_metadata)
-        logger.info(f"user_config提取完成: job_id={job_id}, user_config存在={user_config is not None}")
-        
-        if not user_config:
-            logger.error(f"Job metadata中缺少用户配置: job_id={job_id}")
-            raise ValueError("Job metadata中缺少用户配置")
-        
-        # 强制使用配置的绝对路径
-        parent_path = settings.USERS_DATA_PATH
-        if not parent_path:
-            raise ValueError("USERS_DATA_PATH 未配置，必须设置用户数据目录的绝对路径")
-        
-        if not os.path.isabs(parent_path):
-            raise ValueError(f"USERS_DATA_PATH 必须是绝对路径，当前值: {parent_path}")
-        
-        # 验证路径是否存在或可创建
-        try:
-            os.makedirs(parent_path, exist_ok=True)
-        except (OSError, PermissionError) as e:
-            raise ValueError(f"USERS_DATA_PATH 目录无法创建或访问: {parent_path}, 错误: {e}")
-        
-        # 更新 user_config 中的 parent 路径
-        if 'parent' in user_config:
-            old_parent = user_config.get('parent', '')
-            user_config['parent'] = parent_path
-            if old_parent != parent_path:
-                logger.info(f"路径修复: job_id={job_id}, 旧路径={old_parent}, 新路径={parent_path}")
-        
-        # 重新计算 KB_PATH 和 KB_VECS_PATH
-        if 'KB' in user_config:
-            user_config['KB_PATH'] = os.path.join(parent_path, user_config['KB'])
-        if 'kb_vec_term' in user_config and 'user' in user_config:
-            user_config['KB_VECS_PATH'] = os.path.join(
-                parent_path,
-                f"{user_config['kb_vec_term']}_{user_config['user']}"
+            raise NotFoundException(
+                resource="JobMetadata",
+                resource_id=job_id,
+                internal_message=f"Job metadata not found for job_id={job_id}"
             )
         
-        # 确保用户目录结构存在（Worker服务按需创建）
-        if 'KB_PATH' in user_config and 'KB_VECS_PATH' in user_config:
-            from app.services.user.user_directory_service import UserDirectoryService
-            try:
-                UserDirectoryService.ensure_user_directories(
-                    user_config['KB_PATH'],
-                    user_config['KB_VECS_PATH']
-                )
-                logger.info(f"用户目录结构已确保存在: KB_PATH={user_config['KB_PATH']}, KB_VECS_PATH={user_config['KB_VECS_PATH']}")
-            except Exception as e:
-                logger.error(f"创建用户目录结构失败: {e}")
-                raise ValueError(f"无法创建用户目录结构: {e}")
+        # use USERS_DATA_PATH + user_id as output directory
+        parent_path = settings.USERS_DATA_PATH
+        if not parent_path:
+            raise SystemSettingMissingException(
+                message="System configuration error",
+                internal_message="USERS_DATA_PATH not configured"
+            )
         
-        # 更新 USER_SETTINGS 中的路径（只更新在 parse_and_vectorize_task 流程中实际使用的路径）
-        if 'USER_SETTINGS' in user_config:
-            user_settings = user_config['USER_SETTINGS']
-            kb_vecs_path = user_config.get('KB_VECS_PATH', parent_path)
-            
-            # 更新在 encode_kb 和 load_existing_kb 中使用的路径
-            if 'KB_VEC_PATH' in user_settings:
-                user_settings['KB_VEC_PATH'] = os.path.join(
-                    kb_vecs_path,
-                    'all_vec.npy'
-                )
-            if 'KB_PATH_VEC_PATH' in user_settings:
-                user_settings['KB_PATH_VEC_PATH'] = os.path.join(
-                    kb_vecs_path,
-                    'all_path_vec.npy'
-                )
-            if 'KB_CONTENT_PATH' in user_settings:
-                user_settings['KB_CONTENT_PATH'] = os.path.join(
-                    kb_vecs_path,
-                    'all_contents.csv'
-                )
-            # 修复：更新 RESOURCE_PATH（在 gen_img_tb_records 中使用）
-            if 'RESOURCE_PATH' in user_settings:
-                user_settings['RESOURCE_PATH'] = os.path.join(
-                    kb_vecs_path,
-                    'resources.json'
-                )
+        if not os.path.isabs(parent_path):
+            raise SystemSettingInvalidException(
+                message="System configuration error",
+                internal_message=f"USERS_DATA_PATH must be absolute path, current value: {parent_path}"
+            )
+        
+        output_dir = os.path.join(parent_path, f"kb_{job_user_id}")
+        
+        # Ensure output directory exists
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Output directory ready: {output_dir}")
+        except (OSError, PermissionError) as e:
+            raise FileSystemException(
+                message="System error preparing storage",
+                path=output_dir,
+                operation="create_directory",
+                internal_message=f"Failed to create directory: {output_dir}",
+                original_exception=e
+            )
         
         # 发布状态更新消息：开始处理
         logger.info(f"开始发布状态更新消息: job_id={job_id}, status={JobStatus.RUNNING.value}")
@@ -446,31 +405,34 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
         logger.info(f"filename提取完成: job_id={job_id}, filename={filename}")
         
-        # 调用修改后的解析逻辑（传入user_config）
+        # 调用解析逻辑（传入简化的output_dir）
         logger.info(f"开始导入解析服务: job_id={job_id}")
-        from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse                                                                     
+        from app.services.document_parser.parse_service import checkerboard_inject_parse                                                                     
         logger.info(f"解析服务导入成功: job_id={job_id}")
         
         doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
         logger.info(f"开始解析文件: job_id={job_id}, filename={filename}, 类型={doc_type}, file_url={file_url[:100] if file_url else None}...")
         
-        add_dir = await checkerboard_inject_parse(
+        add_dir, add_contents_df = await checkerboard_inject_parse(
             file_full_path=file_url,
             filename=filename,
-            user_config=user_config,  # 传入用户配置
-            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),                                                                     
+            output_dir=output_dir,
+            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),                                                                     
             doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
             smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
             summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             
             summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),                                                             
-            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),                                                                 
             add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
         )
-        logger.info(f"文件解析调用完成: job_id={job_id}, add_dir={add_dir}")
+        logger.info(f"File parsing completed: job_id={job_id}, add_dir={add_dir}, add_contents_df length={len(add_contents_df) if add_contents_df is not None else 0}")
         
-        if not add_dir:
-            logger.error(f"文件解析失败，未返回解析目录: job_id={job_id}, filename={filename}")
-            raise ValueError("文件解析失败，未返回解析目录")
+        if add_contents_df is None:
+            logger.error(f"File parsing failed, no content returned: job_id={job_id}, filename={filename}")
+            raise ValueError("File parsing failed, no content returned")
+        
+        if add_contents_df.empty:
+            logger.warning(f"no content returned from file parsing: job_id={job_id}, filename={filename}")
         
         logger.info(f"文件解析成功: job_id={job_id}, add_dir={add_dir}")
         
@@ -479,31 +441,22 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         await metadata_service.update_metadata(job_id, {"add_dir": add_dir})
         logger.info(f"add_dir已保存到Redis job_metadata: job_id={job_id}, add_dir={add_dir}")
         
-        # 发布进度更新消息：解析完成，开始向量化
-        logger.info(f"开始发布进度更新消息（向量化）: job_id={job_id}, progress=30")
+        
+        # 发布进度更新消息：解析完成，准备保存chunks
+        logger.info(f"开始发布进度更新消息（保存chunks）: job_id={job_id}, progress=50")
         await message_publisher.publish_progress_update(
             job_id=job_id,
-            progress=30,
-            message_text="解析完成，正在向量化...",
+            progress=50,
+            message_text="解析完成，正在保存数据块...",
         )
-        logger.info(f"进度更新消息发布成功（向量化）: job_id={job_id}")
+        logger.info(f"进度更新消息发布成功（保存chunks）: job_id={job_id}")
         
-        # 调用旧方案的向量化逻辑
-        logger.info(f"开始导入向量化服务: job_id={job_id}")
-        from app.services.knowledge.kb_encoder_service import encode_kb
-        logger.info(f"向量化服务导入成功，开始向量化: job_id={job_id}, add_dir={add_dir}")
-        
-        user_info = await encode_kb(user_config, add_dir=add_dir, mode="add")
-        logger.info(f"向量化完成: job_id={job_id}, user_info keys={list(user_info.keys()) if user_info else None}")
         
         # 保存DataFrame为chunks到Redis
         from shared.services.redis.chunks_redis_service import ChunksRedisService
         
         chunks_redis_service = ChunksRedisService(redis_service)
         
-        # 单独处理当前文件解析的chunks
-        from app.services.knowledge.kb_encoder_service import load_new_data
-        add_contents_df = load_new_data(add_dir)
         if add_contents_df is not None:
             logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")                                                                    
             success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)                                                              
@@ -515,11 +468,11 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             logger.warning("add_contents_df为空，保存空chunks到Redis")
             await chunks_redis_service.save_chunks(job_id, [])
         
-        # 发布进度更新消息：向量化完成，开始生成ZIP
+        # 发布进度更新消息：chunks已保存，开始生成ZIP
         await message_publisher.publish_progress_update(
             job_id=job_id,
             progress=70,
-            message_text="向量化完成，正在生成结果包...",
+            message_text="数据块已保存，正在生成结果包...",
         )
         
         # 从Redis获取chunks数据（用于生成ZIP包）
@@ -529,33 +482,6 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         else:
             logger.warning(f"从Redis获取chunks数据失败: job_id={job_id}")
             chunks = []
-        
-        # 从全局管理器获取向量化结果（用于准备存储到knowledge_base表的数据）
-        from app.services.common.global_manager_service import global_df_manager
-        user_key = f"{user_config['user']}_all_contents_df"
-        all_contents_df = global_df_manager.get_dataframe(user_key)
-        logger.debug(f"user_key: {user_key}, all_contents_df length: {len(all_contents_df) if all_contents_df is not None else 'None'}")                        
-        
-        # 准备知识库记录数据（转换为字典格式，用于消息传递）
-        kb_records = []
-        if all_contents_df is not None and len(all_contents_df) > 0:
-            from shared.models.database.knowledge_base import KBPydantic
-            
-            # 转换DataFrame为字典（只处理新增的内容）
-            contents_count = len(all_contents_df)
-            for _, row in all_contents_df.tail(contents_count).iterrows():
-                kb_record_dict = {
-                    'content': row.get('content'),
-                    'path': row.get('path'),
-                    'type': row.get('type'),
-                    'length': row.get('length'),
-                    'keywords': row.get('keywords'),
-                    'summary': row.get('summary'),
-                    'know_id': row.get('know_id'),
-                    'tokens': row.get('tokens'),
-                    'embedding': None  # 向量存储在文件系统
-                }
-                kb_records.append(kb_record_dict)
         
         # 从job_metadata获取信息
         source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")             
@@ -582,6 +508,7 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             source_file_name=source_file_name,
             data_id=data_id,
             job_metadata=job_metadata,
+            parsed_df=add_contents_df,  # 传入 DataFrame 以生成 kb.csv 和 hierarchy.json
         )
         
         # 提取 checksum 的字符串值（ZipResultService 返回的是字典格式）
@@ -597,8 +524,9 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         # 上传 ZIP 包到 S3（业务逻辑处理）
         result_s3_key = await upload_service.upload_zip_result(job_id, zip_file_path)                                                                           
         
-        # 安全地获取kb_records的长度
-        stored_count = len(kb_records) if kb_records is not None else 0
+        # 向量化已移除，stored_count 设为 0
+        stored_count = 0
+        kb_records = []
         
         # 发布进度更新消息：任务完成
         await message_publisher.publish_progress_update(
@@ -627,8 +555,8 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
             "status": "success",
             "job_id": job_id,
             "add_dir": add_dir,
-            "vectors_count": len(user_info.get("all_vec", [])),
-            "contents_count": len(user_info.get("all_contents_df", [])),
+            "vectors_count": 0,
+            "contents_count": len(add_contents_df) if add_contents_df is not None else 0,
             "stored_count": stored_count,
             "delivery_mode": "url",
             "result_s3_key": result_s3_key
@@ -640,13 +568,16 @@ async def _parse_and_vectorize_async(job_id: str, user_id: str):
         logger.error(f"解析并向量化失败: job_id={job_id}, error={e}, error_type={type(e).__name__}")
         logger.error(f"异常堆栈跟踪: job_id={job_id}\n{error_trace}")
         # 发布失败消息
-        logger.info(f"开始发布失败消息: job_id={job_id}")
+        logger.info(f"开始发布失败消息: job_id={job_id}, refund_credits={is_final_attempt}")
         message_publisher = get_message_publisher()
         await message_publisher.publish_failure(
             job_id=job_id,
             error_message=str(e),
             error_type=type(e).__name__,
             stack_trace=error_trace,
+            metadata={
+                "refund_credits": is_final_attempt
+            }
         )
         logger.info(f"失败消息发布完成: job_id={job_id}")
         raise
