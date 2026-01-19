@@ -477,9 +477,96 @@ jobs:
           
           # 验证部署状态
           echo "验证部署状态..."
-          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/"$DEPLOYMENT_NAME" \
-            --namespace=$NAMESPACE \
-            --timeout=300s
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          ROLLOUT_SUCCESS=false
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "检查部署状态 (尝试 $ATTEMPT/$MAX_ATTEMPTS)..."
+            
+            # 检查rollout状态
+            if kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/"$DEPLOYMENT_NAME" \
+              --namespace="$NAMESPACE" \
+              --timeout=60s 2>&1 | tee /tmp/rollout-status.txt; then
+              echo "✅ 部署成功完成！"
+              ROLLOUT_SUCCESS=true
+              break
+            else
+              echo "⚠️ 部署检查未完成，等待后重试..."
+              
+              # 检查Pod状态以提供更多信息
+              echo "当前Pod状态:"
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o wide
+              
+              # 检查Pod事件
+              echo "Pod事件:"
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get events -n "$NAMESPACE" --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' | grep "$DEPLOYMENT_NAME" | tail -5
+              
+              # 如果Pod存在，检查容器状态
+              POD_NAME=$(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+              if [ -n "$POD_NAME" ]; then
+                echo "容器状态:"
+                kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[*].name}{" : "}{.status.containerStatuses[*].ready}{"\n"}'
+              fi
+              
+              # 等待一段时间后重试
+              sleep 30
+              ATTEMPT=$((ATTEMPT + 1))
+            fi
+          done
+          
+          if [ "$ROLLOUT_SUCCESS" = false ]; then
+            echo "❌ 部署检查超时，达到最大重试次数 ($MAX_ATTEMPTS)"
+            
+            # 提供更详细的错误信息
+            echo "=== 详细错误诊断 ==="
+            echo "1. Deployment状态:"
+            kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" describe deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE"
+            
+            echo "2. Pod状态:"
+            kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o wide
+            
+            echo "3. Pod详细状态:"
+            for POD in $(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o name); do
+              echo "Pod: $POD"
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" describe "$POD" -n "$NAMESPACE" | grep -A 10 "Events:"
+            done
+            
+            # 尝试获取容器日志
+            echo "4. 容器日志 (最后50行):"
+            for POD in $(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o jsonpath='{.items[*].metadata.name}'); do
+              echo "=== Pod $POD 日志 ==="
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" logs "$POD" -n "$NAMESPACE" --tail=50 2>/dev/null || echo "无法获取日志"
+            done
+            
+            exit 1
+          fi
+          
+          # 额外检查服务是否真的可用
+          echo "执行最终健康检查..."
+          HEALTH_CHECK_ATTEMPTS=6
+          HEALTH_ATTEMPT=1
+          
+          while [ $HEALTH_ATTEMPT -le $HEALTH_CHECK_ATTEMPTS ]; do
+            echo "健康检查 (尝试 $HEALTH_ATTEMPT/$HEALTH_CHECK_ATTEMPTS)..."
+            
+            # 检查所有Pod是否都就绪
+            READY_PODS=$(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            DESIRED_PODS=$(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+            
+            if [ "$READY_PODS" = "$DESIRED_PODS" ] && [ "$READY_PODS" != "0" ]; then
+              echo "✅ 所有Pod都已就绪 ($READY_PODS/$DESIRED_PODS)"
+              break
+            else
+              echo "⚠️ Pod就绪状态: $READY_PODS/$DESIRED_PODS"
+              sleep 10
+              HEALTH_ATTEMPT=$((HEALTH_ATTEMPT + 1))
+            fi
+          done
+          
+          if [ $HEALTH_ATTEMPT -gt $HEALTH_CHECK_ATTEMPTS ]; then
+            echo "⚠️ 健康检查未完全通过，但部署已更新。Pod就绪状态: $READY_PODS/$DESIRED_PODS"
+          fi
           
           echo "✅ ${{ matrix.service }} deployed to Aliyun ACK"
       
