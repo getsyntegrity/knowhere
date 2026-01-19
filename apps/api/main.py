@@ -24,7 +24,6 @@ from app.core.users import get_user_manager
 from app.core.jwt import auth_backend
 from app.core.image_cli import ImageCli
 from app.middleware.api_key_auth_middleware import api_key_auth_middleware
-from app.middleware.credits_middleware import credits_middleware
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from fastapi_users import FastAPIUsers
@@ -155,9 +154,6 @@ def create_app() -> FastAPI:
     # 添加Moesif API监控中间件
     app.add_middleware(MoesifMiddleware)
 
-    # Credits 扣费中间件（仅作用于 POST /api/v1/jobs）
-    app.add_middleware(BaseHTTPMiddleware, dispatch=credits_middleware)
-    
     # 添加API Key认证中间件
     # app.add_middleware(api_key_auth_middleware)
 
