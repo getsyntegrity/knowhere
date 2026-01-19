@@ -453,12 +453,12 @@ jobs:
           echo "Using image: $IMAGE"
           
           # 更新K8s Deployment
-          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/${{ matrix.service }} \
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/knowhere-${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
             --namespace=$ALIYUN_ACK_NAMESPACE
           
           # 验证部署状态
-          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/${{ matrix.service }} \
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/knowhere-${{ matrix.service }} \
             --namespace=$ALIYUN_ACK_NAMESPACE \
             --timeout=300s
           
