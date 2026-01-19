@@ -665,10 +665,10 @@ jobs:
             echo "Image: ${{ env.ACR_IMAGE_URI }}"
           else
             echo "Image: ${{ env.GHCR_IMAGE_URI }}"
-        fi
-        
-        echo ""
-        echo "Next steps:"
-        echo "- Verify service health checks"
-        echo "- Monitor application logs"
-        echo "- Run integration tests (if applicable)"
+          fi
+          
+          echo ""
+          echo "Next steps:"
+          echo "- Verify service health checks"
+          echo "- Monitor application logs"
+          echo "- Run integration tests (if applicable)"
