@@ -306,377 +306,369 @@ jobs:
             echo "ECR Image: (not pushed for web service or PR event)"
           fi
 
-  # Job 2: 环境部署
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: |
-      github.event.inputs.simulate_only != 'true' &&
-      (github.event_name != 'pull_request' || github.event.inputs.target_environment != '')
+# Job 2: 环境部署
+deploy:
+  runs-on: ubuntu-latest
+  needs: build-and-push
+  if: |
+    github.event.inputs.simulate_only != 'true' &&
+    (github.event_name != 'pull_request' || github.event.inputs.target_environment != '')
+  
+  strategy:
+    # 部署矩阵：阿里云环境需要部署所有服务，AWS环境只部署api和worker
+    # 具体逻辑在后续步骤中判断
+    matrix:
+      service: [api, web, worker]  # 构建了所有服务，部署时根据平台过滤
+  
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check if should deploy this service
+      id: check-deploy
+      run: |
+        INPUT_SERVICE="${{ github.event.inputs.service }}"
+        CURRENT_SERVICE="${{ matrix.service }}"
+        IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
+        
+        # 如果是PR事件，默认不自动部署，除非手动触发指定了环境
+        if [ "$IS_PR" == "true" ] && [ -z "${{ github.event.inputs.target_environment }}" ]; then
+          echo "should_deploy=false" >> $GITHUB_OUTPUT
+          echo "⏭️  PR事件不自动部署，跳过服务: $CURRENT_SERVICE"
+          exit 0
+        fi
+        
+        if [[ -z "$INPUT_SERVICE" || "$INPUT_SERVICE" == "all" || "$INPUT_SERVICE" == "$CURRENT_SERVICE" ]]; then
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+          echo "✅ Will deploy service: $CURRENT_SERVICE"
+        else
+          echo "should_deploy=false" >> $GITHUB_OUTPUT
+          echo "⏭️  Skipping service: $CURRENT_SERVICE (manual input specified: $INPUT_SERVICE)"
+        fi
+
+    - name: Download image URIs artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.service }}-image-uris
+        path: /tmp/image-uris
+
+    - name: Load image URIs from file
+      id: load-uris
+      run: |
+        ENV_FILE="/tmp/image-uris/${{ matrix.service }}_image_uris.env"
+        if [ -f "$ENV_FILE" ]; then
+          # 读取环境变量文件
+          source $ENV_FILE
+          
+          # 输出到GitHub Actions环境
+          echo "GHCR_IMAGE_URI=${${{ matrix.service }}_ghcr_image_uri}" >> $GITHUB_ENV
+          echo "ACR_IMAGE_URI=${${{ matrix.service }}_acr_image_uri}" >> $GITHUB_ENV
+          echo "ECR_IMAGE_URI=${${{ matrix.service }}_ecr_image_uri}" >> $GITHUB_ENV
+          
+          # 同时输出到步骤输出
+          echo "ghcr_uri=${${{ matrix.service }}_ghcr_image_uri}" >> $GITHUB_OUTPUT
+          echo "acr_uri=${${{ matrix.service }}_acr_image_uri}" >> $GITHUB_OUTPUT
+          echo "ecr_uri=${${{ matrix.service }}_ecr_image_uri}" >> $GITHUB_OUTPUT
+          
+          echo "✅ Loaded image URIs for ${{ matrix.service }}"
+          echo "GHCR: ${${{ matrix.service }}_ghcr_image_uri}"
+          echo "ACR: ${${{ matrix.service }}_acr_image_uri}"
+          echo "ECR: ${${{ matrix.service }}_ecr_image_uri}"
+        else
+          echo "❌ Error: Image URIs file not found: $ENV_FILE"
+          exit 1
+        fi
+
+    - name: Determine deployment type and namespace
+      id: deploy-type
+      run: |
+        ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+        SERVICE="${{ matrix.service }}"
+        IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
+        
+        # 如果是PR事件且手动指定了环境，使用指定环境
+        if [ "$IS_PR" == "true" ] && [ -n "${{ github.event.inputs.target_environment }}" ]; then
+          ENVIRONMENT="${{ github.event.inputs.target_environment }}"
+          echo "PR事件使用手动指定环境: $ENVIRONMENT"
+        fi
+        
+        # 确定部署类型（基于环境和平台策略）
+        if [ "$ENVIRONMENT" == "prod" ]; then
+          DEPLOY_TYPE="k8s"
+          echo "Deploying PRODUCTION to Kubernetes clusters (ACK & EKS)"
+        else
+          # staging环境：阿里云走ECS，AWS走EKS
+          DEPLOY_TYPE="mixed"
+          echo "Deploying STAGING: Aliyun to ECS, AWS to EKS"
+        fi
+        echo "deploy_type=$DEPLOY_TYPE" >> $GITHUB_OUTPUT
+        
+        # 确定各平台的命名空间
+        # AWS EKS 命名空间: staging -> knowhere-staging, prod -> knowhere-prod
+        # 阿里云 ACK 命名空间: 固定为 knowhere
+        if [ "$ENVIRONMENT" == "prod" ]; then
+          AWS_EKS_NAMESPACE="knowhere-prod"
+        else
+          AWS_EKS_NAMESPACE="knowhere-staging"
+        fi
+        ALIYUN_ACK_NAMESPACE="knowhere"
+        
+        echo "aws_eks_namespace=$AWS_EKS_NAMESPACE" >> $GITHUB_OUTPUT
+        echo "aliyun_ack_namespace=$ALIYUN_ACK_NAMESPACE" >> $GITHUB_OUTPUT
+        
+        # 输出部署目标信息
+        echo "AWS EKS 目标: 集群 ${{ env.AWS_EKS_PROD_CLUSTER_NAME }}, 命名空间 $AWS_EKS_NAMESPACE"
+        echo "Aliyun ACK 目标: 集群 ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}, 命名空间 $ALIYUN_ACK_NAMESPACE"
+        if [ "$ENVIRONMENT" == "staging" ]; then
+          echo "Aliyun ECS 目标: 实例 ${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}"
+        fi
+        
+        # 判断当前服务是否应该部署到AWS
+        # AWS环境不需要web服务
+        if [ "$SERVICE" == "web" ]; then
+          echo "skip_aws_deploy=true" >> $GITHUB_OUTPUT
+          echo "⚠️ Web服务不会部署到AWS环境"
+        else
+          echo "skip_aws_deploy=false" >> $GITHUB_OUTPUT
+        fi
     
-    strategy:
-      # 部署矩阵：阿里云环境需要部署所有服务，AWS环境只部署api和worker
-      # 具体逻辑在后续步骤中判断
-      matrix:
-        service: [api, web, worker]  # 构建了所有服务，部署时根据平台过滤
+    # 阿里云 ACK 部署步骤 - 修复缺少阿里云 CLI 的问题
+    - name: Set up Aliyun CLI for ACK deployment
+      if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
+      uses: aliyun/setup-aliyun-cli-action@v1
+      with:
+        access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+        access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        region: ${{ secrets.ALIYUN_REGION }}
     
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check if should deploy this service
-        id: check-deploy
-        run: |
-          INPUT_SERVICE="${{ github.event.inputs.service }}"
-          CURRENT_SERVICE="${{ matrix.service }}"
-          IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
-          
-          # 如果是PR事件，默认不自动部署，除非手动触发指定了环境
-          if [ "$IS_PR" == "true" ] && [ -z "${{ github.event.inputs.target_environment }}" ]; then
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
-            echo "⏭️  PR事件不自动部署，跳过服务: $CURRENT_SERVICE"
-            exit 0
-          fi
-          
-          if [[ -z "$INPUT_SERVICE" || "$INPUT_SERVICE" == "all" || "$INPUT_SERVICE" == "$CURRENT_SERVICE" ]]; then
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-            echo "✅ Will deploy service: $CURRENT_SERVICE"
-          else
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
-            echo "⏭️  Skipping service: $CURRENT_SERVICE (manual input specified: $INPUT_SERVICE)"
-          fi
-
-      - name: Download image URIs artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.service }}-image-uris
-          path: /tmp/image-uris
-
-      - name: Load image URIs from file
-        id: load-uris
-        run: |
-          ENV_FILE="/tmp/image-uris/${{ matrix.service }}_image_uris.env"
-          if [ -f "$ENV_FILE" ]; then
-            # 读取环境变量文件
-            source $ENV_FILE
-            
-            # 输出到GitHub Actions环境
-            echo "GHCR_IMAGE_URI=${${{ matrix.service }}_ghcr_image_uri}" >> $GITHUB_ENV
-            echo "ACR_IMAGE_URI=${${{ matrix.service }}_acr_image_uri}" >> $GITHUB_ENV
-            echo "ECR_IMAGE_URI=${${{ matrix.service }}_ecr_image_uri}" >> $GITHUB_ENV
-            
-            # 同时输出到步骤输出
-            echo "ghcr_uri=${${{ matrix.service }}_ghcr_image_uri}" >> $GITHUB_OUTPUT
-            echo "acr_uri=${${{ matrix.service }}_acr_image_uri}" >> $GITHUB_OUTPUT
-            echo "ecr_uri=${${{ matrix.service }}_ecr_image_uri}" >> $GITHUB_OUTPUT
-            
-            echo "✅ Loaded image URIs for ${{ matrix.service }}"
-            echo "GHCR: ${${{ matrix.service }}_ghcr_image_uri}"
-            echo "ACR: ${${{ matrix.service }}_acr_image_uri}"
-            echo "ECR: ${${{ matrix.service }}_ecr_image_uri}"
-          else
-            echo "❌ Error: Image URIs file not found: $ENV_FILE"
-            exit 1
-          fi
-
-      - name: Determine deployment type and namespace
-        id: deploy-type
-        run: |
-          ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
-          SERVICE="${{ matrix.service }}"
-          IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
-          
-          # 如果是PR事件且手动指定了环境，使用指定环境
-          if [ "$IS_PR" == "true" ] && [ -n "${{ github.event.inputs.target_environment }}" ]; then
-            ENVIRONMENT="${{ github.event.inputs.target_environment }}"
-            echo "PR事件使用手动指定环境: $ENVIRONMENT"
-          fi
-          
-          # 确定部署类型（基于环境和平台策略）
-          if [ "$ENVIRONMENT" == "prod" ]; then
-            DEPLOY_TYPE="k8s"
-            echo "Deploying PRODUCTION to Kubernetes clusters (ACK & EKS)"
-          else
-            # staging环境：阿里云走ECS，AWS走EKS
-            DEPLOY_TYPE="mixed"
-            echo "Deploying STAGING: Aliyun to ECS, AWS to EKS"
-          fi
-          echo "deploy_type=$DEPLOY_TYPE" >> $GITHUB_OUTPUT
-          
-          # 确定各平台的命名空间
-          # AWS EKS 命名空间: staging -> knowhere-staging, prod -> knowhere-prod
-          # 阿里云 ACK 命名空间: 固定为 knowhere
-          if [ "$ENVIRONMENT" == "prod" ]; then
-            AWS_EKS_NAMESPACE="knowhere-prod"
-          else
-            AWS_EKS_NAMESPACE="knowhere-staging"
-          fi
-          ALIYUN_ACK_NAMESPACE="knowhere"
-          
-          echo "aws_eks_namespace=$AWS_EKS_NAMESPACE" >> $GITHUB_OUTPUT
-          echo "aliyun_ack_namespace=$ALIYUN_ACK_NAMESPACE" >> $GITHUB_OUTPUT
-          
-          # 输出部署目标信息
-          echo "AWS EKS 目标: 集群 ${{ env.AWS_EKS_PROD_CLUSTER_NAME }}, 命名空间 $AWS_EKS_NAMESPACE"
-          echo "Aliyun ACK 目标: 集群 ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }}, 命名空间 $ALIYUN_ACK_NAMESPACE"
-          if [ "$ENVIRONMENT" == "staging" ]; then
-            echo "Aliyun ECS 目标: 实例 ${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}"
-          fi
-          
-          # 判断当前服务是否应该部署到AWS
-          # AWS环境不需要web服务
-          if [ "$SERVICE" == "web" ]; then
-            echo "skip_aws_deploy=true" >> $GITHUB_OUTPUT
-            echo "⚠️ Web服务不会部署到AWS环境"
-          else
-            echo "skip_aws_deploy=false" >> $GITHUB_OUTPUT
-          fi
-      
-      # 阿里云 ACK 部署步骤
-      - name: Set up Aliyun CLI
-        if: steps.check-deploy.outputs.should_deploy == 'true' && steps.deploy-type.outputs.deploy_type == 'mixed'
-        uses: aliyun/setup-aliyun-cli-action@v1
-        with:
-          access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          region: ${{ secrets.ALIYUN_REGION }}
-      - name: Deploy to Aliyun ACK (生产环境)
-        if: |
-          steps.deploy-type.outputs.deploy_type == 'k8s' && 
-          steps.check-deploy.outputs.should_deploy == 'true' &&
-          github.event_name != 'pull_request'
-        env:
-          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
-        run: |
-          echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
-          
-          # 配置阿里云CLI
-          aliyun configure set --profile default \
-            --access-key-id $ALIYUN_ACCESS_KEY_ID \
-            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
-            --region $ALIYUN_REGION
-          
-          # 获取ACK集群kubeconfig
-          aliyun cs GetClusterKubeConfig \
-            --ClusterId ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }} \
-            --RegionId $ALIYUN_REGION > kubeconfig.yaml
-          
-          export KUBECONFIG=kubeconfig.yaml
-          
-          # 使用ACR镜像（阿里云环境优先使用ACR）
+    - name: Deploy to Aliyun ACK (生产环境)
+      if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
+      env:
+        ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+        ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
+      run: |
+        echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
+        
+        # 使用ACR镜像（阿里云环境优先使用ACR）
+        IMAGE="${{ env.ACR_IMAGE_URI }}"
+        if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
+          IMAGE="${{ env.GHCR_IMAGE_URI }}"
+        fi
+        
+        echo "Using image: $IMAGE"
+        
+        # 获取ACK集群kubeconfig
+        aliyun cs GetClusterKubeConfig \
+          --ClusterId ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }} \
+          --RegionId $ALIYUN_REGION > kubeconfig.yaml
+        
+        export KUBECONFIG=kubeconfig.yaml
+        
+        # 检查kubeconfig是否有效
+        kubectl cluster-info
+        
+        # 检查当前命名空间下的deployment
+        kubectl get deployments -n $ALIYUN_ACK_NAMESPACE
+        
+        # 更新K8s Deployment
+        kubectl set image deployment/${{ matrix.service }} \
+          ${{ matrix.service }}=$IMAGE \
+          --namespace=$ALIYUN_ACK_NAMESPACE
+        
+        # 验证部署状态
+        kubectl rollout status deployment/${{ matrix.service }} \
+          --namespace=$ALIYUN_ACK_NAMESPACE \
+          --timeout=300s
+        
+        echo "✅ ${{ matrix.service }} deployed to Aliyun ACK"
+    
+    # AWS EKS 部署步骤 - 统一处理生产和预发布
+    - name: Deploy to AWS EKS
+      if: |
+        steps.check-deploy.outputs.should_deploy == 'true' && 
+        steps.deploy-type.outputs.skip_aws_deploy == 'false' &&
+        github.event_name != 'pull_request'
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ env.AWS_EKS_PROD_REGION }}
+      run: |
+        ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+        SERVICE="${{ matrix.service }}"
+        
+        echo "🚀 Deploying $SERVICE to AWS EKS ($ENVIRONMENT environment)"
+        echo "目标集群: ${{ env.AWS_EKS_PROD_CLUSTER_NAME }}, 命名空间: ${{ steps.deploy-type.outputs.aws_eks_namespace }}"
+        
+        # 为此次运行生成独立的 kubeconfig 文件路径
+        EKS_KUBECONFIG_FILE="eks_kubeconfig_${{ github.run_id }}_${ENVIRONMENT}.yaml"
+        
+        # 配置 AWS CLI 凭证
+        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+        aws configure set region $AWS_REGION
+        
+        # 动态生成 kubeconfig
+        aws eks update-kubeconfig \
+          --name ${{ env.AWS_EKS_PROD_CLUSTER_NAME }} \
+          --region $AWS_REGION \
+          --kubeconfig $EKS_KUBECONFIG_FILE
+        
+        echo "✅ Kubeconfig 已动态生成至: $EKS_KUBECONFIG_FILE"
+        
+        # 使用ECR镜像（AWS环境优先使用ECR）
+        IMAGE="${{ env.ECR_IMAGE_URI }}"
+        if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
+          echo "⚠️ ECR镜像未找到，回退到ACR镜像"
           IMAGE="${{ env.ACR_IMAGE_URI }}"
-          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
-            IMAGE="${{ env.GHCR_IMAGE_URI }}"
-          fi
-          
-          echo "Using image: $IMAGE"
-          
-          # 更新K8s Deployment
-          kubectl set image deployment/${{ matrix.service }} \
-            ${{ matrix.service }}=$IMAGE \
-            --namespace=prod
-          
-          # 验证部署状态
-          kubectl rollout status deployment/${{ matrix.service }} \
-            --namespace=prod \
-            --timeout=300s
-          
-          echo "✅ ${{ matrix.service }} deployed to Aliyun ACK"
-      
-      # AWS EKS 部署步骤 - 统一处理生产和预发布
-      - name: Deploy to AWS EKS
-        if: |
-          steps.check-deploy.outputs.should_deploy == 'true' && 
-          steps.deploy-type.outputs.skip_aws_deploy == 'false' &&
-          github.event_name != 'pull_request'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ env.AWS_EKS_PROD_REGION }}
-        run: |
-          ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
-          SERVICE="${{ matrix.service }}"
-          
-          echo "🚀 Deploying $SERVICE to AWS EKS ($ENVIRONMENT environment)"
-          echo "目标集群: ${{ env.AWS_EKS_PROD_CLUSTER_NAME }}, 命名空间: ${{ steps.deploy-type.outputs.aws_eks_namespace }}"
-          
-          # 为此次运行生成独立的 kubeconfig 文件路径
-          EKS_KUBECONFIG_FILE="eks_kubeconfig_${{ github.run_id }}_${ENVIRONMENT}.yaml"
-          
-          # 配置 AWS CLI 凭证
-          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-          aws configure set region $AWS_REGION
-          
-          # 动态生成 kubeconfig
-          aws eks update-kubeconfig \
-            --name ${{ env.AWS_EKS_PROD_CLUSTER_NAME }} \
-            --region $AWS_REGION \
-            --kubeconfig $EKS_KUBECONFIG_FILE
-          
-          echo "✅ Kubeconfig 已动态生成至: $EKS_KUBECONFIG_FILE"
-          
-          # 使用ECR镜像（AWS环境优先使用ECR）
-          IMAGE="${{ env.ECR_IMAGE_URI }}"
-          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
-            echo "⚠️ ECR镜像未找到，回退到ACR镜像"
-            IMAGE="${{ env.ACR_IMAGE_URI }}"
-          fi
-          
-          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
-            echo "❌ 错误：没有找到可用的镜像URI"
-            exit 1
-          fi
-          
-          echo "使用镜像: $IMAGE"
-          
-          # 使用动态生成的配置文件执行部署
-          kubectl --kubeconfig="$EKS_KUBECONFIG_FILE" set image deployment/knowhere-$SERVICE \
-            $SERVICE="$IMAGE" \
-            --namespace=${{ steps.deploy-type.outputs.aws_eks_namespace }}
-          
-          # 验证部署状态
-          kubectl --kubeconfig="$EKS_KUBECONFIG_FILE" rollout status deployment/knowhere-$SERVICE \
-            --namespace=${{ steps.deploy-type.outputs.aws_eks_namespace }} \
-            --timeout=300s
-          
-          echo "✅ knowhere-$SERVICE 已成功部署到 AWS EKS (${{ steps.deploy-type.outputs.aws_eks_namespace }})"
+        fi
+        
+        if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
+          echo "❌ 错误：没有找到可用的镜像URI"
+          exit 1
+        fi
+        
+        echo "使用镜像: $IMAGE"
+        
+        # 使用动态生成的配置文件执行部署
+        kubectl --kubeconfig="$EKS_KUBECONFIG_FILE" set image deployment/knowhere-$SERVICE \
+          $SERVICE="$IMAGE" \
+          --namespace=${{ steps.deploy-type.outputs.aws_eks_namespace }}
+        
+        # 验证部署状态
+        kubectl --kubeconfig="$EKS_KUBECONFIG_FILE" rollout status deployment/knowhere-$SERVICE \
+          --namespace=${{ steps.deploy-type.outputs.aws_eks_namespace }} \
+          --timeout=300s
+        
+        echo "✅ knowhere-$SERVICE 已成功部署到 AWS EKS (${{ steps.deploy-type.outputs.aws_eks_namespace }})"
 
-      - name: Set up Aliyun CLI
-        if: steps.check-deploy.outputs.should_deploy == 'true' && steps.deploy-type.outputs.deploy_type == 'mixed'
-        uses: aliyun/setup-aliyun-cli-action@v1
-        with:
-          access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          region: ${{ secrets.ALIYUN_REGION }}
+    - name: Set up Aliyun CLI for ECS deployment
+      if: steps.check-deploy.outputs.should_deploy == 'true' && steps.deploy-type.outputs.deploy_type == 'mixed'
+      uses: aliyun/setup-aliyun-cli-action@v1
+      with:
+        access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+        access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        region: ${{ secrets.ALIYUN_REGION }}
 
-      # 阿里云 ECS 部署步骤（仅预发布环境）
-      - name: Deploy to Aliyun ECS via Docker Compose (预发布环境)
-        if: |
-          steps.deploy-type.outputs.deploy_type == 'mixed' && 
-          steps.check-deploy.outputs.should_deploy == 'true'
-        env:
-          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
-        run: |
-          echo "🚀 开始部署 ${{ matrix.service }} 服务到阿里云ECS（通过Docker Compose）"
-          
-          # 配置阿里云CLI
-          aliyun configure set --profile default \
-            --access-key-id $ALIYUN_ACCESS_KEY_ID \
-            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
-            --region $ALIYUN_REGION
-          
-          # 使用ACR镜像（阿里云环境优先使用ACR）
-          IMAGE="${{ env.ACR_IMAGE_URI }}"
-          if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
-            echo "⚠️ ACR镜像未找到，回退到GHCR镜像"
-            IMAGE="${{ env.GHCR_IMAGE_URI }}"
-          fi
-          
-          echo "📦 镜像地址: $IMAGE"
-          
-          if [ -f ".github/scripts/deploy-ecs.sh" ]; then
-            DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh | sed -e "s/{{serviceName}}/${{ matrix.service }}/g" -e "s|{{imageFull}}|$IMAGE|g")
-            echo "✅ 部署脚本参数替换完成"
-          else
-            echo "错误: 找不到部署脚本 .github/scripts/deploy-ecs.sh"
-            exit 1
-          fi
-          
-          # 发送到ECS执行
-          echo "正在向ECS实例发送部署命令..."
-          RAW_OUTPUT=$(aliyun ecs RunCommand \
-            --InstanceId.1 "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
-            --RegionId "$ALIYUN_REGION" \
-            --Type RunShellScript \
-            --CommandContent "$DEPLOY_SCRIPT_CONTENT" \
-            --Timeout 600)
+    # 阿里云 ECS 部署步骤（仅预发布环境）
+    - name: Deploy to Aliyun ECS via Docker Compose (预发布环境)
+      if: |
+        steps.deploy-type.outputs.deploy_type == 'mixed' && 
+        steps.check-deploy.outputs.should_deploy == 'true'
+      env:
+        ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+        ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
+      run: |
+        echo "🚀 开始部署 ${{ matrix.service }} 服务到阿里云ECS（通过Docker Compose）"
+        
+        # 使用ACR镜像（阿里云环境优先使用ACR）
+        IMAGE="${{ env.ACR_IMAGE_URI }}"
+        if [ -z "$IMAGE" ] || [ "$IMAGE" = "null" ]; then
+          echo "⚠️ ACR镜像未找到，回退到GHCR镜像"
+          IMAGE="${{ env.GHCR_IMAGE_URI }}"
+        fi
+        
+        echo "📦 镜像地址: $IMAGE"
+        
+        if [ -f ".github/scripts/deploy-ecs.sh" ]; then
+          DEPLOY_SCRIPT_CONTENT=$(cat .github/scripts/deploy-ecs.sh | sed -e "s/{{serviceName}}/${{ matrix.service }}/g" -e "s|{{imageFull}}|$IMAGE|g")
+          echo "✅ 部署脚本参数替换完成"
+        else
+          echo "错误: 找不到部署脚本 .github/scripts/deploy-ecs.sh"
+          exit 1
+        fi
+        
+        # 发送到ECS执行
+        echo "正在向ECS实例发送部署命令..."
+        RAW_OUTPUT=$(aliyun ecs RunCommand \
+          --InstanceId.1 "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
+          --RegionId "$ALIYUN_REGION" \
+          --Type RunShellScript \
+          --CommandContent "$DEPLOY_SCRIPT_CONTENT" \
+          --Timeout 600)
 
-          echo "命令原始返回: $RAW_OUTPUT"
-          # 从返回信息中提取 InvokeId
-          INVOKE_ID=$(echo "$RAW_OUTPUT" | grep -oP '(?<="InvokeId": ")[^"]+' | head -1)
+        echo "命令原始返回: $RAW_OUTPUT"
+        # 从返回信息中提取 InvokeId
+        INVOKE_ID=$(echo "$RAW_OUTPUT" | grep -oP '(?<="InvokeId": ")[^"]+' | head -1)
 
-          if [[ -z "$INVOKE_ID" ]]; then
-            echo "❌ 无法从命令返回中提取执行ID (InvokeId)，可能命令发送失败。"
-            echo "请检查上方命令的原始输出。"
-            exit 1
-          fi
-          echo "命令已发送，执行ID为: $INVOKE_ID"
+        if [[ -z "$INVOKE_ID" ]]; then
+          echo "❌ 无法从命令返回中提取执行ID (InvokeId)，可能命令发送失败。"
+          echo "请检查上方命令的原始输出。"
+          exit 1
+        fi
+        echo "命令已发送，执行ID为: $INVOKE_ID"
 
-          # 轮询查询执行结果
-          MAX_POLL=30
-          POLL_INTERVAL=10
-          for ((i=1; i<=MAX_POLL; i++)); do
-              echo "正在查询执行状态 ($i/$MAX_POLL)..."
-              INVOCATION_RAW=$(aliyun ecs DescribeInvocationResults \
-                --RegionId "$ALIYUN_REGION" \
-                --InstanceId "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
-                --InvokeId "$INVOKE_ID" 2>/dev/null)
+        # 轮询查询执行结果
+        MAX_POLL=30
+        POLL_INTERVAL=10
+        for ((i=1; i<=MAX_POLL; i++)); do
+            echo "正在查询执行状态 ($i/$MAX_POLL)..."
+            INVOCATION_RAW=$(aliyun ecs DescribeInvocationResults \
+              --RegionId "$ALIYUN_REGION" \
+              --InstanceId "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
+              --InvokeId "$INVOKE_ID" 2>/dev/null)
 
-              STATUS=$(echo "$INVOCATION_RAW" | grep -oP '(?<="InvocationStatus": ")[^"]+' | head -1)
-              EXIT_CODE=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ExitCode": )[0-9]+' | head -1)
-              
-              if [[ "$STATUS" == "Success" ]]; then
-                  echo "✅ ECS实例上的脚本执行成功。"
-                  break
-              elif [[ "$STATUS" == "Failed" ]]; then
-                  echo "❌ ECS实例上的脚本执行失败，退出码: $EXIT_CODE"
-                  # 尝试提取错误信息
-                  ERROR_INFO=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ErrorInfo": ")[^"]+' | head -1 2>/dev/null || echo "未知错误")
-                  echo "错误信息: $ERROR_INFO"
-                  exit 1
-              elif [[ "$STATUS" == "Running" ]]; then
-                  echo "脚本仍在执行中，${POLL_INTERVAL}秒后再次检查..."
-                  sleep $POLL_INTERVAL
-              else
-                  echo "当前状态: '$STATUS'，等待后重试..."
-                  sleep $POLL_INTERVAL
-              fi
-              
-              if [[ $i -eq $MAX_POLL ]]; then
-                  echo "❌ 轮询超时，未能获取最终执行状态。"
-                  exit 1
-              fi
-          done
-          
-          echo "✅ ${{ matrix.service }} 部署完成"
-      
-      - name: Deployment summary
-        if: steps.check-deploy.outputs.should_deploy == 'true'
-        run: |
-          ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
-          SERVICE="${{ matrix.service }}"
-          IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
-          
-          echo "🎉 Deployment Summary"
-          echo "====================================="
-          echo "Service: $SERVICE"
-          echo "Environment: $ENVIRONMENT"
-          echo "Deployment Type: ${{ steps.deploy-type.outputs.deploy_type }}"
-          echo "Event Type: ${{ github.event_name }}"
-          if [ "$IS_PR" == "true" ]; then
-            echo "PR Number: ${{ github.event.pull_request.number }}"
-          fi
-          
-          if [ "$SERVICE" == "web" ] && [ "${{ steps.deploy-type.outputs.skip_aws_deploy }}" == "true" ]; then
-            echo "⚠️ Web服务仅在阿里云环境部署，AWS环境已跳过"
-          fi
-          
-          # 显示使用的镜像
-          if [ -n "${{ env.ECR_IMAGE_URI }}" ] && [ "${{ env.ECR_IMAGE_URI }}" != "null" ]; then
-            echo "Image: ${{ env.ECR_IMAGE_URI }}"
-          elif [ -n "${{ env.ACR_IMAGE_URI }}" ] && [ "${{ env.ACR_IMAGE_URI }}" != "null" ]; then
-            echo "Image: ${{ env.ACR_IMAGE_URI }}"
-          else
-            echo "Image: ${{ env.GHCR_IMAGE_URI }}"
-          fi
-          
-          echo ""
-          echo "Next steps:"
-          echo "- Verify service health checks"
-          echo "- Monitor application logs"
-          echo "- Run integration tests (if applicable)"
+            STATUS=$(echo "$INVOCATION_RAW" | grep -oP '(?<="InvocationStatus": ")[^"]+' | head -1)
+            EXIT_CODE=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ExitCode": )[0-9]+' | head -1)
+            
+            if [[ "$STATUS" == "Success" ]]; then
+                echo "✅ ECS实例上的脚本执行成功。"
+                break
+            elif [[ "$STATUS" == "Failed" ]]; then
+                echo "❌ ECS实例上的脚本执行失败，退出码: $EXIT_CODE"
+                # 尝试提取错误信息
+                ERROR_INFO=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ErrorInfo": ")[^"]+' | head -1 2>/dev/null || echo "未知错误")
+                echo "错误信息: $ERROR_INFO"
+                exit 1
+            elif [[ "$STATUS" == "Running" ]]; then
+                echo "脚本仍在执行中，${POLL_INTERVAL}秒后再次检查..."
+                sleep $POLL_INTERVAL
+            else
+                echo "当前状态: '$STATUS'，等待后重试..."
+                sleep $POLL_INTERVAL
+            fi
+            
+            if [[ $i -eq $MAX_POLL ]]; then
+                echo "❌ 轮询超时，未能获取最终执行状态。"
+                exit 1
+            fi
+        done
+        
+        echo "✅ ${{ matrix.service }} 部署完成"
+    
+    - name: Deployment summary
+      if: steps.check-deploy.outputs.should_deploy == 'true'
+      run: |
+        ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+        SERVICE="${{ matrix.service }}"
+        IS_PR="${{ needs.build-and-push.outputs.is_pr }}"
+        
+        echo "🎉 Deployment Summary"
+        echo "====================================="
+        echo "Service: $SERVICE"
+        echo "Environment: $ENVIRONMENT"
+        echo "Deployment Type: ${{ steps.deploy-type.outputs.deploy_type }}"
+        echo "Event Type: ${{ github.event_name }}"
+        if [ "$IS_PR" == "true" ]; then
+          echo "PR Number: ${{ github.event.pull_request.number }}"
+        fi
+        
+        if [ "$SERVICE" == "web" ] && [ "${{ steps.deploy-type.outputs.skip_aws_deploy }}" == "true" ]; then
+          echo "⚠️ Web服务仅在阿里云环境部署，AWS环境已跳过"
+        fi
+        
+        # 显示使用的镜像
+        if [ -n "${{ env.ECR_IMAGE_URI }}" ] && [ "${{ env.ECR_IMAGE_URI }}" != "null" ]; then
+          echo "Image: ${{ env.ECR_IMAGE_URI }}"
+        elif [ -n "${{ env.ACR_IMAGE_URI }}" ] && [ "${{ env.ACR_IMAGE_URI }}" != "null" ]; then
+          echo "Image: ${{ env.ACR_IMAGE_URI }}"
+        else
+          echo "Image: ${{ env.GHCR_IMAGE_URI }}"
+        fi
+        
+        echo ""
+        echo "Next steps:"
+        echo "- Verify service health checks"
+        echo "- Monitor application logs"
+        echo "- Run integration tests (if applicable)"
