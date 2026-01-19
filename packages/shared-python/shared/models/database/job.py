@@ -58,6 +58,11 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
+    # Billing Information (Per-Page Billing)
+    page_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Calculated page count for billing")
+    credits_charged: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="Credits charged (1 Credit = 1 Page)")
+    billing_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False, comment="pending, charged, billing_failed, refunded")
+    
     # 关系
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
     user: Mapped["User"] = relationship("User", back_populates="jobs", lazy="select")

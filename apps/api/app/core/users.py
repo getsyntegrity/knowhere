@@ -98,7 +98,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
         try:
             from shared.core.config import settings
             from shared.core.database import get_db_context
-            from app.repositories.credits_repository import CreditsRepository
+            from app.services.billing.credits_service import CreditsService
             from app.repositories.subscription_repository import \
                 SubscriptionRepository
             from loguru import logger
@@ -121,15 +121,18 @@ class UserManager(UUIDIDMixin, BaseUserManager):
                 if subscription:
                     logger.info(f"为用户 {user.id} 创建Free订阅成功")
                     
-                    # 赠送初始Credits
-                    credits_repo = CreditsRepository()
-                    await credits_repo.add_credits(
-                        db=db,
+                    # 赠送初始Credits (use service for proper transaction logging)
+                    credits_service = CreditsService()
+                    await credits_service.add_credits(
+                        session=db,
                         user_id=str(user.id),
                         amount=initial_credits,
-                        transaction_type="initial_grant",
-                        description=f"新用户注册赠送 {initial_credits} Credits"
+                        reason=f"新用户注册赠送 {initial_credits} Credits",
+                        transaction_type="initial_grant"
                     )
+                    
+                    # Explicit commit since repository no longer auto-commits
+                    await db.commit()
                     
                     logger.info(f"为用户 {user.id} 赠送 {initial_credits} Credits成功")
                     

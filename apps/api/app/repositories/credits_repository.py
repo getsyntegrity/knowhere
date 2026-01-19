@@ -52,6 +52,7 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
         """
         如果用户当前余额高于 max_balance，则将余额调整为 max_balance。
         返回值表示是否发生了更新。
+        Note: Caller is responsible for committing the transaction.
         """
         from sqlalchemy import update
         result = await session.execute(
@@ -60,29 +61,35 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
             .where(User.credits_balance > max_balance)
             .values(credits_balance=max_balance)
         )
-        await session.commit()
+        # Note: Commit removed - caller controls transaction
         return result.rowcount > 0
     
     async def add_credits(self, session: AsyncSession, user_id: str, amount: int) -> bool:
-        """增加Credits"""
+        """
+        增加Credits
+        Note: Caller is responsible for committing the transaction.
+        """
         from sqlalchemy import update
         result = await session.execute(
             update(User)
             .where(User.id == user_id)
             .values(credits_balance=User.credits_balance + amount)
         )
-        await session.commit()
+        # Note: Commit removed - caller controls transaction
         return result.rowcount > 0
     
     async def deduct_credits(self, session: AsyncSession, user_id: str, amount: int) -> bool:
-        """扣除Credits"""
+        """
+        扣除Credits
+        Note: Caller is responsible for committing the transaction.
+        """
         from sqlalchemy import and_, update
         result = await session.execute(
             update(User)
             .where(and_(User.id == user_id, User.credits_balance >= amount))
             .values(credits_balance=User.credits_balance - amount)
         )
-        await session.commit()
+        # Note: Commit removed - caller controls transaction
         return result.rowcount > 0
     
     async def get_usage_stats(self, session: AsyncSession, user_id: str, period: str = "month") -> Dict[str, Any]:
