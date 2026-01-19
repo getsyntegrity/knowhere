@@ -446,28 +446,15 @@ async def _parse_async(job_id: str, user_id: str):
     from shared.models.schemas.job_metadata import JobMetadataHelper
     
     metadata_service = JobMetadataService(redis_service)
-    logger.info(f"metadata_service创建成功，开始获取metadata: job_id={job_id}")
     job_metadata = await metadata_service.get_metadata(job_id)
-    logger.info(f"job_metadata获取完成: job_id={job_id}, metadata存在={job_metadata is not None}")
     if not job_metadata:
         raise NotFoundException(
             resource="JobMetadata",
             resource_id=job_id,
             internal_message=f"Job metadata not found for job_id={job_id}"
         )
-    
-    logger.info(f"开始从job_metadata提取user_config: job_id={job_id}")
-    user_config = JobMetadataHelper.get_user_config(job_metadata)
-    logger.info(f"user_config提取完成: job_id={job_id}, user_config存在={user_config is not None}")
-    
-    if not user_config:
-        raise NotFoundException(
-            resource="JobMetadata",
-            resource_id=job_id,
-            internal_message=f"Missing user_config in job_metadata for {job_id}"
-        )
-    
-    # 强制使用配置的绝对路径
+
+    # use USERS_DATA_PATH + user_id as output directory
     parent_path = settings.USERS_DATA_PATH
     if not parent_path:
         raise SystemSettingMissingException(
@@ -480,47 +467,21 @@ async def _parse_async(job_id: str, user_id: str):
             message="System configuration error",
             internal_message=f"USERS_DATA_PATH must be absolute path, current value: {parent_path}"
         )
-    
-    # 验证路径是否存在或可创建
+
+    output_dir = os.path.join(parent_path, f"kb_{job_user_id}")
+
+    # Ensure output directory exists
     try:
-        os.makedirs(parent_path, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Output directory ready: {output_dir}")
     except (OSError, PermissionError) as e:
         raise FileSystemException(
             message="System error preparing storage",
-            path=parent_path,
+            path=output_dir,
             operation="create_directory",
-            internal_message=f"Failed to create directory: {parent_path}",
+            internal_message=f"Failed to create directory: {output_dir}",
             original_exception=e
         )
-    
-    # 更新 user_config 中的 parent 路径
-    if 'parent' in user_config:
-        old_parent = user_config.get('parent', '')
-        user_config['parent'] = parent_path
-        if old_parent != parent_path:
-            logger.info(f"路径修复: job_id={job_id}, 旧路径={old_parent}, 新路径={parent_path}")
-    
-    # 重新计算 KB_PATH 
-    if 'KB' in user_config:
-        user_config['KB_PATH'] = os.path.join(parent_path, user_config['KB'])
-
-    
-    # 确保用户目录结构存在（Worker服务按需创建）
-    if 'KB_PATH' in user_config:
-        from app.services.user.user_directory_service import UserDirectoryService
-        try:
-            UserDirectoryService.ensure_user_directories(
-                user_config['KB_PATH'],
-            )
-            logger.info(f"用户目录结构已确保存在: KB_PATH={user_config['KB_PATH']}")
-        except Exception as e:
-            raise FileSystemException(
-                message="System error preparing your workspace",
-                path=user_config.get('KB_PATH', 'unknown'),
-                operation="create_directory",
-                internal_message=f"Failed to create user directories: {e}",
-                original_exception=e
-            )
 
     # 发布状态更新消息：开始处理
     logger.info(f"开始发布状态更新消息: job_id={job_id}, status={JobStatus.RUNNING.value}")
@@ -595,7 +556,6 @@ async def _parse_async(job_id: str, user_id: str):
     from shared.models.database.job import Job
     from app.services.billing import deduct_credits
     from sqlalchemy import select
-    from shared.core.config import settings
     
     async with get_db_context() as db:
         # Lock job row to prevent race conditions
@@ -647,13 +607,11 @@ async def _parse_async(job_id: str, user_id: str):
     # END BILLING
     # ============================================================
 
-
-    
     
     # 调用修改后的解析逻辑（传入user_config）
     # IMPORTANT: Use local_temp_path (already downloaded) to avoid downloading twice
     logger.info(f"开始导入解析服务: job_id={job_id}")
-    from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse                                                                     
+    from app.services.document_parser.parse_service import checkerboard_inject_parse   
     logger.info(f"解析服务导入成功: job_id={job_id}")
     
     doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
@@ -661,15 +619,15 @@ async def _parse_async(job_id: str, user_id: str):
     
     try:
         add_dir, add_contents_df = await checkerboard_inject_parse(
-            file_full_path=local_temp_path,  # Use downloaded local file, not URL
+            file_full_path=local_temp_path,
             filename=filename,
-            user_config=user_config,  # 传入用户配置
-            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),                                                                     
+            output_dir=output_dir,
+            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),                                                                     
             doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
             smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
             summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             
             summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),                                                             
-            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),                                                                 
             add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
         )
     finally:

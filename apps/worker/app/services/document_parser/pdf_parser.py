@@ -8,6 +8,7 @@ from shared.core.exceptions.domain_exceptions import (
     MinerUServiceException,
     TimeoutException,
     WorkerHandlingException,
+    StorageServiceException
 )
 from shared.core.exceptions.knowhere_exception import KnowhereException
 
