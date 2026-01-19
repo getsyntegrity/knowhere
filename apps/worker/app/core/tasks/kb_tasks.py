@@ -560,8 +560,9 @@ async def _parse_async(job_id: str, user_id: str):
     logger.info(f"filename提取完成: job_id={job_id}, filename={filename}")
 
     # ============================================================
-    # FILE DOWNLOAD & WORKLOAD ESTIMATION
-    # Download file once and reuse for parsing. Report workload metrics.
+    # FILE DOWNLOAD & WORKLOAD ESTIMATION & SYNC BILLING
+    # Download file, estimate pages, BLOCK and call API to charge.
+    # If billing fails, stop immediately - do not process.
     # ============================================================
     from app.services.workload.page_estimator import PageEstimator
     import tempfile
@@ -571,69 +572,107 @@ async def _parse_async(job_id: str, user_id: str):
     local_temp_path = None
     page_count = 1  # Default minimum
     
-    try:
-        # Download file to temp location (KEEP for reuse in parsing)
-        file_ext = os.path.splitext(filename)[1].lower() if filename else ""
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
-            local_temp_path = tmp_file.name
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.get(file_url)
-                response.raise_for_status()
-                tmp_file.write(response.content)
-        
-        logger.info(f"File download complete: job_id={job_id}, local_path={local_temp_path}")
-        
-        # Estimate workload (page count) for this document
-        page_count = PageEstimator.estimate(local_temp_path)
-        logger.info(f"Workload estimation complete: job_id={job_id}, page_count={page_count}")
-        
-        # ============================================================
-        # REPORT WORKLOAD METRICS (API handles billing based on this)
-        # Worker only reports what it's going to process, no billing logic
-        # ============================================================
-        await message_publisher.publish_workload_metrics(
-            job_id=job_id,
-            page_count=page_count,
-            user_id=job_user_id,
-            filename=filename
-        )
-        logger.info(f"Workload metrics reported: job_id={job_id}, page_count={page_count}")
-        
-    except Exception as workload_error:
-        logger.error(f"Workload estimation error: job_id={job_id}, error={workload_error}")
-        # Continue with parsing - API can handle missing workload metrics
-        pass
+    # Download file to temp location (KEEP for reuse in parsing)
+    file_ext = os.path.splitext(filename)[1].lower() if filename else ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+        local_temp_path = tmp_file.name
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.get(file_url)
+            response.raise_for_status()
+            tmp_file.write(response.content)
     
-    # Store workload info in Redis metadata
+    logger.info(f"File download complete: job_id={job_id}, local_path={local_temp_path}")
+    
+    # Estimate workload (page count) for this document
+    page_count = PageEstimator.estimate(local_temp_path)
+    logger.info(f"Workload estimation complete: job_id={job_id}, page_count={page_count}")
+    
+    # ============================================================
+    # SYNCHRONOUS BILLING - Deduct credits before processing
+    # ============================================================
+    from shared.core.database import get_db_context
+    from shared.core.exceptions.domain_exceptions import InsufficientCreditsException
+    from shared.models.database.job import Job
+    from app.services.billing import deduct_credits
+    from sqlalchemy import select
+    
+    async with get_db_context() as db:
+        # Lock job row to prevent race conditions
+        job_result = await db.execute(
+            select(Job).where(Job.job_id == job_id).with_for_update()
+        )
+        job = job_result.scalar_one_or_none()
+        
+        # Idempotency: already charged
+        if job and getattr(job, "billing_status", "") == "charged":
+            logger.info(f"Job already charged: {job_id}")
+        else:
+            # Deduct credits
+            description = f"Document processing: {filename or 'file'} ({page_count} pages)"
+            billing_success = await deduct_credits(db, job_user_id, page_count, description)
+            
+            if not billing_success:
+                logger.error(f"Billing failed: job_id={job_id}, user_id={job_user_id}")
+                if local_temp_path and os.path.exists(local_temp_path):
+                    os.unlink(local_temp_path)
+                raise InsufficientCreditsException(
+                    user_message=f"Insufficient credits to process this document ({page_count} pages required).",
+                    required_credits=page_count,
+                    internal_message="Insufficient credits"
+                )
+            
+            # Update job billing info
+            if job:
+                job.page_count = page_count
+                job.credits_charged = page_count
+                job.billing_status = "charged"
+            
+            await db.commit()
+            logger.info(f"Billing successful: job_id={job_id}, credits_charged={page_count}")
+    
+    # Store in Redis
     await metadata_service.update_metadata(job_id, {
         "page_count": page_count,
-        "workload_reported": True
+        "billing_status": "charged"
     })
     # ============================================================
-    # END WORKLOAD ESTIMATION
+    # END BILLING
     # ============================================================
+
+
     
     
     # 调用修改后的解析逻辑（传入user_config）
+    # IMPORTANT: Use local_temp_path (already downloaded) to avoid downloading twice
     logger.info(f"开始导入解析服务: job_id={job_id}")
     from app.services.knowledge.knowledge_base_service import checkerboard_inject_parse                                                                     
     logger.info(f"解析服务导入成功: job_id={job_id}")
     
     doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
-    logger.info(f"开始解析文件: job_id={job_id}, filename={filename}, 类型={doc_type}, file_url={file_url[:100] if file_url else None}...")
+    logger.info(f"start parse: job_id={job_id}, filename={filename}, 类型={doc_type}, local_path={local_temp_path}")
     
-    add_dir, add_contents_df = await checkerboard_inject_parse(
-        file_full_path=file_url,
-        filename=filename,
-        user_config=user_config,  # 传入用户配置
-        kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),                                                                     
-        doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
-        smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
-        summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             
-        summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),                                                             
-        summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
-        add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
-    )
+    try:
+        add_dir, add_contents_df = await checkerboard_inject_parse(
+            file_full_path=local_temp_path,  # Use downloaded local file, not URL
+            filename=filename,
+            user_config=user_config,  # 传入用户配置
+            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "默认目录"),                                                                     
+            doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
+            smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
+            summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             
+            summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),                                                             
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),                                                                 
+            add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
+        )
+    finally:
+        # Cleanup temp file after parsing (success or failure)
+        if local_temp_path and os.path.exists(local_temp_path):
+            try:
+                os.unlink(local_temp_path)
+                logger.info(f"Temp file cleaned up: {local_temp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
+    
     logger.info(f"File parsing completed: job_id={job_id}, add_dir={add_dir}, add_contents_df length={len(add_contents_df) if add_contents_df is not None else 0}")
 
     if add_contents_df is None:

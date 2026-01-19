@@ -17,6 +17,7 @@ from shared.core.config import settings
 from shared.core.constants import APIConstants
 from app.services.document_parser.md_parser import parse_md
 from shared.utils.FileDownUpUtils import s3_download_extract_zip
+from shared.utils.CommonHelper import is_remote
 
 MINERU_API_TIMEOUT = 60       # For API calls (get status, etc.)
 MINERU_UPLOAD_TIMEOUT = 600   # For large file uploads (10 min max)
@@ -195,27 +196,24 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
 
     logger.info(f"Transferring file {filename} from S3 to MinerU via temp file...")
     
-    from shared.utils.file_transfer import stream_download_and_upload, DownloadError, UploadError
+    # File is guaranteed to be local (downloaded in kb_tasks.py)
+    logger.info(f"Uploading local file {pdf_url} to MinerU...")
     try:
-        upload_res = stream_download_and_upload(
-            source_url=pdf_url,
-            target_url=upload_url,
-            download_timeout=APIConstants.S3_FILE_DOWNLOAD_TIMEOUT,
-            upload_timeout=MINERU_UPLOAD_TIMEOUT,
-            upload_method="PUT",
-        )
+        with open(pdf_url, "rb") as f:
+            upload_res = requests.put(
+                upload_url, 
+                data=f, 
+                timeout=MINERU_UPLOAD_TIMEOUT
+            )
+            
         if upload_res.status_code != 200:
             raise MinerUServiceException(
                 internal_message=f"Failed to upload file to MinerU: {upload_res.text}",
                 status_code=upload_res.status_code
             )
-    except DownloadError as e:
+    except IOError as e:
         raise StorageServiceException(
-            internal_message=f"Failed to download file from S3: {e}"
-        )
-    except UploadError as e:
-        raise MinerUServiceException(
-            internal_message=f"Failed to upload file to MinerU: {e}"
+            internal_message=f"Failed to read local file: {e}"
         )
 
     logger.info(f"File: {filename} uploaded successfully, waiting for parsing...")

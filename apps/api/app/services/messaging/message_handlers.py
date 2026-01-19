@@ -401,16 +401,16 @@ async def _handle_failure_async(message: JobFailureMessage):
                     try:
                         logger.info(f"Refund request detected: job_id={message.job_id}")
                         from app.services.billing.credits_service import CreditsService
-                        from shared.core.config import settings
                         from app.repositories.job_repository import JobRepository
                         
                         job_repo = JobRepository()
                         job = await job_repo.get_job_by_id(db, message.job_id)
                         
                         if job:
-                            credits_service = CreditsService()
-                            refund_amount = getattr(settings, "CREDITS_PER_API_CALL", 0)
+                            # Refund the actual amount charged (per-page billing)
+                            refund_amount = getattr(job, "credits_charged", 0) or 0
                             if refund_amount > 0:
+                                credits_service = CreditsService()
                                 refund_success = await credits_service.refund_job_credits(
                                     db,
                                     str(job.user_id),
@@ -420,7 +420,7 @@ async def _handle_failure_async(message: JobFailureMessage):
                                 if refund_success:
                                     logger.info(f"Credits refund successful: job_id={message.job_id}, amount={refund_amount}")
                                 else:
-                                    logger.info(f"Credits refund skipped or failed: job_id={message.job_id}")
+                                    logger.info(f"Credits refund skipped (already refunded): job_id={message.job_id}")
                     except Exception as e:
                         logger.error(f"Credits refund failed: {e}", exc_info=True)
                 
