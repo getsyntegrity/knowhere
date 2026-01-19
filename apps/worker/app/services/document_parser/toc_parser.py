@@ -16,6 +16,7 @@ from loguru import logger
 from lxml import etree
 
 from app.services.document_parser.table_parser import df2html
+from app.services.document_parser.layout_parser import hiearchy_llm
 from shared.services.ai import ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
@@ -129,7 +130,6 @@ def detect_doc_tocs(elem, ns):
 
 
 # ==================== Markdown TOC Detection Functions ====================
-
 
 def normalize_md(s: str) -> str:
     """Normalize markdown string for comparison"""
@@ -309,47 +309,6 @@ async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 
     return all_results
 
 
-async def hiearchy_llm(df, model_name: str = None, max_depth: int = 6, max_len: int = 8192):
-    """
-    Use LLM to analyze hierarchy structure
-    
-    Args:
-        df: DataFrame with id, heading columns
-        model_name: model name (optional)
-        max_depth: max depth of hierarchy
-        max_len: max tokens for output
-    
-    Returns:
-        List of dicts with id and level
-    """
-    level_html = df2html(df)
-    ot_limit = int(len(level_html) * 1.2)
-    ot_limit = min(ot_limit, max_len)
-
-    paras = {"max_tokens": ot_limit, "max_depth": max_depth, "top_title": None}
-    prompt, temperature, top_p, max_tokens = build_prompt(
-        task="eval-headings", 
-        texts=level_html, 
-        query="", 
-        paras=paras
-    )
-    messages = [
-        {"role": "system", "content": "you are a document auditing expert"},
-        {"role": "user", "content": prompt}
-    ]
-    
-    answer = await ai_query_service.query_ai(
-        messages=messages,
-        user="toc_hierarchy",
-        model=model_name,
-        stream=False,
-        max_tokens=max_tokens,
-        temperature=temperature
-    )
-    layout_res = eval_response(answer)
-    return layout_res
-
-
 async def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None) -> list:
     """
     Parse TOC hierarchy using LLM
@@ -363,7 +322,7 @@ async def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None
         List of dicts with line_id, content, level
     """
     try:
-        toc_hierarchy = await hiearchy_llm(toc_df, model_name=model_name, max_depth=max_depth)
+        toc_hierarchy = await hiearchy_llm(toc_df, top_title=None, model_name=model_name, max_depth=max_depth, task="eval-toc-headings")
         # develop mapping
         id_to_level = {item["id"]: item["level"] for item in toc_hierarchy}
         

@@ -1,3 +1,4 @@
+import os
 import re
 import unicodedata
 import uuid
@@ -25,6 +26,28 @@ from shared.services.ai.response_process_service import eval_response
 from shared.services.ai.response_process_service import eval_response
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException
+
+
+# ==================== Helper Functions ====================
+
+def save_intermediate_csv(df: pd.DataFrame, output_dir: str, filename: str):
+    """
+    保存中间结果DataFrame为CSV文件，使用utf-8-sig编码以支持中英文
+    
+    Args:
+        df: 要保存的DataFrame
+        output_dir: 输出目录路径
+        filename: 文件名（不含扩展名）
+    """
+    if output_dir is None or df is None or df.empty:
+        return
+    
+    try:
+        csv_path = os.path.join(output_dir, f"{filename}.csv")
+        df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        logger.debug(f"📊 Saved intermediate result to {csv_path}, rows={len(df)}")
+    except Exception as e:
+        logger.warning(f"Failed to save intermediate CSV {filename}: {e}")
 
 
 # ==================== Tree Structure Functions (from sxjg) ====================
@@ -577,14 +600,26 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
     return preds_df
 
 
-async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len=8192):
-    """Apply LLM to analyze the hierarchy of headings"""
+async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len=8192, task="eval-headings"):
+    """Apply LLM to analyze the hierarchy of headings
+    
+    Args:
+        df: DataFrame with id, heading columns
+        top_title: Optional top title for context
+        model_name: LLM model name (optional, uses default if None)
+        max_depth: Maximum hierarchy depth
+        max_len: Maximum output tokens
+        task: Prompt task type - "eval-headings" for general document, "eval-toc-headings" for TOC
+    
+    Returns:
+        List of dicts with id and level
+    """
     level_html = df2html(df)
     ot_limit = int(len(level_html) * 1.2)
     ot_limit = min(ot_limit, max_len)
 
     paras = {"max_tokens": ot_limit, "max_depth": max_depth, "top_title": top_title}
-    prompt, temperature, top_p, max_tokens = build_prompt(task="eval-headings", texts=level_html, query="", paras=paras)
+    prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_html, query="", paras=paras)
     messages = [
         {"role": "system", "content": "you are a document auditing expert"},
         {"role": "user", "content": prompt}
@@ -606,7 +641,7 @@ async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len
         raise
 
 
-async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None):
+async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None):
     """
     解析文档标题层级
     
@@ -618,6 +653,7 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
         enable_regx: 是否启用正则匹配
         smart_parse: 是否使用LLM智能解析
         model_name: LLM模型名称
+        output_dir: 输出目录，用于保存中间结果CSV
     """
     logger.info(f"🔥 开始解析文档层级结构: doc_type={doc_type}, smart_parse={smart_parse}, 候选标题数={len(infos)}")
     
@@ -633,12 +669,14 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
         raw_preds = pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
     # 2. parse smart/not smart
-    # TODO save raw_preds as preds_1
-    heading_preds = est_hierarchies_naive(raw_preds, smart_parse)
-    # TODO save heading_preds as preds_2
+    # Save raw_preds as preds_1 (原始候选标题, 经过filter_*_headings处理后)
+    save_intermediate_csv(raw_preds, output_dir, "preds_1_raw_filtered")
+    heading_preds = est_hierarchies_naive(raw_preds, smart_parse, output_dir=output_dir)
+    # Save heading_preds as preds_2 (经过naive处理后的预测结果)
+    save_intermediate_csv(heading_preds, output_dir, "preds_2_naive_processed")
 
     if smart_parse:
-        heading_preds = await est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name)
+        heading_preds = await est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name, output_dir=output_dir)
         logger.info("✅ 智能解析完成")
 
     # 3. final polishing for certain types
@@ -665,12 +703,19 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
         
         logger.info(f"✅ Heading parsing completed, final {len(heading_preds[heading_preds['level'] > 0])} valid headings")
     
-    # TODO save heading_preds as preds_5
+    # Save heading_preds as preds_5 (最终输出结果, 经过所有后处理)
+    save_intermediate_csv(heading_preds, output_dir, "preds_5_final_output")
     return heading_preds
 
 
-def est_hierarchies_naive(raw_preds, proceed_smart=True):
-    """非LLM层级解析"""
+def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
+    """非LLM层级解析
+    
+    Args:
+        raw_preds: 原始预测DataFrame
+        proceed_smart: 是否继续进行LLM解析
+        output_dir: 输出目录，用于保存中间结果CSV
+    """
     logger.debug("🚀 non-llm parsing => recursive processing")
     save_preds = raw_preds.copy()
 
@@ -692,7 +737,18 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True):
     return heading_preds
 
 
-async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None):
+async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None):
+    """LLM层级解析
+    
+    Args:
+        raw_preds: 原始预测DataFrame
+        prompt_limt: prompt字符限制
+        toc_hierarchies: TOC层级信息
+        max_len: 最大标题长度
+        max_depth: 最大层级深度
+        model_name: LLM模型名称
+        output_dir: 输出目录，用于保存中间结果CSV
+    """
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
@@ -714,7 +770,8 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
         base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
         logger.debug(f"层级映射构建完成: {len(lvl_mapping)} 个映射规则")
 
-        # TODO save base_preds as preds_3
+        # Save base_preds as preds_3 (LLM解析后的基础预测, 包含层级映射)
+        save_intermediate_csv(base_preds, output_dir, "preds_3_llm_base")
 
         if len(level_dfs) > 1:
             logger.debug(f"处理多个层级DataFrame，共 {len(level_dfs)} 个...")
