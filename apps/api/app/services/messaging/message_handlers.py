@@ -7,6 +7,8 @@ from typing import Any, Dict
 
 from shared.core.database import get_db_context
 from shared.models.database.knowledge_base import KBPydantic
+from shared.models.database.job import Job  # Added for locking
+from sqlalchemy import select  # Added for locking
 from shared.models.schemas.messages import (JobFailureMessage,
                                          JobProgressUpdateMessage,
                                          JobResultMessage,
@@ -403,26 +405,38 @@ async def _handle_failure_async(message: JobFailureMessage):
                         from app.services.billing.credits_service import CreditsService
                         from app.repositories.job_repository import JobRepository
                         
-                        job_repo = JobRepository()
-                        job = await job_repo.get_job_by_id(db, message.job_id)
+                        # Use SELECT FOR UPDATE to prevent race conditions during refund
+                        stmt = select(Job).where(Job.job_id == message.job_id).with_for_update()
+                        result = await db.execute(stmt)
+                        job = result.scalar_one_or_none()
                         
                         if job:
-                            # Refund the actual amount charged (per-page billing)
-                            refund_amount = getattr(job, "credits_charged", 0) or 0
-                            if refund_amount > 0:
-                                credits_service = CreditsService()
-                                refund_success = await credits_service.refund_job_credits(
-                                    db,
-                                    str(job.user_id),
-                                    refund_amount,
-                                    message.job_id
-                                )
-                                if refund_success:
-                                    logger.info(f"Credits refund successful: job_id={message.job_id}, amount={refund_amount}")
-                                else:
-                                    logger.info(f"Credits refund skipped (already refunded): job_id={message.job_id}")
+                            # 1. Check if already refunded
+                            if getattr(job, "billing_status", "") == "refunded":
+                                logger.info(f"Refund skipped: Job {message.job_id} already marked as refunded.")
+                            else:
+                                # Refund the actual amount charged (per-page billing)
+                                refund_amount = getattr(job, "credits_charged", 0) or 0
+                                if refund_amount > 0:
+                                    credits_service = CreditsService()
+                                    refund_success = await credits_service.refund_job_credits(
+                                        db,
+                                        str(job.user_id),
+                                        refund_amount,
+                                        message.job_id
+                                    )
+                                    if refund_success:
+                                        logger.info(f"Credits refund successful: job_id={message.job_id}, amount={refund_amount}")
+                                        # Update job billing status
+                                        job.billing_status = "refunded"
+                                    else:
+                                        logger.info(f"Credits refund skipped (already refunded): job_id={message.job_id}")
+                                
+                                # Commit to save changed (if any) and release the lock
+                                await db.commit()
                     except Exception as e:
                         logger.error(f"Credits refund failed: {e}", exc_info=True)
+                        await db.rollback()  # Release lock on error
                 
                 # Log detailed error information
                 if message.stack_trace:

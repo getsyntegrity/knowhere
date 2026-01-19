@@ -595,6 +595,7 @@ async def _parse_async(job_id: str, user_id: str):
     from shared.models.database.job import Job
     from app.services.billing import deduct_credits
     from sqlalchemy import select
+    from shared.core.config import settings
     
     async with get_db_context() as db:
         # Lock job row to prevent race conditions
@@ -608,23 +609,30 @@ async def _parse_async(job_id: str, user_id: str):
             logger.info(f"Job already charged: {job_id}")
         else:
             # Deduct credits
-            description = f"Document processing: {filename or 'file'} ({page_count} pages)"
-            billing_success = await deduct_credits(db, job_user_id, page_count, description)
+            credits_required = page_count * settings.CREDITS_PER_PAGE
+            description = f"Document processing: {filename or 'file'} ({page_count} pages @ {settings.CREDITS_PER_PAGE} credits/page)"
+            billing_success = await deduct_credits(db, job_user_id, credits_required, description)
             
             if not billing_success:
                 logger.error(f"Billing failed: job_id={job_id}, user_id={job_user_id}")
                 if local_temp_path and os.path.exists(local_temp_path):
                     os.unlink(local_temp_path)
+                
+                # Mark billing status as failed
+                if job:
+                    job.billing_status = "billing_failed"
+                    await db.commit()
+                    
                 raise InsufficientCreditsException(
-                    user_message=f"Insufficient credits to process this document ({page_count} pages required).",
-                    required_credits=page_count,
+                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {credits_required}).",
+                    required_credits=credits_required,
                     internal_message="Insufficient credits"
                 )
             
             # Update job billing info
             if job:
                 job.page_count = page_count
-                job.credits_charged = page_count
+                job.credits_charged = credits_required
                 job.billing_status = "charged"
             
             await db.commit()

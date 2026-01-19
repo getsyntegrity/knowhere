@@ -126,6 +126,7 @@ class JobResultResponse(BaseModel):
     model: Optional[str] = Field(None, description="Parsing model used")
     ocr_enabled: Optional[bool] = Field(None, description="Whether OCR is enabled")
     duration_seconds: Optional[float] = Field(None, description="Job duration (updated_at - created_at, in seconds)")
+    credits_spent: Optional[int] = Field(None, description="Credits consumed")
 
 class JobList(BaseModel):
     """任务列表响应"""
