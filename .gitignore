@@ -50,7 +50,7 @@ packages/shared-types/generated/
 # custom
 apps/api/users/
 apps/api/tests/
-apps/worker/debug_parse.py
+apps/worker/debug_*.py
 apps/worker/debug_users/
 apps/worker/app/tmp_data/
 apps/worker/app/tmp_res/

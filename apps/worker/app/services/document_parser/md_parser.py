@@ -69,14 +69,15 @@ def heading_md_relocate(md_lines, heading_preds):
     return md_lines  # note the length=original md_lines but contents/level are updated
 
 
-async def eval_md_headings(md_lines, source_type, toc_hierarchies=None, smart_parse=False, model_name=None):
+async def eval_md_headings(md_lines, source_type, toc_hierarchies=None, smart_parse=False, model_name=None, output_dir=None):
     """Evaluate markdown headings with optional TOC hierarchies context"""
     heading_preds = await pred_titles(
         md_lines, source_type, 
         toc_hierarchies=toc_hierarchies,
         enable_regx=True, 
         smart_parse=smart_parse,
-        model_name=model_name
+        model_name=model_name,
+        output_dir=output_dir
     )
 
     if len(heading_preds) == 0:
@@ -174,7 +175,8 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
         source_type, 
         toc_hierarchies=toc_hierarchies,
         smart_parse=base_llm_paras["smart_title_parse"], 
-        model_name=model_name
+        model_name=model_name,
+        output_dir=output_dir
     )
 
     time_stamp = get_str_time()
