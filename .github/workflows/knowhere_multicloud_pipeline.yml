@@ -432,29 +432,17 @@ jobs:
             echo "skip_aws_deploy=false" >> $GITHUB_OUTPUT
           fi
       
-      # 阿里云 ACK 部署步骤 - 修复缺少阿里云 CLI 的问题
-      - name: Set up Aliyun CLI for ACK deployment
-        if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
-        uses: aliyun/setup-aliyun-cli-action@v1
-        with:
-          access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          region: ${{ secrets.ALIYUN_REGION }}
-      
+      # 阿里云 ACK 部署步骤
       - name: Deploy to Aliyun ACK (生产环境)
         if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
         env:
-          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
+         ALIYUN_ACK_KUBECONFIG: ${{ secrets.ALIYUN_ACK_KUBECONFIG }} 
         run: |
           echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
 
-          echo "配置阿里云CLI凭据..."
-          aliyun configure set --profile default \
-            --access-key-id $ALIYUN_ACCESS_KEY_ID \
-            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
-            --region $ALIYUN_REGION
+          ACK_KUBECONFIG_FILE="ack_kubeconfig.yaml"
+          echo "$ALIYUN_ACK_KUBECONFIG" > "$ACK_KUBECONFIG_FILE"
+          echo "✅ Kubeconfig 文件已从 Secret 生成"
           
           # 使用ACR镜像（阿里云环境优先使用ACR）
           IMAGE="${{ env.ACR_IMAGE_URI }}"
@@ -464,26 +452,13 @@ jobs:
           
           echo "Using image: $IMAGE"
           
-          # 获取ACK集群kubeconfig
-          aliyun cs GetClusterKubeConfig \
-            --ClusterId ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }} \
-            --RegionId $ALIYUN_REGION > kubeconfig.yaml
-          
-          export KUBECONFIG=kubeconfig.yaml
-          
-          # 检查kubeconfig是否有效
-          kubectl cluster-info
-          
-          # 检查当前命名空间下的deployment
-          kubectl get deployments -n $ALIYUN_ACK_NAMESPACE
-          
           # 更新K8s Deployment
-          kubectl set image deployment/${{ matrix.service }} \
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/${{ matrix.service }} \
             ${{ matrix.service }}=$IMAGE \
             --namespace=$ALIYUN_ACK_NAMESPACE
           
           # 验证部署状态
-          kubectl rollout status deployment/${{ matrix.service }} \
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/${{ matrix.service }} \
             --namespace=$ALIYUN_ACK_NAMESPACE \
             --timeout=300s
           
