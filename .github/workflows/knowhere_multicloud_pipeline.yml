@@ -449,6 +449,12 @@ jobs:
           ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
         run: |
           echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
+
+          echo "配置阿里云CLI凭据..."
+          aliyun configure set --profile default \
+            --access-key-id $ALIYUN_ACCESS_KEY_ID \
+            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
+            --region $ALIYUN_REGION
           
           # 使用ACR镜像（阿里云环境优先使用ACR）
           IMAGE="${{ env.ACR_IMAGE_URI }}"
@@ -561,6 +567,12 @@ jobs:
           ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
         run: |
           echo "🚀 开始部署 ${{ matrix.service }} 服务到阿里云ECS（通过Docker Compose）"
+
+          echo "配置阿里云CLI凭据..."
+          aliyun configure set --profile default \
+            --access-key-id $ALIYUN_ACCESS_KEY_ID \
+            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
+            --region $ALIYUN_REGION
           
           # 使用ACR镜像（阿里云环境优先使用ACR）
           IMAGE="${{ env.ACR_IMAGE_URI }}"
