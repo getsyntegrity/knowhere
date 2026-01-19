@@ -451,14 +451,32 @@ jobs:
           fi
           
           echo "Using image: $IMAGE"
+          DEPLOYMENT_NAME="knowhere-${{ matrix.service }}"
+          echo "Deployment名称: $DEPLOYMENT_NAME"
+          echo "容器名称: ${{ matrix.service }}"
+          echo "命名空间: $ALIYUN_ACK_NAMESPACE"
           
-          # 更新K8s Deployment
-          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/knowhere-${{ matrix.service }} \
+          if ! kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n $ALIYUN_ACK_NAMESPACE > /dev/null 2>&1; then
+            echo "❌ 错误：Deployment $DEPLOYMENT_NAME 在命名空间 $ALIYUN_ACK_NAMESPACE 中不存在"
+            echo "请先确认以下Deployment是否存在："
+            kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployments -n $ALIYUN_ACK_NAMESPACE
+            exit 1
+          fi
+          
+          # 检查Deployment中的容器名称
+          echo "检查Deployment中的容器信息..."
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n $ALIYUN_ACK_NAMESPACE -o jsonpath='{.spec.template.spec.containers[*].name}'
+          echo ""
+          
+          # 更新K8s Deployment - 使用正确的Deployment名称和容器名称
+          echo "更新Deployment $DEPLOYMENT_NAME 的镜像..."
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/"$DEPLOYMENT_NAME" \
             ${{ matrix.service }}=$IMAGE \
             --namespace=$ALIYUN_ACK_NAMESPACE
           
           # 验证部署状态
-          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/knowhere-${{ matrix.service }} \
+          echo "验证部署状态..."
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/"$DEPLOYMENT_NAME" \
             --namespace=$ALIYUN_ACK_NAMESPACE \
             --timeout=300s
           
