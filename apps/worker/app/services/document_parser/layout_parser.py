@@ -600,7 +600,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
     return preds_df
 
 
-async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len=8192, task="eval-headings"):
+async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len=8192, task="eval-headings", toc_context=None):
     """Apply LLM to analyze the hierarchy of headings
     
     Args:
@@ -610,6 +610,7 @@ async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len
         max_depth: Maximum hierarchy depth
         max_len: Maximum output tokens
         task: Prompt task type - "eval-headings" for general document, "eval-toc-headings" for TOC
+        toc_context: Optional formatted TOC context string for guiding level assignment
     
     Returns:
         List of dicts with id and level
@@ -618,7 +619,7 @@ async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len
     ot_limit = int(len(level_html) * 1.2)
     ot_limit = min(ot_limit, max_len)
 
-    paras = {"max_tokens": ot_limit, "max_depth": max_depth, "top_title": top_title}
+    paras = {"max_tokens": ot_limit, "max_depth": max_depth, "top_title": top_title, "toc_context": toc_context or ""}
     prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_html, query="", paras=paras)
     messages = [
         {"role": "system", "content": "you are a document auditing expert"},
@@ -735,16 +736,16 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
 
 
 async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None):
-    """LLM层级解析
+    """LLM-based hiearchy detection
     
     Args:
-        raw_preds: 原始预测DataFrame
-        prompt_limt: prompt字符限制
-        toc_hierarchies: TOC层级信息
-        max_len: 最大标题长度
-        max_depth: 最大层级深度
-        model_name: LLM模型名称
-        output_dir: 输出目录，用于保存中间结果CSV
+        raw_preds: raw data
+        prompt_limt: prompt character limit
+        toc_hierarchies: TOC hierarchies
+        max_len: maximum heading length
+        max_depth: maximum hierarchy depth
+        model_name: LLM model name
+        output_dir: output directory, used to save intermediate results CSV
     """
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
@@ -756,7 +757,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
     try:
         logger.debug("🚀 smart parse => interpreting hierarchy patterns...")
         df4llm = basic_df.drop(columns=["reason"])
-        logger.debug(f"DataFrame转换完成，行数: {len(df4llm)}")
+        logger.debug(f"DataFrame transformation completed, rows: {len(df4llm)}")
         
         layout_res = await hiearchy_llm(df4llm, "", model_name, max_depth)
         
@@ -765,13 +766,13 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
         base_preds["reason"] = basic_df["reason"].values
 
         base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
-        logger.debug(f"层级映射构建完成: {len(lvl_mapping)} 个映射规则")
+        logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules")
 
         # Save base_preds as preds_3
         save_intermediate_csv(base_preds, output_dir, "preds_3_llm_base")
 
         if len(level_dfs) > 1:
-            logger.debug(f"处理多个层级DataFrame，共 {len(level_dfs)} 个...")
+            logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
             for l, level_df in tqdm(enumerate(level_dfs), total=len(level_dfs), desc=f"mapping and post-processing..."):
                 level_df = execute_level_mapping(level_df, lvl_mapping)  # record origin level for debug
                 full_preds.append(level_df)

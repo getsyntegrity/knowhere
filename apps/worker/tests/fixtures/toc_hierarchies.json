@@ -1,0 +1,377 @@
+[
+  {
+    "toc_range": [
+      18,
+      68
+    ],
+    "toc_with_level": [
+      {
+        "line_id": 0,
+        "content": "# 目 录",
+        "level": 1
+      },
+      {
+        "line_id": 2,
+        "content": "# 经营类",
+        "level": 1
+      },
+      {
+        "line_id": 4,
+        "content": "# SJSYJ-SC101-2024",
+        "level": 2
+      },
+      {
+        "line_id": 6,
+        "content": "1.营销效益考核及奖励办法（陕十一建通[2021]6 号)… 3",
+        "level": 3
+      },
+      {
+        "line_id": 7,
+        "content": "2.经营奖励办法（试行）（陕十一建[2022]60 号) 8",
+        "level": 3
+      },
+      {
+        "line_id": 8,
+        "content": "3.项目内部竞标管理办法（试行）（陕十一建[2024]31号) 13",
+        "level": 3
+      },
+      {
+        "line_id": 10,
+        "content": "# 生产类",
+        "level": 1
+      },
+      {
+        "line_id": 12,
+        "content": "# SJSYJ-SC102-2024",
+        "level": 2
+      },
+      {
+        "line_id": 14,
+        "content": "1.建筑工人实名制管理及农民工工资支付办法（2021 版）（陕十一建通[2021]27号)·19",
+        "level": 3
+      },
+      {
+        "line_id": 15,
+        "content": "2.华山云商平台采购管理办法（陕十一建[2022]14 号) ： 46",
+        "level": 3
+      },
+      {
+        "line_id": 16,
+        "content": "3.关于进一步做好 2022年度农民工工资与实名制管理工作的通知（陕十一建通[2022]",
+        "level": 3
+      },
+      {
+        "line_id": 17,
+        "content": "22 号) : 55",
+        "level": 3
+      },
+      {
+        "line_id": 18,
+        "content": "4.工程项目管理复盘总结工作管理办法（陕十一建[2022]26 号)： :57",
+        "level": 3
+      },
+      {
+        "line_id": 19,
+        "content": "5.招标采购管理办法（陕十一建[2023]2 号) ·71",
+        "level": 3
+      },
+      {
+        "line_id": 20,
+        "content": "6.工程项目封口闭合管理实施办法（2023版）（陕十一建通[2023]15 号) 98",
+        "level": 3
+      },
+      {
+        "line_id": 21,
+        "content": "7.工程项目复盘工作指导建议（陕十一建通[2023]16 号) · 112",
+        "level": 3
+      },
+      {
+        "line_id": 23,
+        "content": "# 安全类",
+        "level": 1
+      },
+      {
+        "line_id": 25,
+        "content": "# SJSYJ-SC103-2024",
+        "level": 2
+      },
+      {
+        "line_id": 27,
+        "content": "1.项目综合治理安全考核基本方案（陕十一建通[2020]110 号)· 137",
+        "level": 3
+      },
+      {
+        "line_id": 28,
+        "content": "2.安全管理规定（2020版）（陕十一建通[2020]134 号) 142",
+        "level": 3
+      },
+      {
+        "line_id": 29,
+        "content": "3.各级安全生产责任制度（2020版）（陕十一建通[2020]135号)· 189",
+        "level": 3
+      },
+      {
+        "line_id": 30,
+        "content": "4.项目综合治理安全考核基本方案实施细则（陕十一建通[2021]21 号)· : 209",
+        "level": 3
+      },
+      {
+        "line_id": 31,
+        "content": "5.安全风险分级管控及隐患排查治理体系建设标准（陕十一建通[2021]72号)217",
+        "level": 3
+      },
+      {
+        "line_id": 32,
+        "content": "6.关于明确集团公司项目分类标准的通知（陕十一建[2022]29 号) :296",
+        "level": 3
+      },
+      {
+        "line_id": 33,
+        "content": "7二级单位及项目部关键岗位安全管理职责清单（陕十一建[2022]30 号) · 298",
+        "level": 3
+      },
+      {
+        "line_id": 34,
+        "content": "8.项目安全总监管理办法（陕十一建[2022]35 号) … 308",
+        "level": 3
+      },
+      {
+        "line_id": 35,
+        "content": "9.安全风险分级管控和隐患排查治理体系建设实施办法（陕十一建[2022]49 号) 314",
+        "level": 3
+      },
+      {
+        "line_id": 36,
+        "content": "10.关于成立安全风险分级管控和隐患排查治理体系建设工作领导小组的通知（陕十一建",
+        "level": 3
+      },
+      {
+        "line_id": 37,
+        "content": "[2022]50 号)… … 341",
+        "level": 3
+      },
+      {
+        "line_id": 38,
+        "content": "11.安全生产事前问责实施细则（试行）（陕十一建[2022]52 号) 343",
+        "level": 3
+      },
+      {
+        "line_id": 39,
+        "content": "12.生产安全事故综合应急救援预案（2022版）（陕十一建[2022]54 号) 353",
+        "level": 3
+      },
+      {
+        "line_id": 41,
+        "content": "# 科技成果类",
+        "level": 1
+      },
+      {
+        "line_id": 43,
+        "content": "# SJSYJ-SC104-2024",
+        "level": 2
+      },
+      {
+        "line_id": 45,
+        "content": "1.科技创新管理办法. …379",
+        "level": 3
+      },
+      {
+        "line_id": 47,
+        "content": "技术质量类SJSYJ-SC105-2024",
+        "level": 1
+      },
+      {
+        "line_id": 49,
+        "content": "1.质量管理规定（2020版）（陕十一建通[2020]130号) : 393",
+        "level": 3
+      },
+      {
+        "line_id": 50,
+        "content": "2.工程质量创优管理办法（陕十一建[2024]16号） 408",
+        "level": 3
+      }
+    ],
+    "toc_tree": {
+      "# 目 录": {},
+      "# 经营类": {
+        "# SJSYJ-SC101-2024": {
+          "1.营销效益考核及奖励办法（陕十一建通[2021]6 号)… 3": {},
+          "2.经营奖励办法（试行）（陕十一建[2022]60 号) 8": {},
+          "3.项目内部竞标管理办法（试行）（陕十一建[2024]31号) 13": {}
+        }
+      },
+      "# 生产类": {
+        "# SJSYJ-SC102-2024": {
+          "1.建筑工人实名制管理及农民工工资支付办法（2021 版）（陕十一建通[2021]27号)·19": {},
+          "2.华山云商平台采购管理办法（陕十一建[2022]14 号) ： 46": {},
+          "3.关于进一步做好 2022年度农民工工资与实名制管理工作的通知（陕十一建通[2022]": {},
+          "22 号) : 55": {},
+          "4.工程项目管理复盘总结工作管理办法（陕十一建[2022]26 号)： :57": {},
+          "5.招标采购管理办法（陕十一建[2023]2 号) ·71": {},
+          "6.工程项目封口闭合管理实施办法（2023版）（陕十一建通[2023]15 号) 98": {},
+          "7.工程项目复盘工作指导建议（陕十一建通[2023]16 号) · 112": {}
+        }
+      },
+      "# 安全类": {
+        "# SJSYJ-SC103-2024": {
+          "1.项目综合治理安全考核基本方案（陕十一建通[2020]110 号)· 137": {},
+          "2.安全管理规定（2020版）（陕十一建通[2020]134 号) 142": {},
+          "3.各级安全生产责任制度（2020版）（陕十一建通[2020]135号)· 189": {},
+          "4.项目综合治理安全考核基本方案实施细则（陕十一建通[2021]21 号)· : 209": {},
+          "5.安全风险分级管控及隐患排查治理体系建设标准（陕十一建通[2021]72号)217": {},
+          "6.关于明确集团公司项目分类标准的通知（陕十一建[2022]29 号) :296": {},
+          "7二级单位及项目部关键岗位安全管理职责清单（陕十一建[2022]30 号) · 298": {},
+          "8.项目安全总监管理办法（陕十一建[2022]35 号) … 308": {},
+          "9.安全风险分级管控和隐患排查治理体系建设实施办法（陕十一建[2022]49 号) 314": {},
+          "10.关于成立安全风险分级管控和隐患排查治理体系建设工作领导小组的通知（陕十一建": {},
+          "[2022]50 号)… … 341": {},
+          "11.安全生产事前问责实施细则（试行）（陕十一建[2022]52 号) 343": {},
+          "12.生产安全事故综合应急救援预案（2022版）（陕十一建[2022]54 号) 353": {}
+        }
+      },
+      "# 科技成果类": {
+        "# SJSYJ-SC104-2024": {
+          "1.科技创新管理办法. …379": {}
+        }
+      },
+      "技术质量类SJSYJ-SC105-2024": {
+        "1.质量管理规定（2020版）（陕十一建通[2020]130号) : 393": {},
+        "2.工程质量创优管理办法（陕十一建[2024]16号） 408": {}
+      }
+    }
+  },
+  {
+    "toc_range": [
+      4065,
+      4096
+    ],
+    "toc_with_level": [
+      {
+        "line_id": 0,
+        "content": "# Contents",
+        "level": 1
+      },
+      {
+        "line_id": 2,
+        "content": "1General Provisions.",
+        "level": 1
+      },
+      {
+        "line_id": 4,
+        "content": "2Terms",
+        "level": 1
+      },
+      {
+        "line_id": 6,
+        "content": "3Basic Requirements",
+        "level": 1
+      },
+      {
+        "line_id": 8,
+        "content": "3.1Responsibilities.",
+        "level": 2
+      },
+      {
+        "line_id": 9,
+        "content": "3.2Management Regulations.",
+        "level": 2
+      },
+      {
+        "line_id": 11,
+        "content": "4Risk Identification and Classification Control",
+        "level": 1
+      },
+      {
+        "line_id": 13,
+        "content": "4.1 Risk Identification Method",
+        "level": 2
+      },
+      {
+        "line_id": 14,
+        "content": "4.2 Risk Identification and Classification",
+        "level": 2
+      },
+      {
+        "line_id": 15,
+        "content": "4.3 Regulations on Risk Classification and Control",
+        "level": 2
+      },
+      {
+        "line_id": 16,
+        "content": "4.4Risk Dynamic Optimization.",
+        "level": 2
+      },
+      {
+        "line_id": 18,
+        "content": "5Hidden Dangers Investigation and Hierarchical Treatment",
+        "level": 1
+      },
+      {
+        "line_id": 20,
+        "content": "5.1Determination of Serious Hidden Dangers",
+        "level": 2
+      },
+      {
+        "line_id": 21,
+        "content": "5.2Hidden Dangers Investigation",
+        "level": 2
+      },
+      {
+        "line_id": 22,
+        "content": "5.3Hidden Dangers Control",
+        "level": 2
+      },
+      {
+        "line_id": 24,
+        "content": "6File Information Management.",
+        "level": 1
+      },
+      {
+        "line_id": 26,
+        "content": "6.1Component.",
+        "level": 2
+      },
+      {
+        "line_id": 27,
+        "content": "6.2Management Requirements",
+        "level": 2
+      },
+      {
+        "line_id": 29,
+        "content": "Appendix A Risk Classification Control Schedule Appendix BInvestigation and Treatment of Hidden Dangers Schedule. Appendix CSuggestive List of Safety Risks on Construction Site Appendix DList of Serious Accident Hidden Dangers on Construction Site",
+        "level": 1
+      },
+      {
+        "line_id": 31,
+        "content": "Explanation of Terms in this Standard List of Cited Standards and Documents",
+        "level": 1
+      }
+    ],
+    "toc_tree": {
+      "# Contents": {},
+      "1General Provisions.": {},
+      "2Terms": {},
+      "3Basic Requirements": {
+        "3.1Responsibilities.": {},
+        "3.2Management Regulations.": {}
+      },
+      "4Risk Identification and Classification Control": {
+        "4.1 Risk Identification Method": {},
+        "4.2 Risk Identification and Classification": {},
+        "4.3 Regulations on Risk Classification and Control": {},
+        "4.4Risk Dynamic Optimization.": {}
+      },
+      "5Hidden Dangers Investigation and Hierarchical Treatment": {
+        "5.1Determination of Serious Hidden Dangers": {},
+        "5.2Hidden Dangers Investigation": {},
+        "5.3Hidden Dangers Control": {}
+      },
+      "6File Information Management.": {
+        "6.1Component.": {},
+        "6.2Management Requirements": {}
+      },
+      "Appendix A Risk Classification Control Schedule Appendix BInvestigation and Treatment of Hidden Dangers Schedule. Appendix CSuggestive List of Safety Risks on Construction Site Appendix DList of Serious Accident Hidden Dangers on Construction Site": {},
+      "Explanation of Terms in this Standard List of Cited Standards and Documents": {}
+    }
+  }
+]

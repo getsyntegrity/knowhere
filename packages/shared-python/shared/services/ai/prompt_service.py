@@ -67,16 +67,34 @@ def build_prompt(task, texts, query, **kwargs):
         top_p = 0.01
         max_depth = kwargs['paras']['max_depth']
         max_tokens = kwargs['paras']['max_tokens']
+        toc_context = kwargs['paras'].get('toc_context', '')
+        
+        # 构建 TOC 参考部分（如果有）
+        if toc_context:
+            toc_section = f"""
+        ***Reference: Table of Contents (TOC)***
+        The following is the document's table of contents with predefined levels. Use this as a reference when assigning levels:
+        
+        '''
+        {toc_context}
+        '''
+        
+        - If a row's heading matches a TOC entry, use the TOC's predefined level
+        - If a row appears to be a sub-section of a TOC entry, assign a deeper level
+        - IMPORTANT: If a row does NOT appear in the TOC, it CANNOT be assigned the same level or a higher level than any TOC entry. It should be either body text (level = -1) or a sub-section with a deeper level than the nearest TOC heading above it
+        """
+        else:
+            toc_section = ""
 
         prompt = f"""
-        You are a document structure auditing expert. You will receive an HTML table with multiple rows of text, where each row may be a heading or body text, including:
+        You are a document structure auditing expert. You will receive an HTML table with text rows, where each row may be a heading or body text, including:
         1. id column: line number
         2. heading column: text content
         3. level column: preliminary estimated level (may be inaccurate), as follows:
-            1 represents `<h1>`, 2 represents `<h2>`, and so on
+            1 represents `<h1>` (the highest level), 2 represents `<h2>`, and so on
             -1 indicates the text is estimated as "body text", not a heading
             Not Sure indicates the level is undetermined
-
+        {toc_section}
         Data:
         '''
         {texts}

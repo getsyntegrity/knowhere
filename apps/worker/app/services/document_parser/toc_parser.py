@@ -497,3 +497,11 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
     logger.info(f"Removed TOC lines, remaining {len(md_lines)} lines")
     
     return toc_hierarchies, md_lines
+
+
+# ==================== TOC Utility Functions ====================
+
+def load_toc_hierarchies(json_path: str) -> list:
+    import json
+    with open(json_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
