@@ -26,7 +26,7 @@ WORKDIR /app
 
 # 构建参数 - Next.js NEXT_PUBLIC_API_URL（必须在构建时传入，会被内联到客户端代码中）
 # 默认值使用 next.config.js 中的默认值，确保向后兼容
-ARG NEXT_PUBLIC_API_URL=https://apitest.knowhereto.ai
+ARG NEXT_PUBLIC_API_URL=https://api.knowhereto.com
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 # 注意：Google OAuth配置（GOOGLE_CLIENT_ID）不再在构建时注入
