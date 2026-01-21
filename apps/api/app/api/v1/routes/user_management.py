@@ -11,6 +11,7 @@ from app.services.user.user_service import UserService
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException
+from shared.core.billing import MicroDollar
 
 router = APIRouter()
 
@@ -60,7 +61,7 @@ async def get_credits_balance(
     """获取用户Credits余额"""
     try:
         balance = await credits_service.get_balance(db, current_user.id)
-        return {"user_id": current_user.id, "credits_balance": balance}
+        return {"user_id": current_user.id, "credits_balance": MicroDollar(balance).to_ui_string()}
     except Exception as e:
         raise WorkerHandlingException(
             internal_message=f"获取Credits余额失败: {str(e)}"
@@ -79,9 +80,17 @@ async def get_credits_transactions(
         transactions = await credits_service.get_user_transactions(
             db, current_user.id, limit, offset
         )
+        # Convert micro-credits to display credits in transactions
+        display_transactions = [
+            {
+                **tx,
+                "credits_amount": MicroDollar(tx["credits_amount"]).to_ui_string()
+            }
+            for tx in transactions
+        ]
         return {
             "user_id": current_user.id,
-            "transactions": transactions,
+            "transactions": display_transactions,
             "limit": limit,
             "offset": offset
         }

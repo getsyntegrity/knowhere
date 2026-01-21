@@ -5,7 +5,7 @@ from enum import Enum
 from typing import List, Optional
 
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Column, DateTime, BigInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
@@ -54,7 +54,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     # 开放API管理相关字段
     provider_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # 认证提供商类型
     provider_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)   # 第三方用户ID
-    credits_balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Credits余额
+    credits_balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)  # In micro-credits: $1.00 = 1,000,000
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Stripe客户ID
     subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # 订阅ID
     user_type: Mapped[str] = mapped_column(

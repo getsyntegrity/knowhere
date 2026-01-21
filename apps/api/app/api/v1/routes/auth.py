@@ -11,6 +11,7 @@ from shared.models.database.user import User
 from shared.models.schemas.user import UserCreate, UserRead, UserUpdate
 from fastapi import APIRouter, Depends, Request
 from fastapi_users import FastAPIUsers
+from shared.core.billing import MicroDollar
 
 router = APIRouter(tags=["Authentication"])
 
@@ -59,7 +60,7 @@ async def get_current_user_info(request: Request, user: User = Depends(get_curre
         "user_type": user.user_type,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
-        "credits_balance": user.credits_balance,
+        "credits_balance": MicroDollar(user.credits_balance).to_ui_string(),
         "avatar_url": user.avatar_url,
         "phone": user.phone,
         "create_time": user.create_time

@@ -26,6 +26,7 @@ from shared.models.database.usage_log import UsageLog
 from shared.models.database.job import Job
 from shared.models.database.stripe_price_config import StripePriceConfig
 from shared.models.database.credits_transaction import CreditsTransaction
+from shared.core.billing import MicroDollar
 
 router = APIRouter(tags=["Billing"])
 
@@ -168,7 +169,7 @@ async def get_credits_balance(
         usage_percentage = (balance / credits_limit * 100) if credits_limit > 0 else 0
         
         return CreditsBalanceResponse(
-            credits_balance=balance,
+            credits_balance=MicroDollar(balance).to_ui_string(),
             credits_limit=credits_limit,
             usage_percentage=round(usage_percentage, 2)
         )
@@ -193,7 +194,7 @@ async def get_usage_stats(
         
         return UsageStatsResponse(
             period=stats["period"],
-            total_credits_used=stats["total_used"],
+            total_credits_used=MicroDollar(stats["total_used"]).to_ui_string(),
             api_calls_count=stats["transaction_count"],
             success_rate=95.0,  # TODO: 从使用日志计算实际成功率
             average_response_time=stats.get("avg_response_time", 0),
@@ -235,13 +236,14 @@ async def parse_usage_overview(
 
         # 已用积分：从credits_transactions表统计usage和refund类型
         # usage类型为负数（扣除），refund类型为正数（退还）
-        # 净消耗 = abs(sum(usage + refund))
+        # 净消耗 = abs(sum(usage + refund)), then convert to display credits
         credits_row = await db.execute(
             select(func.coalesce(func.sum(CreditsTransaction.credits_amount), 0))
             .where(CreditsTransaction.user_id == user_id)
             .where(CreditsTransaction.transaction_type.in_(["usage", "refund"]))
         )
-        total_credits_used = abs(credits_row.scalar_one() or 0)
+        total_micro_credits_used = abs(credits_row.scalar_one() or 0)
+        total_credits_used = MicroDollar(total_micro_credits_used).to_ui_string()
 
         # 同比上月增长：最近30天 vs 前一个30天
         curr_row = await db.execute(
@@ -315,7 +317,7 @@ async def get_transaction_history(
         transaction_list = [
             TransactionHistoryResponse(
                 id=tx.id,
-                credits_amount=tx.credits_amount,
+                credits_amount=MicroDollar(tx.credits_amount).to_ui_string(),
                 transaction_type=tx.transaction_type,
                 description=tx.description,
                 created_at=tx.created_at

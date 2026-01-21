@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi_users import FastAPIUsers
 from shared.core.exceptions.domain_exceptions import AuthException, SystemSettingMissingException
 from sqlalchemy.ext.asyncio import AsyncSession
+from shared.core.billing import MicroDollar
 
 router = APIRouter(tags=["OAuth Authentication"])
 
@@ -65,7 +66,7 @@ async def google_login(
                 "username": user.username,
                 "avatar_url": user.avatar_url,
                 "user_type": user.user_type,
-                "credits_balance": user.credits_balance
+                "credits_balance": MicroDollar(user.credits_balance).to_ui_string()
             }
         )
         
@@ -118,7 +119,7 @@ async def apple_login(
                 "username": user.username,
                 "avatar_url": user.avatar_url,
                 "user_type": user.user_type,
-                "credits_balance": user.credits_balance
+                "credits_balance": MicroDollar(user.credits_balance).to_ui_string()
             }
         )
         
@@ -171,7 +172,7 @@ async def github_login(
                 "username": user.username,
                 "avatar_url": user.avatar_url,
                 "user_type": user.user_type,
-                "credits_balance": user.credits_balance
+                "credits_balance": MicroDollar(user.credits_balance).to_ui_string()
             }
         )
         

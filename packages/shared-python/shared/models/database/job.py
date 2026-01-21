@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,7 +60,7 @@ class Job(Base):
     
     # Billing Information (Per-Page Billing)
     page_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Calculated page count for billing")
-    credits_charged: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="Credits charged (1 Credit = 1 Page)")
+    credits_charged: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False, comment="In micro-credits: $1.00 = 1,000,000")
     billing_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False, comment="pending, charged, billing_failed, refunded")
     
     # 关系

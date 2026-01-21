@@ -21,8 +21,12 @@ class BillingConfig(BaseSettings):
     PLUS_PLAN_CREDITS: int = Field(default=1000, description="Plus计划每月Credits")
     PRO_PLAN_CREDITS: int = Field(default=10000, description="Pro计划每月Credits")
     
-    # Credits 配置
-    CREDITS_PER_PAGE: int = Field(default=1, description="credits per page usage", env="CREDITS_PER_PAGE")
+    # Credits 配置 (Micro-Dollar System: $1.00 = 1,000,000 micro-credits)
+    CREDITS_IN_MICRO_DOLLARS_PER_PAGE: int = Field(
+        default=1500, 
+        description="Micro-credits per page ($0.0015 = 1500 micros)", 
+        env="CREDITS_IN_MICRO_DOLLARS_PER_PAGE"
+    )
     LOW_BALANCE_THRESHOLD: int = Field(default=10, description="低余额预警阈值")
     CREDITS_VALID_DAYS: int = Field(default=90, env="CREDITS_VALID_DAYS", description="Credits有效期（天），过期点数失效")
     
