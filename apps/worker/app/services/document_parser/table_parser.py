@@ -61,7 +61,7 @@ def df2html(tb_df: pd.DataFrame,
         border=0,
         justify="center",
     )
-    return table_html
+    return table_html.replace('\n', '')
 
 def table2html(table: DocxTable) -> str:
     html = "<table border='1'>"

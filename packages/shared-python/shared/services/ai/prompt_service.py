@@ -261,29 +261,25 @@ def build_prompt(task, texts, query, **kwargs):
 
         prompt = f"""You are a document analysis expert. You need to identify the actual start and end positions of the table of contents from the candidate region.
 
-        [Candidate Region Information]
-        - Candidate region start line number: {start_idx}
-        - Candidate region end line number: {end_idx}
-
         [Candidate Region Content]
+        The following table shows candidate lines with their id (0-indexed) and content:
         {texts}
 
         [Judgment Rules]
-        Please analyze the above content and find the actual start and end line numbers of the table of contents region:
+        Please analyze the above content and find the actual start and end line ids of the table of contents region:
 
         1. **TOC Line Characteristics**:
         - Starts with "Table of Contents", "Contents", "目录", "目次", etc.
         - Usually contains chapter numbers or serial numbers (e.g., "1.", "Chapter 1", "一、", "第一章", etc.)
         - Contains heading text, usually with page numbers at the end
         - Format is relatively uniform and neat, with ellipsis "..." possible in the middle of line text
-        - Most line numbers are consecutive
         - TOC region should include the line containing keywords like "Table of Contents", "Contents", "目录" if they exist
 
         [Output Format]
         Output in JSON format:
         {{
-            "toc_start": number,  // TOC content start line number (absolute line number)
-            "toc_end": number,    // TOC content end line number (absolute line number)
+            "toc_start": number,  // TOC start id (must be in range {start_idx} to {end_idx})
+            "toc_end": number,    // TOC end id (must be in range {start_idx} to {end_idx})
             "confidence": "high" | "medium" | "low"  // Confidence level
         }}
 

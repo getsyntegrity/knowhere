@@ -16,7 +16,7 @@ from loguru import logger
 from lxml import etree
 
 from app.services.document_parser.table_parser import df2html
-from app.services.document_parser.layout_parser import hiearchy_llm
+from app.services.document_parser.layout_parser import hiearchy_llm, judge_by_conditions, remove_by_conditions
 from shared.services.ai import ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
@@ -149,7 +149,65 @@ def truncate_text(text: str, start_limit: int, end_limit: int) -> str:
     return f"{start_part}...{end_part}"
 
 
-def detect_toc_candidates(md_lines: list, limit_: int = 100) -> list:
+def is_content_line(line: str) -> bool:
+    """
+    Check if a line is valid content for TOC candidates.
+    Filter out table tags and LaTeX formulas.
+    
+    Args:
+        line: the line to check
+    
+    Returns:
+        True if the line is valid content, False if it should be filtered out
+    """
+    stripped = line.strip().lower()
+    
+    # Filter out html lines
+    if stripped.startswith("<table>"):
+        return False
+    
+    if stripped.startswith("!["):
+        return False
+
+    # Filter out lines containing LaTeX patterns
+    latex_patterns = [
+        r"\\mathrm\b",
+        r"\\frac\b",
+        r"\\sum\b",
+        r"\\int\b",
+        r"\\sqrt\b",
+        r"\\alpha\b",
+        r"\\beta\b",
+        r"\\gamma\b",
+        r"\\delta\b",
+        r"\\theta\b",
+        r"\\lambda\b",
+        r"\\sigma\b",
+        r"\\omega\b",
+        r"\\partial\b",
+        r"\\infty\b",
+        r"\\left\b",
+        r"\\right\b",
+        r"\\begin\{",
+        r"\\end\{",
+        r"\\text\b",
+        r"\\mathbf\b",
+        r"\\mathit\b",
+        r"\\times\b",
+        r"\\cdot\b",
+        r"\\leq\b",
+        r"\\geq\b",
+        r"\\neq\b",
+        r"\\approx\b",
+    ]
+    
+    for pattern in latex_patterns:
+        if re.search(pattern, line, re.IGNORECASE):
+            return False
+    return True
+
+
+def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
     """
     Detect TOC candidates (support multiple TOC areas)
     
@@ -158,10 +216,11 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> list:
         limit_: max lines to consider for each candidate area
     
     Returns:
-        List[(start_idx, candidate_lines_with_indices)]
-        - start_idx: start index of the candidate area
-        - candidate_lines_with_indices: [(line_idx, line_content), ...] non-empty lines list
-        if no TOC keywords found, return [(0, the first 150 non-empty lines)]
+        Tuple of (candidates, invalid_ids_by_area)
+        - candidates: List[(start_idx, candidate_lines_with_indices)]
+          - start_idx: start index of the candidate area
+          - candidate_lines_with_indices: [(line_idx, line_content), ...] valid lines only
+        - invalid_ids_by_area: List[set] - each set contains invalid line indices for that area
     """
     
     toc_keywords = {"目录", "目次", "tableofcontents", "contents"}
@@ -183,43 +242,61 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> list:
     
     # Step 3: build candidate areas for each start index
     candidates = []
+    invalid_ids_by_area = []
+    
     for start_idx in start_indices:
         end_idx = min(start_idx + limit_, len(md_lines))
         raw_lines = md_lines[start_idx:end_idx]
 
         candidate_lines_with_indices = []
+        invalid_ids = []
+        
         for i, line in enumerate(raw_lines):
             absolute_idx = start_idx + i
+            
             if line.strip():
-                candidate_lines_with_indices.append((absolute_idx, line))
+                if is_content_line(line):
+                    candidate_lines_with_indices.append((absolute_idx, line))
+                else:
+                    invalid_ids.append(absolute_idx)
         
-        non_empty_count = len(candidate_lines_with_indices)
+        valid_count = len(candidate_lines_with_indices)
+        invalid_count = len(invalid_ids)
         logger.debug(f"Candidate area #{len(candidates)+1}: line {start_idx}-{end_idx-1}, "
-                    f"original lines: {len(raw_lines)}, non-empty lines: {non_empty_count}")
+                    f"valid lines: {valid_count}, invalid lines: {invalid_count}")
         
         candidates.append((start_idx, candidate_lines_with_indices))
-    return candidates
+        invalid_ids_by_area.append(invalid_ids)
+    
+    return candidates, invalid_ids_by_area
 
 
-async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None) -> tuple:
+async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None, use_reindex: bool = False, total_lines: int = 0) -> tuple:
     """
-    Use LLM to judge TOC range
+    Use LLM to determine the start and end indices of the TOC content
     
     Args:
-        html_table: HTML table string
+        html_table: HTML table of candidate lines
         lines_: [(line_idx, line_content), ...] non-empty lines list
         model_name: model name (optional, uses default if not specified)
+        use_reindex: if True, LLM receives 0-based consecutive ids
+        total_lines: total number of lines (used when use_reindex=True)
     
     Returns:
         (toc_start_idx, toc_end_idx) or None
-        - toc_start_idx: start index of the TOC content
-        - toc_end_idx: end index of the TOC content
+        - If use_reindex=True, returns 0-based indices that need to be mapped back
     """
     if not lines_:
         return None
     
-    start_idx = lines_[0][0]
-    end_idx = lines_[-1][0]
+    if use_reindex:
+        # Use 0-based consecutive indexing
+        start_idx = 0
+        end_idx = total_lines - 1
+    else:
+        start_idx = lines_[0][0]
+        end_idx = lines_[-1][0]
+    
     total_candidates = len(lines_)
     
     paras = {
@@ -235,7 +312,7 @@ async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = N
     )
     
     messages = [
-        {"role": "system", "content": "你是一位文档分析专家"},
+        {"role": "system", "content": "You are a document analysis expert"},
         {"role": "user", "content": prompt}
     ]
     
@@ -256,11 +333,11 @@ async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = N
         logger.info(f"LLM judge: toc_start={toc_start}, toc_end={toc_end}, confidence={confidence}")
         
         if toc_start is not None and toc_end is not None:
-            valid_line_indices = set(idx for idx, _ in lines_)
-            if toc_start in valid_line_indices and toc_end in valid_line_indices and toc_end >= toc_start:
+            # Validate: indices should be within valid range
+            if 0 <= toc_start <= end_idx and 0 <= toc_end <= end_idx and toc_end >= toc_start:
                 return toc_start, toc_end
             else:
-                logger.warning("IDs returned by LLM are out of range, ignored")
+                logger.warning(f"IDs returned by LLM are out of range [0, {end_idx}], got [{toc_start}, {toc_end}]")
                 return None
         else:
             return None
@@ -281,32 +358,51 @@ async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 
     
     Returns:
         List[(start_idx, end_idx, toc_lines)] or empty list
+        - toc_lines only contains valid content lines (table/LaTeX/images filtered out)
         may return multiple TOC areas
     """
     # Step 1: detect candidate areas (may be multiple)
-    candidates = detect_toc_candidates(md_lines, limit_)
+    candidates, invalid_ids_by_area = detect_toc_candidates(md_lines, limit_)
     if not candidates:
         logger.info("No TOC candidates detected")
         return []
     
     # Step 2: evaluate each candidate area with LLM
-    all_results = []
+    toc_ranges = []
     
-    for idx, (_, lines_) in enumerate(candidates):
-        df = pd.DataFrame(lines_, columns=["行号", "内容"])
-        df["内容"] = df["内容"].apply(lambda x: truncate_text(x.strip(), 50, 10))
-        html_table = df2html(df, index=False)
+    for idx, ((_, lines_), invalid_ids) in enumerate(zip(candidates, invalid_ids_by_area)):
+        # Build mapping: re-index to 0-based consecutive ids for LLM
+        # This avoids LLM hallucination on non-existent line numbers
+        reindex_to_original = {i: abs_idx for i, (abs_idx, _) in enumerate(lines_)}
+        original_to_reindex = {abs_idx: i for i, (abs_idx, _) in enumerate(lines_)}
         
-        llm_result = await llm_judge_toc_range(html_table, lines_, model_name)
+        # Create DataFrame with re-indexed ids (0, 1, 2, ...)
+        df = pd.DataFrame([
+            {"id": i, "content": truncate_text(line.strip(), 50, 10)}
+            for i, (_, line) in enumerate(lines_)
+        ])
+        
+        html_table = df2html(df, index=False)
+        llm_result = await llm_judge_toc_range(html_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
         
         if llm_result is not None:
-            toc_start, toc_end = llm_result
-            toc_lines = md_lines[toc_start:toc_end+1]
-            logger.info(f"TOC area #{idx+1} detected, from {toc_start} to {toc_end}, with {len(toc_lines)} lines")
-            all_results.append((toc_start, toc_end, toc_lines))
+            reindex_start, reindex_end = llm_result
+            # Map back to original absolute indices
+            toc_start = reindex_to_original.get(reindex_start)
+            toc_end = reindex_to_original.get(reindex_end)
+            
+            if toc_start is not None and toc_end is not None:
+                # Filter out invalid lines from the raw toc_lines
+                toc_lines = [
+                    line for i, line in enumerate(md_lines[toc_start : toc_end+1], start=toc_start)
+                    if i not in invalid_ids and line.strip()
+                ]
+                toc_ranges.append((toc_start, toc_end, toc_lines))
+            else:
+                logger.warning(f"TOC area #{idx+1}: failed to map reindex back to original")
         else:
             logger.info(f"TOC area #{idx+1} not detected")
-    return all_results
+    return toc_ranges
 
 
 async def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None) -> list:
@@ -319,21 +415,20 @@ async def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None
         model_name: model name (optional)
     
     Returns:
-        List of dicts with line_id, content, level
+        List of dicts with id, heading, level
     """
     try:
-        toc_hierarchy = await hiearchy_llm(toc_df, top_title=None, model_name=model_name, max_depth=max_depth, task="eval-toc-headings")
-        # develop mapping
+        toc_hierarchy = await hiearchy_llm(toc_df, model_name=model_name, max_depth=max_depth, task="eval-toc-headings")
         id_to_level = {item["id"]: item["level"] for item in toc_hierarchy}
-        
+
         toc_with_level = []
         for _, row in toc_df.iterrows():
             line_id = row["id"]
-            content = row["heading"]
+            heading = row["heading"]
             level = id_to_level.get(line_id, 1)
             toc_with_level.append({
-                "line_id": line_id,
-                "content": content,
+                "id": line_id,
+                "heading": heading,
                 "level": level
             })
         return toc_with_level
@@ -348,7 +443,7 @@ def build_tree_tocs(toc_with_level: list) -> dict:
     Build nested JSON from TOC with level
     
     Args:
-        toc_with_level: [{"line_id": line index, "content": content, "level": level}, ...]
+        toc_with_level: [{"id": line index, "heading": content, "level": level, "reason": ...}, ...]
         level: 1 for h1, 2 for h2..., -1 will be treated as the lowest level title
     
     Returns:
@@ -378,7 +473,7 @@ def build_tree_tocs(toc_with_level: list) -> dict:
     stack = [(root, 0)]
     
     for item in toc_with_level:
-        content = item["content"]
+        heading = item["heading"]
         original_level = item["level"]
         
         # normalize level: -1 -> level_for_minus_one
@@ -387,9 +482,32 @@ def build_tree_tocs(toc_with_level: list) -> dict:
             stack.pop()
         
         parent_dict = stack[-1][0]
-        parent_dict[content] = {}
-        stack.append((parent_dict[content], normalized_level))
+        parent_dict[heading] = {}
+        stack.append((parent_dict[heading], normalized_level))
     return root
+
+
+def gen_reason_code_toc(text: str) -> str:
+    """
+    Generate reason code for a text line using judge_by_conditions and remove_by_conditions.
+    This aligns with the preds CSV format.
+    
+    Args:
+        text: the text line to analyze
+    
+    Returns:
+        reason code string in format "POS [...] NEG [...]"
+    """
+    # Clean the text (remove leading # marks)
+    text_clean = text.lstrip('#').strip()
+    
+    pos_code, detail_info = judge_by_conditions(text_clean, return_detail=True)
+    neg_code = remove_by_conditions(text_clean)
+    
+    reason_suffix = detail_info.get('reason_suffix', '')
+    reason_str = f"POS {pos_code}{reason_suffix} NEG {neg_code}"
+    
+    return reason_str
 
 
 async def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6) -> tuple:
@@ -397,39 +515,70 @@ async def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: in
     Analyze TOC hierarchy and generate nested JSON
     
     Args:
-        toc_lines: list of TOC lines
+        toc_lines: list of pre-filtered valid TOC lines (invalid content already removed)
         model_name: model name (optional)
         max_depth: max depth of hierarchy
     
     Returns:
         (toc_with_level, toc_tree)
         - toc_with_level: list with level information
+          Format: [{"id": int, "heading": str, "level": int, "reason": str}, ...]
         - toc_tree: nested JSON structure
     """
-    data = []
+    # Build data for LLM judgment (all lines are valid, pre-filtered)
+    valid_data = []
+    
     for i, line in enumerate(toc_lines):
-        content = line.strip()
-        if content:
-            data.append({
-                "id": i,
-                "heading": content,
-                "level": "Not Sure"
-            })
-    toc_df = pd.DataFrame(data)
+        heading = line.strip()
+        if not heading:
+            continue
+        
+        valid_data.append({
+            "id": i,
+            "heading": heading,
+            "level": "Not Sure"
+        })
+    
+    toc_df = pd.DataFrame(valid_data)
     
     if toc_df.empty:
-        logger.info("TOC is empty, skip hierarchy analysis")
-        return [], {}
+        logger.info("No valid TOC content, skip hierarchy analysis")
+        return "", {}
     
-    # Step 3: evaluate TOC hierarchy with LLM
-    toc_with_level = await parse_toc_hierarchy(toc_df, max_depth, model_name)
+    # Evaluate TOC hierarchy with LLM
+    llm_result = await parse_toc_hierarchy(toc_df, max_depth, model_name)
     
-    # Step 4: build nested JSON
-    toc_tree = build_tree_tocs(toc_with_level)
+    # Build id -> level mapping from LLM result
+    id_to_level = {item["id"]: item["level"] for item in llm_result}
+    
+    # Build final result with reason as post-processing
+    result_data = []
+    valid_items_for_tree = []
+    
+    for data in valid_data:
+        line_id = data["id"]
+        heading = data["heading"]
+        level = id_to_level.get(line_id, -1)
+        
+        # Add reason as post-processing
+        reason = gen_reason_code_toc(heading)
+        
+        if level > 0:
+            result_data.append({"id": line_id, "heading": heading, "level": level, "reason": reason})
+            valid_items_for_tree.append({"id": line_id, "heading": heading, "level": level, "reason": reason})
+    
+    if result_data:
+        result_df = pd.DataFrame(result_data)
+        toc_with_level = df2html(result_df, index=False)
+    else:
+        toc_with_level = ""
+    
+    # Build nested JSON
+    toc_tree = build_tree_tocs(valid_items_for_tree)
     return toc_with_level, toc_tree
 
 
-async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "normal", limit_: int = 100):
+async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "normal", limit_: int = 150):
     """
     Detect and analyze TOC in texts
     
@@ -457,7 +606,7 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
     if branch == "normal":
         toc_area = await detect_tocs_llm(md_lines, model_name, limit_)
     elif branch == "plus-ocr":
-        # TODO implement OCR branch
+        # TODO implement OCR branch, if implement, direct yield toc-tree
         return None, md_lines
     else:
         logger.error(f"Not supported branch: {branch}")
@@ -467,17 +616,20 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
         logger.warning("TOC detection failed, no TOC area detected")
         return None, md_lines
     
-    logger.info("-" * 60)
     logger.info("Step 2: analyze TOC hierarchy")
     logger.info(f"{len(toc_area)} TOC areas detected")
-    logger.info("-" * 60)
     
     toc_hierarchies = []
     ranges_to_remove = []
     
     for idx, (toc_start, toc_end, toc_lines) in enumerate(toc_area):
-        logger.info(f"Analyzing TOC area #{idx+1} hierarchy")
+        logger.info(f"Analyzing TOC area #{idx+1}")
         
+
+        #TODO we need to refine the toc_lines before feeding it to llm, first, 
+        
+
+
         toc_with_level, toc_tree = await eval_toc_levels(toc_lines, model_name, max_depth=6)
         toc_hierarchies.append({
             "toc_range": (toc_start, toc_end),
@@ -490,12 +642,11 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
     # Sort ranges by start index descending just to be safe
     ranges_to_remove.sort(key=lambda x: x[0], reverse=True)
     
-    for start, end in ranges_to_remove:        
+    for start, end in ranges_to_remove:
         # Slicing removal: [:start] + [end+1:]
         md_lines = md_lines[:start] + md_lines[end+1:]
     
     logger.info(f"Removed TOC lines, remaining {len(md_lines)} lines")
-    
     return toc_hierarchies, md_lines
 
 

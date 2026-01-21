@@ -600,12 +600,11 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
     return preds_df
 
 
-async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len=8192, task="eval-headings", toc_context=None):
+async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=8192, task="eval-headings"):
     """Apply LLM to analyze the hierarchy of headings
     
     Args:
         df: DataFrame with id, heading columns
-        top_title: Optional top title for context
         model_name: LLM model name (optional, uses default if None)
         max_depth: Maximum hierarchy depth
         max_len: Maximum output tokens
@@ -619,7 +618,7 @@ async def hiearchy_llm(df, top_title=None, model_name=None, max_depth=6, max_len
     ot_limit = int(len(level_html) * 1.2)
     ot_limit = min(ot_limit, max_len)
 
-    paras = {"max_tokens": ot_limit, "max_depth": max_depth, "top_title": top_title, "toc_context": toc_context or ""}
+    paras = {"max_tokens": ot_limit, "max_depth": max_depth, "toc_context": toc_context or ""}
     prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_html, query="", paras=paras)
     messages = [
         {"role": "system", "content": "you are a document auditing expert"},
@@ -759,7 +758,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
         df4llm = basic_df.drop(columns=["reason"])
         logger.debug(f"DataFrame transformation completed, rows: {len(df4llm)}")
         
-        layout_res = await hiearchy_llm(df4llm, "", model_name, max_depth)
+        layout_res = await hiearchy_llm(df4llm, model_name, max_depth, toc_context=None, task="eval-headings")
         
         base_preds = pd.DataFrame(layout_res)
         base_preds.insert(1, "heading", basic_df["heading"].values)  # insert original headings back
