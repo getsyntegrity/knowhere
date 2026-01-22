@@ -97,7 +97,7 @@ export interface UsageStats {
 export interface Transaction {
   id: string
   type: 'credit' | 'debit'
-  amount: number
+  credits_amount: number
   description: string
   created_at: string
 }
