@@ -61,7 +61,7 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
             .where(User.credits_balance > max_balance)
             .values(credits_balance=max_balance)
         )
-        # Note: Commit removed - caller controls transaction
+        await session.commit()
         return result.rowcount > 0
     
     async def add_credits(self, session: AsyncSession, user_id: str, amount: int) -> bool:
