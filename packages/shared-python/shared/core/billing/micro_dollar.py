@@ -57,6 +57,23 @@ class MicroDollar:
     # Factory Methods
     # =============================================
 
+    # shoud we call this from_credits? 
+    @classmethod
+    def from_dollars(cls, amount: int) -> "MicroDollar":
+        """
+        Convert a dollar amount to MicroDollar.
+        
+        Args:
+            amount: Dollar amount as int (e.g., 1 for $1.00)
+            
+        Returns:
+            MicroDollar instance
+            
+        Example:
+            MicroDollar.from_dollars(1) -> MicroDollar(1_000_000)
+        """
+        return cls(amount * cls.SCALE)
+
     @classmethod
     def from_float(cls, amount: float) -> "MicroDollar":
         """

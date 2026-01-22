@@ -1,6 +1,7 @@
 """
 Stripe 支付服务
 """
+from shared.core.billing import MicroDollar
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -131,7 +132,8 @@ class StripeService:
                 "user_id": str(user_id),
                 "price_id": str(price_id),
                 "type": "credits_package",
-                "credits_amount": str(config.credits_amount) if config.credits_amount else None,
+                # TODO, we need to display credit instead of micro dollar in stripe
+                "credits_amount": MicroDollar(config.credits_amount).to_ui_string() if config.credits_amount else None,
                 "quantity": str(quantity),
             }
 
@@ -169,7 +171,7 @@ class StripeService:
             raise StripeServiceException(
                 internal_message=f"Stripe credits checkout session failed: {e}"
             )
-    
+    # TODO, why user can input credits to topup?
     async def create_payment_intent(
         self, 
         user_id: str, 
@@ -459,13 +461,13 @@ class StripeService:
                 await db.commit()
                 return {'status': 'error', 'message': 'Missing credits_amount'}
             
-            credits_amount = int(credits_amount_str)
+            micro_dollar_to_add = MicroDollar.from_dollars(int(credits_amount_str))
             
             # 更新支付记录的extra_metadata，添加商品信息
             payment_record.extra_metadata = {
                 **payment_metadata,
-                'product_description': f"Credits包 - {credits_amount} Credits",
-                'credits_amount': credits_amount,
+                'product_description': f"Credits包 - {credits_amount_str} Credits",
+                'credits_amount': micro_dollar_to_add,
                 'payment_method': 'payment_intent'  # 标识这是通过PaymentIntent购买的
             }
             
@@ -478,24 +480,24 @@ class StripeService:
             await self.credits_service.add_credits(
                 db,
                 user_id,
-                credits_amount,
-                f"购买Credits包 - {credits_amount} Credits",
+                micro_dollar_to_add,
+                f"buy credits - {credits_amount_str} Credits",
                 stripe_payment_id=payment_intent_id
             )
             
             # 更新支付记录
             payment_record.status = 'succeeded'
-            payment_record.credits_amount = credits_amount
+            payment_record.credits_amount = micro_dollar_to_add
             payment_record.processed_at = datetime.utcnow()
             await db.commit()
             await db.refresh(payment_record)
             
-            logger.info(f"Credits购买成功: user_id={user_id}, credits={credits_amount}, payment_intent_id={payment_intent_id}")
+            logger.info(f"buy credits success: user_id={user_id}, credits={credits_amount_str} micro dollar={micro_dollar_to_add}, payment_intent_id={payment_intent_id}")
             return {
                 'status': 'success',
                 'event_type': 'payment_intent.succeeded',
                 'user_id': user_id,
-                'credits_amount': credits_amount,
+                'credits_amount': micro_dollar_to_add,
                 'payment_type': 'credits_package'
             }
         
@@ -643,13 +645,14 @@ class StripeService:
                     credits_refunded = -int(
                         price_cfg.credits_amount
                         * abs(refund_amount_cents)
-                        / abs(price_cfg.amount_cents)
+                        / abs(price_cfg.amount_cents) // credits_amount * quantity
                     )
             except Exception as e:
                 logger.warning(f"退款计算Credits失败，price_id={price_id}: {e}")
                 credits_refunded = None
         
         # 回退：若没有价格配置，按原支付记录比例折算
+        # TODO, shoud not we use this as the refund policy as first priority?
         if credits_refunded is None and original_record and original_record.credits_amount and original_record.amount_cents:
             credits_refunded = -int(
                 abs(original_record.credits_amount)

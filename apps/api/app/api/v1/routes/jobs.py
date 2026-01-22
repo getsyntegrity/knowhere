@@ -2,6 +2,7 @@
 统一Jobs API路由（符合PRD规范）
 """
 
+from shared.core.billing import MicroDollar
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -611,7 +612,7 @@ async def list_jobs(
                     model=model,
                     ocr_enabled=ocr_enabled,
                     duration_seconds=duration_seconds,
-                    credits_spent=job.credits_charged if hasattr(job, "credits_charged") else 0,
+                    credits_spent=MicroDollar(job.credits_charged).to_ui_string() if hasattr(job, "credits_charged") else 0,
                 )
             )
 
@@ -757,7 +758,7 @@ async def get_job_result(
             model=model,
             ocr_enabled=ocr_enabled,
             duration_seconds=(job.updated_at - job.created_at).total_seconds() if job.updated_at and job.created_at else None,
-            credits_spent=job.credits_charged if hasattr(job, "credits_charged") else 0,
+            credits_spent=MicroDollar(job.credits_charged).to_ui_string() if hasattr(job, "credits_charged") else 0,
         )
 
         return response_data

@@ -1,6 +1,7 @@
 """
 Credits 管理服务
 """
+from shared.core.billing import MicroDollar
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -211,7 +212,7 @@ class CreditsService:
         return await self.add_credits(
             session, 
             user_id, 
-            amount, 
+            MicroDollar.from_dollars(amount), 
             f"新用户免费Credits ({user_type})"
         )
     
