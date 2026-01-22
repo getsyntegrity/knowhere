@@ -132,8 +132,7 @@ class StripeService:
                 "user_id": str(user_id),
                 "price_id": str(price_id),
                 "type": "credits_package",
-                # TODO, we need to display credit instead of micro dollar in stripe
-                "credits_amount": MicroDollar(config.credits_amount).to_credit() if config.credits_amount else None,
+                "credits_amount": str(config.credits_amount) if config.credits_amount else None,
                 "quantity": str(quantity),
             }
 
@@ -171,7 +170,7 @@ class StripeService:
             raise StripeServiceException(
                 internal_message=f"Stripe credits checkout session failed: {e}"
             )
-    # TODO, why user can input credits to topup?
+
     async def create_payment_intent(
         self, 
         user_id: str, 
@@ -187,7 +186,7 @@ class StripeService:
                 metadata={
                     'user_id': user_id,
                     'type': 'credits',
-                    'credits_amount': str(MicroDollar.from_dollars(credits_amount).amount)
+                    'credits_amount': str(credits_amount)
                 }
             )
             return {
@@ -652,7 +651,6 @@ class StripeService:
                 credits_refunded = None
         
         # 回退：若没有价格配置，按原支付记录比例折算
-        # TODO, shoud not we use this as the refund policy as first priority?
         if credits_refunded is None and original_record and original_record.credits_amount and original_record.amount_cents:
             credits_refunded = -int(
                 abs(original_record.credits_amount)

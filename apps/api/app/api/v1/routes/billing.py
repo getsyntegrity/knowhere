@@ -84,7 +84,6 @@ async def buy_credits(
     stripe_service = StripeService()
     
     try:
-        # @TODO, whats going on here?
         # 计算金额（100 Credits = ¥2，即1 Credit = ¥0.02）
         amount_cny = request.credits_amount * 0.02  # 人民币金额
         amount_cents = int(amount_cny * 100)  # 转换为分
@@ -92,7 +91,7 @@ async def buy_credits(
         payment_intent = await stripe_service.create_payment_intent(
             user_id=str(current_user.id),
             amount=amount_cents,
-            credits_amount=request.credits_amount,
+            credits_amount=MicroDollar.from_dollars(request.credits_amount),
             currency='cny'
         )
         
@@ -163,7 +162,6 @@ async def get_credits_balance(
         from app.repositories.subscription_repository import \
             SubscriptionRepository
         subscription_repo = SubscriptionRepository()
-        # TODO, need determine if a user can not have subscription?
         subscription = await subscription_repo.get_active_by_user_id(db, str(current_user.id))
         
         limit_micro_dollar = subscription.get_micro_dollar_limit() if subscription else MicroDollar.from_dollars(100).amount
