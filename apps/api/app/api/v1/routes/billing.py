@@ -84,7 +84,7 @@ async def buy_credits(
     stripe_service = StripeService()
     
     try:
-        // @TODO, whats going on here?
+        # @TODO, whats going on here?
         # 计算金额（100 Credits = ¥2，即1 Credit = ¥0.02）
         amount_cny = request.credits_amount * 0.02  # 人民币金额
         amount_cents = int(amount_cny * 100)  # 转换为分
@@ -138,7 +138,7 @@ async def get_current_subscription(
             "status": subscription.status,
             "start_date": subscription.start_date.isoformat(),
             "end_date": subscription.end_date.isoformat() if subscription.end_date else None,
-            "credits_limit": subscription.get_micro_dollar_limit().to_ui_string(),
+            "credits_limit": subscription.get_micro_dollar_limit().to_credit(),
             "stripe_subscription_id": subscription.stripe_subscription_id
         }
         
@@ -166,13 +166,13 @@ async def get_credits_balance(
         # TODO, need determine if a user can not have subscription?
         subscription = await subscription_repo.get_active_by_user_id(db, str(current_user.id))
         
-        limit_micro_dollar = subscription.get_micro_dollar_limit()
+        limit_micro_dollar = subscription.get_micro_dollar_limit() if subscription else MicroDollar.from_dollars(100).amount
         
         usage_percentage = (balance_micro_dollar / limit_micro_dollar * 100) if limit_micro_dollar > 0 else 0
 
         return CreditsBalanceResponse(
-            credits_balance=MicroDollar(balance_micro_dollar).to_ui_string(),
-            credits_limit=MicroDollar(limit_micro_dollar).to_ui_string(),
+            credits_balance=MicroDollar(balance_micro_dollar).to_credit(),
+            credits_limit=MicroDollar(limit_micro_dollar).to_credit(),
             usage_percentage=round(usage_percentage, 2)
         )
         
@@ -196,7 +196,7 @@ async def get_usage_stats(
         
         return UsageStatsResponse(
             period=stats["period"],
-            total_credits_used=MicroDollar(stats["total_used"]).to_ui_string(),
+            total_credits_used=MicroDollar(stats["total_used"]).to_credit(),
             api_calls_count=stats["transaction_count"],
             success_rate=95.0,  # TODO: 从使用日志计算实际成功率
             average_response_time=stats.get("avg_response_time", 0),
@@ -244,7 +244,11 @@ async def parse_usage_overview(
             .where(CreditsTransaction.user_id == user_id)
             .where(CreditsTransaction.transaction_type.in_(["usage", "refund"]))
         )
-        total_micro_credits_used = abs(credits_row.scalar_one() or 0) 
+        # Cast Decimal to int is safe here because:
+        # 1. Source column is BigInteger (whole numbers only)
+        # 2. Postgres returns Decimal to avoid overflow
+        # 3. Sum of integers has no fractional part, so int() is lossless
+        total_micro_credits_used = int(abs(credits_row.scalar_one() or 0)) 
 
 
         # 同比上月增长：最近30天 vs 前一个30天
@@ -293,8 +297,8 @@ async def parse_usage_overview(
         return ParseUsageResponse(
             request_total=total_requests or 0,
             mom_growth=round(mom_growth, 2),
-            credits_used=MicroDollar(total_micro_credits_used).to_ui_string() or 0,
-            estimated_amount=estimated_amount, // in dollar
+            credits_used=MicroDollar(total_micro_credits_used).to_credit() or 0,
+            estimated_amount=estimated_amount, # in dollar
             success_rate=round(success_rate, 2),
             avg_processing_time=avg_processing_time,
         )
@@ -319,7 +323,7 @@ async def get_transaction_history(
         transaction_list = [
             TransactionHistoryResponse(
                 id=tx.id,
-                credits_amount=MicroDollar(tx.credits_amount).to_ui_string(),
+                credits_amount=MicroDollar(tx.credits_amount).to_credit(),
                 transaction_type=tx.transaction_type,
                 description=tx.description,
                 created_at=tx.created_at
@@ -379,9 +383,9 @@ async def get_price_configs(
                         "id": config.plan_id,
                         "plan_id": config.plan_id,
                         "price_id": config.price_id,
-                        "name": config.extra_metadata.get('display_name', f"{MicroDollar(config.credits_amount).to_ui_string()} Credits") if config.extra_metadata else f"{MicroDollar(config.credits_amount).to_ui_string()} Credits",
+                        "name": config.extra_metadata.get('display_name', f"{MicroDollar(config.credits_amount).to_credit()} Credits") if config.extra_metadata else f"{MicroDollar(config.credits_amount).to_credit()} Credits",
                         "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
-                        "credits_amount": MicroDollar(config.credits_amount).to_ui_string(),
+                        "credits_amount": MicroDollar(config.credits_amount).to_credit(),
                         "amount_cents": config.amount_cents,
                         "currency": config.currency,
                         "metadata": config.extra_metadata or {}
@@ -416,9 +420,9 @@ async def get_price_configs(
                         "id": config.plan_id,
                         "plan_id": config.plan_id,
                         "price_id": config.price_id,
-                        "name": config.extra_metadata.get('display_name', f"{MicroDollar(config.credits_amount).to_ui_string()} Credits") if config.extra_metadata else f"{MicroDollar(config.credits_amount).to_ui_string()} Credits",
+                        "name": config.extra_metadata.get('display_name', f"{MicroDollar(config.credits_amount).to_credit()} Credits") if config.extra_metadata else f"{MicroDollar(config.credits_amount).to_credit()} Credits",
                         "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
-                        "credits_amount": MicroDollar(config.credits_amount).to_ui_string(),
+                        "credits_amount": MicroDollar(config.credits_amount).to_credit(),
                         "amount_cents": config.amount_cents,
                         "currency": config.currency,
                         "metadata": config.extra_metadata or {}

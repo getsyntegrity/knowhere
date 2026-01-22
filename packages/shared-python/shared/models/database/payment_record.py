@@ -29,7 +29,7 @@ class PaymentRecord(Base):
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)  # 支付金额（分）
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default='CNY')
     status: Mapped[str] = mapped_column(String(50), nullable=False)  # pending/succeeded/failed
-    credits_amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # Micro-credits (1 display credit = 1,000,000 micros)
+    credits_amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # Micro-dollars (1 display credit = 1,000,000 micros)
     plan_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # 计划ID（仅subscription类型）
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # Stripe订阅ID（仅subscription类型）
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 处理时间

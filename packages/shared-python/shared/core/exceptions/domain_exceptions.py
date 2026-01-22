@@ -144,7 +144,7 @@ class InsufficientCreditsException(KnowhereException):
             details["required_credits"] = required_credits
         if current_balance is not None:
             details["current_balance"] = current_balance
-            
+
         super().__init__(
             code=ErrorCode.PAYMENT_REQUIRED,
             internal_message=internal_message or user_message,

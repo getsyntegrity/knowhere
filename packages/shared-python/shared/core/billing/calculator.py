@@ -14,7 +14,7 @@ class BillingCalculator:
     Per-page billing calculator.
     
     Calculates document processing costs in micro-credits.
-    Uses settings.CREDITS_IN_MICRO_DOLLARS_PER_PAGE for pricing.
+    Uses settings.MICRO_DOLLARS_PER_PAGE for pricing.
     
     Example:
         calc = BillingCalculator()
@@ -28,9 +28,9 @@ class BillingCalculator:
         
         Args:
             price_per_page_micros: Price per page in micro-credits.
-                                   Defaults to settings.CREDITS_IN_MICRO_DOLLARS_PER_PAGE
+                                   Defaults to settings.MICRO_DOLLARS_PER_PAGE
         """
-        self._price_per_page = price_per_page_micros or settings.CREDITS_IN_MICRO_DOLLARS_PER_PAGE
+        self._price_per_page = price_per_page_micros or settings.MICRO_DOLLARS_PER_PAGE
     
     @property
     def price_per_page(self) -> MicroDollar:

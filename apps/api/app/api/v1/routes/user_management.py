@@ -61,7 +61,7 @@ async def get_credits_balance(
     """获取用户Credits余额"""
     try:
         balance = await credits_service.get_balance(db, current_user.id)
-        return {"user_id": current_user.id, "credits_balance": MicroDollar(balance).to_ui_string()}
+        return {"user_id": current_user.id, "credits_balance": MicroDollar(balance).to_credit()}
     except Exception as e:
         raise WorkerHandlingException(
             internal_message=f"获取Credits余额失败: {str(e)}"
@@ -84,7 +84,7 @@ async def get_credits_transactions(
         display_transactions = [
             {
                 **tx,
-                "credits_amount": MicroDollar(tx["credits_amount"]).to_ui_string()
+                "credits_amount": MicroDollar(tx["credits_amount"]).to_credit()
             }
             for tx in transactions
         ]

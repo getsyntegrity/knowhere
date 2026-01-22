@@ -133,7 +133,7 @@ class StripeService:
                 "price_id": str(price_id),
                 "type": "credits_package",
                 # TODO, we need to display credit instead of micro dollar in stripe
-                "credits_amount": MicroDollar(config.credits_amount).to_ui_string() if config.credits_amount else None,
+                "credits_amount": MicroDollar(config.credits_amount).to_credit() if config.credits_amount else None,
                 "quantity": str(quantity),
             }
 

@@ -15,10 +15,8 @@ Usage:
     user.credits_balance = cost.amount
     
     # To frontend display
-    display_credits = cost.to_ui_string()  # Returns int for display
+    display_credits = cost.to_credit()  # Returns int for display
 """
-from decimal import Decimal
-
 
 class MicroDollar:
     """
@@ -73,45 +71,6 @@ class MicroDollar:
             MicroDollar.from_dollars(1) -> MicroDollar(1_000_000)
         """
         return cls(amount * cls.SCALE)
-
-    @classmethod
-    def from_float(cls, amount: float) -> "MicroDollar":
-        """
-        Convert a float dollar amount to MicroDollar.
-        
-        WARNING: Use only for user input conversion. Internal calculations
-        should use integer arithmetic exclusively.
-        
-        Args:
-            amount: Dollar amount as float (e.g., 0.0015 for $0.0015)
-            
-        Returns:
-            MicroDollar instance
-            
-        Example:
-            MicroDollar.from_float(0.0015) -> MicroDollar(1500)
-        """
-        d = Decimal(str(amount))
-        micros = int(d * cls.SCALE)
-        return cls(micros)
-
-    @classmethod
-    def from_cents(cls, cents: int) -> "MicroDollar":
-        """
-        Convert cents to MicroDollar.
-        
-        Args:
-            cents: Amount in cents (100 cents = $1.00)
-            
-        Returns:
-            MicroDollar instance
-            
-        Example:
-            MicroDollar.from_cents(150) -> MicroDollar(1_500_000) = $1.50
-        """
-        if not isinstance(cents, int):
-            raise TypeError(f"Cents must be an integer, got {type(cents).__name__}")
-        return cls(cents * 10_000)  # 1 cent = 10,000 micros
 
     @classmethod
     def zero(cls) -> "MicroDollar":
@@ -204,22 +163,22 @@ class MicroDollar:
 
     def __repr__(self) -> str:
         """Developer-friendly representation."""
-        return f"<MicroDollar: {self._amount} (${self._amount / self.SCALE:.6f})>"
+        return f"<MicroDollar: {self._amount} ({self._amount / self.SCALE:.2f})>"
 
     def __str__(self) -> str:
         """User-friendly string."""
-        return f"${self._amount / self.SCALE:.6f}"
+        return f"{self._amount / self.SCALE:.2f}"
 
-    def to_ui_string(self) -> int:
+    def to_credit(self) -> float:
         """
         Convert micro-credits to display credits for frontend.
         
         1 display credit = 1,000,000 micro-credits = $1.00
         
         Returns:
-            Integer display credits (rounded down)
+            Float display credits with 4 decimal precision (e.g., 10.0005)
         """
-        return self._amount // self.SCALE
+        return round(self._amount / self.SCALE, 4)
 
     def to_dollars(self) -> float:
         """
@@ -229,12 +188,3 @@ class MicroDollar:
             Float dollar amount
         """
         return self._amount / self.SCALE
-
-    def to_dollars_string(self) -> str:
-        """
-        Format as dollar string for display.
-        
-        Returns:
-            String like "$0.001500"
-        """
-        return f"${self._amount / self.SCALE:.6f}"

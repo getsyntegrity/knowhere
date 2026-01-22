@@ -60,7 +60,7 @@ async def get_current_user_info(request: Request, user: User = Depends(get_curre
         "user_type": user.user_type,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
-        "credits_balance": MicroDollar(user.credits_balance).to_ui_string(),
+        "credits_balance": MicroDollar(user.credits_balance).to_credit(),
         "avatar_url": user.avatar_url,
         "phone": user.phone,
         "create_time": user.create_time

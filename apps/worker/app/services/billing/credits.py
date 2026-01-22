@@ -13,7 +13,7 @@ from shared.core.billing import MicroDollar
 async def deduct_credits(
     session: AsyncSession,
     user_id: str, 
-    amount: MicroDollar, 
+    micro_dollar: MicroDollar, 
     description: str
 ) -> bool:
     """
@@ -28,7 +28,7 @@ async def deduct_credits(
     Returns:
         True if successful, False if insufficient balance
     """
-    amount_micros = amount.amount
+    amount_micros = micro_dollar.amount
     
     # Check current balance
     balance_result = await session.execute(

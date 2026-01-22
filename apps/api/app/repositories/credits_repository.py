@@ -132,11 +132,15 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
         )
         
         purchase_stats = purchase_result.first()
-        
+
         return {
             "period": period,
-            "total_used": abs(usage_stats.total_used or 0),
-            "total_purchased": purchase_stats.total_purchased or 0,
+            # Cast Decimal to int is safe here because:
+            # 1. Source column is BigInteger (whole numbers only)
+            # 2. Postgres returns Decimal to avoid overflow
+            # 3. Sum of integers has no fractional part, so int() is lossless
+            "total_used": int(abs(usage_stats.total_used or 0)),
+            "total_purchased": int(purchase_stats.total_purchased or 0),
             "transaction_count": usage_stats.transaction_count or 0,
             "purchase_count": purchase_stats.purchase_count or 0,
             "start_date": start_date,
@@ -163,4 +167,8 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
             .where(PaymentRecord.credits_amount.isnot(None))
             .where(PaymentRecord.created_at >= cutoff)
         )
-        return result.scalar_one() or 0
+        # Cast Decimal to int is safe here because:
+        # 1. Source column is BigInteger (whole numbers only)
+        # 2. Postgres returns Decimal to avoid overflow
+        # 3. Sum of integers has no fractional part, so int() is lossless
+        return int(result.scalar_one() or 0)

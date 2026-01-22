@@ -66,7 +66,7 @@ async def google_login(
                 "username": user.username,
                 "avatar_url": user.avatar_url,
                 "user_type": user.user_type,
-                "credits_balance": MicroDollar(user.credits_balance).to_ui_string()
+                "credits_balance": MicroDollar(user.credits_balance).to_credit()
             }
         )
         
@@ -119,7 +119,7 @@ async def apple_login(
                 "username": user.username,
                 "avatar_url": user.avatar_url,
                 "user_type": user.user_type,
-                "credits_balance": MicroDollar(user.credits_balance).to_ui_string()
+                "credits_balance": MicroDollar(user.credits_balance).to_credit()
             }
         )
         
@@ -172,7 +172,7 @@ async def github_login(
                 "username": user.username,
                 "avatar_url": user.avatar_url,
                 "user_type": user.user_type,
-                "credits_balance": MicroDollar(user.credits_balance).to_ui_string()
+                "credits_balance": MicroDollar(user.credits_balance).to_credit()
             }
         )
         

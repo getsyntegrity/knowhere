@@ -60,7 +60,7 @@ class Job(Base):
     
     # Billing Information (Per-Page Billing)
     page_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Calculated page count for billing")
-    credits_charged: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False, comment="In micro-credits: $1.00 = 1,000,000")
+    credits_charged: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False, comment="In micro-dollars: $1.00 = 1,000,000")
     billing_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False, comment="pending, charged, billing_failed, refunded")
     
     # 关系

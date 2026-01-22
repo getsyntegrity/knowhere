@@ -15,7 +15,7 @@ from app.core.dependencies import get_current_user_dual_auth, get_db
 from shared.core.state_machine.states import JobStatus
 from shared.models.database.user import User
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
-                                    JobResponse, JobResult, JobResultResponse)
+                                    JobResponse, JobResultResponse)
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
@@ -596,7 +596,7 @@ async def list_jobs(
                 duration_seconds = (job.updated_at - job.created_at).total_seconds()
             
             job_responses.append(
-                JobResult(
+                JobResultResponse(
                     job_id=job.job_id,
                     status=status_for_api,
                     source_type=job.source_type,
@@ -612,7 +612,7 @@ async def list_jobs(
                     model=model,
                     ocr_enabled=ocr_enabled,
                     duration_seconds=duration_seconds,
-                    credits_spent=MicroDollar(job.credits_charged).to_ui_string() if hasattr(job, "credits_charged") else 0,
+                    credits_spent=MicroDollar(job.credits_charged).to_credit() if hasattr(job, "credits_charged") else 0,
                 )
             )
 
@@ -758,7 +758,7 @@ async def get_job_result(
             model=model,
             ocr_enabled=ocr_enabled,
             duration_seconds=(job.updated_at - job.created_at).total_seconds() if job.updated_at and job.created_at else None,
-            credits_spent=MicroDollar(job.credits_charged).to_ui_string() if hasattr(job, "credits_charged") else 0,
+            credits_spent=MicroDollar(job.credits_charged).to_credit() if hasattr(job, "credits_charged") else 0,
         )
 
         return response_data

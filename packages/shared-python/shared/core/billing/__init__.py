@@ -17,7 +17,7 @@ Usage:
     job.credits_charged = cost.amount
     
     # To frontend display (1M micros = 1 display credit)
-    display_credits = balance.to_ui_string()
+    display_credits = balance.to_credit()
 """
 from .micro_dollar import MicroDollar
 from .calculator import BillingCalculator

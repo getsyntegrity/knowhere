@@ -1,9 +1,10 @@
 """
 订阅计划数据模型
 """
+from __future__ import annotations
+
 from shared.core.billing import MicroDollar
 from shared.core.exceptions.domain_exceptions import UndefinedSubscriptionPlanException
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -43,7 +44,6 @@ class Subscription(Base):
         return self.status == "active" and (self.end_date is None or self.end_date > datetime.utcnow())
     
     def get_micro_dollar_limit(self) -> int:
-        """获取Credits限制"""
         credits_map = {
             "free": MicroDollar.from_dollars(100).amount,
             "plus": MicroDollar.from_dollars(1000).amount,
