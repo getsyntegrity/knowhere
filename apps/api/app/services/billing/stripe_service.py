@@ -187,7 +187,7 @@ class StripeService:
                 metadata={
                     'user_id': user_id,
                     'type': 'credits',
-                    'credits_amount': str(credits_amount)
+                    'credits_amount': str(MicroDollar.from_dollars(credits_amount).amount)
                 }
             )
             return {
@@ -461,13 +461,13 @@ class StripeService:
                 await db.commit()
                 return {'status': 'error', 'message': 'Missing credits_amount'}
             
-            micro_dollar_to_add = MicroDollar.from_dollars(int(credits_amount_str))
-            
+            credits_amount = int(credits_amount_str)
+
             # 更新支付记录的extra_metadata，添加商品信息
             payment_record.extra_metadata = {
                 **payment_metadata,
-                'product_description': f"Credits包 - {credits_amount_str} Credits",
-                'credits_amount': micro_dollar_to_add,
+                'product_description': f"Credits package - {credits_amount} Credits",
+                'credits_amount': credits_amount,
                 'payment_method': 'payment_intent'  # 标识这是通过PaymentIntent购买的
             }
             
@@ -480,24 +480,24 @@ class StripeService:
             await self.credits_service.add_credits(
                 db,
                 user_id,
-                micro_dollar_to_add,
-                f"buy credits - {credits_amount_str} Credits",
+                credits_amount,
+                f"buy credits - {credits_amount} Credits",
                 stripe_payment_id=payment_intent_id
             )
             
             # 更新支付记录
             payment_record.status = 'succeeded'
-            payment_record.credits_amount = micro_dollar_to_add
+            payment_record.credits_amount = credits_amount
             payment_record.processed_at = datetime.utcnow()
             await db.commit()
             await db.refresh(payment_record)
             
-            logger.info(f"buy credits success: user_id={user_id}, credits={credits_amount_str} micro dollar={micro_dollar_to_add}, payment_intent_id={payment_intent_id}")
+            logger.info(f"buy credits success: user_id={user_id}, credits={credits_amount}, payment_intent_id={payment_intent_id}")
             return {
                 'status': 'success',
                 'event_type': 'payment_intent.succeeded',
                 'user_id': user_id,
-                'credits_amount': micro_dollar_to_add,
+                'credits_amount': credits_amount,
                 'payment_type': 'credits_package'
             }
         

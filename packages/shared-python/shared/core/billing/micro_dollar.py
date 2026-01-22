@@ -167,7 +167,7 @@ class MicroDollar:
 
     def __str__(self) -> str:
         """User-friendly string."""
-        return f"{self._amount / self.SCALE:.2f}"
+        return f"<MicroDollar: {self._amount} ({self._amount / self.SCALE:.2f})>"
 
     def to_credit(self) -> float:
         """
