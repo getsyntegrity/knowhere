@@ -195,26 +195,56 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
     batch_id = result["data"]["batch_id"]
     upload_url = result["data"]["file_urls"][0]
 
-    logger.info(f"Transferring file {filename} from S3 to MinerU via temp file...")
+    logger.info(f"Transferring file {filename} to MinerU...")
     
-    # File is guaranteed to be local (downloaded in kb_tasks.py)
-    logger.info(f"Uploading local file {pdf_url} to MinerU...")
-    try:
-        with open(pdf_url, "rb") as f:
-            upload_res = requests.put(
-                upload_url, 
-                data=f, 
-                timeout=MINERU_UPLOAD_TIMEOUT
-            )
+    # Support both local files and remote URLs
+    if is_remote(pdf_url):
+        # Remote URL: download to temp file first, then upload
+        import tempfile
+        logger.info(f"Downloading remote file {pdf_url} to temp file...")
+        try:
+            download_res = requests.get(pdf_url, stream=True, timeout=APIConstants.S3_FILE_DOWNLOAD_TIMEOUT)
+            download_res.raise_for_status()
             
-        if upload_res.status_code != 200:
-            raise MinerUServiceException(
-                internal_message=f"Failed to upload file to MinerU: {upload_res.text}",
-                status_code=upload_res.status_code
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
+                for chunk in download_res.iter_content(chunk_size=8192):
+                    tmp_file.write(chunk)
+                tmp_path = tmp_file.name
+            
+            logger.info(f"Uploading temp file {tmp_path} to MinerU...")
+            with open(tmp_path, "rb") as f:
+                upload_res = requests.put(
+                    upload_url, 
+                    data=f, 
+                    timeout=MINERU_UPLOAD_TIMEOUT
+                )
+            
+            # Clean up temp file
+            os.unlink(tmp_path)
+            
+        except requests.RequestException as e:
+            raise StorageServiceException(
+                internal_message=f"Failed to download remote file: {e}"
             )
-    except IOError as e:
-        raise StorageServiceException(
-            internal_message=f"Failed to read local file: {e}"
+    else:
+        # Local file: upload directly
+        logger.info(f"Uploading local file {pdf_url} to MinerU...")
+        try:
+            with open(pdf_url, "rb") as f:
+                upload_res = requests.put(
+                    upload_url, 
+                    data=f, 
+                    timeout=MINERU_UPLOAD_TIMEOUT
+                )
+        except IOError as e:
+            raise StorageServiceException(
+                internal_message=f"Failed to read local file: {e}"
+            )
+    
+    if upload_res.status_code != 200:
+        raise MinerUServiceException(
+            internal_message=f"Failed to upload file to MinerU: {upload_res.text}",
+            status_code=upload_res.status_code
         )
 
     logger.info(f"File: {filename} uploaded successfully, waiting for parsing...")

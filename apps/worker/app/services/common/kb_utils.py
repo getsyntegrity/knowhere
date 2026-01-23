@@ -122,11 +122,85 @@ def process_path_texts(path_, last=50):
     return '_'.join(temp_path.split(os.sep))[:last]
 
 def process_dup_paths_df(df):
-    """处理重复路径的DataFrame"""
-    if df['path'].duplicated(keep=False).any():
-        df['count'] = df.groupby('path').cumcount() + 1
-        df['path'] = df.apply(lambda x: f"{x['path']}_{x['count']}" if x['count'] > 1 else x['path'], axis=1)
-        df.drop(columns=['count'], inplace=True)
+    """
+    de-duplicate kbs dataframe for final output
+    
+    Args:
+        df: initial dataframe after all heading stacking
+    
+    Returns:
+        Dataframe without any duplicate paths
+    """
+    if 'path' not in df.columns:
+        return df
+    
+    split_char = settings.SPLIT_CHAR or "/"
+    
+    # Step 1: detect if there are any duplicated paths
+    dup_mask = df['path'].duplicated(keep=False)
+    if not dup_mask.any():
+        return df
+    
+    # Step 2: record ids of duplicated paths as a mapping
+    path_occurrences = {}  # path -> list of row indices
+    for idx, path in enumerate(df['path']):
+        if path not in path_occurrences:
+            path_occurrences[path] = []
+        path_occurrences[path].append(idx)
+    
+    # path_renames: row_index -> new_path (recording rows renamed)
+    # parent_rename_map: original_path -> {row_index: new_path}
+    path_renames = {}
+    parent_rename_map = {}
+    
+    for path, indices in path_occurrences.items():
+        if len(indices) > 1:  # only process duplicated paths
+            parent_rename_map[path] = {}
+            for occurrence, idx in enumerate(indices):
+                if occurrence == 0:
+                    # keep the first appearance as it is
+                    path_renames[idx] = path
+                else:
+                    # add suffix to subsequent appearances
+                    new_path = f"{path}_{occurrence + 1}"
+                    path_renames[idx] = new_path
+                    parent_rename_map[path][idx] = new_path
+    
+    # Step 3: process all rows, update paths
+    new_paths = []
+    
+    for idx, row in df.iterrows():
+        path = row['path']
+        
+        # 检查这行本身是否需要重命名
+        new_path = path_renames.get(idx, path)
+        path_parts = new_path.split(split_char)
+        
+        # 检查这行的路径是否是某个被重命名父路径的子路径
+        for parent_path, rename_info in parent_rename_map.items():
+            parent_parts = parent_path.split(split_char)
+            
+            # 检查当前路径是否以此父路径开头（且不是父路径本身）
+            if (len(path_parts) > len(parent_parts) and 
+                path_parts[:len(parent_parts)] == parent_parts):
+                
+                # 找到在当前行之前、最近的被重命名的父路径
+                matching_parent_idx = None
+                for parent_idx in sorted(rename_info.keys(), reverse=True):
+                    if parent_idx < idx:
+                        matching_parent_idx = parent_idx
+                        break
+                
+                if matching_parent_idx is not None:
+                    renamed_parent = rename_info[matching_parent_idx]
+                    renamed_parent_parts = renamed_parent.split(split_char)
+                    new_path_parts = renamed_parent_parts + path_parts[len(parent_parts):]
+                    new_path = split_char.join(new_path_parts)
+                    break    
+        new_paths.append(new_path)
+    
+    df = df.copy()
+    df['path'] = new_paths
     return df
 
 def remove_spaces(text, handle_punctuation=False):

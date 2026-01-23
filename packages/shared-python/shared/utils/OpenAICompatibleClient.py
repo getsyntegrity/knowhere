@@ -40,8 +40,8 @@ class OpenAICompatibleClient:
         
         Args:
             redis_service: Redis service instance for session management (optional)
-            api_key: API key, defaults to settings.DS_KEY
-            api_url: API URL, defaults to settings.DS_URL
+            api_key: API key, if not provided will auto-route based on model name
+            api_url: API URL, if not provided will auto-route based on model name
             default_model: Default model name, defaults to settings.NORMOL_MODEL
             timeout: Request timeout in seconds
             skip_redis: Whether to skip Redis (local debug mode)
@@ -53,13 +53,64 @@ class OpenAICompatibleClient:
             from shared.services.redis import RedisServiceFactory
             self.redis_service = redis_service or RedisServiceFactory.get_service()
         
-        # Support custom configuration, use defaults if not provided
-        self.api_key = api_key or settings.DS_KEY
-        self.api_url = api_url or settings.DS_URL
+        # Get model name for routing
         self.default_model = default_model or getattr(settings, 'NORMOL_MODEL', 'deepseek-chat')
+        
+        # Auto-route API based on model name (if api_key/api_url not explicitly provided)
+        resolved_key, resolved_url = self._resolve_api_config(
+            model_name=self.default_model,
+            api_key=api_key,
+            api_url=api_url
+        )
+        
+        self.api_key = resolved_key
+        self.api_url = resolved_url
         self.timeout = timeout
         
         logger.debug(f"Initializing OpenAI-compatible client: URL={self.api_url}, Model={self.default_model}, Redis={'enabled' if self.redis_service else 'disabled'}")
+    
+    def _resolve_api_config(self, model_name: str, api_key: Optional[str], api_url: Optional[str]) -> tuple:
+        """
+        Resolve API key and URL based on model name
+        
+        Routing rules:
+        - qwen* / qwen3-max / qwen-* → ALI_API_KEY + ALI_URL
+        - doubao* / ep-* → ARK_API_KEY + ARK_URL  
+        - deepseek* / default → DS_KEY + DS_URL
+        
+        Returns:
+            tuple: (api_key, api_url)
+        """
+        # If both explicitly provided, use them directly
+        if api_key and api_url:
+            return api_key, api_url
+        
+        model_lower = (model_name or '').lower()
+        
+        # Qwen models → Aliyun DashScope
+        if 'qwen' in model_lower:
+            resolved_key = api_key or getattr(settings, 'ALI_API_KEY', None)
+            ali_base = getattr(settings, 'ALI_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+            # Ensure URL has /chat/completions suffix
+            if ali_base and not ali_base.endswith('/chat/completions'):
+                resolved_url = api_url or f"{ali_base}/chat/completions"
+            else:
+                resolved_url = api_url or ali_base
+            logger.debug(f"Model '{model_name}' routed to Aliyun DashScope")
+            return resolved_key, resolved_url
+        
+        # Doubao/Ark models → Volcano Engine
+        if 'doubao' in model_lower or model_lower.startswith('ep-'):
+            resolved_key = api_key or getattr(settings, 'ARK_API_KEY', None)
+            resolved_url = api_url or getattr(settings, 'ARK_URL', None)
+            logger.debug(f"Model '{model_name}' routed to Volcano Ark")
+            return resolved_key, resolved_url
+        
+        # Default: DeepSeek
+        resolved_key = api_key or settings.DS_KEY
+        resolved_url = api_url or settings.DS_URL
+        logger.debug(f"Model '{model_name}' routed to DeepSeek (default)")
+        return resolved_key, resolved_url
 
     async def get_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
         """Get the state of a specific conversation from Redis"""

@@ -67,16 +67,34 @@ def build_prompt(task, texts, query, **kwargs):
         top_p = 0.01
         max_depth = kwargs['paras']['max_depth']
         max_tokens = kwargs['paras']['max_tokens']
+        toc_context = kwargs['paras'].get('toc_context', '')
+        
+        # 构建 TOC 参考部分（如果有）
+        if toc_context:
+            toc_section = f"""
+        ***Reference: Table of Contents (TOC)***
+        The following is the document's table of contents with predefined levels. Use this as a reference when assigning levels:
+        
+        '''
+        {toc_context}
+        '''
+        
+        - If a row's heading matches a TOC entry, use the TOC's predefined level
+        - If a row appears to be a sub-section of a TOC entry, assign a deeper level
+        - IMPORTANT: If a row does NOT appear in the TOC, it CANNOT be assigned the same level or a higher level than any TOC entry. It should be either body text (level = -1) or a sub-section with a deeper level than the nearest TOC heading above it
+        """
+        else:
+            toc_section = ""
 
         prompt = f"""
-        You are a document structure auditing expert. You will receive an HTML table with multiple rows of text, where each row may be a heading or body text, including:
+        You are a document structure auditing expert. You will receive an HTML table with text rows, where each row may be a heading or body text, including:
         1. id column: line number
         2. heading column: text content
         3. level column: preliminary estimated level (may be inaccurate), as follows:
-            1 represents `<h1>`, 2 represents `<h2>`, and so on
+            1 represents `<h1>` (the highest level), 2 represents `<h2>`, and so on
             -1 indicates the text is estimated as "body text", not a heading
             Not Sure indicates the level is undetermined
-
+        {toc_section}
         Data:
         '''
         {texts}
@@ -243,29 +261,25 @@ def build_prompt(task, texts, query, **kwargs):
 
         prompt = f"""You are a document analysis expert. You need to identify the actual start and end positions of the table of contents from the candidate region.
 
-        [Candidate Region Information]
-        - Candidate region start line number: {start_idx}
-        - Candidate region end line number: {end_idx}
-
         [Candidate Region Content]
+        The following table shows candidate lines with their id (0-indexed) and content:
         {texts}
 
         [Judgment Rules]
-        Please analyze the above content and find the actual start and end line numbers of the table of contents region:
+        Please analyze the above content and find the actual start and end line ids of the table of contents region:
 
         1. **TOC Line Characteristics**:
         - Starts with "Table of Contents", "Contents", "目录", "目次", etc.
         - Usually contains chapter numbers or serial numbers (e.g., "1.", "Chapter 1", "一、", "第一章", etc.)
         - Contains heading text, usually with page numbers at the end
         - Format is relatively uniform and neat, with ellipsis "..." possible in the middle of line text
-        - Most line numbers are consecutive
         - TOC region should include the line containing keywords like "Table of Contents", "Contents", "目录" if they exist
 
         [Output Format]
         Output in JSON format:
         {{
-            "toc_start": number,  // TOC content start line number (absolute line number)
-            "toc_end": number,    // TOC content end line number (absolute line number)
+            "toc_start": number,  // TOC start id (must be in range {start_idx} to {end_idx})
+            "toc_end": number,    // TOC end id (must be in range {start_idx} to {end_idx})
             "confidence": "high" | "medium" | "low"  // Confidence level
         }}
 

@@ -199,7 +199,6 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
                 base_level = current_heading_level
             
             adjusted_level = current_heading_level - base_level + 1
-            # sxjg: use (heading, level) tuples for path_stack
             path_stack = [(h, lvl) for h, lvl in path_stack if lvl < adjusted_level]
             path_stack.append((current_heading, adjusted_level))
             
