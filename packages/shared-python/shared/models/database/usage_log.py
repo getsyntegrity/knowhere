@@ -23,7 +23,7 @@ class UsageLog(Base):
     api_key_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     method: Mapped[str] = mapped_column(String(10), nullable=False)
-    credits_used: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    credits_used: Mapped[int] = mapped_column(Integer, default=1, nullable=False) # micro dollars
     response_time: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 毫秒
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)

@@ -568,10 +568,11 @@ async def _parse_async(job_id: str, user_id: str):
         if job and getattr(job, "billing_status", "") == "charged":
             logger.info(f"Job already charged: {job_id}")
         else:
-            # Deduct credits
-            credits_required = page_count * settings.CREDITS_PER_PAGE
-            description = f"Document processing: {filename or 'file'} ({page_count} pages @ {settings.CREDITS_PER_PAGE} credits/page)"
-            billing_success = await deduct_credits(db, job_user_id, credits_required, description)
+            # Calculate billing using BillingCalculator
+            from shared.core.billing import BillingCalculator
+            billing_calc = BillingCalculator()
+            micro_dollar_required = billing_calc.calculate_page_cost(page_count)
+            billing_success = await deduct_credits(db, job_user_id, micro_dollar_required, billing_calc.format_description(page_count, filename))
             
             if not billing_success:
                 logger.error(f"Billing failed: job_id={job_id}, user_id={job_user_id}")
@@ -584,19 +585,19 @@ async def _parse_async(job_id: str, user_id: str):
                     await db.commit()
                     
                 raise InsufficientCreditsException(
-                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {credits_required}).",
-                    required_credits=credits_required,
+                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required}).",
+                    required_credits=micro_dollar_required.amount,
                     internal_message="Insufficient credits"
                 )
             
             # Update job billing info
             if job:
                 job.page_count = page_count
-                job.credits_charged = credits_required
+                job.credits_charged = micro_dollar_required.amount
                 job.billing_status = "charged"
             
             await db.commit()
-            logger.info(f"Billing successful: job_id={job_id}, credits_charged={page_count}")
+            logger.info(f"Billing successful: job_id={job_id}, credits_charged={micro_dollar_required.amount}")
     
     # Store in Redis
     await metadata_service.update_metadata(job_id, {

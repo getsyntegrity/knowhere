@@ -1,6 +1,7 @@
 """
 Stripe 支付服务
 """
+from shared.core.billing import MicroDollar
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -169,7 +170,7 @@ class StripeService:
             raise StripeServiceException(
                 internal_message=f"Stripe credits checkout session failed: {e}"
             )
-    
+
     async def create_payment_intent(
         self, 
         user_id: str, 
@@ -460,11 +461,11 @@ class StripeService:
                 return {'status': 'error', 'message': 'Missing credits_amount'}
             
             credits_amount = int(credits_amount_str)
-            
+
             # 更新支付记录的extra_metadata，添加商品信息
             payment_record.extra_metadata = {
                 **payment_metadata,
-                'product_description': f"Credits包 - {credits_amount} Credits",
+                'product_description': f"Credits package - {credits_amount} Credits",
                 'credits_amount': credits_amount,
                 'payment_method': 'payment_intent'  # 标识这是通过PaymentIntent购买的
             }
@@ -479,7 +480,7 @@ class StripeService:
                 db,
                 user_id,
                 credits_amount,
-                f"购买Credits包 - {credits_amount} Credits",
+                f"buy credits - {credits_amount} Credits",
                 stripe_payment_id=payment_intent_id
             )
             
@@ -490,7 +491,7 @@ class StripeService:
             await db.commit()
             await db.refresh(payment_record)
             
-            logger.info(f"Credits购买成功: user_id={user_id}, credits={credits_amount}, payment_intent_id={payment_intent_id}")
+            logger.info(f"buy credits success: user_id={user_id}, credits={credits_amount}, payment_intent_id={payment_intent_id}")
             return {
                 'status': 'success',
                 'event_type': 'payment_intent.succeeded',
@@ -643,7 +644,7 @@ class StripeService:
                     credits_refunded = -int(
                         price_cfg.credits_amount
                         * abs(refund_amount_cents)
-                        / abs(price_cfg.amount_cents)
+                        / abs(price_cfg.amount_cents) // credits_amount * quantity
                     )
             except Exception as e:
                 logger.warning(f"退款计算Credits失败，price_id={price_id}: {e}")

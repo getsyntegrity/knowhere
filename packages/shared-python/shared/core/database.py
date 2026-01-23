@@ -21,7 +21,7 @@ ssl_connect_args = settings.get_async_ssl_connect_args()
 
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=True, # 取消注释以在控制台打印 SQL 语句，用于调试
+    # echo=True, # 取消注释以在控制台打印 SQL 语句，用于调试
     # 连接池配置
     pool_size=ProcessingConstants.DB_POOL_SIZE,
     max_overflow=ProcessingConstants.DB_MAX_OVERFLOW,

@@ -24,30 +24,18 @@ class BuyCreditsPackageRequest(BaseModel):
     price_id: str = Field(..., description="Stripe价格ID")
     quantity: int = Field(default=1, gt=0, description="购买数量")
 
-class SubscriptionResponse(BaseModel):
-    """订阅信息响应"""
-    id: str
-    plan_type: str
-    status: str
-    start_date: datetime
-    end_date: Optional[datetime]
-    credits_limit: int
-    
-    class Config:
-        from_attributes = True
-
 
 class CreditsBalanceResponse(BaseModel):
     """Credits余额响应"""
-    credits_balance: int
-    credits_limit: int
+    credits_balance: float
+    credits_limit: float
     usage_percentage: float
 
 
 class UsageStatsResponse(BaseModel):
     """使用统计响应"""
     period: str
-    total_credits_used: int
+    total_credits_used: float
     api_calls_count: int
     success_rate: float
     average_response_time: float
@@ -57,7 +45,7 @@ class UsageStatsResponse(BaseModel):
 class TransactionHistoryResponse(BaseModel):
     """交易历史响应"""
     id: str
-    credits_amount: int
+    credits_amount: float
     transaction_type: str
     description: Optional[str]
     created_at: datetime
