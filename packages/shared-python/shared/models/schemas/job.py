@@ -71,35 +71,6 @@ class StandardErrorObject(BaseModel):
     details: Optional[Dict[str, Any]] = Field(None, description="Additional error details (violations, retry_after, etc.)")
 
 
-class JobResult(BaseModel):
-    """Job status query response"""
-
-    job_id: str = Field(..., description="Job ID")
-    status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="Job status")
-    source_type: str = Field(..., description="File source type")
-    data_id: Optional[str] = Field(None, description="User-defined ID")
-    created_at: datetime = Field(..., description="Creation time")
-
-    # Status-related fields
-    progress: Optional[Dict[str, Any]] = Field(None, description="Progress information")
-    
-    # Error field - uses StandardErrorObject for embedded error pattern
-    # When status == "failed", this contains the error details
-    error: Optional[StandardErrorObject] = Field(None, description="Error information (only when status=failed)")
-
-    # Result-related fields
-    result: Optional[Dict[str, Any]] = Field(None, description="Parsing result (contains checksum and statistics)")
-    result_url: Optional[str] = Field(None, description="Result file URL (ZIP download link)")
-    result_url_expires_at: datetime = Field(..., description="Result URL expiration time")
-    
-    # Extended fields
-    file_name: Optional[str] = Field(None, description="Source file name")
-    file_extension: Optional[str] = Field(None, description="File extension, uppercase")
-    model: Optional[str] = Field(None, description="Parsing model used")
-    ocr_enabled: Optional[bool] = Field(None, description="Whether OCR is enabled")
-    duration_seconds: Optional[float] = Field(None, description="Job duration (updated_at - created_at, in seconds)")
-    credits_spent: Optional[int] = Field(None, description="Credits consumed")
-
 class JobResultResponse(BaseModel):
     """Job status query response (for GET /jobs/{job_id}/result)"""
 
@@ -126,12 +97,12 @@ class JobResultResponse(BaseModel):
     model: Optional[str] = Field(None, description="Parsing model used")
     ocr_enabled: Optional[bool] = Field(None, description="Whether OCR is enabled")
     duration_seconds: Optional[float] = Field(None, description="Job duration (updated_at - created_at, in seconds)")
-    credits_spent: Optional[int] = Field(None, description="Credits consumed")
+    credits_spent: Optional[float] = Field(None, description="Credits consumed")
 
 class JobList(BaseModel):
     """任务列表响应"""
 
-    jobs: list[JobResult] = Field(..., description="任务列表")
+    jobs: list[JobResultResponse] = Field(..., description="任务列表")
     total: int = Field(..., description="总数量")
     page: int = Field(..., description="当前页码")
     page_size: int = Field(..., description="每页数量")

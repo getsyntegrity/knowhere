@@ -3,6 +3,7 @@ OAuth 服务基类
 """
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
+from shared.core.billing import MicroDollar
 
 from shared.models.database.oauth_provider import OAuthProvider
 from shared.models.database.user import User
@@ -184,7 +185,7 @@ class OAuthService(ABC):
             hashed_password="",  # OAuth用户不需要密码
             is_active=True,
             user_type="user",
-            credits_balance=100,  # 新用户分配100个免费Credits
+            credits_balance=MicroDollar.from_dollars(100),  # assign 100 micro dollars for new user
             create_time=datetime.utcnow()
         )
         

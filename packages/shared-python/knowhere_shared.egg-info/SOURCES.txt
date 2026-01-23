@@ -12,6 +12,9 @@ shared/core/context.py
 shared/core/database.py
 shared/core/logging.py
 shared/core/security.py
+shared/core/billing/__init__.py
+shared/core/billing/calculator.py
+shared/core/billing/micro_dollar.py
 shared/core/config/__init__.py
 shared/core/config/ai.py
 shared/core/config/app.py

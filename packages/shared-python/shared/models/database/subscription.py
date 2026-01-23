@@ -3,6 +3,9 @@
 """
 from __future__ import annotations
 
+from shared.core.billing import MicroDollar
+from shared.core.exceptions.domain_exceptions import UndefinedSubscriptionPlanException
+
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -40,14 +43,20 @@ class Subscription(Base):
         """检查订阅是否激活"""
         return self.status == "active" and (self.end_date is None or self.end_date > datetime.utcnow())
     
-    def get_credits_limit(self) -> int:
-        """获取Credits限制"""
+    def get_micro_dollar_limit(self) -> int:
         credits_map = {
-            "free": 100,
-            "plus": 1000,
-            "pro": 10000
+            "free": MicroDollar.from_dollars(100).amount,
+            "plus": MicroDollar.from_dollars(1000).amount,
+            "pro": MicroDollar.from_dollars(10000).amount
         }
-        return credits_map.get(self.plan_type, 100)
+
+        if self.plan_type not in credits_map:
+            raise UndefinedSubscriptionPlanException(
+                internal_message=f"Invalid plan type: {self.plan_type}",
+                user_message="Invalid subscription plan type",
+            )
+
+        return credits_map.get(self.plan_type)
     
     def get_priority_level(self) -> int:
         """获取优先级级别（用于MQ路由）"""
