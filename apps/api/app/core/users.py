@@ -126,7 +126,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
                         session=db,
                         user_id=str(user.id),
                         amount=init_micro_dollar.amount,
-                        reason=f"new user registration grant {init_micro_dollar.to_credit()} credits",
+                        reason=f"new user registration bonus",
                         transaction_type="initial_grant"
                     )
 

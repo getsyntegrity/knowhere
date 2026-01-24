@@ -137,7 +137,7 @@ async def get_current_subscription(
             "status": subscription.status,
             "start_date": subscription.start_date.isoformat(),
             "end_date": subscription.end_date.isoformat() if subscription.end_date else None,
-            "credits_limit": subscription.get_micro_dollar_limit().to_credit(),
+            "credits_limit": MicroDollar(subscription.get_micro_dollar_limit()).to_credit(),
             "stripe_subscription_id": subscription.stripe_subscription_id
         }
         
