@@ -156,27 +156,48 @@ async def http_exception_handler(
     # Convert HTTP status to ErrorCode using the canonical mapping
     code = ErrorCodeMapper.get_error_code_from_http_status(exc.status_code)
     
-    # Generic safe messages for each status (no detail leak)
-    safe_messages = {
-        400: "Bad request",
-        401: "Authentication required",
-        403: "Permission denied",
-        404: "Resource not found",
-        405: "Method not allowed",
-        409: "Conflict",
-        429: "Too many requests",
-        500: "Internal server error",
-        502: "Bad gateway",
-        503: "Service unavailable",
-        504: "Gateway timeout",
+    # Check for specific FastAPI Users error codes in detail
+    detail_str = str(exc.detail) if exc.detail else ""
+    
+    # Map FastAPI Users error codes to user-friendly messages
+    fastapi_users_messages = {
+        "REGISTER_USER_ALREADY_EXISTS": "This email is already registered. Please log in or use a different email.",
+        "LOGIN_BAD_CREDENTIALS": "Invalid email or password.",
+        "LOGIN_USER_NOT_VERIFIED": "Please verify your email before logging in.",
+        "RESET_PASSWORD_BAD_TOKEN": "Password reset link is invalid or expired.",
+        "VERIFY_USER_BAD_TOKEN": "Email verification link is invalid or expired.",
+        "VERIFY_USER_ALREADY_VERIFIED": "Your email is already verified.",
     }
-    safe_message = safe_messages.get(exc.status_code, "An error occurred")
+    
+    # Try to match FastAPI Users error code
+    user_message = None
+    for error_code, message in fastapi_users_messages.items():
+        if error_code in detail_str:
+            user_message = message
+            break
+    
+    # Generic safe messages for each status (fallback)
+    if user_message is None:
+        safe_messages = {
+            400: "Bad request",
+            401: "Authentication required",
+            403: "Permission denied",
+            404: "Resource not found",
+            405: "Method not allowed",
+            409: "Conflict",
+            429: "Too many requests",
+            500: "Internal server error",
+            502: "Bad gateway",
+            503: "Service unavailable",
+            504: "Gateway timeout",
+        }
+        user_message = safe_messages.get(exc.status_code, "An error occurred")
     
     # Create KnowhereException with internal_message for logs, user_message for response
     knowhere_exc = KnowhereException(
         code=code,
         internal_message=f"HTTPException detail: {exc.detail}",  # For logs
-        user_message=safe_message,  # For client
+        user_message=user_message,  # For client
     )
     
     # Delegate to central handler
