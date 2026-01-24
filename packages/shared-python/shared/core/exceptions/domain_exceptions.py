@@ -144,7 +144,7 @@ class InsufficientCreditsException(KnowhereException):
             details["required_credits"] = required_credits
         if current_balance is not None:
             details["current_balance"] = current_balance
-            
+
         super().__init__(
             code=ErrorCode.PAYMENT_REQUIRED,
             internal_message=internal_message or user_message,
@@ -960,5 +960,26 @@ class WebhookServiceException(KnowhereException):
             internal_message=internal_message,
             user_message=user_message,
             details={"service": "webhook"},
+            original_exception=original_exception,
+        )
+    
+
+class UndefinedSubscriptionPlanException(KnowhereException):
+    """
+    Subscription plan is undefined.
+    
+    5xx Error: Auto-defaults to safe user_message.
+    """
+    def __init__(
+        self,
+        internal_message: str,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,
+            details={"component": "subscription"},
             original_exception=original_exception,
         )

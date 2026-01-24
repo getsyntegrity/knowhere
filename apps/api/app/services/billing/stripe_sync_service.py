@@ -2,6 +2,7 @@
 Stripe价格同步服务
 用于从Stripe API获取价格信息并更新数据库
 """
+from shared.core.billing import MicroDollar
 from typing import Optional
 import stripe
 from shared.core.config import settings
@@ -46,7 +47,7 @@ class StripeSyncService:
                 credits_str = stripe_price.metadata.get('credits_amount')
                 if credits_str:
                     try:
-                        config.credits_amount = int(credits_str)
+                        config.credits_amount = MicroDollar.from_dollars(int(credits_str))
                     except ValueError:
                         logger.warning(f"无法解析credits_amount: {credits_str}")
             

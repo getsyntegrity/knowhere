@@ -1,6 +1,7 @@
 """
 FastAPI Users 用户管理器配置
 """
+from shared.core.billing import MicroDollar
 from typing import Optional
 
 from shared.core.config import settings
@@ -93,6 +94,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
         # 创建Free订阅和赠送初始Credits
         await self._setup_new_user_subscription(user)
     
+    # not used for now
     async def _setup_new_user_subscription(self, user):
         """为新用户设置Free订阅和初始Credits"""
         try:
@@ -103,8 +105,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
                 SubscriptionRepository
             from loguru import logger
 
-            # 获取初始Credits数量
-            initial_credits = getattr(settings, 'FREE_PLAN_INITIAL_CREDITS', 100)
+            init_micro_dollar = MicroDollar.from_dollars(getattr(settings, 'FREE_PLAN_INITIAL_CREDITS', 100))
             
             async with get_db_context() as db:
                 # 创建Free订阅
@@ -126,20 +127,20 @@ class UserManager(UUIDIDMixin, BaseUserManager):
                     await credits_service.add_credits(
                         session=db,
                         user_id=str(user.id),
-                        amount=initial_credits,
-                        reason=f"新用户注册赠送 {initial_credits} Credits",
+                        amount=init_micro_dollar,
+                        reason=f"new user registration grant {init_micro_dollar} micro dollars",
                         transaction_type="initial_grant"
                     )
                     
                     # Explicit commit since repository no longer auto-commits
                     await db.commit()
                     
-                    logger.info(f"为用户 {user.id} 赠送 {initial_credits} Credits成功")
+                    logger.info(f"success to add initial credits for user {user.id}, micro dollars: {init_micro_dollar}")
                     
                     # 发送欢迎邮件
                     await self._send_welcome_email(user, db=db)
                 else:
-                    logger.error(f"为用户 {user.id} 创建Free订阅失败")
+                    logger.error(f"failed to create free subscription for user {user.id}")
                     
         except Exception as e:
             from loguru import logger

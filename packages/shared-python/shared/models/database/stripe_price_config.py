@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint, BigInteger
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
@@ -21,7 +21,7 @@ class StripePriceConfig(Base):
     price_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     product_type: Mapped[str] = mapped_column(String(50), nullable=False)  # subscription/credits_package
     plan_id: Mapped[str] = mapped_column(String(50), nullable=False)  # plus/pro/credits_500等
-    credits_amount: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')  # Credits数量（credits_package类型必填，subscription类型可为0）
+    credits_amount: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default='0')  # Micro-credits (1 display credit = 1,000,000 micros)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')  # 金额（分，必填，用于验证和前端显示）
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default='CNY')
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)

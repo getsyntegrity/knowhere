@@ -511,7 +511,7 @@ export default function BillingPage() {
                         </TableCell>
                         <TableCell>{transaction.description}</TableCell>
                         <TableCell className={transaction.type === 'credit' ? 'text-green-600' : 'text-red-600'}>
-                          {transaction.type === 'credit' ? '+' : '-'}{formatCredits(transaction.amount)}
+                          {formatCredits(transaction.credits_amount)}
                         </TableCell>
                         <TableCell>{formatDate(transaction.created_at, 'long')}</TableCell>
                       </TableRow>

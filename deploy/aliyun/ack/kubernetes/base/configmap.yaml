@@ -68,7 +68,7 @@ data:
   ALI_URL: "${ALI_URL}"
   ARK_URL: "${ARK_URL}"
   EMBEDDING_MODEL: "${EMBEDDING_MODEL}"
-  NORMOL_MODEL: "${NORMAL_MODEL}"
+  NORMOL_MODEL: "${NORMOL_MODEL}"
   IMAGE_MODEL: "${IMAGE_MODEL}"
   IMAGE_MODEL_MAX: "${IMAGE_MODEL_MAX}"
   MINERU_URL: "${MINERU_URL}"
@@ -109,5 +109,5 @@ data:
   CONFIG_PATH: "app/core/config/config.txt"
   PATH_IMAGE_PATTERN: ".*\\.(png|jpe?g|gif)$"
   IMG_TBL_PATTERN: "TABLE_.*?_TABLE|IMAGE_.*?_IMAGE"
-  SPLIT_CHAR: "-->"
+  SPLIT_CHAR: "/"
 

@@ -26,6 +26,7 @@ from shared.models.database.usage_log import UsageLog
 from shared.models.database.job import Job
 from shared.models.database.stripe_price_config import StripePriceConfig
 from shared.models.database.credits_transaction import CreditsTransaction
+from shared.core.billing import MicroDollar
 
 router = APIRouter(tags=["Billing"])
 
@@ -90,7 +91,7 @@ async def buy_credits(
         payment_intent = await stripe_service.create_payment_intent(
             user_id=str(current_user.id),
             amount=amount_cents,
-            credits_amount=request.credits_amount,
+            credits_amount=MicroDollar.from_dollars(request.credits_amount),
             currency='cny'
         )
         
@@ -136,7 +137,7 @@ async def get_current_subscription(
             "status": subscription.status,
             "start_date": subscription.start_date.isoformat(),
             "end_date": subscription.end_date.isoformat() if subscription.end_date else None,
-            "credits_limit": subscription.get_credits_limit(),
+            "credits_limit": subscription.get_micro_dollar_limit().to_credit(),
             "stripe_subscription_id": subscription.stripe_subscription_id
         }
         
@@ -155,7 +156,7 @@ async def get_credits_balance(
     credits_service = CreditsService()
     
     try:
-        balance = await credits_service.check_balance(db, str(current_user.id))
+        balance_micro_dollar = await credits_service.check_balance(db, str(current_user.id))
         
         # 获取订阅信息计算限制
         from app.repositories.subscription_repository import \
@@ -163,13 +164,13 @@ async def get_credits_balance(
         subscription_repo = SubscriptionRepository()
         subscription = await subscription_repo.get_active_by_user_id(db, str(current_user.id))
         
-        credits_limit = subscription.get_credits_limit() if subscription else 100
+        limit_micro_dollar = subscription.get_micro_dollar_limit() if subscription else MicroDollar.from_dollars(100).amount
         
-        usage_percentage = (balance / credits_limit * 100) if credits_limit > 0 else 0
-        
+        usage_percentage = (balance_micro_dollar / limit_micro_dollar * 100) if limit_micro_dollar > 0 else 0
+
         return CreditsBalanceResponse(
-            credits_balance=balance,
-            credits_limit=credits_limit,
+            credits_balance=MicroDollar(balance_micro_dollar).to_credit(),
+            credits_limit=MicroDollar(limit_micro_dollar).to_credit(),
             usage_percentage=round(usage_percentage, 2)
         )
         
@@ -193,7 +194,7 @@ async def get_usage_stats(
         
         return UsageStatsResponse(
             period=stats["period"],
-            total_credits_used=stats["total_used"],
+            total_credits_used=MicroDollar(stats["total_used"]).to_credit(),
             api_calls_count=stats["transaction_count"],
             success_rate=95.0,  # TODO: 从使用日志计算实际成功率
             average_response_time=stats.get("avg_response_time", 0),
@@ -235,13 +236,18 @@ async def parse_usage_overview(
 
         # 已用积分：从credits_transactions表统计usage和refund类型
         # usage类型为负数（扣除），refund类型为正数（退还）
-        # 净消耗 = abs(sum(usage + refund))
+        # 净消耗 = abs(sum(usage + refund)), then convert to display credits
         credits_row = await db.execute(
             select(func.coalesce(func.sum(CreditsTransaction.credits_amount), 0))
             .where(CreditsTransaction.user_id == user_id)
             .where(CreditsTransaction.transaction_type.in_(["usage", "refund"]))
         )
-        total_credits_used = abs(credits_row.scalar_one() or 0)
+        # Cast Decimal to int is safe here because:
+        # 1. Source column is BigInteger (whole numbers only)
+        # 2. Postgres returns Decimal to avoid overflow
+        # 3. Sum of integers has no fractional part, so int() is lossless
+        total_micro_credits_used = int(abs(credits_row.scalar_one() or 0)) 
+
 
         # 同比上月增长：最近30天 vs 前一个30天
         curr_row = await db.execute(
@@ -284,13 +290,13 @@ async def parse_usage_overview(
         price_cfg = price_row.scalar_one_or_none()
         estimated_amount = None
         if price_cfg and price_cfg.credits_amount and price_cfg.credits_amount > 0:
-            estimated_amount = round(price_cfg.amount_cents * total_credits_used / (100 * price_cfg.credits_amount), 4)
+            estimated_amount = round(price_cfg.amount_cents * total_micro_credits_used / (100 * price_cfg.credits_amount), 4)
 
         return ParseUsageResponse(
             request_total=total_requests or 0,
             mom_growth=round(mom_growth, 2),
-            credits_used=total_credits_used or 0,
-            estimated_amount=estimated_amount,
+            credits_used=MicroDollar(total_micro_credits_used).to_credit() or 0,
+            estimated_amount=estimated_amount, # in dollar
             success_rate=round(success_rate, 2),
             avg_processing_time=avg_processing_time,
         )
@@ -315,7 +321,7 @@ async def get_transaction_history(
         transaction_list = [
             TransactionHistoryResponse(
                 id=tx.id,
-                credits_amount=tx.credits_amount,
+                credits_amount=MicroDollar(tx.credits_amount).to_credit(),
                 transaction_type=tx.transaction_type,
                 description=tx.description,
                 created_at=tx.created_at
@@ -375,9 +381,9 @@ async def get_price_configs(
                         "id": config.plan_id,
                         "plan_id": config.plan_id,
                         "price_id": config.price_id,
-                        "name": config.extra_metadata.get('display_name', f"{config.credits_amount} Credits") if config.extra_metadata else f"{config.credits_amount} Credits",
+                        "name": config.extra_metadata.get('display_name', f"{MicroDollar(config.credits_amount).to_credit()} Credits") if config.extra_metadata else f"{MicroDollar(config.credits_amount).to_credit()} Credits",
                         "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
-                        "credits_amount": config.credits_amount,
+                        "credits_amount": MicroDollar(config.credits_amount).to_credit(),
                         "amount_cents": config.amount_cents,
                         "currency": config.currency,
                         "metadata": config.extra_metadata or {}
@@ -412,9 +418,9 @@ async def get_price_configs(
                         "id": config.plan_id,
                         "plan_id": config.plan_id,
                         "price_id": config.price_id,
-                        "name": config.extra_metadata.get('display_name', f"{config.credits_amount} Credits") if config.extra_metadata else f"{config.credits_amount} Credits",
+                        "name": config.extra_metadata.get('display_name', f"{MicroDollar(config.credits_amount).to_credit()} Credits") if config.extra_metadata else f"{MicroDollar(config.credits_amount).to_credit()} Credits",
                         "description": config.extra_metadata.get('description', '') if config.extra_metadata else '',
-                        "credits_amount": config.credits_amount,
+                        "credits_amount": MicroDollar(config.credits_amount).to_credit(),
                         "amount_cents": config.amount_cents,
                         "currency": config.currency,
                         "metadata": config.extra_metadata or {}
