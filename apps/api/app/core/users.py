@@ -105,7 +105,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
                 SubscriptionRepository
             from loguru import logger
 
-            init_micro_dollar = MicroDollar.from_dollars(getattr(settings, 'FREE_PLAN_INITIAL_CREDITS', 100))
+            init_micro_dollar = MicroDollar.from_dollars(getattr(settings, 'FREE_PLAN_INITIAL_CREDITS', 5))
             
             async with get_db_context() as db:
                 # 创建Free订阅 - 使用db.add直接创建
