@@ -31,7 +31,15 @@ class CreditsService:
         
         # 余额不能超过有效期内购入的总额度，过期额度视为失效
         if recent_credits < user_balance:
-            await self.repository.cap_balance(session, user_id, recent_credits)
+            expired_amount = user_balance - recent_credits
+            logger.info(f"User {user_id} has expired credits: balance={user_balance}, valid={recent_credits}, expired={expired_amount}")
+            
+            await self.deduct_credits(
+                session=session,
+                user_id=user_id,
+                amount=expired_amount,
+                reason="Credits expired due to validity period"
+            )
             return recent_credits
         
         return user_balance
@@ -224,4 +232,3 @@ class CreditsService:
     async def _send_credits_added_notification(self, session: AsyncSession, user_id: str, amount: int):
         """发送Credits增加通知"""
         # TODO: 实现邮件或推送通知
-        print(f"用户 {user_id} 获得 {amount} Credits")

@@ -3,6 +3,7 @@ FastAPI Users 用户管理器配置
 """
 from shared.core.billing import MicroDollar
 from typing import Optional
+from loguru import logger
 
 from shared.core.config import settings
 from shared.core.database import get_db
@@ -81,7 +82,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
         response: Optional[Request] = None,
     ):
         """登录后处理"""
-        print(f"用户 {user.email} 已登录")
+        logger.info(f"user {user.email} has been logged in")
     
     async def on_after_register(
         self, 
@@ -89,12 +90,11 @@ class UserManager(UUIDIDMixin, BaseUserManager):
         request: Optional[Request] = None
     ):
         """注册后处理"""
-        print(f"用户 {user.email} 已注册")
+        logger.info(f"user {user.email} has been registered")
         
         # 创建Free订阅和赠送初始Credits
         await self._setup_new_user_subscription(user)
     
-    # not used for now
     async def _setup_new_user_subscription(self, user):
         """为新用户设置Free订阅和初始Credits"""
         try:
@@ -108,29 +108,41 @@ class UserManager(UUIDIDMixin, BaseUserManager):
             init_micro_dollar = MicroDollar.from_dollars(getattr(settings, 'FREE_PLAN_INITIAL_CREDITS', 100))
             
             async with get_db_context() as db:
-                # 创建Free订阅
-                subscription_repo = SubscriptionRepository()
+                # 创建Free订阅 - 使用db.add直接创建
+                from shared.models.database.subscription import Subscription
                 from datetime import datetime
-                subscription_data = {
-                    "user_id": str(user.id),
-                    "plan_type": "free",
-                    "status": "active",
-                    "start_date": datetime.utcnow()
-                }
-                subscription = await subscription_repo.create(db, subscription_data)
+                
+                subscription = Subscription(
+                    user_id=user.id,
+                    plan_type="free",
+                    status="active",
+                    start_date=datetime.utcnow()
+                )
+                db.add(subscription)
                 
                 if subscription:
-                    logger.info(f"为用户 {user.id} 创建Free订阅成功")
-                    
-                    # 赠送初始Credits (use service for proper transaction logging)
                     credits_service = CreditsService()
                     await credits_service.add_credits(
                         session=db,
                         user_id=str(user.id),
-                        amount=init_micro_dollar,
-                        reason=f"new user registration grant {init_micro_dollar} micro dollars",
+                        amount=init_micro_dollar.amount,
+                        reason=f"new user registration grant {init_micro_dollar.to_credit()} credits",
                         transaction_type="initial_grant"
                     )
+
+                    # Create a payment record for the initial grant to ensure validity check passes
+                    from shared.models.database.payment_record import PaymentRecord
+                    payment_record = PaymentRecord(
+                        user_id=user.id,
+                        payment_type='system_grant',
+                        amount_cents=0,
+                        currency='USD',
+                        status='succeeded',
+                        credits_amount=init_micro_dollar.amount,
+                        extra_metadata={"reason": "initial_grant"},
+                        processed_at=datetime.utcnow()
+                    )
+                    db.add(payment_record)
                     
                     # Explicit commit since repository no longer auto-commits
                     await db.commit()
@@ -144,7 +156,7 @@ class UserManager(UUIDIDMixin, BaseUserManager):
                     
         except Exception as e:
             from loguru import logger
-            logger.error(f"设置新用户订阅失败: {e}")
+            logger.error(f"setup new user subscription failed: {e}")
             # 不抛出异常，避免影响用户注册流程
     
     async def _send_welcome_email(self, user, db=None):

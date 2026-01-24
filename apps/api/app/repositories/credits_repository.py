@@ -52,7 +52,6 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
         """
         如果用户当前余额高于 max_balance，则将余额调整为 max_balance。
         返回值表示是否发生了更新。
-        Note: Caller is responsible for committing the transaction.
         """
         from sqlalchemy import update
         result = await session.execute(
