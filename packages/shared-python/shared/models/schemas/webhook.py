@@ -33,6 +33,7 @@ class WebhookLogResponse(BaseModel):
     response_status_code: Optional[int] = Field(None, description="Response status code")
     response_body: Optional[str] = Field(None, description="Response body")
     error_message: Optional[str] = Field(None, description="Error message")
+    duration_ms: int = Field(0, description="Request duration in milliseconds")
     created_at: datetime = Field(..., description="Created time")
 
 

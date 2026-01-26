@@ -23,13 +23,21 @@ class WebhookRepository:
         idempotency_key: str,
         response_status_code: Optional[int] = None,
         response_body: Optional[str] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
+        duration_ms: int = 0,
+        event_id: Optional[str] = None
     ) -> Optional[WebhookLog]:
-        """Log Webhook Attempt"""
+        """
+        Log a webhook delivery attempt.
+        
+        Note: This method uses flush() instead of commit() to allow
+        the caller to manage transaction boundaries.
+        """
         try:
             # request_payload is Dict, SQLAlchemy JSON type handles serialization automatically
             webhook_log = WebhookLog(
                 job_id=job_id,
+                event_id=event_id,
                 webhook_url=webhook_url,
                 attempt_number=attempt_number,
                 request_payload=request_payload,  # Pass Dict directly, SQLAlchemy handles it
@@ -37,13 +45,14 @@ class WebhookRepository:
                 idempotency_key=idempotency_key,
                 response_status_code=response_status_code,
                 response_body=response_body,
-                error_message=error_message
+                error_message=error_message,
+                duration_ms=duration_ms
             )
             
             db.add(webhook_log)
-            await db.commit()
+            await db.commit()  # Keep commit here since this is called via get_db_context which manages its own session
             
-            logger.info(f"Webhook log recorded successfully: job_id={job_id}, attempt={attempt_number}")
+            logger.info(f"Webhook log recorded successfully: job_id={job_id}, attempt={attempt_number}, duration_ms={duration_ms}")
             return webhook_log
             
         except Exception as e:

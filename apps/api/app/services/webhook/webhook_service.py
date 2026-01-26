@@ -80,6 +80,9 @@ class WebhookService:
                 ) as response:
                     response_body = await response.text()
                     
+                    # Calculate request duration
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    
                     # Log Webhook attempt
                     log = await self._log_webhook_attempt(
                         job_id=job_id,
@@ -90,7 +93,9 @@ class WebhookService:
                         idempotency_key=idempotency_key,
                         response_status_code=response.status,
                         response_body=response_body,
-                        error_message=None
+                        error_message=None,
+                        duration_ms=duration_ms,
+                        event_id=event_id
                     )
                     
                     delivery_id = str(log.id) if log else None
@@ -116,20 +121,40 @@ class WebhookService:
                         
         except asyncio.TimeoutError:
             error_msg = "Webhook request timeout"
+            duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook timeout: job_id={job_id}")
             log = await self._log_webhook_attempt(
-                job_id, webhook_url, attempt_number, payload, 
-                signature, idempotency_key, None, None, error_msg
+                job_id=job_id,
+                webhook_url=webhook_url,
+                attempt_number=attempt_number,
+                request_payload=payload,
+                signature=signature,
+                idempotency_key=idempotency_key,
+                response_status_code=None,
+                response_body=None,
+                error_message=error_msg,
+                duration_ms=duration_ms,
+                event_id=event_id
             )
             delivery_id = str(log.id) if log else None
             return {"success": False, "error": error_msg, "attempt_number": attempt_number, "delivery_id": delivery_id}
             
         except Exception as e:
             error_msg = f"Webhook exception: {str(e)}"
+            duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook exception: job_id={job_id}, error={e}")
             log = await self._log_webhook_attempt(
-                job_id, webhook_url, attempt_number, payload,
-                signature, idempotency_key, None, None, error_msg
+                job_id=job_id,
+                webhook_url=webhook_url,
+                attempt_number=attempt_number,
+                request_payload=payload,
+                signature=signature,
+                idempotency_key=idempotency_key,
+                response_status_code=None,
+                response_body=None,
+                error_message=error_msg,
+                duration_ms=duration_ms,
+                event_id=event_id
             )
             delivery_id = str(log.id) if log else None
             return {"success": False, "error": error_msg, "attempt_number": attempt_number, "delivery_id": delivery_id}
@@ -151,14 +176,14 @@ class WebhookService:
         return f"sha256={signature}"
     
     def _calculate_delay(self, attempt: int) -> float:
-        """Calculate retry delay (exponential backoff + jitter)"""
+        """Calculate retry delay (exponential backoff + jitter per design spec FR-03)."""
         import random
 
         # Exponential backoff
         delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
         
-        # Add jitter (±25%)
-        jitter = random.uniform(0.75, 1.25)
+        # Add jitter (±10% per design spec FR-03)
+        jitter = random.uniform(0.90, 1.10)
         delay = delay * jitter
         
         return delay
@@ -173,9 +198,11 @@ class WebhookService:
         idempotency_key: str,
         response_status_code: Optional[int],
         response_body: Optional[str],
-        error_message: Optional[str]
+        error_message: Optional[str],
+        duration_ms: int = 0,
+        event_id: Optional[str] = None
     ):
-        """Log Webhook Attempt"""
+        """Log Webhook delivery attempt."""
         try:
             async with get_db_context() as db:
                 return await self.webhook_repo.log_webhook_attempt(
@@ -188,7 +215,9 @@ class WebhookService:
                     idempotency_key=idempotency_key,
                     response_status_code=response_status_code,
                     response_body=response_body,
-                    error_message=error_message
+                    error_message=error_message,
+                    duration_ms=duration_ms,
+                    event_id=event_id
                 )
         except Exception as e:
             logger.error(f"Failed to log Webhook: {e}")

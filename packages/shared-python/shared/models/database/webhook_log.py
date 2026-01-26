@@ -1,5 +1,7 @@
 """
-Webhook日志数据模型 (Webhook Delivery History)
+Webhook Delivery History Model
+
+Records every webhook delivery attempt for auditing and debugging.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class WebhookLog(Base):
-    """Webhook日志模型 - 记录Webhook推送历史"""
+    """Webhook Log Model - Records webhook delivery history."""
     __tablename__ = "webhook_logs"
     
     # Primary key
@@ -28,14 +30,14 @@ class WebhookLog(Base):
     job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False)
     event_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("webhook_events.id", ondelete="CASCADE"), nullable=True)  # Optional for backward compatibility
     
-    # Webhook信息
+    # Webhook information
     webhook_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 第几次尝试（1-5）
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # Attempt number (1-6)
     
-    # 请求信息
-    request_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # JSON存储
-    signature: Mapped[str] = mapped_column(String(128), nullable=False)  # HMAC签名
-    idempotency_key: Mapped[str] = mapped_column(String(36), nullable=False)  # UUID幂等键
+    # Request information
+    request_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # JSON storage
+    signature: Mapped[str] = mapped_column(String(128), nullable=False)  # HMAC signature
+    idempotency_key: Mapped[str] = mapped_column(String(36), nullable=False)  # UUID idempotency key
     
     # Response information
     response_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -43,7 +45,7 @@ class WebhookLog(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # Request duration in milliseconds
     
-    # 时间戳
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Relationships
@@ -62,9 +64,10 @@ class WebhookLog(Base):
         return f"<WebhookLog(job_id={self.job_id}, attempt={self.attempt_number}, status={self.response_status_code})>"
     
     def is_success(self) -> bool:
-        """检查是否成功"""
+        """Check if the request was successful."""
         return self.response_status_code is not None and 200 <= self.response_status_code < 300
     
     def is_failed(self) -> bool:
-        """检查是否失败"""
+        """Check if the request failed."""
         return self.response_status_code is None or self.response_status_code >= 400
+

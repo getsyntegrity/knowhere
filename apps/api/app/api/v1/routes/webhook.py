@@ -122,6 +122,7 @@ async def get_webhook_logs(
                 response_status_code=log.response_status_code,
                 response_body=log.response_body,
                 error_message=log.error_message,
+                duration_ms=log.duration_ms,
                 created_at=log.created_at
             ))
         
