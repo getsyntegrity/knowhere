@@ -1,16 +1,19 @@
 """
 Webhook Repository Layer
+
+Provides database operations for webhook delivery logging.
 """
 from typing import Any, Dict, List, Optional
 
-from shared.models.database.webhook_log import WebhookLog
 from loguru import logger
-from sqlalchemy import and_, desc, select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.models.database.webhook_log import WebhookLog
 
 
 class WebhookRepository:
-    """Webhook Repository Class"""
+    """Repository for webhook delivery log operations."""
     
     async def log_webhook_attempt(
         self,
@@ -25,144 +28,73 @@ class WebhookRepository:
         response_body: Optional[str] = None,
         error_message: Optional[str] = None,
         duration_ms: int = 0,
-        event_id: Optional[str] = None
+        event_id: Optional[str] = None,
     ) -> Optional[WebhookLog]:
         """
         Log a webhook delivery attempt.
         
-        Note: This method uses flush() instead of commit() to allow
-        the caller to manage transaction boundaries.
+        Creates a WebhookLog entry for the delivery attempt with all
+        request and response details for auditing purposes.
         """
         try:
-            # request_payload is Dict, SQLAlchemy JSON type handles serialization automatically
             webhook_log = WebhookLog(
                 job_id=job_id,
                 event_id=event_id,
                 webhook_url=webhook_url,
                 attempt_number=attempt_number,
-                request_payload=request_payload,  # Pass Dict directly, SQLAlchemy handles it
+                request_payload=request_payload,
                 signature=signature,
                 idempotency_key=idempotency_key,
                 response_status_code=response_status_code,
                 response_body=response_body,
                 error_message=error_message,
-                duration_ms=duration_ms
+                duration_ms=duration_ms,
             )
             
             db.add(webhook_log)
-            await db.commit()  # Keep commit here since this is called via get_db_context which manages its own session
+            await db.commit()
             
-            logger.info(f"Webhook log recorded successfully: job_id={job_id}, attempt={attempt_number}, duration_ms={duration_ms}")
+            logger.info(
+                f"Webhook log recorded: job_id={job_id}, attempt={attempt_number}, "
+                f"status={response_status_code}, duration_ms={duration_ms}"
+            )
             return webhook_log
             
         except Exception as e:
-            logger.error(f"Failed to record Webhook log: {e}")
+            logger.error(f"Failed to record webhook log: {e}")
             await db.rollback()
             return None
     
     async def get_webhook_logs(
         self,
         db: AsyncSession,
-        job_id: str,
-        limit: int = 50,
-        offset: int = 0
-    ) -> List[WebhookLog]:
-        """Get Webhook Logs"""
-        try:
-            result = await db.execute(
-                select(WebhookLog)
-                .where(WebhookLog.job_id == job_id)
-                .order_by(desc(WebhookLog.created_at))
-                .limit(limit)
-                .offset(offset)
-            )
-            return result.scalars().all()
-        except Exception as e:
-            logger.error(f"Failed to get Webhook logs: {e}")
-            return []
-    
-    async def get_webhook_logs_by_url(
-        self,
-        db: AsyncSession,
-        webhook_url: str,
-        limit: int = 50,
-        offset: int = 0
-    ) -> List[WebhookLog]:
-        """Get Webhook logs by URL"""
-        try:
-            result = await db.execute(
-                select(WebhookLog)
-                .where(WebhookLog.webhook_url == webhook_url)
-                .order_by(desc(WebhookLog.created_at))
-                .limit(limit)
-                .offset(offset)
-            )
-            return result.scalars().all()
-        except Exception as e:
-            logger.error(f"Failed to get Webhook logs by URL: {e}")
-            return []
-    
-    async def get_failed_webhook_logs(
-        self,
-        db: AsyncSession,
-        limit: int = 100
-    ) -> List[WebhookLog]:
-        """Get failed Webhook logs"""
-        try:
-            result = await db.execute(
-                select(WebhookLog)
-                .where(
-                    and_(
-                        WebhookLog.response_status_code.isnot(None),
-                        WebhookLog.response_status_code >= 400
-                    )
-                )
-                .order_by(desc(WebhookLog.created_at))
-                .limit(limit)
-            )
-            return result.scalars().all()
-        except Exception as e:
-            logger.error(f"Failed to get failed Webhook logs: {e}")
-            return []
-    
-    async def get_webhook_stats(
-        self,
-        db: AsyncSession,
         job_id: Optional[str] = None,
-        webhook_url: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Get Webhook Statistics"""
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[WebhookLog]:
+        """
+        Get webhook delivery logs with optional job_id filter.
+        
+        Args:
+            db: Database session
+            job_id: Optional filter by job ID (if None, returns all logs)
+            limit: Maximum number of results
+            offset: Number of results to skip
+            
+        Returns:
+            List of WebhookLog entries ordered by created_at descending
+        """
         try:
-            query = select(WebhookLog)
-            conditions = []
+            query = select(WebhookLog).order_by(desc(WebhookLog.created_at))
             
             if job_id:
-                conditions.append(WebhookLog.job_id == job_id)
-            if webhook_url:
-                conditions.append(WebhookLog.webhook_url == webhook_url)
+                query = query.where(WebhookLog.job_id == job_id)
             
-            if conditions:
-                query = query.where(and_(*conditions))
+            query = query.limit(limit).offset(offset)
             
             result = await db.execute(query)
-            logs = result.scalars().all()
-            
-            total_attempts = len(logs)
-            successful_attempts = len([log for log in logs if log.is_success()])
-            failed_attempts = len([log for log in logs if log.is_failed()])
-            
-            return {
-                "total_attempts": total_attempts,
-                "successful_attempts": successful_attempts,
-                "failed_attempts": failed_attempts,
-                "success_rate": successful_attempts / total_attempts if total_attempts > 0 else 0
-            }
+            return list(result.scalars().all())
             
         except Exception as e:
-            logger.error(f"Failed to get Webhook statistics: {e}")
-            return {
-                "total_attempts": 0,
-                "successful_attempts": 0,
-                "failed_attempts": 0,
-                "success_rate": 0
-            }
+            logger.error(f"Failed to get webhook logs: {e}")
+            return []
