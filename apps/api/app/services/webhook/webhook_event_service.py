@@ -11,6 +11,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
+from shared.core.exceptions.webhook_exceptions import WebhookConfigException
 
 
 class WebhookEventService:
@@ -19,13 +20,8 @@ class WebhookEventService:
     
     Implements the Transactional Outbox pattern:
     1. WebhookEvent is created in the same transaction as job state change
-    2. After commit, event is published to RabbitMQ for async dispatch
+    2. After commit, event is dispatched via Celery task for async processing
     """
-    
-    # Webhook queue configuration
-    WEBHOOK_EXCHANGE = "webhook.direct"
-    WEBHOOK_ROUTING_KEY = "webhook.dispatch"
-    WEBHOOK_QUEUE = "q.webhook.work"
     
     async def create_event(
         self,
@@ -39,7 +35,7 @@ class WebhookEventService:
         Create a WebhookEvent record (the outbox).
         
         This should be called within the same transaction as the job state update
-        to ensure atomicity. The event will be published to RabbitMQ after commit.
+        to ensure atomicity. The event will be dispatched via Celery after commit.
         
         Args:
             db: Database session (should be in an active transaction)
@@ -50,7 +46,29 @@ class WebhookEventService:
             
         Returns:
             The created WebhookEvent
+            
+        Raises:
+            WebhookConfigException: If target_url or secret is invalid
         """
+        # Validate configuration
+        if not target_url:
+            raise WebhookConfigException(
+                internal_message="Missing webhook target_url",
+                user_message="Webhook URL is required."
+            )
+            
+        if not target_url.startswith(("http://", "https://")):
+            raise WebhookConfigException(
+                internal_message=f"Invalid webhook scheme: {target_url}",
+                user_message="Webhook URL must start with http:// or https://."
+            )
+            
+        if not secret:
+            raise WebhookConfigException(
+                internal_message="Missing webhook secret",
+                user_message="Webhook secret is required for signature verification."
+            )
+
         event = WebhookEvent(
             job_id=job_id,
             target_url=target_url,
@@ -70,54 +88,33 @@ class WebhookEventService:
     
     async def publish_event_to_queue(self, event_id: str) -> bool:
         """
-        Publish a webhook event to RabbitMQ for async dispatch.
+        Schedule a Celery task to dispatch the webhook event.
         
         This should be called AFTER the transaction containing the WebhookEvent
         has been committed, to ensure the event exists in the database.
         
         Args:
-            event_id: The WebhookEvent ID to publish
+            event_id: The WebhookEvent ID to dispatch
             
         Returns:
-            True if published successfully
+            True if task was scheduled successfully
         """
         try:
-            from shared.services.messaging.message_publisher import get_message_publisher
+            from shared.core.celery_app import get_celery_app
             
-            publisher = get_message_publisher()
-            channel = await publisher._connection_manager.get_channel()
+            celery_app = get_celery_app()
             
-            if not channel:
-                logger.error(f"Failed to get channel for webhook publish: event_id={event_id}")
-                return False
-            
-            # Ensure exchange exists
-            exchange = await channel.declare_exchange(
-                self.WEBHOOK_EXCHANGE,
-                type="direct",
-                durable=True
+            # Schedule the Celery task to dispatch this webhook event
+            task = celery_app.send_task(
+                "app.core.tasks.webhook_tasks.dispatch_webhook_task",
+                args=[event_id],
             )
             
-            # Publish message
-            import json
-            import aio_pika
-            
-            message = aio_pika.Message(
-                body=json.dumps({"event_id": event_id}).encode(),
-                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                content_type="application/json"
-            )
-            
-            await exchange.publish(
-                message,
-                routing_key=self.WEBHOOK_ROUTING_KEY
-            )
-            
-            logger.info(f"WebhookEvent published to queue: event_id={event_id}")
+            logger.info(f"Webhook dispatch task scheduled: event_id={event_id}, task_id={task.id}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to publish webhook event: event_id={event_id}, error={e}")
+            logger.error(f"Failed to schedule webhook dispatch task: event_id={event_id}, error={e}")
             return False
     
     async def create_and_publish_event(

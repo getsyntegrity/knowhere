@@ -90,7 +90,7 @@ class WebhookEvent(Base):
     deliveries: Mapped[list["WebhookLog"]] = relationship(
         "WebhookLog", 
         back_populates="event",
-        cascade="all, delete-orphan",
+        cascade="all, delete-orphan", # how about the manual trigger?
         foreign_keys="WebhookLog.event_id"
     )
     

@@ -78,11 +78,11 @@ celery_app.conf.update(
         # 现有任务路由
         'shared.core.tasks.celery_tasks.process_ai_query': {'queue': 'ai_high_priority'},
         
-        # 知识库任务路由（动态路由）
-        'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # 默认中等优先级
+        # Knowledge base tasks (dynamic routing)
+        'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # Default medium priority
         
-        # Webhook任务路由（仅在API服务队列中运行）
-        'app.core.tasks.webhook_tasks.send_webhook_retry_task': {'queue': 'kb_medium'},
+        # Webhook tasks (webhook queue)
+        'app.core.tasks.webhook_tasks.dispatch_webhook_task': {'queue': 'kb_medium'},
     }
 )
 

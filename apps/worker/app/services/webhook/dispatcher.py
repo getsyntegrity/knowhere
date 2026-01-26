@@ -1,16 +1,15 @@
 """
 Webhook Dispatcher Service
 
-Consumes webhook events from RabbitMQ and dispatches HTTP requests
-with retry logic, HMAC signing, and delivery logging.
+Dispatches webhook events via HTTP requests with HMAC signing and delivery logging.
+Called by Celery task for async processing.
 """
 import hashlib
 import hmac
 import json
-import random
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
@@ -19,17 +18,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db_context
+from shared.core.database import get_db_context
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.models.database.webhook_log import WebhookLog
+from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 
-from . import (
-    BASE_DELAY_SECONDS,
-    HTTP_TIMEOUT_SECONDS,
-    JITTER_FACTOR,
-    MAX_ATTEMPTS,
-    RETRY_LEVELS,
-    WEBHOOK_RETRY_EXCHANGE,
-)
+from . import HTTP_TIMEOUT_SECONDS, MAX_ATTEMPTS
 
 
 class WebhookDispatcher:
@@ -88,15 +82,20 @@ class WebhookDispatcher:
             # 6. Handle result
             if success:
                 await self._mark_delivered(db, event)
-                return True  # ACK
+                return True  # Success
             else:
-                # Schedule retry if attempts remaining
-                if event.attempts < MAX_ATTEMPTS - 1:
-                    await self._schedule_retry(db, event)
-                    return True  # ACK - will be retried via DLX
-                else:
+                # Increment attempts, Celery will handle retry
+                await self._increment_attempts(db, event)
+                
+                if event.attempts >= MAX_ATTEMPTS:
                     await self._mark_failed(db, event)
-                    return True  # ACK - final failure
+                    return True  # Final failure, no more retries
+                
+                # Raise exception so Celery task will retry
+                raise WebhookDeliveryException(
+                    internal_message=f"Webhook delivery failed: {error_message}",
+                    retryable=True
+                )
     
     async def _fetch_event(self, db: AsyncSession, event_id: str) -> Optional[WebhookEvent]:
         """Fetch WebhookEvent by ID."""
@@ -205,54 +204,12 @@ class WebhookDispatcher:
         await db.commit()
         logger.warning(f"WebhookEvent failed permanently: {event.id}")
     
-    async def _schedule_retry(self, db: AsyncSession, event: WebhookEvent) -> None:
-        """
-        Update event for retry and calculate next retry time.
-        
-        The actual retry is handled by RabbitMQ DLX - we just update
-        the database state here.
-        """
+    async def _increment_attempts(self, db: AsyncSession, event: WebhookEvent) -> None:
+        """Increment attempt count for failed delivery (Celery will retry)."""
         event.attempts += 1
-        event.status = WebhookEventStatus.DELIVERING
-        
-        # Calculate next retry time with jitter
-        delay_seconds = self._calculate_backoff(event.attempts)
-        event.next_retry_at = datetime.utcnow() + timedelta(seconds=delay_seconds)
         event.updated_at = datetime.utcnow()
-        
         await db.commit()
-        logger.info(f"WebhookEvent scheduled for retry: {event.id}, attempt={event.attempts}, next_retry_at={event.next_retry_at}")
-    
-    def _calculate_backoff(self, attempt: int) -> float:
-        """
-        Calculate exponential backoff delay with jitter.
-        
-        Formula: base_delay * 2^(attempt-1) ± 10% jitter
-        """
-        base_delay = BASE_DELAY_SECONDS * (2 ** (attempt - 1))
-        
-        # Apply jitter (±10%)
-        jitter = random.uniform(1 - JITTER_FACTOR, 1 + JITTER_FACTOR)
-        delay = base_delay * jitter
-        
-        return delay
-    
-    def get_retry_queue_for_attempt(self, attempt: int) -> str:
-        """
-        Get the appropriate retry queue based on attempt number.
-        
-        Maps attempt number to retry level delays.
-        """
-        if attempt <= 1:
-            return RETRY_LEVELS[0]["routing_key"]  # 1 min
-        elif attempt <= 2:
-            return RETRY_LEVELS[1]["routing_key"]  # 10 min
-        elif attempt <= 3:
-            return RETRY_LEVELS[2]["routing_key"]  # 30 min
-        elif attempt <= 4:
-            return RETRY_LEVELS[3]["routing_key"]  # 2 hours
-        else:
-            return RETRY_LEVELS[4]["routing_key"]  # 6 hours
+        logger.info(f"WebhookEvent attempt incremented: {event.id}, attempts={event.attempts}")
 
 
 # Singleton instance
@@ -265,3 +222,4 @@ def get_webhook_dispatcher() -> WebhookDispatcher:
     if _dispatcher is None:
         _dispatcher = WebhookDispatcher()
     return _dispatcher
+
