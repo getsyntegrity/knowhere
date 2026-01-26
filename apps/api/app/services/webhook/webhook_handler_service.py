@@ -17,7 +17,7 @@ from shared.services.storage.file_upload_service import FileUploadService
 
 
 class WebhookHandlerService:
-    """Webhook处理服务 - 使用Transactional Outbox Pattern"""
+    """Webhook Handler Service - Uses Transactional Outbox Pattern"""
     
     # Default signing secret if not provided in job metadata
     DEFAULT_SECRET = "default_webhook_secret"

@@ -1,6 +1,6 @@
 """
-Webhook推送服务（API服务专用）
-负责发送Webhook请求并记录日志
+Webhook Delivery Service (API Service Dedicated)
+Responsible for sending Webhook requests and logging
 """
 import asyncio
 import hashlib
@@ -18,14 +18,14 @@ from loguru import logger
 
 
 class WebhookService:
-    """Webhook推送服务"""
+    """Webhook Delivery Service"""
     
     def __init__(self):
         self.webhook_repo = WebhookRepository()
         self.signing_secret = getattr(settings, 'WEBHOOK_SIGNING_SECRET', 'default_secret')
         self.max_retries = 5
-        self.base_delay = 1  # 基础延迟（秒）
-        self.max_delay = 60  # 最大延迟（秒）
+        self.base_delay = 1  # Base delay (seconds)
+        self.max_delay = 60  # Max delay (seconds)
     
     async def send_webhook(
         self, 
@@ -70,7 +70,7 @@ class WebhookService:
                 'User-Agent': 'Knowhere-Webhook/1.0'
             }
             
-            # 发送请求
+            # Send request
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     webhook_url,
@@ -80,8 +80,7 @@ class WebhookService:
                 ) as response:
                     response_body = await response.text()
                     
-                    # 记录Webhook日志
-                    # 记录Webhook日志
+                    # Log Webhook attempt
                     log = await self._log_webhook_attempt(
                         job_id=job_id,
                         webhook_url=webhook_url,
@@ -97,7 +96,7 @@ class WebhookService:
                     delivery_id = str(log.id) if log else None
                     
                     if 200 <= response.status < 300:
-                        logger.info(f"Webhook发送成功: job_id={job_id}, status={response.status}")
+                        logger.info(f"Webhook sent successfully: job_id={job_id}, status={response.status}")
                         return {
                             "success": True,
                             "status_code": response.status,
@@ -106,7 +105,7 @@ class WebhookService:
                             "delivery_id": delivery_id
                         }
                     else:
-                        logger.warning(f"Webhook发送失败: job_id={job_id}, status={response.status}")
+                        logger.warning(f"Webhook failed: job_id={job_id}, status={response.status}")
                         return {
                             "success": False,
                             "status_code": response.status,
@@ -116,8 +115,8 @@ class WebhookService:
                         }
                         
         except asyncio.TimeoutError:
-            error_msg = "Webhook请求超时"
-            logger.error(f"Webhook超时: job_id={job_id}")
+            error_msg = "Webhook request timeout"
+            logger.error(f"Webhook timeout: job_id={job_id}")
             log = await self._log_webhook_attempt(
                 job_id, webhook_url, attempt_number, payload, 
                 signature, idempotency_key, None, None, error_msg
@@ -126,8 +125,8 @@ class WebhookService:
             return {"success": False, "error": error_msg, "attempt_number": attempt_number, "delivery_id": delivery_id}
             
         except Exception as e:
-            error_msg = f"Webhook发送异常: {str(e)}"
-            logger.error(f"Webhook异常: job_id={job_id}, error={e}")
+            error_msg = f"Webhook exception: {str(e)}"
+            logger.error(f"Webhook exception: job_id={job_id}, error={e}")
             log = await self._log_webhook_attempt(
                 job_id, webhook_url, attempt_number, payload,
                 signature, idempotency_key, None, None, error_msg
@@ -152,13 +151,13 @@ class WebhookService:
         return f"sha256={signature}"
     
     def _calculate_delay(self, attempt: int) -> float:
-        """计算重试延迟（指数退避 + 抖动）"""
+        """Calculate retry delay (exponential backoff + jitter)"""
         import random
 
-        # 指数退避
+        # Exponential backoff
         delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
         
-        # 添加抖动（±25%）
+        # Add jitter (±25%)
         jitter = random.uniform(0.75, 1.25)
         delay = delay * jitter
         
@@ -176,7 +175,7 @@ class WebhookService:
         response_body: Optional[str],
         error_message: Optional[str]
     ):
-        """记录Webhook尝试日志"""
+        """Log Webhook Attempt"""
         try:
             async with get_db_context() as db:
                 return await self.webhook_repo.log_webhook_attempt(
@@ -192,6 +191,5 @@ class WebhookService:
                     error_message=error_message
                 )
         except Exception as e:
-            logger.error(f"记录Webhook日志失败: {e}")
+            logger.error(f"Failed to log Webhook: {e}")
             return None
-

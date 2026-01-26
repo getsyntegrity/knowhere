@@ -1,5 +1,5 @@
 """
-Webhook仓储层
+Webhook Repository Layer
 """
 from typing import Any, Dict, List, Optional
 
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class WebhookRepository:
-    """Webhook仓储类"""
+    """Webhook Repository Class"""
     
     async def log_webhook_attempt(
         self,
@@ -25,14 +25,14 @@ class WebhookRepository:
         response_body: Optional[str] = None,
         error_message: Optional[str] = None
     ) -> Optional[WebhookLog]:
-        """记录Webhook尝试日志"""
+        """Log Webhook Attempt"""
         try:
-            # request_payload 是 Dict，SQLAlchemy 的 JSON 类型会自动序列化
+            # request_payload is Dict, SQLAlchemy JSON type handles serialization automatically
             webhook_log = WebhookLog(
                 job_id=job_id,
                 webhook_url=webhook_url,
                 attempt_number=attempt_number,
-                request_payload=request_payload,  # 直接传递 Dict，SQLAlchemy 会自动处理
+                request_payload=request_payload,  # Pass Dict directly, SQLAlchemy handles it
                 signature=signature,
                 idempotency_key=idempotency_key,
                 response_status_code=response_status_code,
@@ -43,11 +43,11 @@ class WebhookRepository:
             db.add(webhook_log)
             await db.commit()
             
-            logger.info(f"Webhook日志记录成功: job_id={job_id}, attempt={attempt_number}")
+            logger.info(f"Webhook log recorded successfully: job_id={job_id}, attempt={attempt_number}")
             return webhook_log
             
         except Exception as e:
-            logger.error(f"记录Webhook日志失败: {e}")
+            logger.error(f"Failed to record Webhook log: {e}")
             await db.rollback()
             return None
     
@@ -58,7 +58,7 @@ class WebhookRepository:
         limit: int = 50,
         offset: int = 0
     ) -> List[WebhookLog]:
-        """获取Webhook日志"""
+        """Get Webhook Logs"""
         try:
             result = await db.execute(
                 select(WebhookLog)
@@ -69,7 +69,7 @@ class WebhookRepository:
             )
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"获取Webhook日志失败: {e}")
+            logger.error(f"Failed to get Webhook logs: {e}")
             return []
     
     async def get_webhook_logs_by_url(
@@ -79,7 +79,7 @@ class WebhookRepository:
         limit: int = 50,
         offset: int = 0
     ) -> List[WebhookLog]:
-        """根据URL获取Webhook日志"""
+        """Get Webhook logs by URL"""
         try:
             result = await db.execute(
                 select(WebhookLog)
@@ -90,7 +90,7 @@ class WebhookRepository:
             )
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"根据URL获取Webhook日志失败: {e}")
+            logger.error(f"Failed to get Webhook logs by URL: {e}")
             return []
     
     async def get_failed_webhook_logs(
@@ -98,7 +98,7 @@ class WebhookRepository:
         db: AsyncSession,
         limit: int = 100
     ) -> List[WebhookLog]:
-        """获取失败的Webhook日志"""
+        """Get failed Webhook logs"""
         try:
             result = await db.execute(
                 select(WebhookLog)
@@ -113,7 +113,7 @@ class WebhookRepository:
             )
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"获取失败Webhook日志失败: {e}")
+            logger.error(f"Failed to get failed Webhook logs: {e}")
             return []
     
     async def get_webhook_stats(
@@ -122,7 +122,7 @@ class WebhookRepository:
         job_id: Optional[str] = None,
         webhook_url: Optional[str] = None
     ) -> Dict[str, Any]:
-        """获取Webhook统计信息"""
+        """Get Webhook Statistics"""
         try:
             query = select(WebhookLog)
             conditions = []
@@ -150,7 +150,7 @@ class WebhookRepository:
             }
             
         except Exception as e:
-            logger.error(f"获取Webhook统计失败: {e}")
+            logger.error(f"Failed to get Webhook statistics: {e}")
             return {
                 "total_attempts": 0,
                 "successful_attempts": 0,
