@@ -32,30 +32,36 @@ class WebhookService:
         job_id: str, 
         webhook_url: str, 
         payload: Dict[str, Any],
-        attempt_number: int = 1
+        attempt_number: int = 1,
+        event_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        发送Webhook
+        Send Webhook request.
         
         Args:
-            job_id: 任务ID
-            webhook_url: Webhook URL
-            payload: 推送数据
-            attempt_number: 尝试次数
+            job_id: Job ID
+            webhook_url: Webhook destination URL
+            payload: JSON payload to send
+            attempt_number: Current attempt number (1-6)
+            event_id: Associated WebhookEvent ID (optional)
             
         Returns:
-            Dict: 发送结果
+            Dict: Result with success status, status_code, etc.
         """
+        # Generate idempotency key (X-Knowhere-Attempt-ID per design spec)
         idempotency_key = str(uuid.uuid4())
         signature = self._generate_signature(payload)
         
+        import time
+        start_time = time.time()
+        
         try:
-            # 构建请求头
+            # Build request headers (using X-Knowhere-* per design spec)
             headers = {
                 'Content-Type': 'application/json',
-                'X-Webhook-Signature': signature,
-                'X-Webhook-Idempotency-Key': idempotency_key,
-                'X-Webhook-Timestamp': str(int(datetime.utcnow().timestamp())),
+                'X-Knowhere-Signature': signature,
+                'X-Knowhere-Attempt-ID': idempotency_key,
+                'X-Knowhere-Timestamp': str(int(datetime.utcnow().timestamp())),
                 'User-Agent': 'Knowhere-Webhook/1.0'
             }
             
@@ -118,8 +124,14 @@ class WebhookService:
             return {"success": False, "error": error_msg, "attempt_number": attempt_number}
     
     def _generate_signature(self, payload: Dict[str, Any]) -> str:
-        """生成HMAC-SHA256签名"""
-        payload_str = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+        """
+        Generate HMAC-SHA256 signature.
+        
+        Per design spec: signs the raw JSON body (not sorted keys).
+        Format: sha256=<hex_digest>
+        """
+        # Use compact JSON format without sorting per design spec
+        payload_str = json.dumps(payload, separators=(',', ':'))
         signature = hmac.new(
             self.signing_secret.encode('utf-8'),
             payload_str.encode('utf-8'),

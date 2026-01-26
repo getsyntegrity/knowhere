@@ -1,21 +1,26 @@
 """
-Webhook处理服务（API服务专用）
-处理Job完成和失败的Webhook发送
+Webhook Handler Service (API Service)
 
-使用混合重试机制：
-- 第一次尝试同步发送（快速成功）
-- 失败后创建Celery任务进行异步重试（不阻塞主流程）
+Handles Job completion and failure webhook notifications using the
+Transactional Outbox Pattern for reliability:
+1. Creates WebhookEvent record atomically with job state
+2. Publishes event to RabbitMQ for async dispatch
+3. Falls back to immediate send + Celery retry for quick delivery
 """
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from loguru import logger
+
 from app.repositories.webhook_repository import WebhookRepository
 from shared.services.storage.file_upload_service import FileUploadService
-from loguru import logger
 
 
 class WebhookHandlerService:
-    """Webhook处理服务"""
+    """Webhook处理服务 - 使用Transactional Outbox Pattern"""
+    
+    # Default signing secret if not provided in job metadata
+    DEFAULT_SECRET = "default_webhook_secret"
     
     def __init__(self):
         self.webhook_repo = WebhookRepository()
@@ -26,22 +31,27 @@ class WebhookHandlerService:
         db,
         job_id: str,
         job_result: Any,
-        webhook_url: str
+        webhook_url: str,
+        webhook_secret: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        处理Job完成的Webhook发送
+        Handle Job completion Webhook.
+        
+        Creates a WebhookEvent record (outbox pattern) and publishes to queue
+        for async dispatch with retries.
         
         Args:
-            db: 数据库会话
-            job_id: 任务ID
-            job_result: JobResult对象
+            db: Database session
+            job_id: Job ID
+            job_result: JobResult object
             webhook_url: Webhook URL
+            webhook_secret: HMAC signing secret (optional)
         
         Returns:
-            Dict: 发送结果
+            Dict: Result with event_id if created
         """
         try:
-            # 构建Webhook payload
+            # Build webhook payload
             webhook_payload: Dict[str, Any] = {
                 "event": "job.completed",
                 "job_id": job_id,
@@ -50,48 +60,70 @@ class WebhookHandlerService:
                 "completed_at": datetime.utcnow().isoformat()
             }
             
-            # 添加 result_url（ZIP 包下载链接）
+            # Add result_url (ZIP download link)
             if job_result and job_result.result_s3_key:
                 result_url_info = await self.upload_service.generate_download_url(job_result.result_s3_key)
                 webhook_payload["result_url"] = result_url_info["download_url"]
             
-            # 添加 result（包含 checksum 和 statistics）
+            # Add result (checksum and statistics)
             if job_result and job_result.inline_payload:
                 webhook_payload["result"] = job_result.inline_payload
             
-            # 发送Webhook（混合重试机制：第一次同步，失败后异步重试）
-            from app.services.webhook.webhook_service import WebhookService
+            # Get webhook secret from job metadata if not provided
+            secret = webhook_secret or await self._get_webhook_secret(job_id)
             
-            webhook_service = WebhookService()
+            # Create WebhookEvent (outbox pattern)
+            from app.services.webhook.webhook_event_service import get_webhook_event_service
+            event_service = get_webhook_event_service()
             
-            # 第一次尝试同步发送（快速成功）
-            first_result = await webhook_service.send_webhook(
+            event = await event_service.create_event(
+                db=db,
                 job_id=job_id,
-                webhook_url=webhook_url,
-                payload=webhook_payload,
-                attempt_number=1
+                target_url=webhook_url,
+                secret=secret,
+                payload=webhook_payload
             )
             
-            if first_result.get("success", False):
-                logger.info(f"Job完成Webhook发送成功: job_id={job_id}, attempt=1")
-                return first_result
+            # Flush to ensure event is in DB (transaction will be committed by caller)
+            await db.flush()
             
-            # 第一次失败，创建Celery任务进行异步重试
-            logger.info(f"Job完成Webhook第一次尝试失败，创建异步重试任务: job_id={job_id}")
-            from shared.core.celery_app import get_celery_app
-            celery_app = get_celery_app()
+            logger.info(f"WebhookEvent created for job completion: event_id={event.id}, job_id={job_id}")
             
-            retry_task = celery_app.signature(
-                'app.core.tasks.webhook_tasks.send_webhook_retry_task',
-                args=[job_id, webhook_url, webhook_payload, 2]
-            )
-            retry_task.apply_async()
+            # For immediate delivery attempt, also use the existing service
+            # This provides fast delivery while the outbox provides reliability
+            try:
+                from app.services.webhook.webhook_service import WebhookService
+                webhook_service = WebhookService()
+                
+                first_result = await webhook_service.send_webhook(
+                    job_id=job_id,
+                    webhook_url=webhook_url,
+                    payload=webhook_payload,
+                    attempt_number=1,
+                    event_id=event.id  # Link to the event
+                )
+                
+                if first_result.get("success", False):
+                    # Update event status to delivered
+                    from shared.models.database.webhook import WebhookEventStatus
+                    event.status = WebhookEventStatus.DELIVERED
+                    event.attempts = 1
+                    logger.info(f"Job completion Webhook sent successfully: job_id={job_id}")
+                    return {"success": True, "event_id": event.id}
+                
+            except Exception as e:
+                logger.warning(f"Immediate webhook send failed, will rely on dispatcher: {e}")
             
-            logger.info(f"Job完成Webhook异步重试任务已创建: job_id={job_id}")
-            return first_result  # 返回第一次尝试的结果
+            # Return event info - dispatcher will handle async delivery
+            return {
+                "success": True,
+                "event_id": event.id,
+                "queued": True,
+                "message": "WebhookEvent created, queued for async dispatch"
+            }
             
         except Exception as e:
-            logger.error(f"处理Job完成Webhook失败: {e}")
+            logger.error(f"Failed to handle job completion webhook: {e}")
             return {"success": False, "error": str(e)}
     
     async def handle_job_failure_webhook(
@@ -101,21 +133,26 @@ class WebhookHandlerService:
         error_message: str,
         error_type: Optional[str] = None,
         error_code: str = "UNKNOWN",
-        webhook_url: str = None
+        webhook_url: str = None,
+        webhook_secret: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Handle Job failure Webhook sending
+        Handle Job failure Webhook.
+        
+        Creates a WebhookEvent record (outbox pattern) and publishes to queue
+        for async dispatch with retries.
         
         Args:
             db: Database session
             job_id: Job ID
             error_message: Error message
-            error_type: Error type (optional, Python exception class name)
-            error_code: Canonical error code (e.g., INVALID_ARGUMENT, INTERNAL_ERROR)
-            webhook_url: Webhook URL (optional, if None will get from Job)
+            error_type: Error type (optional)
+            error_code: Canonical error code
+            webhook_url: Webhook URL (optional, fetched from Job if not provided)
+            webhook_secret: HMAC signing secret (optional)
         
         Returns:
-            Dict: Sending result
+            Dict: Result with event_id if created
         """
         try:
             # If webhook_url not provided, get from Job
@@ -128,7 +165,7 @@ class WebhookHandlerService:
                     return {"success": False, "skipped": True, "reason": "webhook_not_enabled"}
                 webhook_url = job.webhook_url
             
-            # Build Webhook payload
+            # Build webhook payload
             webhook_payload: Dict[str, Any] = {
                 "event": "job.failed",
                 "job_id": job_id,
@@ -141,38 +178,77 @@ class WebhookHandlerService:
                 }
             }
             
-            # 发送Webhook（混合重试机制：第一次同步，失败后异步重试）
-            from app.services.webhook.webhook_service import WebhookService
+            # Get webhook secret from job metadata if not provided
+            secret = webhook_secret or await self._get_webhook_secret(job_id)
             
-            webhook_service = WebhookService()
+            # Create WebhookEvent (outbox pattern)
+            from app.services.webhook.webhook_event_service import get_webhook_event_service
+            event_service = get_webhook_event_service()
             
-            # 第一次尝试同步发送（快速成功）
-            first_result = await webhook_service.send_webhook(
+            event = await event_service.create_event(
+                db=db,
                 job_id=job_id,
-                webhook_url=webhook_url,
-                payload=webhook_payload,
-                attempt_number=1
+                target_url=webhook_url,
+                secret=secret,
+                payload=webhook_payload
             )
             
-            if first_result.get("success", False):
-                logger.info(f"Job失败Webhook发送成功: job_id={job_id}, attempt=1")
-                return first_result
+            # Flush to ensure event is in DB
+            await db.flush()
             
-            # 第一次失败，创建Celery任务进行异步重试
-            logger.info(f"Job失败Webhook第一次尝试失败，创建异步重试任务: job_id={job_id}")
-            from shared.core.celery_app import get_celery_app
-            celery_app = get_celery_app()
+            logger.info(f"WebhookEvent created for job failure: event_id={event.id}, job_id={job_id}")
             
-            retry_task = celery_app.signature(
-                'app.core.tasks.webhook_tasks.send_webhook_retry_task',
-                args=[job_id, webhook_url, webhook_payload, 2]
-            )
-            retry_task.apply_async()
+            # Attempt immediate delivery
+            try:
+                from app.services.webhook.webhook_service import WebhookService
+                webhook_service = WebhookService()
+                
+                first_result = await webhook_service.send_webhook(
+                    job_id=job_id,
+                    webhook_url=webhook_url,
+                    payload=webhook_payload,
+                    attempt_number=1,
+                    event_id=event.id
+                )
+                
+                if first_result.get("success", False):
+                    from shared.models.database.webhook import WebhookEventStatus
+                    event.status = WebhookEventStatus.DELIVERED
+                    event.attempts = 1
+                    logger.info(f"Job failure Webhook sent successfully: job_id={job_id}")
+                    return {"success": True, "event_id": event.id}
+                    
+            except Exception as e:
+                logger.warning(f"Immediate webhook send failed, will rely on dispatcher: {e}")
             
-            logger.info(f"Job失败Webhook异步重试任务已创建: job_id={job_id}")
-            return first_result  # 返回第一次尝试的结果
+            return {
+                "success": True,
+                "event_id": event.id,
+                "queued": True,
+                "message": "WebhookEvent created, queued for async dispatch"
+            }
             
         except Exception as e:
-            logger.error(f"处理Job失败Webhook失败: {e}")
+            logger.error(f"Failed to handle job failure webhook: {e}")
             return {"success": False, "error": str(e)}
-
+    
+    async def _get_webhook_secret(self, job_id: str) -> str:
+        """Get webhook secret from job metadata or use default."""
+        try:
+            from shared.services.redis import JobMetadataService, RedisServiceFactory
+            from shared.models.schemas.job_metadata import JobMetadataHelper
+            
+            redis_service = RedisServiceFactory.get_service()
+            metadata_service = JobMetadataService(redis_service)
+            job_metadata = await metadata_service.get_metadata(job_id)
+            
+            if job_metadata:
+                webhook_config = JobMetadataHelper.get_webhook(job_metadata)
+                if webhook_config and webhook_config.get("secret"):
+                    return webhook_config["secret"]
+            
+            return self.DEFAULT_SECRET
+            
+        except Exception as e:
+            logger.warning(f"Failed to get webhook secret from metadata: {e}")
+            return self.DEFAULT_SECRET

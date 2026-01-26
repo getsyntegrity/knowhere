@@ -1,8 +1,10 @@
 """
-Webhook日志数据模型
+Webhook日志数据模型 (Webhook Delivery History)
 """
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
@@ -10,16 +12,21 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
 
+if TYPE_CHECKING:
+    from shared.models.database.job import Job
+    from shared.models.database.webhook import WebhookEvent
+
 
 class WebhookLog(Base):
     """Webhook日志模型 - 记录Webhook推送历史"""
     __tablename__ = "webhook_logs"
     
-    # 主键
+    # Primary key
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
-    # 关联Job
+    # Associations
     job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False)
+    event_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("webhook_events.id", ondelete="CASCADE"), nullable=True)  # Optional for backward compatibility
     
     # Webhook信息
     webhook_url: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -30,20 +37,23 @@ class WebhookLog(Base):
     signature: Mapped[str] = mapped_column(String(128), nullable=False)  # HMAC签名
     idempotency_key: Mapped[str] = mapped_column(String(36), nullable=False)  # UUID幂等键
     
-    # 响应信息
+    # Response information
     response_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # Request duration in milliseconds
     
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     
-    # 关系
+    # Relationships
     job: Mapped["Job"] = relationship("Job", back_populates="webhook_logs")
+    event: Mapped[Optional["WebhookEvent"]] = relationship("WebhookEvent", back_populates="deliveries", foreign_keys=[event_id])
     
-    # 索引
+    # Indexes
     __table_args__ = (
         Index('idx_webhook_logs_job_id', 'job_id'),
+        Index('idx_webhook_logs_event_id', 'event_id'),
         Index('idx_webhook_logs_created_at', 'created_at'),
         Index('idx_webhook_logs_attempt', 'job_id', 'attempt_number'),
     )

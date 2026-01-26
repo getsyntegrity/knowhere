@@ -36,6 +36,7 @@ shared/core/exceptions/domain_exceptions.py
 shared/core/exceptions/knowhere_exception.py
 shared/core/exceptions/redis_exceptions.py
 shared/core/exceptions/retryable_exceptions.py
+shared/core/exceptions/webhook_exceptions.py
 shared/core/response/ErrorCode.py
 shared/core/response/__init__.py
 shared/core/state_machine/__init__.py
@@ -61,6 +62,7 @@ shared/models/database/subscription.py
 shared/models/database/usage_log.py
 shared/models/database/user.py
 shared/models/database/user_roles.py
+shared/models/database/webhook.py
 shared/models/database/webhook_log.py
 shared/models/schemas/__init__.py
 shared/models/schemas/api_key.py
