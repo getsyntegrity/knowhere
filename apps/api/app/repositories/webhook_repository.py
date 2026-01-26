@@ -24,7 +24,7 @@ class WebhookRepository:
         response_status_code: Optional[int] = None,
         response_body: Optional[str] = None,
         error_message: Optional[str] = None
-    ) -> bool:
+    ) -> Optional[WebhookLog]:
         """记录Webhook尝试日志"""
         try:
             # request_payload 是 Dict，SQLAlchemy 的 JSON 类型会自动序列化
@@ -44,12 +44,12 @@ class WebhookRepository:
             await db.commit()
             
             logger.info(f"Webhook日志记录成功: job_id={job_id}, attempt={attempt_number}")
-            return True
+            return webhook_log
             
         except Exception as e:
             logger.error(f"记录Webhook日志失败: {e}")
             await db.rollback()
-            return False
+            return None
     
     async def get_webhook_logs(
         self,

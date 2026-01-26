@@ -64,3 +64,18 @@ class WebhookTestResponse(BaseModel):
     response_body: Optional[str] = Field(None, description="响应体")
     error_message: Optional[str] = Field(None, description="错误信息")
     test_time: datetime = Field(..., description="测试时间")
+
+
+class WebhookTriggerRequest(BaseModel):
+    """Webhook手动触发请求"""
+    job_id: str = Field(..., description="任务ID")
+
+
+class WebhookTriggerResponse(BaseModel):
+    """Webhook手动触发响应"""
+    success: bool = Field(..., description="是否成功")
+    status_code: Optional[int] = Field(None, description="HTTP状态码")
+    response_body: Optional[str] = Field(None, description="响应体")
+    duration_ms: int = Field(..., description="耗时(ms)")
+    delivery_id: Optional[str] = Field(None, description="投递日志ID")
+    error_message: Optional[str] = Field(None, description="错误信息")

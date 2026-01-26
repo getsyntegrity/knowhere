@@ -33,7 +33,8 @@ class WebhookService:
         webhook_url: str, 
         payload: Dict[str, Any],
         attempt_number: int = 1,
-        event_id: Optional[str] = None
+        event_id: Optional[str] = None,
+        secret: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Send Webhook request.
@@ -44,13 +45,17 @@ class WebhookService:
             payload: JSON payload to send
             attempt_number: Current attempt number (1-6)
             event_id: Associated WebhookEvent ID (optional)
+            secret: HMAC signing secret (optional, uses global default if None)
             
         Returns:
             Dict: Result with success status, status_code, etc.
         """
         # Generate idempotency key (X-Knowhere-Attempt-ID per design spec)
         idempotency_key = str(uuid.uuid4())
-        signature = self._generate_signature(payload)
+        
+        # Use provided secret or fallback to global default
+        signing_secret = secret if secret else self.signing_secret
+        signature = self._generate_signature(payload, signing_secret)
         
         import time
         start_time = time.time()
@@ -76,7 +81,8 @@ class WebhookService:
                     response_body = await response.text()
                     
                     # 记录Webhook日志
-                    await self._log_webhook_attempt(
+                    # 记录Webhook日志
+                    log = await self._log_webhook_attempt(
                         job_id=job_id,
                         webhook_url=webhook_url,
                         attempt_number=attempt_number,
@@ -88,13 +94,16 @@ class WebhookService:
                         error_message=None
                     )
                     
+                    delivery_id = str(log.id) if log else None
+                    
                     if 200 <= response.status < 300:
                         logger.info(f"Webhook发送成功: job_id={job_id}, status={response.status}")
                         return {
                             "success": True,
                             "status_code": response.status,
                             "response_body": response_body,
-                            "attempt_number": attempt_number
+                            "attempt_number": attempt_number,
+                            "delivery_id": delivery_id
                         }
                     else:
                         logger.warning(f"Webhook发送失败: job_id={job_id}, status={response.status}")
@@ -102,28 +111,31 @@ class WebhookService:
                             "success": False,
                             "status_code": response.status,
                             "response_body": response_body,
-                            "attempt_number": attempt_number
+                            "attempt_number": attempt_number,
+                            "delivery_id": delivery_id
                         }
                         
         except asyncio.TimeoutError:
             error_msg = "Webhook请求超时"
             logger.error(f"Webhook超时: job_id={job_id}")
-            await self._log_webhook_attempt(
+            log = await self._log_webhook_attempt(
                 job_id, webhook_url, attempt_number, payload, 
                 signature, idempotency_key, None, None, error_msg
             )
-            return {"success": False, "error": error_msg, "attempt_number": attempt_number}
+            delivery_id = str(log.id) if log else None
+            return {"success": False, "error": error_msg, "attempt_number": attempt_number, "delivery_id": delivery_id}
             
         except Exception as e:
             error_msg = f"Webhook发送异常: {str(e)}"
             logger.error(f"Webhook异常: job_id={job_id}, error={e}")
-            await self._log_webhook_attempt(
+            log = await self._log_webhook_attempt(
                 job_id, webhook_url, attempt_number, payload,
                 signature, idempotency_key, None, None, error_msg
             )
-            return {"success": False, "error": error_msg, "attempt_number": attempt_number}
+            delivery_id = str(log.id) if log else None
+            return {"success": False, "error": error_msg, "attempt_number": attempt_number, "delivery_id": delivery_id}
     
-    def _generate_signature(self, payload: Dict[str, Any]) -> str:
+    def _generate_signature(self, payload: Dict[str, Any], secret: str) -> str:
         """
         Generate HMAC-SHA256 signature.
         
@@ -133,7 +145,7 @@ class WebhookService:
         # Use compact JSON format without sorting per design spec
         payload_str = json.dumps(payload, separators=(',', ':'))
         signature = hmac.new(
-            self.signing_secret.encode('utf-8'),
+            secret.encode('utf-8'),
             payload_str.encode('utf-8'),
             hashlib.sha256
         ).hexdigest()
@@ -167,7 +179,7 @@ class WebhookService:
         """记录Webhook尝试日志"""
         try:
             async with get_db_context() as db:
-                await self.webhook_repo.log_webhook_attempt(
+                return await self.webhook_repo.log_webhook_attempt(
                     db=db,
                     job_id=job_id,
                     webhook_url=webhook_url,
@@ -181,4 +193,5 @@ class WebhookService:
                 )
         except Exception as e:
             logger.error(f"记录Webhook日志失败: {e}")
+            return None
 
