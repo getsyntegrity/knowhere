@@ -17,9 +17,10 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.core.database import get_db_context
-from shared.core.database import get_db_context
+# Use task-local db context to avoid event loop issues with Celery
+from shared.core.database import get_task_local_db_context
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
+
 from shared.models.database.webhook_log import WebhookLog
 from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 
@@ -48,7 +49,7 @@ class WebhookDispatcher:
         Returns:
             True if successfully dispatched or terminal, False if should retry
         """
-        async with get_db_context() as db:
+        async with get_task_local_db_context() as db:
             # 1. Fetch event from database
             event = await self._fetch_event(db, event_id)
             
@@ -84,7 +85,21 @@ class WebhookDispatcher:
                 await self._mark_delivered(db, event)
                 return True  # Success
             else:
-                # Increment attempts, Celery will handle retry
+                # Determine if error is retryable
+                # Retryable: 5xx, timeout (None), 429 (rate limit)
+                # NOT retryable: 4xx (except 429) - client errors won't be fixed by retrying
+                is_retryable = self._is_retryable_error(status_code)
+                
+                if not is_retryable:
+                    # Permanent failure - don't retry
+                    logger.warning(
+                        f"WebhookEvent permanent failure (non-retryable): "
+                        f"event_id={event_id}, status={status_code}"
+                    )
+                    await self._mark_failed(db, event)
+                    return True  # ACK - no point retrying
+                
+                # Increment attempts for transient errors
                 await self._increment_attempts(db, event)
                 
                 if event.attempts >= MAX_ATTEMPTS:
@@ -94,7 +109,8 @@ class WebhookDispatcher:
                 # Raise exception so Celery task will retry
                 raise WebhookDeliveryException(
                     internal_message=f"Webhook delivery failed: {error_message}",
-                    retryable=True
+                    retryable=True,
+                    status_code=status_code
                 )
     
     async def _fetch_event(self, db: AsyncSession, event_id: str) -> Optional[WebhookEvent]:
@@ -154,6 +170,40 @@ class WebhookDispatcher:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook error: event_id={event.id}, error={e}")
             return False, None, duration_ms, str(e)
+    
+    def _is_retryable_error(self, status_code: Optional[int]) -> bool:
+        """
+        Determine if an HTTP error is transient and worth retrying.
+        
+        Retryable (transient) errors:
+        - None (timeout/network error)
+        - 429 (rate limited)
+        - 500-599 (server errors)
+        
+        NOT retryable (permanent) errors:
+        - 400-428, 430-499 (client errors - won't be fixed by retrying)
+        
+        Args:
+            status_code: HTTP response status code, or None for timeout/network
+            
+        Returns:
+            True if error is transient and should be retried
+        """
+        if status_code is None:
+            # Timeout or network error - always retry
+            return True
+        
+        if status_code == 429:
+            # Rate limited - retry after backoff
+            return True
+        
+        if 500 <= status_code < 600:
+            # Server error - transient, retry
+            return True
+        
+        # 4xx (except 429) - client error, permanent failure
+        # Examples: 400 Bad Request, 401 Unauthorized, 404 Not Found
+        return False
     
     def _sign_payload(self, payload: Dict[str, Any], secret: str) -> str:
         """Generate HMAC-SHA256 signature."""
