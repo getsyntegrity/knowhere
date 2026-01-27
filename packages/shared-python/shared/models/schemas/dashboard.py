@@ -4,7 +4,7 @@ Dashboard 相关 Schema
 from datetime import datetime
 from typing import Any, Dict, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class OverviewResponse(BaseModel):
@@ -37,8 +37,7 @@ class NotificationResponse(BaseModel):
     is_read: bool
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DashboardStatsResponse(BaseModel):

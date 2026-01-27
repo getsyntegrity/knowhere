@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -66,7 +66,7 @@ class WebhookService:
                 'Content-Type': 'application/json',
                 'X-Knowhere-Signature': signature,
                 'X-Knowhere-Attempt-ID': idempotency_key,
-                'X-Knowhere-Timestamp': str(int(datetime.utcnow().timestamp())),
+                'X-Knowhere-Timestamp': str(int(datetime.now(timezone.utc).timestamp())),
                 'User-Agent': 'Knowhere-Webhook/1.0'
             }
             

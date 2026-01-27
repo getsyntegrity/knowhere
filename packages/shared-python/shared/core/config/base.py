@@ -5,7 +5,7 @@ import os
 
 from loguru import logger
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BaseConfig(BaseSettings):
@@ -64,8 +64,9 @@ class BaseConfig(BaseSettings):
         logger.info("文件路径验证成功")
         return True
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"  # 忽略额外的环境变量
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"  # 忽略额外的环境变量
+    )

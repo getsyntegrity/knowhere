@@ -110,6 +110,7 @@ shared/services/storage/zip_result_service.py
 shared/services/storage/adapters/__init__.py
 shared/services/storage/adapters/oss_adapter.py
 shared/services/storage/adapters/s3_adapter.py
+shared/tests/fakes.py
 shared/utils/CommonHelper.py
 shared/utils/FileDownUpUtils.py
 shared/utils/OpenAICompatibleClient.py

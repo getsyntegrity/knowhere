@@ -6,7 +6,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi_users.schemas import BaseUserUpdate
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from shared.models.database.user import UserType
 
@@ -52,8 +52,7 @@ class UserRead(UserBase):
             obj.is_superuser = obj.is_superuser()
         return super().model_validate(obj, *args, **kwargs)
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserUpdateRequest(BaseModel):
@@ -88,8 +87,7 @@ class UserResponse(UserBase):
         
         return super().model_validate(data, *args, **kwargs)
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserStatsResponse(BaseModel):

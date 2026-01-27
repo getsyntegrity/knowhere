@@ -9,7 +9,7 @@ import hmac
 import json
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
@@ -138,7 +138,7 @@ class WebhookDispatcher:
             'Content-Type': 'application/json',
             'X-Knowhere-Signature': signature,
             'X-Knowhere-Attempt-ID': attempt_id,
-            'X-Knowhere-Timestamp': str(int(datetime.utcnow().timestamp())),
+            'X-Knowhere-Timestamp': str(int(datetime.now(timezone.utc).timestamp())),
             'User-Agent': 'Knowhere-Webhook/1.0'
         }
         
@@ -243,21 +243,21 @@ class WebhookDispatcher:
         """Mark event as delivered."""
         event.status = WebhookEventStatus.DELIVERED
         event.attempts += 1
-        event.updated_at = datetime.utcnow()
+        event.updated_at = datetime.now(timezone.utc)
         await db.commit()
         logger.info(f"WebhookEvent delivered: {event.id}")
     
     async def _mark_failed(self, db: AsyncSession, event: WebhookEvent) -> None:
         """Mark event as failed (max retries exceeded)."""
         event.status = WebhookEventStatus.FAILED
-        event.updated_at = datetime.utcnow()
+        event.updated_at = datetime.now(timezone.utc)
         await db.commit()
         logger.warning(f"WebhookEvent failed permanently: {event.id}")
     
     async def _increment_attempts(self, db: AsyncSession, event: WebhookEvent) -> None:
         """Increment attempt count for failed delivery (Celery will retry)."""
         event.attempts += 1
-        event.updated_at = datetime.utcnow()
+        event.updated_at = datetime.now(timezone.utc)
         await db.commit()
         logger.info(f"WebhookEvent attempt incremented: {event.id}, attempts={event.attempts}")
 

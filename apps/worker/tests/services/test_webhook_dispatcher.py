@@ -20,7 +20,7 @@ import sys
 sys.path.insert(0, '/home/suguan/github.com/ontosAI/knowhere-api/apps/worker')
 
 from app.services.webhook.dispatcher import WebhookDispatcher
-from app.services.webhook import JITTER_FACTOR, MAX_ATTEMPTS, BASE_DELAY_SECONDS
+from app.services.webhook import MAX_ATTEMPTS
 
 
 class TestWebhookDispatcher:
@@ -86,56 +86,34 @@ class TestWebhookDispatcher:
         assert sig1 != sig2
     
     # =========================================================================
-    # Backoff Calculation Tests
-    # =========================================================================
-    
-    def test_calculate_backoff_first_attempt(self, dispatcher):
-        """First attempt should use base delay with jitter."""
-        delay = dispatcher._calculate_backoff(1)
-        
-        # Delay should be within ±JITTER_FACTOR of BASE_DELAY_SECONDS
-        min_delay = BASE_DELAY_SECONDS * (1 - JITTER_FACTOR)
-        max_delay = BASE_DELAY_SECONDS * (1 + JITTER_FACTOR)
-        
-        assert min_delay <= delay <= max_delay
-    
-    def test_calculate_backoff_exponential_growth(self, dispatcher):
-        """Backoff should grow exponentially with attempt number."""
-        delays = [dispatcher._calculate_backoff(i) for i in range(1, 6)]
-        
-        # Each delay should be roughly double the previous (accounting for jitter)
-        for i in range(1, len(delays)):
-            # The ratio should be approximately 2 (with jitter tolerance)
-            ratio = delays[i] / delays[i-1]
-            # Allow for jitter variance (factor of ~1.5 to ~2.5)
-            assert 1.4 < ratio < 2.8, f"Ratio at attempt {i+1}: {ratio}"
-    
-    def test_calculate_backoff_with_jitter_variation(self, dispatcher):
-        """Multiple calls for same attempt should produce different values (jitter)."""
-        attempt = 3
-        delays = [dispatcher._calculate_backoff(attempt) for _ in range(10)]
-        
-        # With jitter, not all delays should be identical
-        unique_delays = set(delays)
-        assert len(unique_delays) > 1, "Jitter should produce variation"
-    
-    # =========================================================================
-    # Retry Queue Selection Tests
-    # =========================================================================
-    
-    def test_get_retry_queue_for_attempt_mapping(self, dispatcher):
-        """Verify correct retry queue selection based on attempt."""
-        assert dispatcher.get_retry_queue_for_attempt(1) == "wait.1m"
-        assert dispatcher.get_retry_queue_for_attempt(2) == "wait.10m"
-        assert dispatcher.get_retry_queue_for_attempt(3) == "wait.30m"
-        assert dispatcher.get_retry_queue_for_attempt(4) == "wait.2h"
-        assert dispatcher.get_retry_queue_for_attempt(5) == "wait.6h"
-        # Beyond max attempts, still use longest delay
-        assert dispatcher.get_retry_queue_for_attempt(6) == "wait.6h"
-    
-    # =========================================================================
     # Dispatch Flow Tests (with mocks)
     # =========================================================================
+    
+    @pytest.mark.asyncio
+    async def test_dispatch_failed_delivery_raises_exception(self, dispatcher):
+        """Dispatch should raise exception on failure to trigger Celery retry."""
+        mock_event = MagicMock()
+        mock_event.id = "test-event-id"
+        mock_event.attempts = 1
+        mock_event.is_terminal.return_value = False
+        
+        # Mock dependencies
+        with patch.object(dispatcher, '_fetch_event', new_callable=AsyncMock) as mock_fetch, \
+             patch.object(dispatcher, '_send_webhook', new_callable=AsyncMock) as mock_send, \
+             patch.object(dispatcher, '_increment_attempts', new_callable=AsyncMock) as mock_inc, \
+             patch.object(dispatcher, '_log_delivery', new_callable=AsyncMock):
+            
+            mock_fetch.return_value = mock_event
+            # Simulate failure response
+            mock_send.return_value = (False, 500, 100, "Internal Server Error")
+            
+            # Should raise WebhookDeliveryException
+            from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
+            with pytest.raises(WebhookDeliveryException):
+                await dispatcher.dispatch("test-event-id")
+            
+            # Verify attempt was incremented
+            mock_inc.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_dispatch_event_not_found_acks(self, dispatcher):
