@@ -62,7 +62,7 @@ class BillingConfig(BaseSettings):
     NEXT_PUBLIC_POSTHOG_HOST: str = Field(default="https://app.posthog.com", env="NEXT_PUBLIC_POSTHOG_HOST")
     
     # 订阅配置
-    FREE_PLAN_INITIAL_CREDITS: int = Field(default=100, env="FREE_PLAN_INITIAL_CREDITS")
+    FREE_PLAN_INITIAL_CREDITS: int = Field(default=5, env="FREE_PLAN_INITIAL_CREDITS")
     
     # S3配置（新增）
     S3_UPLOADS_BUCKET: str = Field(default="", env="S3_UPLOADS_BUCKET")
