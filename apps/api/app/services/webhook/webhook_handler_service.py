@@ -83,7 +83,7 @@ class WebhookHandlerService:
                 secret=secret,
                 payload=webhook_payload
             )
-            
+
             # Flush to ensure event is in DB (transaction will be committed by caller)
             await db.flush()
             
@@ -133,6 +133,7 @@ class WebhookHandlerService:
         error_message: str,
         error_type: Optional[str] = None,
         error_code: str = "UNKNOWN",
+        error_details: Optional[Dict[str, Any]] = None,
         webhook_url: str = None,
         webhook_secret: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -165,17 +166,20 @@ class WebhookHandlerService:
                     return {"success": False, "skipped": True, "reason": "webhook_not_enabled"}
                 webhook_url = job.webhook_url
             
-            # Build webhook payload
+            # Build webhook payload with standard error format
+            from shared.core.response import build_standard_error_response
+            
             webhook_payload: Dict[str, Any] = {
                 "event": "job.failed",
                 "job_id": job_id,
                 "status": "failed",
                 "failed_at": datetime.utcnow().isoformat(),
-                "error": {
-                    "message": error_message,
-                    "type": error_type or "Exception",
-                    "code": error_code
-                }
+                "error": build_standard_error_response(
+                    code=error_code,
+                    message=error_message,
+                    request_id=job_id,
+                    details=error_details
+                )
             }
             
             # Get webhook secret from job metadata if not provided

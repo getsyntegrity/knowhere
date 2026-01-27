@@ -30,6 +30,7 @@ from shared.core.exceptions.domain_exceptions import (
     RateLimitException,
     JobOperationException
 )
+from shared.core.exceptions.webhook_exceptions import WebhookConfigException
 
 router = APIRouter(tags=["Jobs"])
 
@@ -148,20 +149,21 @@ def _build_error_response(job, job_metadata: Optional[dict] = None) -> Optional[
     """
     if not job.error_message:
         return None
-        
-    error_response = {
-        "code": job.error_code or "UNKNOWN",
-        "message": job.error_message,
-        "request_id": job.job_id  # Use job_id as request_id for tracing
-    }
+    
+    from shared.core.response import build_standard_error_response
     
     # Extract error_details from job_metadata if present
+    error_details = None
     if job_metadata and isinstance(job_metadata, dict):
         error_details = job_metadata.get("error_details")
-        if error_details:
-            error_response["details"] = error_details
     
-    return error_response
+    return build_standard_error_response(
+        code=job.error_code or "UNKNOWN",
+        message=job.error_message,
+        request_id=job.job_id,
+        details=error_details
+    )
+
 
 def create_job_response(
     job_id: str,
@@ -253,6 +255,28 @@ async def create_job(
                 user_message="source_url is required when source_type is 'url'",
                 violations=[{"field": "source_url", "description": "Required for url source type"}]
             )
+
+        # Validate webhook config if present
+        if request.webhook:
+            # Check for URL validity
+            if request.webhook.url:
+                parsed = urlparse(request.webhook.url)
+                if not all([parsed.scheme, parsed.netloc]):
+                    raise WebhookConfigException(
+                        user_message="Invalid webhook URL format",
+                        internal_message=f"Invalid webhook URL: {request.webhook.url}"
+                    )
+                if parsed.scheme not in ('http', 'https'):
+                     raise WebhookConfigException(
+                        user_message="Webhook URL must be http or https",
+                        internal_message=f"Invalid webhook scheme: {parsed.scheme}"
+                    )
+
+            if not request.webhook.secret:
+                raise WebhookConfigException(
+                    internal_message="Missing webhook secret",
+                    user_message="Webhook secret is required for signature verification."
+                )
 
         # 验证文件类型
         if request.source_type == "file" and not validate_file_type(request.file_name):
@@ -450,6 +474,8 @@ async def create_job(
 
             except ValidationException:
                 raise
+            except WebhookConfigException:
+                raise
             except JobOperationException:
                 raise
             except Exception as e:
@@ -459,6 +485,8 @@ async def create_job(
                 )
 
     except ValidationException:
+        raise
+    except WebhookConfigException:
         raise
     except JobOperationException:
         raise

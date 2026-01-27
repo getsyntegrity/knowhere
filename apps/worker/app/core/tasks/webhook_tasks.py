@@ -16,6 +16,7 @@ from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 # Top-level imports (concern #3)
 from app.services.webhook import MAX_ATTEMPTS
 from app.services.webhook.dispatcher import get_webhook_dispatcher
+from shared.core.async_utils import run_async_task
 
 
 celery_app = get_celery_app()
@@ -59,6 +60,13 @@ class WebhookDispatchTask(Task):
             f"Webhook dispatch task failed permanently: task_id={task_id}, "
             f"event_id={event_id}, error={exc}"
         )
+        # Update status in DB (last resort status update)
+        if event_id != "unknown":
+            try:
+                dispatcher = get_webhook_dispatcher()
+                run_async_task(dispatcher.mark_event_failed(event_id))
+            except Exception as e:
+                logger.error(f"Failed to update webhook status in on_failure: {e}")
 
 
 @celery_app.task(
@@ -123,7 +131,8 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
             
     try:
         # Jitter is handled above (non-blocking), so we just dispatch directly here
-        result = asyncio.run(_dispatch_async(event_id))
+        # Use run_async_task to reuse event loop and connections
+        result = run_async_task(_dispatch_async(event_id))
         return result
         
     except WebhookDeliveryException as exc:
@@ -174,6 +183,10 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
             f"attempts={current_attempt}"
         )
         try:
+            # Mark as failed in DB before sending to DLQ (so UI shows failed)
+            dispatcher = get_webhook_dispatcher()
+            run_async_task(dispatcher.mark_event_failed(event_id))
+            
             dispatch_webhook_task.apply_async(
                 args=[event_id, next_attempt],
                 queue=DEAD_QUEUE,

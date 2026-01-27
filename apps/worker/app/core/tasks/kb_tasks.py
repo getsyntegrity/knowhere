@@ -20,7 +20,7 @@ from shared.services.redis import RedisServiceFactory, JobInfoRedisService, JobM
 from shared.services.storage.file_upload_service import FileUploadService
 from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
-from shared.services.messaging.message_publisher import run_async_publish
+from shared.core.async_utils import run_async_task
 
 # Exception handling
 from shared.core.exceptions.domain_exceptions import (
@@ -39,7 +39,7 @@ from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 
 # Clean top-level imports (concerns #2 & #3)
 from shared.core.constants.system import SystemConstants
-from shared.core.database import get_task_local_db_context
+from shared.core.database import get_db_context
 from shared.core.billing import BillingCalculator
 from shared.models.database.job import Job
 from shared.models.schemas.job_metadata import JobMetadataHelper
@@ -110,7 +110,7 @@ class KBBaseTask(Task):
                 # Include stack trace only for wrapped exceptions
                 stack_trace = str(einfo) if knowhere_exc.original_exception else None
                 
-                run_async_publish(
+                run_async_task(
                     message_publisher.publish_failure(
                         job_id=job_id,
                         error_message=error_info["message"],
@@ -148,7 +148,7 @@ class KBBaseTask(Task):
             # Publish retry message to notify API service
             try:
                 message_publisher = get_message_publisher()
-                run_async_publish(
+                run_async_task(
                     message_publisher.publish_status_update(
                         job_id=job_id,
                         status=JobStatus.RUNNING.value,  # Keep running status during retry
@@ -184,8 +184,8 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None
             internal_message="Worker task 'upload_url_file_task' called without job_id"
         )
 
-    # Use asyncio.run() for proper event loop management
-    return asyncio.run(_upload_url_file_async(
+    # Use run_async_task for proper event loop management
+    return run_async_task(_upload_url_file_async(
         job_id, source_url, user_id, job_type
     ))
 
@@ -354,9 +354,9 @@ def parse_task(self, job_id: str, user_id: str = None, job_type: str = "kb_manag
             internal_message="Worker task 'parse_task' called without job_id"
         )
     
-    # Use asyncio.run() for proper event loop management
-    # This automatically creates and closes a fresh event loop
-    return asyncio.run(_parse_async(
+    # Use run_async_task for proper event loop management (reusing loop)
+    # This keeps the event loop alive effectively
+    return run_async_task(_parse_async(
         job_id, user_id
     ))
 
@@ -534,7 +534,7 @@ async def _parse_async(job_id: str, user_id: str):
     # SYNCHRONOUS BILLING - Deduct credits before processing
     # ============================================================
     # Use task-local db context to avoid event loop issues with Celery retries
-    async with get_task_local_db_context() as db:
+    async with get_db_context() as db:
         # Lock job row to prevent race conditions
         job_result = await db.execute(
             select(Job).where(Job.job_id == job_id).with_for_update()

@@ -53,7 +53,7 @@ async def test_fr03_failure_increments_attempts(fake_db, dispatcher):
     mock_response.__aenter__.return_value = mock_response
     mock_response.__aexit__.return_value = None
     
-    with patch("app.services.webhook.dispatcher.get_task_local_db_context", 
+    with patch("app.services.webhook.dispatcher.get_db_context", 
                return_value=MagicMock(__aenter__=AsyncMock(return_value=fake_db), __aexit__=AsyncMock(return_value=None))), \
          patch("aiohttp.ClientSession.post", return_value=mock_response):
         
@@ -76,7 +76,7 @@ async def test_fr03_max_attempts_marks_failed(fake_db, dispatcher):
     mock_response.__aenter__.return_value = mock_response
     mock_response.__aexit__.return_value = None
     
-    with patch("app.services.webhook.dispatcher.get_task_local_db_context", 
+    with patch("app.services.webhook.dispatcher.get_db_context", 
                return_value=MagicMock(__aenter__=AsyncMock(return_value=fake_db), __aexit__=AsyncMock(return_value=None))), \
          patch("aiohttp.ClientSession.post", return_value=mock_response):
         
@@ -103,7 +103,7 @@ async def test_fr04_successful_delivery_marks_delivered(fake_db, dispatcher):
     mock_response.__aenter__.return_value = mock_response
     mock_response.__aexit__.return_value = None
     
-    with patch("app.services.webhook.dispatcher.get_task_local_db_context", 
+    with patch("app.services.webhook.dispatcher.get_db_context", 
                return_value=MagicMock(__aenter__=AsyncMock(return_value=fake_db), __aexit__=AsyncMock(return_value=None))), \
          patch("aiohttp.ClientSession.post", return_value=mock_response):
         
@@ -134,7 +134,7 @@ async def test_fr05_skips_already_delivered_event(fake_db, dispatcher):
     )
     fake_db.storage.append(event)
     
-    with patch("app.services.webhook.dispatcher.get_task_local_db_context", 
+    with patch("app.services.webhook.dispatcher.get_db_context", 
                return_value=MagicMock(__aenter__=AsyncMock(return_value=fake_db), __aexit__=AsyncMock(return_value=None))), \
          patch("aiohttp.ClientSession.post") as mock_post:
         

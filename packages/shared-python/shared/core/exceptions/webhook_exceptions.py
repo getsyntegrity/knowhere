@@ -4,7 +4,7 @@ Webhook-specific exceptions.
 These exceptions are used internally for webhook delivery logic and
 are not typically exposed to API clients directly.
 """
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.response.ErrorCode import ErrorCode
@@ -27,7 +27,8 @@ class WebhookConfigException(WebhookException):
     def __init__(
         self, 
         internal_message: str,
-        user_message: str = "Invalid webhook configuration."
+        user_message: str = "Invalid webhook configuration.",
+        details: Optional[Dict[str, Any]] = None
     ):
         super().__init__(
             code=ErrorCode.INVALID_ARGUMENT,
@@ -35,6 +36,8 @@ class WebhookConfigException(WebhookException):
             user_message=user_message,
             http_status_code=400
         )
+        self.details = details
+
 
 
 class WebhookDeliveryException(WebhookException):

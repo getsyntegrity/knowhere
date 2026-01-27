@@ -8,7 +8,8 @@ from datetime import datetime
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_db
@@ -198,3 +199,27 @@ async def trigger_webhook(
         raise WebhookServiceException(
             internal_message=f"Failed to trigger webhook: {str(e)}"
         )
+
+
+@router.post("/test-callback", summary="Test Webhook Callback Endpoint")
+async def test_webhook_callback(
+    request: Request,
+    payload: dict = Body(...),
+):
+    """
+    Test endpoint to receive webhook callbacks.
+    
+    Use this endpoint to verify webhook delivery. It logs receiving data
+    to the server console and returns the received payload.
+    """
+    # Log the event
+    logger.info("🔔 [Test Callback] Webhook Received!")
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Payload: {payload}")
+    
+    return {
+        "status": "received",
+        "timestamp": datetime.utcnow().isoformat(),
+        "payload": payload,
+        "received_headers": {k: v for k, v in request.headers.items() if k.lower().startswith("x-") or k.lower() == "user-agent"},
+    }

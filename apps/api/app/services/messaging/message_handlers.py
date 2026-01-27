@@ -441,9 +441,11 @@ async def _handle_failure_async(message: JobFailureMessage):
                 # Log detailed error information
                 if message.stack_trace:
                     logger.error(f"Job {message.job_id} stack trace:\n{message.stack_trace}")
-                
+
                 # Handle failure webhook and email notifications (if enabled)
-                await _handle_job_failure_notifications(db, message.job_id, message.error_message, message.error_type, error_code)
+                await _handle_job_failure_notifications(
+                    db, message.job_id, message.error_message, message.error_type, error_code, error_details
+                )
                 
                 return {
                     "status": "success",
@@ -470,121 +472,126 @@ async def _handle_failure_async(message: JobFailureMessage):
 
 
 async def _handle_job_completion_notifications(db, job_id: str, job_result: Any):
-    """处理Job完成的通知（Webhook和邮件）"""
-    try:
-        from shared.models.schemas.job_metadata import JobMetadataHelper
-        from app.repositories.job_repository import JobRepository
-        from app.services.email.job_email_service import JobEmailService
-        from shared.services.redis import JobMetadataService, RedisServiceFactory
-        from app.services.webhook.webhook_handler_service import \
-            WebhookHandlerService
+    """
+    Handle Job completion notifications (Webhook and email).
+    
+    Webhook event creation is atomic with the job state update (errors propagate).
+    Email sending is non-critical (errors are logged but not propagated).
+    """
+    from shared.models.schemas.job_metadata import JobMetadataHelper
+    from app.repositories.job_repository import JobRepository
+    from app.services.email.job_email_service import JobEmailService
+    from shared.services.redis import JobMetadataService, RedisServiceFactory
+    from app.services.webhook.webhook_handler_service import WebhookHandlerService
+    
+    job_repo = JobRepository()
+    job = await job_repo.get_job_by_id(db, job_id)
+    
+    if not job:
+        logger.warning(f"Job {job_id} does not exist, skipping notification")
+        return
+    
+    # Webhook notification - errors propagate to ensure atomicity with job state
+    if job.webhook_enabled and job.webhook_url:
+        # Get webhook URL from job_metadata if available
+        redis_service = RedisServiceFactory.get_service()
+        metadata_service = JobMetadataService(redis_service)
+        job_metadata = await metadata_service.get_metadata(job_id)
         
-        job_repo = JobRepository()
-        job = await job_repo.get_job_by_id(db, job_id)
-        
-        if not job:
-            logger.warning(f"Job {job_id} 不存在，跳过通知")
-            return
-        
-        # 检查是否需要发送Webhook
-        webhook_enabled = job.webhook_enabled
         webhook_url = job.webhook_url
+        if job_metadata:
+            webhook_config = JobMetadataHelper.get_webhook(job_metadata)
+            if webhook_config and webhook_config.get("url"):
+                webhook_url = webhook_config["url"]
         
-        if webhook_enabled and webhook_url:
-            # 从job_metadata获取webhook配置
-            redis_service = RedisServiceFactory.get_service()
-            metadata_service = JobMetadataService(redis_service)
-            job_metadata = await metadata_service.get_metadata(job_id)
-            
-            if job_metadata:
-                webhook_config = JobMetadataHelper.get_webhook(job_metadata)
-                if webhook_config and webhook_config.get("url"):
-                    webhook_url = webhook_config["url"]
-            
-            # 发送Webhook
-            webhook_handler = WebhookHandlerService()
-            webhook_result = await webhook_handler.handle_job_completion_webhook(
+        webhook_handler = WebhookHandlerService()
+        webhook_result = await webhook_handler.handle_job_completion_webhook(
+            db=db,
+            job_id=job_id,
+            job_result=job_result,
+            webhook_url=webhook_url
+        )
+        logger.info(f"Job completion webhook result: job_id={job_id}, result={webhook_result}")
+    
+    # Email notification - non-critical, errors logged but not propagated
+    try:
+        from shared.models.database.user import User
+        from sqlalchemy import select
+        result = await db.execute(select(User).where(User.id == job.user_id))
+        user = result.scalar_one_or_none()
+        
+        if user and user.email:
+            email_service = JobEmailService()
+            email_result = await email_service.send_job_completion_email(
                 db=db,
                 job_id=job_id,
                 job_result=job_result,
-                webhook_url=webhook_url
+                user_email=user.email,
+                user_name=getattr(user, 'full_name', None) or user.email,
+                job_type=job.job_type or "kb_management"
             )
-            logger.info(f"Job完成Webhook发送结果: job_id={job_id}, result={webhook_result}")
-        
-        # 发送邮件（如果需要）
-        try:
-            from shared.models.database.user import User
-            from sqlalchemy import select
-            result = await db.execute(select(User).where(User.id == job.user_id))
-            user = result.scalar_one_or_none()
-            
-            if user and user.email:
-                email_service = JobEmailService()
-                email_result = await email_service.send_job_completion_email(
-                    db=db,
-                    job_id=job_id,
-                    job_result=job_result,
-                    user_email=user.email,
-                    user_name=getattr(user, 'full_name', None) or user.email,
-                    job_type=job.job_type or "kb_management"
-                )
-                logger.info(f"Job完成邮件发送结果: job_id={job_id}, user_email={user.email}, result={email_result}")
-        except Exception as e:
-            logger.error(f"发送Job完成邮件失败: {e}")
-        
+            logger.info(f"Job completion email result: job_id={job_id}, user_email={user.email}, result={email_result}")
     except Exception as e:
-        logger.error(f"处理Job完成通知失败: {e}")
+        logger.error(f"Failed to send job completion email: {e}")
 
 
-async def _handle_job_failure_notifications(db, job_id: str, error_message: str, error_type: str = None, error_code: str = "UNKNOWN"):
-    """Handle Job failure notifications (Webhook and email)"""
+async def _handle_job_failure_notifications(
+    db,
+    job_id: str,
+    error_message: str,
+    error_type: str = None,
+    error_code: str = "UNKNOWN",
+    error_details: dict = None
+):
+    """
+    Handle Job failure notifications (Webhook and email).
+    
+    Webhook event creation is atomic with the job state update (errors propagate).
+    Email sending is non-critical (errors are logged but not propagated).
+    """
+    from app.repositories.job_repository import JobRepository
+    from app.services.email.job_email_service import JobEmailService
+    from app.services.webhook.webhook_handler_service import WebhookHandlerService
+    
+    job_repo = JobRepository()
+    job = await job_repo.get_job_by_id(db, job_id)
+    
+    if not job:
+        logger.warning(f"Job {job_id} does not exist, skipping notification")
+        return
+    
+    # Webhook notification - errors propagate to ensure atomicity with job state
+    if job.webhook_enabled and job.webhook_url:
+        webhook_handler = WebhookHandlerService()
+        webhook_result = await webhook_handler.handle_job_failure_webhook(
+            db=db,
+            job_id=job_id,
+            error_message=error_message,
+            error_type=error_type,
+            error_code=error_code,
+            error_details=error_details,
+            webhook_url=job.webhook_url
+        )
+        logger.info(f"Job failure webhook result: job_id={job_id}, result={webhook_result}")
+    
+    # Email notification - non-critical, errors logged but not propagated
     try:
-        from app.repositories.job_repository import JobRepository
-        from app.services.email.job_email_service import JobEmailService
-        from app.services.webhook.webhook_handler_service import \
-            WebhookHandlerService
+        from shared.models.database.user import User
+        from sqlalchemy import select
+        result = await db.execute(select(User).where(User.id == job.user_id))
+        user = result.scalar_one_or_none()
         
-        job_repo = JobRepository()
-        job = await job_repo.get_job_by_id(db, job_id)
-        
-        if not job:
-            logger.warning(f"Job {job_id} does not exist, skipping notification")
-            return
-        
-        # Check if webhook notification is needed
-        if job.webhook_enabled and job.webhook_url:
-            webhook_handler = WebhookHandlerService()
-            webhook_result = await webhook_handler.handle_job_failure_webhook(
+        if user and user.email:
+            email_service = JobEmailService()
+            email_result = await email_service.send_job_failure_email(
                 db=db,
                 job_id=job_id,
+                user_email=user.email,
                 error_message=error_message,
-                error_type=error_type,
-                error_code=error_code,
-                webhook_url=job.webhook_url
+                user_name=getattr(user, 'full_name', None) or user.email,
+                job_type=job.job_type or "kb_management"
             )
-            logger.info(f"Job failure webhook result: job_id={job_id}, result={webhook_result}")
-        
-        # 发送邮件（如果需要）
-        try:
-            from shared.models.database.user import User
-            from sqlalchemy import select
-            result = await db.execute(select(User).where(User.id == job.user_id))
-            user = result.scalar_one_or_none()
-            
-            if user and user.email:
-                email_service = JobEmailService()
-                email_result = await email_service.send_job_failure_email(
-                    db=db,
-                    job_id=job_id,
-                    user_email=user.email,
-                    error_message=error_message,
-                    user_name=getattr(user, 'full_name', None) or user.email,
-                    job_type=job.job_type or "kb_management"
-                )
-                logger.info(f"Job失败邮件发送结果: job_id={job_id}, user_email={user.email}, result={email_result}")
-        except Exception as e:
-            logger.error(f"发送Job失败邮件失败: {e}")
-        
+            logger.info(f"Job failure email result: job_id={job_id}, user_email={user.email}, result={email_result}")
     except Exception as e:
-        logger.error(f"处理Job失败通知失败: {e}")
+        logger.error(f"Failed to send job failure email: {e}")
 

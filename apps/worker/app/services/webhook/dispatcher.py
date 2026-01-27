@@ -17,8 +17,8 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Use task-local db context to avoid event loop issues with Celery
-from shared.core.database import get_task_local_db_context
+# Use standard db context - run_async_task handles the loop reuse
+from shared.core.database import get_db_context
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 
 from shared.models.database.webhook_log import WebhookLog
@@ -49,7 +49,7 @@ class WebhookDispatcher:
         Returns:
             True if successfully dispatched or terminal, False if should retry
         """
-        async with get_task_local_db_context() as db:
+        async with get_db_context() as db:
             # 1. Fetch event from database
             event = await self._fetch_event(db, event_id)
             
@@ -112,6 +112,18 @@ class WebhookDispatcher:
                     retryable=True,
                     status_code=status_code
                 )
+
+    async def mark_event_failed(self, event_id: str) -> None:
+        """
+        Mark a webhook event as permanently failed (public helper).
+        Used by Celery task on_failure or when retries exhausted.
+        """
+        async with get_db_context() as db:
+            event = await self._fetch_event(db, event_id)
+            if event:
+                await self._mark_failed(db, event)
+            else:
+                logger.warning(f"Cannot mark failed: WebhookEvent {event_id} not found")
     
     async def _fetch_event(self, db: AsyncSession, event_id: str) -> Optional[WebhookEvent]:
         """Fetch WebhookEvent by ID."""
