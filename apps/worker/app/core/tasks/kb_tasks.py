@@ -3,18 +3,25 @@ Knowledge Base Management Celery Tasks
 """
 import asyncio
 import os
+import tempfile
+import traceback
+import uuid
 from typing import Dict, Any, Optional
+from urllib.parse import urlparse
+
+import httpx
 from celery import Task
 from loguru import logger
+from sqlalchemy import select
 
 from shared.core.celery_app import get_celery_app
-from shared.core.state_machine.states import JobStatus  # Used only for status constants, not direct state machine operations
-# Worker no longer accesses database directly, retrieves info from Redis
-from shared.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService                                                                     
+from shared.core.state_machine.states import JobStatus
+from shared.services.redis import RedisServiceFactory, JobInfoRedisService, JobMetadataService
 from shared.services.storage.file_upload_service import FileUploadService
 from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
 from shared.services.messaging.message_publisher import run_async_publish
+
 # Exception handling
 from shared.core.exceptions.domain_exceptions import (
     ValidationException,
@@ -24,10 +31,23 @@ from shared.core.exceptions.domain_exceptions import (
     UnknownException,
     WorkerHandlingException,
     SystemSettingMissingException,
-    SystemSettingInvalidException
+    SystemSettingInvalidException,
+    InsufficientCreditsException
 )
 from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.exceptions import RETRYABLE_EXCEPTIONS
+
+# Clean top-level imports (concerns #2 & #3)
+from shared.core.constants.system import SystemConstants
+from shared.core.database import get_task_local_db_context
+from shared.core.billing import BillingCalculator
+from shared.models.database.job import Job
+from shared.models.schemas.job_metadata import JobMetadataHelper
+from shared.services.redis.chunks_redis_service import ChunksRedisService
+from shared.services.storage.zip_result_service import ZipResultService
+from app.services.workload.page_estimator import PageEstimator
+from app.services.document_parser.parse_service import checkerboard_inject_parse
+from app.services.billing import deduct_credits
 
 # Get Celery application
 celery_app = get_celery_app()
@@ -46,9 +66,6 @@ class KBBaseTask(Task):
         
         This is a built-in Celery method, automatically called when a task raises an exception.
         """
-        import uuid
-        import traceback
-        
         # Extract job_id from args or kwargs
         job_id = self._extract_job_id(args, kwargs)
         request_id = str(uuid.uuid4())
@@ -167,23 +184,10 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None
             internal_message="Worker task 'upload_url_file_task' called without job_id"
         )
 
-    # Celery doesn't natively support async tasks, so we must manage the event loop manually
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("Event loop is closed")
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        return loop.run_until_complete(_upload_url_file_async(
-            job_id, source_url, user_id, job_type
-        ))
-    finally:
-        # Only close the loop if we created a new one
-        if loop != asyncio.get_event_loop():
-            loop.close()
+    # Use asyncio.run() for proper event loop management
+    return asyncio.run(_upload_url_file_async(
+        job_id, source_url, user_id, job_type
+    ))
 
 
 async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job_type: str = None):
@@ -226,14 +230,11 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
     )
     
     # Step 1: Validate URL file type (before download, prevent unsafe files)
-    from urllib.parse import urlparse
-    import os
     parsed_url = urlparse(source_url)
     url_path = parsed_url.path
     file_extension = os.path.splitext(url_path)[1].lower()
     
     # Get supported file extensions
-    from shared.core.constants.system import SystemConstants
     all_supported_extensions = []
     for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
         all_supported_extensions.extend(category)
@@ -271,7 +272,6 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
             message_text="Validating file size..."
         )
         
-        # Step 3: Validate file size (before S3 upload)
         # Step 3: Validate file size (before S3 upload)
         file_size = os.path.getsize(temp_file_path)
         
@@ -354,23 +354,11 @@ def parse_task(self, job_id: str, user_id: str = None, job_type: str = "kb_manag
             internal_message="Worker task 'parse_task' called without job_id"
         )
     
-    # Celery doesn't natively support async tasks, so we must manage the event loop manually
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("Event loop is closed")
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        return loop.run_until_complete(_parse_async(
-            job_id, user_id
-        ))
-    finally:
-        # Only close the loop if we created a new one
-        if loop != asyncio.get_event_loop():
-            loop.close()
+    # Use asyncio.run() for proper event loop management
+    # This automatically creates and closes a fresh event loop
+    return asyncio.run(_parse_async(
+        job_id, user_id
+    ))
 
 
 async def _parse_async(job_id: str, user_id: str):
@@ -411,7 +399,6 @@ async def _parse_async(job_id: str, user_id: str):
     
     # 验证S3文件存在性
     logger.info(f"开始验证S3文件存在性: job_id={job_id}, s3_key={s3_key}")
-    from shared.services.storage.file_upload_service import FileUploadService
     upload_service = FileUploadService()
     logger.info(f"FileUploadService创建成功，开始验证文件: job_id={job_id}")
     file_info = await upload_service.verify_s3_file_exists(s3_key)
@@ -443,7 +430,6 @@ async def _parse_async(job_id: str, user_id: str):
     
     # 从job_metadata获取user_config（创建时已初始化）
     logger.info(f"开始获取job_metadata: job_id={job_id}")
-    from shared.models.schemas.job_metadata import JobMetadataHelper
     
     metadata_service = JobMetadataService(redis_service)
     job_metadata = await metadata_service.get_metadata(job_id)
@@ -507,10 +493,9 @@ async def _parse_async(job_id: str, user_id: str):
     logger.info(f"开始下载文件: S3键={s3_key}, bucket={settings.S3_BUCKET_NAME}")
     
     # 下载文件到本地临时目录
-    from shared.services.storage.file_upload_service import FileUploadService
     upload_service = FileUploadService()
     logger.info(f"FileUploadService创建成功，开始生成下载URL: s3_key={s3_key}")
-    file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)                                                         
+    file_url_response = await upload_service.generate_download_url(s3_key, settings.S3_BUCKET_NAME)
     logger.info(f"下载URL生成成功: job_id={job_id}")
     file_url = file_url_response["download_url"]  # 提取实际的URL字符串
     logger.info(f"提取下载URL完成: job_id={job_id}, url长度={len(file_url) if file_url else 0}")
@@ -525,9 +510,6 @@ async def _parse_async(job_id: str, user_id: str):
     # Download file, estimate pages, BLOCK and call API to charge.
     # If billing fails, stop immediately - do not process.
     # ============================================================
-    from app.services.workload.page_estimator import PageEstimator
-    import tempfile
-    import httpx
     
     logger.info(f"Starting file download: job_id={job_id}")
     local_temp_path = None
@@ -551,13 +533,8 @@ async def _parse_async(job_id: str, user_id: str):
     # ============================================================
     # SYNCHRONOUS BILLING - Deduct credits before processing
     # ============================================================
-    from shared.core.database import get_db_context
-    from shared.core.exceptions.domain_exceptions import InsufficientCreditsException
-    from shared.models.database.job import Job
-    from app.services.billing import deduct_credits
-    from sqlalchemy import select
-    
-    async with get_db_context() as db:
+    # Use task-local db context to avoid event loop issues with Celery retries
+    async with get_task_local_db_context() as db:
         # Lock job row to prevent race conditions
         job_result = await db.execute(
             select(Job).where(Job.job_id == job_id).with_for_update()
@@ -569,7 +546,6 @@ async def _parse_async(job_id: str, user_id: str):
             logger.info(f"Job already charged: {job_id}")
         else:
             # Calculate billing using BillingCalculator
-            from shared.core.billing import BillingCalculator
             billing_calc = BillingCalculator()
             micro_dollar_required = billing_calc.calculate_page_cost(page_count)
             billing_success = await deduct_credits(db, job_user_id, micro_dollar_required, billing_calc.format_description(page_count, filename))
@@ -612,7 +588,7 @@ async def _parse_async(job_id: str, user_id: str):
     # 调用修改后的解析逻辑（传入user_config）
     # IMPORTANT: Use local_temp_path (already downloaded) to avoid downloading twice
     logger.info(f"开始导入解析服务: job_id={job_id}")
-    from app.services.document_parser.parse_service import checkerboard_inject_parse   
+    
     logger.info(f"解析服务导入成功: job_id={job_id}")
     
     doc_type = JobMetadataHelper.get_parsing_param(job_metadata, 'doc_type', 'auto')
@@ -623,13 +599,13 @@ async def _parse_async(job_id: str, user_id: str):
             file_full_path=local_temp_path,
             filename=filename,
             output_dir=output_dir,
-            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),                                                                     
-            doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),                                                                     
-            smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),                                                     
-            summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),                                                             
-            summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),                                                             
-            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),                                                                 
-            add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),                                                               
+            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
+            doc_type=JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto"),
+            smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
+            summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
+            summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),
+            add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
         )
     finally:
         # Cleanup temp file after parsing (success or failure)
@@ -641,9 +617,7 @@ async def _parse_async(job_id: str, user_id: str):
                 logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
     
     logger.info(f"File parsing completed: job_id={job_id}, add_dir={add_dir}, add_contents_df length={len(add_contents_df) if add_contents_df is not None else 0}")
-
-    if add_contents_df is None:
-        logger.error(f"File parsing failed, no content returned: job_id={job_id}, filename={filename}")
+    
     if add_contents_df is None:
         logger.error(f"File parsing failed, no content returned: job_id={job_id}, filename={filename}")
         raise WorkerHandlingException(
@@ -669,13 +643,12 @@ async def _parse_async(job_id: str, user_id: str):
     )
     
     # 保存DataFrame为chunks到Redis
-    from shared.services.redis.chunks_redis_service import ChunksRedisService
     
     chunks_redis_service = ChunksRedisService(redis_service)
     
     if add_contents_df is not None:
-        logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")                                                                    
-        success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)                                                              
+        logger.debug(f"开始保存DataFrame为chunks: DataFrame长度={len(add_contents_df)}")
+        success = await chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)
         if success:
             logger.info(f"DataFrame已保存为chunks到Redis: job_id={job_id}")
         else:
@@ -693,13 +666,13 @@ async def _parse_async(job_id: str, user_id: str):
     # 从Redis获取chunks数据（用于生成ZIP包）
     chunks = await chunks_redis_service.get_chunks(job_id)
     if chunks:
-        logger.info(f"从Redis获取chunks数据成功: job_id={job_id}, count={len(chunks)}")                                                                     
+        logger.info(f"从Redis获取chunks数据成功: job_id={job_id}, count={len(chunks)}")
     else:
         logger.warning(f"从Redis获取chunks数据失败: job_id={job_id}")
         chunks = []
 
     # 从job_metadata获取信息
-    source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")             
+    source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")
     if isinstance(source_file_name, str) and "/" in source_file_name:
         source_file_name = os.path.basename(source_file_name)
     
@@ -714,9 +687,8 @@ async def _parse_async(job_id: str, user_id: str):
     )
     
     # 生成 ZIP 包（业务逻辑处理）
-    from shared.services.storage.zip_result_service import ZipResultService
     zip_service = ZipResultService()
-    zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(                                                                       
+    zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(
         job_id=job_id,
         chunks=chunks,
         add_dir=add_dir,
@@ -736,7 +708,7 @@ async def _parse_async(job_id: str, user_id: str):
     )
     
     # 上传 ZIP 包到 S3（业务逻辑处理）
-    result_s3_key = await upload_service.upload_zip_result(job_id, zip_file_path)                                                                           
+    result_s3_key = await upload_service.upload_zip_result(job_id, zip_file_path)
     
     stored_count = 0
     kb_records = []
@@ -762,7 +734,7 @@ async def _parse_async(job_id: str, user_id: str):
         add_dir=add_dir,
     )
     
-    logger.info(f"Worker处理完成，结果消息已发布: job_id={job_id}, stored_count={stored_count}, result_s3_key={result_s3_key}")                             
+    logger.info(f"Worker处理完成，结果消息已发布: job_id={job_id}, stored_count={stored_count}, result_s3_key={result_s3_key}")
     
     return {
         "status": "success",
@@ -774,12 +746,3 @@ async def _parse_async(job_id: str, user_id: str):
         "delivery_mode": "url",
         "result_s3_key": result_s3_key
     }
-            
-
-
-# store_to_db_task 已移除，逻辑已合并到 parse_task 中
-
-# Webhook和邮件发送已迁移到API服务处理
-# Worker只负责业务逻辑处理，完成后通过消息通知API服务
-# API服务根据数据库查询信息处理Webhook和邮件发送
-
