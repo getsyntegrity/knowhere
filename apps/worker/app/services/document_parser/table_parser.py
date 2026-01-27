@@ -63,6 +63,77 @@ def df2html(tb_df: pd.DataFrame,
     )
     return table_html.replace('\n', '')
 
+
+def df2md(tb_df: pd.DataFrame,
+    *,
+    index: bool = False,
+    na_rep: str = "—"
+    ) -> str:
+    """Convert DataFrame to Markdown table format with dynamic column widths.
+    
+    Note: Truncation should be done externally using truncate_text before calling this function.
+    
+    Args:
+        tb_df: Input DataFrame
+        index: Whether to include index column
+        na_rep: String to represent NA values
+    
+    Returns:
+        Markdown table string
+    """
+    import unicodedata
+    def get_display_width(text: str) -> int:
+        """eval width for both ASCII and Chinese"""
+        width = 0
+        for char in text:
+            if unicodedata.east_asian_width(char) in ('F', 'W'):
+                width += 2
+            else:
+                width += 1
+        return width
+    
+    def pad_to_width(text: str, target_width: int) -> str:
+        current_width = get_display_width(text)
+        padding = target_width - current_width
+        return text + ' ' * max(0, padding)
+    
+    df = tb_df.copy()
+    
+    # Handle index
+    if index:
+        df = df.reset_index()
+    
+    # Replace NA values
+    df = df.fillna(na_rep)
+    
+    # Convert all values to string
+    df = df.astype(str)
+    
+    # Calculate column widths based on actual display width (no truncation)
+    col_widths = {}
+    for col in df.columns:
+        header_width = get_display_width(str(col))
+        max_content_width = max(df[col].apply(get_display_width)) if len(df) > 0 else 0
+        col_widths[col] = max(header_width, max_content_width)
+    
+    # Build header row
+    header_cells = [pad_to_width(str(col), col_widths[col]) for col in df.columns]
+    header_line = "| " + " | ".join(header_cells) + " |"
+    
+    # Build separator row
+    separator_cells = ["-" * col_widths[col] for col in df.columns]
+    separator_line = "|-" + "-|-".join(separator_cells) + "-|"
+    
+    # Build data rows
+    data_lines = []
+    for _, row in df.iterrows():
+        cells = [pad_to_width(str(row[col]), col_widths[col]) for col in df.columns]
+        data_lines.append("| " + " | ".join(cells) + " |")
+    
+    # Combine all parts
+    lines = [header_line, separator_line] + data_lines
+    return "\n".join(lines)
+
 def table2html(table: DocxTable) -> str:
     html = "<table border='1'>"
     for row in table.rows:

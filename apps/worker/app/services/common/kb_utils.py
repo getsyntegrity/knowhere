@@ -247,3 +247,34 @@ def html2txt(html_text):
     soup = BeautifulSoup(html_text, 'html.parser')
     text = soup.get_text()
     return text
+
+
+def normalize_md(s: str) -> str:
+    """Normalize markdown string for comparison
+    
+    Removes heading markers (###) and whitespace, converts to lowercase.
+    Used for TOC keyword matching.
+    """
+    s = re.sub(r"^\s*#+\s*", "", s)
+    s = re.sub(r"\s+", "", s)
+    return s.lower()
+
+
+def truncate_text(text: str, start_limit: int, end_limit: int) -> str:
+    """Truncate text keeping start and end parts
+    
+    Args:
+        text: Text to truncate
+        start_limit: Number of characters to keep from start
+        end_limit: Number of characters to keep from end
+    
+    Returns:
+        Truncated text with '...' in middle if exceeds limits
+    """
+    text = str(text)
+    total_limit = start_limit + end_limit
+    if len(text) <= total_limit:
+        return text
+    start_part = text[:start_limit]
+    end_part = text[-end_limit:] if end_limit > 0 else ''
+    return f"{start_part}...{end_part}"

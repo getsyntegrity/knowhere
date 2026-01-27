@@ -1,14 +1,12 @@
 import os
 import re
 import unicodedata
-import uuid
-from collections import Counter, defaultdict
-
 import pandas as pd
-from app.services.common.kb_utils import count_cn_en
-from app.services.document_parser.table_parser import df2html
-from docx.oxml.ns import qn
 from tqdm import tqdm
+from collections import Counter, defaultdict
+from app.services.common.kb_utils import count_cn_en, truncate_text
+from app.services.document_parser.table_parser import df2html, df2md
+from docx.oxml.ns import qn
 
 try:
     from markitdown import MarkItDown
@@ -22,7 +20,6 @@ from shared.core.config import settings
 from shared.services.ai import ai_query_service
 # TaskRedis依赖已移除，使用Redis直接追踪
 from shared.services.ai.prompt_service import build_prompt
-from shared.services.ai.response_process_service import eval_response
 from shared.services.ai.response_process_service import eval_response
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException
@@ -231,13 +228,17 @@ def if_no_pos_code(reason_str: str) -> bool:
 # ==================== Level Mapping Functions ====================
 
 def build_level_mapping(df, origin_lvls, mode="max"):
-    """构建层级映射关系"""
+    """构建层级映射关系
+    
+    注意：之前使用 if_no_pos_code 过滤掉 POS 全为 0 的行，
+    但这会导致后续分段中出现"伪未见 codes"，增加处理复杂度。
+    现在改为包含所有行，让 mapping 更完整。
+    """
     df = df.copy()
     df["origin_level"] = origin_lvls
-    mask = df['reason'].apply(lambda x: not if_no_pos_code(x))
-
-    filtered_df = df[mask]
-    mapping = filtered_df.groupby("reason")["level"].apply(list).to_dict()
+    
+    # 直接使用所有行构建 mapping（不再过滤 POS 全为 0 的行）
+    mapping = df.groupby("reason")["level"].apply(list).to_dict()
 
     processed_mapping = {}
     for reason, lvls in mapping.items():
@@ -265,17 +266,14 @@ def build_level_mapping(df, origin_lvls, mode="max"):
 
 
 def execute_level_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
-    """执行层级映射"""
+    """执行层级映射
+    
+    对所有行应用 mapping（不再使用 if_no_pos_code 过滤）
+    """
     def map_row(row):
-        row_code = str(row["reason"]).strip()
-        need_mapping = not if_no_pos_code(row_code)
-
-        if need_mapping:
-            reason = row["reason"]
-            if reason in mapping:
-                return mapping[reason]["mapped_lvl"]
-            else:
-                return row["level"]
+        reason = row["reason"]
+        if reason in mapping:
+            return mapping[reason]["mapped_lvl"]
         return row["level"]
 
     df = df.copy()
@@ -301,15 +299,6 @@ def get_max_lvl(code_str: str):
 
 
 def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
-    def truncate_text(text, start_limit, end_limit):
-        text = str(text)
-        total_limit = start_limit + end_limit
-        if len(text) <= total_limit:
-            return text
-        start_part = text[:start_limit]
-        end_part = text[-end_limit:] if end_limit > 0 else ''
-        return f"{start_part}...{end_part}"
-
     raw_headings = df['heading'].tolist()
     df["heading"] = df["heading"].apply(lambda x: truncate_text(x, max_start, max_end))
 
@@ -429,9 +418,10 @@ def remove_by_conditions(text, include_punc=False):
     neg_decimal_only = r"^\d*\.\d+$"  # 0.2 .23
     neg_condition_http = r"(?i)(^https?://\S+|^www\.\S+|^P\.S|^\b\d{0,2}\s*(?:a\.m|p\.m)\b)"
     neg_condition_latex = r"\$[^$]*\\[A-Za-z]+(?:\s*\{[^{}]*\})?[^$]*\$"
+    neg_condition_punc_mid = r"[。！；].+"
     neg_condition_punc_end = r"[.,;，。；]$"
 
-    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex, neg_condition_zero, neg_decimal_only]
+    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex, neg_condition_zero, neg_decimal_only, neg_condition_punc_mid]
 
     neg_triggered_code = []
     for regex in neg_conditions:
@@ -614,12 +604,13 @@ async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_l
     Returns:
         List of dicts with id and level
     """
-    level_html = df2html(df)
-    ot_limit = int(len(level_html) * 1.2)
+    
+    level_md = df2md(df) # df2html(df)
+    ot_limit = int(len(level_md) * 1.2)
     ot_limit = min(ot_limit, max_len)
 
     paras = {"max_tokens": ot_limit, "max_depth": max_depth, "toc_context": toc_context or ""}
-    prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_html, query="", paras=paras)
+    prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_md, query="", paras=paras)
     messages = [
         {"role": "system", "content": "you are a document auditing expert"},
         {"role": "user", "content": prompt}
