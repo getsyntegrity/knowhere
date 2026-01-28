@@ -72,7 +72,7 @@ class WebhookDispatcher:
                 return True  # ACK
             
             # 4. Dispatch the webhook
-            success, status_code, duration_ms, error_message = await self._send_webhook(event)
+            success, status_code, duration_ms, error_message, payload, headers = await self._send_webhook(event)
             
             # 5. Log the delivery attempt
             await self._log_delivery(
@@ -80,7 +80,9 @@ class WebhookDispatcher:
                 event=event,
                 status_code=status_code,
                 duration_ms=duration_ms,
-                error_message=error_message
+                error_message=error_message,
+                request_payload=payload,
+                request_headers=headers
             )
             
             # 6. Handle result
@@ -135,12 +137,12 @@ class WebhookDispatcher:
         )
         return result.scalar_one_or_none()
     
-    async def _send_webhook(self, event: WebhookEvent) -> Tuple[bool, Optional[int], int, Optional[str]]:
+    async def _send_webhook(self, event: WebhookEvent) -> Tuple[bool, Optional[int], int, Optional[str], Dict[str, Any], Dict[str, Any]]:
         """
         Send HTTP POST request to webhook target.
         
         Returns:
-            Tuple of (success, status_code, duration_ms, error_message)
+            Tuple of (success, status_code, duration_ms, error_message, payload, headers)
         """
         # Generate attempt ID
         attempt_id = str(uuid.uuid4())
@@ -174,20 +176,20 @@ class WebhookDispatcher:
                     
                     if 200 <= response.status < 300:
                         logger.info(f"Webhook delivered: event_id={event.id}, status={response.status}")
-                        return True, response.status, duration_ms, None
+                        return True, response.status, duration_ms, None, enriched_payload, headers
                     else:
                         logger.warning(f"Webhook failed: event_id={event.id}, status={response.status}")
-                        return False, response.status, duration_ms, f"HTTP {response.status}"
+                        return False, response.status, duration_ms, f"HTTP {response.status}", enriched_payload, headers
                         
         except aiohttp.ClientTimeout:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook timeout: event_id={event.id}")
-            return False, None, duration_ms, "Connection timeout"
+            return False, None, duration_ms, "Connection timeout", enriched_payload, headers
             
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook error: event_id={event.id}, error={e}")
-            return False, None, duration_ms, str(e)
+            return False, None, duration_ms, str(e), enriched_payload, headers
     
     async def _enrich_payload(self, event: WebhookEvent) -> Dict[str, Any]:
         """
@@ -293,15 +295,23 @@ class WebhookDispatcher:
         event: WebhookEvent,
         status_code: Optional[int],
         duration_ms: int,
-        error_message: Optional[str]
+        error_message: Optional[str],
+        request_payload: Dict[str, Any],
+        request_headers: Dict[str, Any]
     ) -> None:
         """Log delivery attempt to webhook_logs."""
+        # Combine headers and payload into log storage
+        combined_payload = {
+            "header": request_headers,
+            "payload": request_payload
+        }
+
         log = WebhookLog(
             job_id=event.job_id,
             event_id=event.id,
             webhook_url=event.target_url,
             attempt_number=event.attempts + 1,
-            request_payload=event.payload,
+            request_payload=combined_payload,
             signature=self._sign_payload(event.payload, event.secret),
             idempotency_key=str(uuid.uuid4()),
             response_status_code=status_code,
