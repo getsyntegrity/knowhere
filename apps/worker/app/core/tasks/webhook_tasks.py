@@ -14,9 +14,11 @@ from shared.core.celery_app import get_celery_app
 from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 
 # Top-level imports (concern #3)
-from app.services.webhook import MAX_ATTEMPTS
-from app.services.webhook.dispatcher import get_webhook_dispatcher
+from shared.services.webhook import get_webhook_dispatcher
 from shared.core.async_utils import run_async_task
+
+# Retry configuration
+MAX_ATTEMPTS = 6
 
 
 celery_app = get_celery_app()

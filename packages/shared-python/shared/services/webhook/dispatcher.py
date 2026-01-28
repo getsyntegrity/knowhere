@@ -24,7 +24,10 @@ from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.models.database.webhook_log import WebhookLog
 from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 
-from . import HTTP_TIMEOUT_SECONDS, MAX_ATTEMPTS
+# Configuration constants
+HTTP_TIMEOUT_SECONDS = 10
+MAX_ATTEMPTS = 6
+
 
 
 class WebhookDispatcher:
@@ -142,8 +145,11 @@ class WebhookDispatcher:
         # Generate attempt ID
         attempt_id = str(uuid.uuid4())
         
+        # Enrich payload with job result data at delivery time
+        enriched_payload = await self._enrich_payload(event)
+        
         # Sign payload
-        signature = self._sign_payload(event.payload, event.secret)
+        signature = self._sign_payload(enriched_payload, event.secret)
         
         # Build headers
         headers = {
@@ -160,7 +166,7 @@ class WebhookDispatcher:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     event.target_url,
-                    json=event.payload,
+                    json=enriched_payload,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
                 ) as response:
@@ -182,6 +188,60 @@ class WebhookDispatcher:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook error: event_id={event.id}, error={e}")
             return False, None, duration_ms, str(e)
+    
+    async def _enrich_payload(self, event: WebhookEvent) -> Dict[str, Any]:
+        """
+        Enrich webhook payload with job result data at delivery time.
+        
+        For job.completed events:
+        - Adds result_url (fresh download URL for result zip)
+        - Adds result (inline payload with checksum/statistics)
+        
+        This ensures download URLs are generated fresh (they expire)
+        and data is current at delivery time.
+        """
+        payload = dict(event.payload)  # Copy to avoid mutating stored payload
+        
+        # Only enrich completion events
+        if payload.get("event") != "job.completed":
+            return payload
+        
+        try:
+            # Fetch job with result
+            from shared.models.database.job import Job
+            from sqlalchemy.orm import selectinload
+            
+            async with get_db_context() as db:
+                result = await db.execute(
+                    select(Job)
+                    .options(selectinload(Job.job_result))
+                    .where(Job.job_id == event.job_id)
+                )
+                job = result.scalar_one_or_none()
+                
+                if not job or not job.job_result:
+                    logger.warning(f"Job or result not found for enrichment: job_id={event.job_id}")
+                    return payload
+                
+                job_result = job.job_result
+                
+                # Add result_url (fresh download link)
+                if job_result.result_s3_key:
+                    from shared.services.storage.file_upload_service import FileUploadService
+                    upload_service = FileUploadService()
+                    url_info = await upload_service.generate_download_url(job_result.result_s3_key)
+                    payload["result_url"] = url_info["download_url"]
+                    logger.debug(f"Enriched payload with result_url for job {event.job_id}")
+                
+                # Add result (inline payload)
+                if job_result.inline_payload:
+                    payload["result"] = job_result.inline_payload
+                
+        except Exception as e:
+            logger.error(f"Failed to enrich payload for event {event.id}: {e}")
+            # Continue with original payload if enrichment fails
+        
+        return payload
     
     def _is_retryable_error(self, status_code: Optional[int]) -> bool:
         """

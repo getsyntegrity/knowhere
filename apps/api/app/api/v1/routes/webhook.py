@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_current_user, get_db
 from app.repositories.job_repository import JobRepository
 from app.repositories.webhook_repository import WebhookRepository
-from app.services.webhook.webhook_service import WebhookService
+from shared.services.webhook import get_webhook_dispatcher
+from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.exceptions.domain_exceptions import WebhookServiceException
 from shared.models.database.user import User
 from shared.models.schemas.job_metadata import JobMetadataHelper
@@ -47,40 +48,36 @@ async def get_webhook_logs(
     Each log entry includes the delivery status, duration, and response details.
     """
     try:
-        webhook_repo = WebhookRepository()
-        
-        logs = await webhook_repo.get_webhook_logs(
-            db=db,
-            job_id=job_id,
-            limit=page_size,
-            offset=(page - 1) * page_size,
+        repo = WebhookRepository()
+        logs, total = await repo.get_webhook_logs(
+            db=db, job_id=job_id, page=page, page_size=page_size
         )
-        
-        log_responses = [
-            WebhookLogResponse(
-                id=log.id,
-                job_id=log.job_id,
-                webhook_url=log.webhook_url,
-                attempt_number=log.attempt_number,
-                response_status_code=log.response_status_code,
-                response_body=log.response_body,
-                error_message=log.error_message,
-                duration_ms=log.duration_ms,
-                created_at=log.created_at,
-            )
-            for log in logs
-        ]
         
         return WebhookLogList(
-            logs=log_responses,
-            total=len(log_responses),
+            total=total,
             page=page,
             page_size=page_size,
+            logs=[
+                WebhookLogResponse(
+                    id=log.id,
+                    job_id=log.job_id,
+                    webhook_url=log.webhook_url,
+                    attempt_number=log.attempt_number,
+                    signature=log.signature,
+                    idempotency_key=log.idempotency_key,
+                    response_status_code=log.response_status_code,
+                    response_body=log.response_body,
+                    error_message=log.error_message,
+                    duration_ms=log.duration_ms,
+                    created_at=log.created_at,
+                )
+                for log in logs
+            ],
         )
-        
     except Exception as e:
+        logger.error(f"Failed to get webhook logs: {e}")
         raise WebhookServiceException(
-            internal_message=f"Failed to get webhook logs: {str(e)}"
+            internal_message=f"Failed to retrieve webhook logs: {str(e)}"
         )
 
 
@@ -91,109 +88,129 @@ async def trigger_webhook(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Manually trigger a webhook for a completed job (synchronous).
+    Manually trigger a webhook for a completed or failed job.
     
-    This bypasses the async retry queue and executes the HTTP request immediately,
-    returning the actual response from the user's webhook server.
-    
-    Use cases:
-    - Immediate retry after a failed delivery
-    - Debugging/testing webhook connectivity
+    This sends a webhook notification synchronously and returns the delivery result.
+    Use this for testing or retrying failed webhook deliveries.
     """
     try:
         job_repo = JobRepository()
-        upload_service = FileUploadService()
-        webhook_service = WebhookService()
         
         # 1. Fetch Job
         job = await job_repo.get_job_by_id(db, request.job_id)
         if not job:
-            raise WebhookServiceException(
-                internal_message=f"Job not found: {request.job_id}"
+            from shared.core.exceptions.domain_exceptions import NotFoundException
+            raise NotFoundException(
+                resource="Job",
+                resource_id=request.job_id
             )
         
-        # 2. Validation
+        # 2. Validation - client errors (400)
         if not job.is_terminal_state():
-            raise WebhookServiceException(
-                internal_message=f"Job is not in terminal state: {job.status}"
+            from shared.core.exceptions.domain_exceptions import ValidationException
+            raise ValidationException(
+                user_message=f"Job must be in terminal state to trigger webhook. Current status: {job.status}",
+                violations=[{"field": "job_id", "description": f"Job status is '{job.status}', expected 'done' or 'failed'"}]
             )
         
         if not job.webhook_url:
-            raise WebhookServiceException(
-                internal_message="Job does not have webhook_url configured"
+            from shared.core.exceptions.webhook_exceptions import WebhookConfigException
+            raise WebhookConfigException(
+                internal_message=f"Job {request.job_id} does not have webhook_url configured",
+                user_message="Job does not have a webhook URL configured. Configure webhook_url when creating the job.",
+                details={"field": "webhook_url", "reason": "not_configured"}
             )
         
         # 3. Get webhook secret from metadata
-        secret = "default_webhook_secret"
+        secret = None
         try:
             redis_service = RedisServiceFactory.get_service()
             metadata_service = JobMetadataService(redis_service)
-            job_metadata = await metadata_service.get_metadata(job.job_id)
+            job_metadata = await metadata_service.get_metadata(request.job_id)
             
             if job_metadata:
                 webhook_config = JobMetadataHelper.get_webhook(job_metadata)
                 if webhook_config and webhook_config.get("secret"):
                     secret = webhook_config["secret"]
-        except Exception:
-            pass  # Fallback to default
+        except Exception as e:
+            # Metadata fetch failed - internal error (5xx)
+            from shared.core.exceptions.domain_exceptions import RedisServiceException
+            raise RedisServiceException(
+                internal_message=f"Failed to fetch job metadata from Redis: {e}",
+                operation="get_metadata",
+                original_exception=e
+            )
         
-        # 4. Construct payload
-        webhook_payload = {
-            "job_id": job.job_id,
-            "delivery_mode": "manual_trigger",
-            "triggered_at": datetime.utcnow().isoformat(),
-        }
+        # If no secret in config - client error (400)
+        if not secret:
+            from shared.core.exceptions.webhook_exceptions import WebhookConfigException
+            raise WebhookConfigException(
+                internal_message=f"Job {request.job_id} webhook config does not have secret",
+                user_message="Webhook secret is not configured. Provide webhook.secret when creating the job.",
+                details={"field": "webhook.secret", "reason": "not_configured"}
+            )
         
+        # 4. Build webhook payload (mimicking dispatcher enrichment)
         if job.status == "done":
-            webhook_payload["event"] = "job.completed"
-            webhook_payload["status"] = "completed"
-            webhook_payload["completed_at"] = (
-                job.updated_at.isoformat() if job.updated_at else datetime.utcnow().isoformat()
-            )
-            
-            if job.job_result:
-                if job.job_result.result_s3_key:
-                    result_url_info = await upload_service.generate_download_url(
-                        job.job_result.result_s3_key
-                    )
-                    webhook_payload["result_url"] = result_url_info["download_url"]
-                if job.job_result.inline_payload:
-                    webhook_payload["result"] = job.job_result.inline_payload
-                    
-        elif job.status == "failed":
-            webhook_payload["event"] = "job.failed"
-            webhook_payload["status"] = "failed"
-            webhook_payload["failed_at"] = (
-                job.updated_at.isoformat() if job.updated_at else datetime.utcnow().isoformat()
-            )
-            webhook_payload["error"] = {
-                "message": job.error_message or "Unknown error",
-                "code": job.error_code or "UNKNOWN",
-                "type": "JobFailed",
+            webhook_payload = {
+                "event": "job.completed",
+                "job_id": job.job_id,
+                "status": "completed",
+                "completed_at": (
+                    job.updated_at.isoformat() if job.updated_at else datetime.utcnow().isoformat()
+                ),
+            }
+            # Add result_url if available
+            if job.job_result and job.job_result.result_s3_key:
+                upload_service = FileUploadService()
+                url_info = await upload_service.generate_download_url(job.job_result.result_s3_key)
+                webhook_payload["result_url"] = url_info["download_url"]
+            # Add inline result
+            if job.job_result and job.job_result.inline_payload:
+                webhook_payload["result"] = job.job_result.inline_payload
+        else:
+            webhook_payload = {
+                "event": "job.failed",
+                "job_id": job.job_id,
+                "status": "failed",
+                "failed_at": (
+                    job.updated_at.isoformat() if job.updated_at else datetime.utcnow().isoformat()
+                ),
+                "error": {
+                    "message": job.error_message or "Unknown error",
+                    "code": job.error_code or "UNKNOWN",
+                    "type": "JobFailed",
+                },
             }
         
-        # 5. Execute synchronously
-        start_time = time.time()
-        result = await webhook_service.send_webhook(
-            job_id=job.job_id,
-            webhook_url=job.webhook_url,
-            payload=webhook_payload,
-            attempt_number=1,
-            secret=secret,
-        )
-        duration_ms = int((time.time() - start_time) * 1000)
+        # 5. Create event and dispatch synchronously using dispatcher
+        from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
         
+        event = WebhookEvent(
+            job_id=job.job_id,
+            target_url=job.webhook_url,
+            secret=secret,
+            payload=webhook_payload,
+            status=WebhookEventStatus.PENDING,
+            attempts=0
+        )
+        
+        # Use dispatcher to send synchronously
+        dispatcher = get_webhook_dispatcher()
+        success, status_code, duration_ms, error_message = await dispatcher._send_webhook(event)
+
         # 6. Return response
         return WebhookTriggerResponse(
-            success=result.get("success", False),
-            status_code=result.get("status_code"),
-            response_body=result.get("response_body"),
+            success=success,
+            status_code=status_code,
+            response_body=None,  # Dispatcher doesn't return response body
             duration_ms=duration_ms,
-            delivery_id=result.get("delivery_id"),
-            error_message=result.get("error"),
+            delivery_id=None,  # Manual trigger doesn't create delivery log
+            error_message=error_message,
         )
         
-    except WebhookServiceException:
+    except KnowhereException:
+        # Re-raise all known exceptions (NotFoundException, ValidationException, etc.)
         raise
     except Exception as e:
         raise WebhookServiceException(

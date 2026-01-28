@@ -482,7 +482,7 @@ async def _handle_job_completion_notifications(db, job_id: str, job_result: Any)
     from app.repositories.job_repository import JobRepository
     from app.services.email.job_email_service import JobEmailService
     from shared.services.redis import JobMetadataService, RedisServiceFactory
-    from app.services.webhook.webhook_handler_service import WebhookHandlerService
+    from app.services.webhook_service import get_webhook_service
     
     job_repo = JobRepository()
     job = await job_repo.get_job_by_id(db, job_id)
@@ -491,27 +491,30 @@ async def _handle_job_completion_notifications(db, job_id: str, job_result: Any)
         logger.warning(f"Job {job_id} does not exist, skipping notification")
         return
     
-    # Webhook notification - errors propagate to ensure atomicity with job state
+    # Webhook notification - best effort, errors logged but don't abort job result
     if job.webhook_enabled and job.webhook_url:
-        # Get webhook URL from job_metadata if available
-        redis_service = RedisServiceFactory.get_service()
-        metadata_service = JobMetadataService(redis_service)
-        job_metadata = await metadata_service.get_metadata(job_id)
-        
-        webhook_url = job.webhook_url
-        if job_metadata:
-            webhook_config = JobMetadataHelper.get_webhook(job_metadata)
-            if webhook_config and webhook_config.get("url"):
-                webhook_url = webhook_config["url"]
-        
-        webhook_handler = WebhookHandlerService()
-        webhook_result = await webhook_handler.handle_job_completion_webhook(
-            db=db,
-            job_id=job_id,
-            job_result=job_result,
-            webhook_url=webhook_url
-        )
-        logger.info(f"Job completion webhook result: job_id={job_id}, result={webhook_result}")
+        try:
+            # Get webhook URL from job_metadata if available
+            redis_service = RedisServiceFactory.get_service()
+            metadata_service = JobMetadataService(redis_service)
+            job_metadata = await metadata_service.get_metadata(job_id)
+            
+            webhook_url = job.webhook_url
+            if job_metadata:
+                webhook_config = JobMetadataHelper.get_webhook(job_metadata)
+                if webhook_config and webhook_config.get("url"):
+                    webhook_url = webhook_config["url"]
+            
+            webhook_service = get_webhook_service()
+            success = await webhook_service.create_and_publish_completion(
+                db=db,
+                job_id=job_id,
+                webhook_url=webhook_url
+            )
+            logger.info(f"Job completion webhook: job_id={job_id}, success={success}")
+        except Exception as e:
+            # Log error but don't abort - job result is more valuable than webhook
+            logger.error(f"Webhook event creation failed for job {job_id}: {e}", exc_info=True)
     
     # Email notification - non-critical, errors logged but not propagated
     try:
@@ -551,7 +554,7 @@ async def _handle_job_failure_notifications(
     """
     from app.repositories.job_repository import JobRepository
     from app.services.email.job_email_service import JobEmailService
-    from app.services.webhook.webhook_handler_service import WebhookHandlerService
+    from app.services.webhook_service import get_webhook_service
     
     job_repo = JobRepository()
     job = await job_repo.get_job_by_id(db, job_id)
@@ -560,19 +563,23 @@ async def _handle_job_failure_notifications(
         logger.warning(f"Job {job_id} does not exist, skipping notification")
         return
     
-    # Webhook notification - errors propagate to ensure atomicity with job state
+    # Webhook notification - best effort, errors logged but don't abort job result
     if job.webhook_enabled and job.webhook_url:
-        webhook_handler = WebhookHandlerService()
-        webhook_result = await webhook_handler.handle_job_failure_webhook(
-            db=db,
-            job_id=job_id,
-            error_message=error_message,
-            error_type=error_type,
-            error_code=error_code,
-            error_details=error_details,
-            webhook_url=job.webhook_url
-        )
-        logger.info(f"Job failure webhook result: job_id={job_id}, result={webhook_result}")
+        try:
+            webhook_service = get_webhook_service()
+            success = await webhook_service.create_and_publish_failure(
+                db=db,
+                job_id=job_id,
+                error_message=error_message,
+                error_type=error_type,
+                error_code=error_code,
+                error_details=error_details,
+                webhook_url=job.webhook_url
+            )
+            logger.info(f"Job failure webhook: job_id={job_id}, success={success}")
+        except Exception as e:
+            # Log error but don't abort - job failure state is more important
+            logger.error(f"Webhook event creation failed for job {job_id}: {e}", exc_info=True)
     
     # Email notification - non-critical, errors logged but not propagated
     try:
