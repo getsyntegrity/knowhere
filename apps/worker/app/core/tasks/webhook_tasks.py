@@ -215,3 +215,69 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
         )
         # Fallback: Re-raise as Celery retry exception to hold in queue
         task_instance.retry(exc=exc, countdown=60, max_retries=None)
+
+
+@celery_app.task(name="app.core.tasks.webhook_tasks.recover_orphaned_webhooks")
+def recover_orphaned_webhooks() -> dict:
+    """
+    Periodic task to recover orphaned webhook events.
+    
+    Finds webhook events that were persisted to the database but never
+    published to the message queue (due to RabbitMQ failure, network issues, etc.)
+    and republishes them.
+    
+    This ensures the "eventual delivery" guarantee of the Transactional Outbox pattern.
+    
+    Runs every 5 minutes via Celery Beat.
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import select
+    from shared.core.database import get_db_context
+    from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
+    
+    logger.info("Starting orphaned webhook recovery job")
+    
+    age_minutes = 5
+    cutoff_time = datetime.utcnow() - timedelta(minutes=age_minutes)
+    recovered = 0
+    
+    async def _recover():
+        nonlocal recovered
+        async with get_db_context() as db:
+            # Find orphaned events (PENDING status, created more than 5 minutes ago, attempts=0)
+            stmt = select(WebhookEvent).where(
+                WebhookEvent.status == WebhookEventStatus.PENDING,
+                WebhookEvent.attempts == 0,
+                WebhookEvent.created_at < cutoff_time
+            ).limit(100)
+            
+            result = await db.execute(stmt)
+            orphaned_events = result.scalars().all()
+            
+            logger.info(f"Found {len(orphaned_events)} orphaned webhook events")
+            
+            for event in orphaned_events:
+                try:
+                    # Republish to queue
+                    dispatch_webhook_task.apply_async(
+                        args=[event.id],
+                        queue='webhook_work',
+                    )
+                    recovered += 1
+                    logger.info(f"Recovered orphaned webhook event: {event.id}")
+                except Exception as e:
+                    logger.error(f"Error recovering webhook event {event.id}: {e}")
+    
+    try:
+        run_async_task(_recover())
+        
+        if recovered > 0:
+            logger.info(f"Successfully recovered {recovered} orphaned webhook events")
+        else:
+            logger.debug("No orphaned webhook events found")
+            
+        return {"status": "success", "recovered": recovered}
+        
+    except Exception as e:
+        logger.error(f"Orphaned webhook recovery job failed: {e}", exc_info=True)
+        return {"status": "error", "error": str(e)}

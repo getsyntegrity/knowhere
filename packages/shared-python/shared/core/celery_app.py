@@ -126,7 +126,15 @@ celery_app.conf.update(
         
         # Webhook tasks - route to dedicated webhook work queue
         'app.core.tasks.webhook_tasks.dispatch_webhook_task': {'queue': 'webhook_work'},
-    }
+        'app.core.tasks.webhook_tasks.recover_orphaned_webhooks': {'queue': 'webhook_work'},
+    },
+    # Periodic tasks (Celery Beat)
+    beat_schedule={
+        'recover-orphaned-webhooks': {
+            'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
+            'schedule': 300.0,  # Every 5 minutes
+        },
+    },
 )
 
 def get_celery_app() -> Celery:
