@@ -16,7 +16,7 @@ from loguru import logger
 # Explicitly import task modules to register tasks with Celery
 # Note: Must import after celery_app to ensure decorators register correctly
 import app.core.tasks.kb_tasks
-import app.core.tasks.webhook_tasks  # Webhook dispatch task
+import app.core.tasks.webhook_tasks
 
 async def init_redis():
     """Initialize Redis connection pool."""
@@ -51,10 +51,13 @@ if __name__ == "__main__":
     # Get log level setting
     log_level = os.getenv("LOG_LEVEL", "INFO").lower()
     
-    # Start worker with unique node name
+    # Start worker with queue whitelist (CRITICAL: Exclude wait queues!)
+    # If we don't specify -Q, specific workers will consume from ALL queues including wait queues,
+    # which breaks the DLX retry delay (messages get consumed immediately instead of waiting).
     celery_app.worker_main([
         "worker", 
         f"--loglevel={log_level}", 
         "--concurrency=8",
-        f"--hostname={node_name}"
+        f"--hostname={node_name}",
+        "-Q", "webhook_work,webhook_dead,kb_high,kb_medium,kb_low,ai_high_priority,default"
     ])

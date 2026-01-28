@@ -142,6 +142,7 @@ class WebhookService:
             task = celery_app.send_task(
                 "app.core.tasks.webhook_tasks.dispatch_webhook_task",
                 args=[event_id],
+                # Queue auto-routed via static task_routes in celery_app.py
             )
             
             logger.info(f"Webhook dispatch task scheduled: event_id={event_id}, task_id={task.id}")

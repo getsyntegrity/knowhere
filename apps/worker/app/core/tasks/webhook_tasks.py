@@ -152,14 +152,8 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
         return False  # Task completes, retry is a new message
         
     except Exception as exc:
-        # Unexpected error - log and retry (could be transient)
-        logger.error(
-            f"Webhook dispatch unexpected error: event_id={event_id}, "
-            f"error={type(exc).__name__}: {exc}"
-        )
-        _schedule_retry(self, event_id, attempt)
-        return False
-
+        # Unexpected error
+        raise exc
 
 async def _dispatch_async(event_id: str) -> bool:
     """

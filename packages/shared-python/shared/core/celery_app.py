@@ -60,31 +60,31 @@ celery_app.conf.task_queues = (
           queue_arguments={
               'x-message-ttl': 60000,  # 60 seconds (1 minute)
               'x-dead-letter-exchange': '',  # Default exchange
-              'x-dead-letter-routing-key': 'webhook.work'
+              'x-dead-letter-routing-key': 'webhook_work'  # Must match QUEUE NAME for default exchange
           }),
     Queue('webhook_wait_10m', routing_key='webhook.wait.10m',
           queue_arguments={
               'x-message-ttl': 600000,  # 600 seconds (10 minutes)
               'x-dead-letter-exchange': '',
-              'x-dead-letter-routing-key': 'webhook.work'
+              'x-dead-letter-routing-key': 'webhook_work'
           }),
     Queue('webhook_wait_30m', routing_key='webhook.wait.30m',
           queue_arguments={
               'x-message-ttl': 1800000,  # 1800 seconds (30 minutes)
               'x-dead-letter-exchange': '',
-              'x-dead-letter-routing-key': 'webhook.work'
+              'x-dead-letter-routing-key': 'webhook_work'
           }),
     Queue('webhook_wait_2h', routing_key='webhook.wait.2h',
           queue_arguments={
               'x-message-ttl': 7200000,  # 7200 seconds (2 hours)
               'x-dead-letter-exchange': '',
-              'x-dead-letter-routing-key': 'webhook.work'
+              'x-dead-letter-routing-key': 'webhook_work'
           }),
     Queue('webhook_wait_6h', routing_key='webhook.wait.6h',
           queue_arguments={
               'x-message-ttl': 21600000,  # 21600 seconds (6 hours)
               'x-dead-letter-exchange': '',
-              'x-dead-letter-routing-key': 'webhook.work'
+              'x-dead-letter-routing-key': 'webhook_work'
           }),
     
     # 3. Dead Letter Queue - Final failure destination

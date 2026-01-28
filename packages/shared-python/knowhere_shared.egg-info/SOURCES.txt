@@ -6,6 +6,7 @@ knowhere_shared.egg-info/requires.txt
 knowhere_shared.egg-info/top_level.txt
 shared/__init__.py
 shared/core/__init__.py
+shared/core/async_utils.py
 shared/core/celery_app.py
 shared/core/celery_router.py
 shared/core/context.py
@@ -39,6 +40,7 @@ shared/core/exceptions/retryable_exceptions.py
 shared/core/exceptions/webhook_exceptions.py
 shared/core/response/ErrorCode.py
 shared/core/response/__init__.py
+shared/core/response/error_response_builder.py
 shared/core/state_machine/__init__.py
 shared/core/state_machine/config.py
 shared/core/state_machine/states.py
@@ -110,6 +112,8 @@ shared/services/storage/zip_result_service.py
 shared/services/storage/adapters/__init__.py
 shared/services/storage/adapters/oss_adapter.py
 shared/services/storage/adapters/s3_adapter.py
+shared/services/webhook/__init__.py
+shared/services/webhook/dispatcher.py
 shared/tests/fakes.py
 shared/utils/CommonHelper.py
 shared/utils/FileDownUpUtils.py
