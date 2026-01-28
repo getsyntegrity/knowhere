@@ -49,8 +49,9 @@ async def get_webhook_logs(
     """
     try:
         repo = WebhookRepository()
+        offset = (page - 1) * page_size
         logs, total = await repo.get_webhook_logs(
-            db=db, job_id=job_id, page=page, page_size=page_size
+            db=db, job_id=job_id, limit=page_size, offset=offset
         )
         
         return WebhookLogList(
@@ -63,6 +64,7 @@ async def get_webhook_logs(
                     job_id=log.job_id,
                     webhook_url=log.webhook_url,
                     attempt_number=log.attempt_number,
+                    request_payload=log.request_payload,
                     signature=log.signature,
                     idempotency_key=log.idempotency_key,
                     response_status_code=log.response_status_code,
@@ -197,7 +199,12 @@ async def trigger_webhook(
         
         # Use dispatcher to send synchronously
         dispatcher = get_webhook_dispatcher()
-        success, status_code, duration_ms, error_message = await dispatcher._send_webhook(event)
+        success, status_code, duration_ms, error_message, payload, headers = await dispatcher._send_webhook(event)
+        
+        combined_payload = {
+            "header": headers,
+            "payload": payload
+        }
 
         # 6. Return response
         return WebhookTriggerResponse(
@@ -207,6 +214,7 @@ async def trigger_webhook(
             duration_ms=duration_ms,
             delivery_id=None,  # Manual trigger doesn't create delivery log
             error_message=error_message,
+            request_payload=combined_payload,
         )
         
     except KnowhereException:

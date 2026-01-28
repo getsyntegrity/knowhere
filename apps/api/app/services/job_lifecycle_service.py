@@ -15,7 +15,7 @@ from app.services.webhook_service import get_webhook_service
 from app.services.email.job_email_service import JobEmailService
 from app.services.billing.credits_service import CreditsService
 
-from shared.models.schemas.job_result_message import JobResultMessage
+from shared.models.schemas.messages import JobResultMessage
 from shared.models.database.knowledge_base import KBPydantic
 from shared.services.redis import RedisServiceFactory
 from shared.services.redis.chunks_redis_service import ChunksRedisService
