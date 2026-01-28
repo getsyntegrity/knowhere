@@ -11,6 +11,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+import asyncio
 
 import aiohttp
 from loguru import logger
@@ -194,7 +195,7 @@ class WebhookDispatcher:
                         error_message = f"HTTP {response.status}"
                         success = False
                         
-        except aiohttp.ClientTimeout:
+        except asyncio.TimeoutError:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook timeout: event_id={event.id}")
             error_message = "Connection timeout"
