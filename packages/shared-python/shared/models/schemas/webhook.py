@@ -53,4 +53,3 @@ class WebhookTriggerResponse(BaseModel):
     duration_ms: int = Field(..., description="Request duration in milliseconds")
     delivery_id: Optional[str] = Field(None, description="Delivery log ID for reference")
     error_message: Optional[str] = Field(None, description="Error message if request failed")
-    request_payload: Optional[dict] = Field(None, description="Combined request headers and payload")

@@ -199,13 +199,13 @@ async def trigger_webhook(
         
         # Use dispatcher to send synchronously
         dispatcher = get_webhook_dispatcher()
-        success, status_code, duration_ms, error_message, payload, headers = await dispatcher._send_webhook(event)
+        # Pass db session and is_manual=True to handle logging internally
+        success, status_code, duration_ms, error_message = await dispatcher._send_webhook(
+            db=db,
+            event=event,
+            is_manual=True
+        )
         
-        combined_payload = {
-            "header": headers,
-            "payload": payload
-        }
-
         # 6. Return response
         return WebhookTriggerResponse(
             success=success,
@@ -214,7 +214,6 @@ async def trigger_webhook(
             duration_ms=duration_ms,
             delivery_id=None,  # Manual trigger doesn't create delivery log
             error_message=error_message,
-            request_payload=combined_payload,
         )
         
     except KnowhereException:

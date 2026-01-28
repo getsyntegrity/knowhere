@@ -72,20 +72,14 @@ class WebhookDispatcher:
                 return True  # ACK
             
             # 4. Dispatch the webhook
-            success, status_code, duration_ms, error_message, payload, headers = await self._send_webhook(event)
-            
-            # 5. Log the delivery attempt
-            await self._log_delivery(
-                db=db,
-                event=event,
-                status_code=status_code,
-                duration_ms=duration_ms,
-                error_message=error_message,
-                request_payload=payload,
-                request_headers=headers
+            # Logging is now handled inside _send_webhook
+            success, status_code, duration_ms, error_message = await self._send_webhook(
+                db=db, 
+                event=event, 
+                is_manual=False
             )
             
-            # 6. Handle result
+            # 6. Handle result (Logging already done)
             if success:
                 await self._mark_delivered(db, event)
                 return True  # Success
@@ -137,18 +131,32 @@ class WebhookDispatcher:
         )
         return result.scalar_one_or_none()
     
-    async def _send_webhook(self, event: WebhookEvent) -> Tuple[bool, Optional[int], int, Optional[str], Dict[str, Any], Dict[str, Any]]:
+    async def _send_webhook(
+        self, 
+        db: AsyncSession,
+        event: WebhookEvent,
+        is_manual: bool = False
+    ) -> Tuple[bool, Optional[int], int, Optional[str]]:
         """
-        Send HTTP POST request to webhook target.
+        Send HTTP POST request to webhook target and log the attempt.
         
+        Args:
+            db: Database session
+            event: WebhookEvent object
+            is_manual: True if manually triggered (adds 'trigger': 'manual' to payload)
+            
         Returns:
-            Tuple of (success, status_code, duration_ms, error_message, payload, headers)
+            Tuple of (success, status_code, duration_ms, error_message)
         """
         # Generate attempt ID
         attempt_id = str(uuid.uuid4())
         
         # Enrich payload with job result data at delivery time
         enriched_payload = await self._enrich_payload(event)
+        
+        # Add manual mark if requested
+        if is_manual:
+            enriched_payload["trigger"] = "manual"
         
         # Sign payload
         signature = self._sign_payload(enriched_payload, event.secret)
@@ -163,6 +171,9 @@ class WebhookDispatcher:
         }
         
         start_time = time.time()
+        status_code = None
+        error_message = None
+        success = False
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -173,23 +184,65 @@ class WebhookDispatcher:
                     timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
                 ) as response:
                     duration_ms = int((time.time() - start_time) * 1000)
+                    status_code = response.status
                     
                     if 200 <= response.status < 300:
                         logger.info(f"Webhook delivered: event_id={event.id}, status={response.status}")
-                        return True, response.status, duration_ms, None, enriched_payload, headers
+                        success = True
                     else:
                         logger.warning(f"Webhook failed: event_id={event.id}, status={response.status}")
-                        return False, response.status, duration_ms, f"HTTP {response.status}", enriched_payload, headers
+                        error_message = f"HTTP {response.status}"
+                        success = False
                         
         except aiohttp.ClientTimeout:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook timeout: event_id={event.id}")
-            return False, None, duration_ms, "Connection timeout", enriched_payload, headers
+            error_message = "Connection timeout"
+            success = False
             
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Webhook error: event_id={event.id}, error={e}")
-            return False, None, duration_ms, str(e), enriched_payload, headers
+            error_message = str(e)
+            success = False
+            
+        # Log delivery attempt
+        # If manual, event_id is None to avoid FK violation
+        log_event_id = None if is_manual else event.id
+        
+        try:
+            # We construct log manually here to handle potential detached execution
+            # or we can reuse _log_delivery but need to handle is_manual
+            
+            # Combine headers and payload
+            combined_payload = {
+                "header": headers,
+                "payload": enriched_payload
+            }
+
+            log = WebhookLog(
+                job_id=event.job_id,
+                event_id=log_event_id,
+                webhook_url=event.target_url,
+                attempt_number=event.attempts + 1,
+                request_payload=combined_payload,
+                signature=signature,
+                idempotency_key=str(uuid.uuid4()),
+                response_status_code=status_code,
+                error_message=error_message,
+                duration_ms=duration_ms
+            )
+            db.add(log)
+            # If auto-commit is needed? 
+            # Dispatcher.dispatch uses passed 'db' session which is managed by 'async with get_db_context()'.
+            # It commits inside _mark_delivered etc.
+            # We should probably commit/flush here to persist log even if update fails?
+            await db.commit() 
+            
+        except Exception as e:
+            logger.error(f"Failed to log webhook delivery: {e}")
+            
+        return success, status_code, duration_ms, error_message
     
     async def _enrich_payload(self, event: WebhookEvent) -> Dict[str, Any]:
         """
