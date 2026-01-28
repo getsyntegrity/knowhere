@@ -168,6 +168,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
     path = relative_root if relative_root else ""
     table_count = 0
     img_count = 0
+    path_counter = {}  # Track path occurrences for deduplication
 
     # estimate hierarchies with toc_hierarchies context
     lines_with_heading = await eval_md_headings(
@@ -200,6 +201,22 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
             
             adjusted_level = current_heading_level - base_level + 1
             path_stack = [(h, lvl) for h, lvl in path_stack if lvl < adjusted_level]
+            
+            # Build tentative path to check for duplicates
+            tentative_heading = current_heading
+            tentative_names = [h for h, lvl in path_stack] + [tentative_heading]
+            tentative_path_parts = [relative_root] if relative_root else []
+            tentative_path_parts.extend(tentative_names)
+            tentative_path = split_char.join(tentative_path_parts)
+            
+            # Deduplicate: if path already exists, add suffix
+            if tentative_path in path_counter:
+                path_counter[tentative_path] += 1
+                suffix = path_counter[tentative_path]
+                current_heading = f"{current_heading}_{suffix}"  # Modify heading with suffix
+            else:
+                path_counter[tentative_path] = 1
+            
             path_stack.append((current_heading, adjusted_level))
             
             # Extract pure heading names for path construction
@@ -208,7 +225,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
             path_parts = [relative_root] if relative_root else []
             path_parts.extend(heading_names)
             inner_paths.append(split_char.join(heading_names))
-            path = split_char.join(path_parts) # path with relative root
+            path = split_char.join(path_parts)  # path with relative root
 
         else: # no path change, remain in the same hierarchy
             # a. handle lines containing images

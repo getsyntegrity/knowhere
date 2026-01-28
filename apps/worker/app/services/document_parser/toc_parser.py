@@ -630,7 +630,7 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
             "toc_with_level": toc_with_level,
             "toc_tree": toc_tree
         })
-        ranges_to_remove.append((toc_start, area_end))
+        ranges_to_remove.append((toc_start, toc_end))
     
     # Step 3: Remove TOC lines from md_lines (process in reverse order to correct indices)
     # Sort ranges by start index descending just to be safe
