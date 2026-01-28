@@ -72,7 +72,7 @@ def build_prompt(task, texts, query, **kwargs):
         # 构建 TOC 参考部分（如果有）
         if toc_context:
             toc_section = f"""
-        ***Reference: Table of Contents (TOC)***
+        ***Important Reference: Table of Contents (TOC)***
         The following is the document's table of contents with predefined levels. Use this as a reference when assigning levels:
         
         '''
@@ -81,7 +81,7 @@ def build_prompt(task, texts, query, **kwargs):
         
         - If a row's heading matches a TOC entry, use the TOC's predefined level
         - If a row appears to be a sub-section of a TOC entry, assign a deeper level
-        - IMPORTANT: If a row does NOT appear in the TOC, it CANNOT be assigned the same level or a higher level than any TOC entry. It should be either body text (level = -1) or a sub-section with a deeper level than the nearest TOC heading above it
+        - IMPORTANT: If a row does NOT appear in the TOC, it CAN ONLY be set as either a body text (level = -1) or sub-section with a deeper level than the nearest TOC heading above it
         """
         else:
             toc_section = ""
@@ -94,8 +94,8 @@ def build_prompt(task, texts, query, **kwargs):
             1 represents `<h1>` (the highest level), 2 represents `<h2>`, and so on
             -1 indicates the text is estimated as "body text", not a heading
             Not Sure indicates the level is undetermined
-        {toc_section}
-        Data:
+        
+        Data to be adjusted:
         '''
         {texts}
         '''
@@ -118,6 +118,8 @@ def build_prompt(task, texts, query, **kwargs):
         - Output only standard JSON, do not add any format wrappers (e.g., do not add ```json)
         - Do not add escaped newlines or other control characters
         - Do not add any explanations, comments, or descriptive text
+
+        {toc_section}
         """
 
     # ==================== TOC Heading Evaluation Prompts ====================

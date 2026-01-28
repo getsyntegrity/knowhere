@@ -82,6 +82,7 @@ shared/models/schemas/webhook.py
 shared/models/schemas/word.py
 shared/services/ai/__init__.py
 shared/services/ai/ai_query_service.py
+shared/services/ai/direct_ai_client.py
 shared/services/ai/prompt_service.py
 shared/services/ai/response_process_service.py
 shared/services/messaging/__init__.py

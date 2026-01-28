@@ -15,7 +15,8 @@ import pandas as pd
 from loguru import logger
 from lxml import etree
 
-from app.services.document_parser.table_parser import df2html
+from app.services.common.kb_utils import normalize_md, truncate_text
+from app.services.document_parser.table_parser import df2html, df2md
 from app.services.document_parser.layout_parser import hiearchy_llm, judge_by_conditions, remove_by_conditions
 from shared.services.ai import ai_query_service
 from shared.services.ai.prompt_service import build_prompt
@@ -131,23 +132,6 @@ def detect_doc_tocs(elem, ns):
 
 # ==================== Markdown TOC Detection Functions ====================
 
-def normalize_md(s: str) -> str:
-    """Normalize markdown string for comparison"""
-    s = re.sub(r"^\s*#+\s*", "", s)
-    s = re.sub(r"\s+", "", s)
-    return s.lower()
-
-
-def truncate_text(text: str, start_limit: int, end_limit: int) -> str:
-    """Truncate text keeping start and end parts"""
-    text = str(text)
-    total_limit = start_limit + end_limit
-    if len(text) <= total_limit:
-        return text
-    start_part = text[:start_limit]
-    end_part = text[-end_limit:] if end_limit > 0 else ''
-    return f"{start_part}...{end_part}"
-
 
 def is_content_line(line: str) -> bool:
     """
@@ -211,16 +195,20 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
     """
     Detect TOC candidates (support multiple TOC areas)
     
+    策略：从 start_idx 开始向后扫描，收集恰好 limit_ 个有效行
+    同时记录完整的原始范围 [start_idx, end_idx]，便于后续过滤整个目录区域
+    
     Args:
         md_lines: markdown lines list
-        limit_: max lines to consider for each candidate area
+        limit_: 目标有效行数（不是最大扫描行数）
     
     Returns:
-        Tuple of (candidates, invalid_ids_by_area)
+        Tuple of (candidates, invalid_ids_by_area, area_ranges)
         - candidates: List[(start_idx, candidate_lines_with_indices)]
           - start_idx: start index of the candidate area
-          - candidate_lines_with_indices: [(line_idx, line_content), ...] valid lines only
-        - invalid_ids_by_area: List[set] - each set contains invalid line indices for that area
+          - candidate_lines_with_indices: [(line_idx, line_content), ...] exactly limit_ valid lines
+        - invalid_ids_by_area: List[list] - each list contains invalid line indices for that area
+        - area_ranges: List[(start_idx, end_idx)] - 原始 md_lines 的完整范围，用于后续过滤
     """
     
     toc_keywords = {"目录", "目次", "tableofcontents", "contents"}
@@ -243,32 +231,36 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
     # Step 3: build candidate areas for each start index
     candidates = []
     invalid_ids_by_area = []
+    area_ranges = []
     
     for start_idx in start_indices:
-        end_idx = min(start_idx + limit_, len(md_lines))
-        raw_lines = md_lines[start_idx:end_idx]
-
         candidate_lines_with_indices = []
         invalid_ids = []
+        current_idx = start_idx
         
-        for i, line in enumerate(raw_lines):
-            absolute_idx = start_idx + i
+        while len(candidate_lines_with_indices) < limit_ and current_idx < len(md_lines):
+            line = md_lines[current_idx]
             
             if line.strip():
                 if is_content_line(line):
-                    candidate_lines_with_indices.append((absolute_idx, line))
+                    candidate_lines_with_indices.append((current_idx, line))
                 else:
-                    invalid_ids.append(absolute_idx)
+                    invalid_ids.append(current_idx)
+            current_idx += 1
+        
+        end_idx = current_idx - 1 if current_idx > start_idx else start_idx
         
         valid_count = len(candidate_lines_with_indices)
         invalid_count = len(invalid_ids)
-        logger.debug(f"Candidate area #{len(candidates)+1}: line {start_idx}-{end_idx-1}, "
-                    f"valid lines: {valid_count}, invalid lines: {invalid_count}")
+        logger.debug(f"Candidate area #{len(candidates)+1}: line {start_idx}-{end_idx}, "
+                    f"valid lines: {valid_count}, invalid lines: {invalid_count}, "
+                    f"scanned: {end_idx - start_idx + 1} lines")
         
         candidates.append((start_idx, candidate_lines_with_indices))
         invalid_ids_by_area.append(invalid_ids)
+        area_ranges.append((start_idx, end_idx))
     
-    return candidates, invalid_ids_by_area
+    return candidates, invalid_ids_by_area, area_ranges
 
 
 async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None, use_reindex: bool = False, total_lines: int = 0) -> tuple:
@@ -362,7 +354,7 @@ async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 
         may return multiple TOC areas
     """
     # Step 1: detect candidate areas (may be multiple)
-    candidates, invalid_ids_by_area = detect_toc_candidates(md_lines, limit_)
+    candidates, invalid_ids_by_area, area_ranges = detect_toc_candidates(md_lines, limit_)
     if not candidates:
         logger.info("No TOC candidates detected")
         return []
@@ -370,20 +362,23 @@ async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 
     # Step 2: evaluate each candidate area with LLM
     toc_ranges = []
     
-    for idx, ((_, lines_), invalid_ids) in enumerate(zip(candidates, invalid_ids_by_area)):
+    for idx, ((_, lines_), invalid_ids, (area_start, area_end)) in enumerate(
+        zip(candidates, invalid_ids_by_area, area_ranges)
+    ):
         # Build mapping: re-index to 0-based consecutive ids for LLM
         # This avoids LLM hallucination on non-existent line numbers
         reindex_to_original = {i: abs_idx for i, (abs_idx, _) in enumerate(lines_)}
-        original_to_reindex = {abs_idx: i for i, (abs_idx, _) in enumerate(lines_)}
+        # original_to_reindex = {abs_idx: i for i, (abs_idx, _) in enumerate(lines_)}
         
         # Create DataFrame with re-indexed ids (0, 1, 2, ...)
         df = pd.DataFrame([
-            {"id": i, "content": truncate_text(line.strip(), 50, 10)}
+            {"id": i, "content": truncate_text(line.strip(), 30, 10)}
             for i, (_, line) in enumerate(lines_)
         ])
         
-        html_table = df2html(df, index=False)
-        llm_result = await llm_judge_toc_range(html_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
+        md_table = df2md(df, index=False)
+        print(md_table)
+        llm_result = await llm_judge_toc_range(md_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
         
         if llm_result is not None:
             reindex_start, reindex_end = llm_result
@@ -392,12 +387,15 @@ async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 
             toc_end = reindex_to_original.get(reindex_end)
             
             if toc_start is not None and toc_end is not None:
-                # Filter out invalid lines from the raw toc_lines
+                # 使用 area_end 作为过滤范围的结束点（包含所有扫描过的行）
+                # toc_start/toc_end 是 LLM 识别的精确 TOC 边界
+                # 但 invalid_ids 的范围是 [area_start, area_end]
                 toc_lines = [
                     line for i, line in enumerate(md_lines[toc_start : toc_end+1], start=toc_start)
                     if i not in invalid_ids and line.strip()
                 ]
-                toc_ranges.append((toc_start, toc_end, toc_lines))
+                # 返回 area_end 作为实际过滤范围
+                toc_ranges.append((toc_start, toc_end, toc_lines, area_end))
             else:
                 logger.warning(f"TOC area #{idx+1}: failed to map reindex back to original")
         else:
@@ -569,7 +567,7 @@ async def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: in
     
     if result_data:
         result_df = pd.DataFrame(result_data)
-        toc_with_level = df2html(result_df, index=False)
+        toc_with_level = df2md(result_df, index=False)
     else:
         toc_with_level = ""
     
@@ -622,17 +620,13 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
     toc_hierarchies = []
     ranges_to_remove = []
     
-    for idx, (toc_start, toc_end, toc_lines) in enumerate(toc_area):
-        logger.info(f"Analyzing TOC area #{idx+1}")
+    for idx, (toc_start, toc_end, toc_lines, area_end) in enumerate(toc_area):
+        logger.info(f"Analyzing TOC area #{idx+1}: TOC range [{toc_start}, {toc_end}], scan range ends at {area_end}")
         
-
-        #TODO we need to refine the toc_lines before feeding it to llm, first, 
-        
-
-
         toc_with_level, toc_tree = await eval_toc_levels(toc_lines, model_name, max_depth=6)
         toc_hierarchies.append({
             "toc_range": (toc_start, toc_end),
+            "scan_range": (toc_start, area_end),
             "toc_with_level": toc_with_level,
             "toc_tree": toc_tree
         })
