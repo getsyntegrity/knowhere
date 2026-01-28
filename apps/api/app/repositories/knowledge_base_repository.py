@@ -10,15 +10,17 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def create_update_kb(kbs:list[KBPydantic]) -> bool:
+async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bool:
     """
     创建或更新知识库
-    :param kbs:
-    :return:
+    :param kbs: Vector Objects
+    :param db: Optional external database session. If provided, transaction is NOT committed here.
+    :return: Success boolean
     """
     if not kbs:
         return True
-    #对象转换
+    
+    # Object mapping
     object_mappings = []
     for kb in kbs:
         data_dict = kb.model_dump()
@@ -27,19 +29,36 @@ async def create_update_kb(kbs:list[KBPydantic]) -> bool:
             for key, value in data_dict.items()
         }
         object_mappings.append(processed_dict)
-    async with get_db_context() as db:
-        try:
-            #bulk_insert_mappings处理ORM数据集
+        
+    try:
+        if db:
+            # Use provided session, do not commit
             await db.run_sync(
                 lambda session: session.bulk_insert_mappings(ContentBase, object_mappings)
             )
-            await db.commit()
-            logger.info(f"批量插入{len(object_mappings)}条记录成功")
+            # Flush to ensure constraints are checked, but don't commit
+            await db.flush()
+            logger.info(f"Bulk inserted {len(object_mappings)} records (Session Flush)")
             return True
-        except Exception as e:
-            await db.rollback()
-            logger.error(f"批量插入记录时发生错误: {e}")
-            return False
+        else:
+            # Use internal session management
+            async with get_db_context() as session:
+                await session.run_sync(
+                    lambda s: s.bulk_insert_mappings(ContentBase, object_mappings)
+                )
+                await session.commit()
+                logger.info(f"Bulk inserted {len(object_mappings)} records (Committed)")
+                return True
+                
+    except Exception as e:
+        logger.error(f"Error bulk inserting records: {e}")
+        if not db: # Only catch/rollback if we own the session
+             # Context manager handles rollback for critical errors, but safe to log
+             pass
+        # Propagate error if external session (let caller handle rollback)
+        if db:
+            raise e
+        return False
 
 async def create_update_path(paths:list[PathPydantic]) -> bool:
     """

@@ -13,13 +13,13 @@ from shared.models.schemas.messages import (JobFailureMessage,
                                          JobProgressUpdateMessage,
                                          JobResultMessage,
                                          JobStatusUpdateMessage)
-from app.repositories.job_result_repository import JobResultRepository
 from app.repositories.knowledge_base_repository import create_update_kb
 from shared.services.messaging.monitoring import message_monitoring
 from shared.services.redis import RedisServiceFactory
 from shared.services.redis.chunks_redis_service import ChunksRedisService
 from shared.services.redis.task_redis_service import TaskRedisService
 from app.services.state_machine import JobStateMachine
+from app.services.job_lifecycle_service import JobLifecycleService
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 
@@ -243,69 +243,29 @@ async def _handle_result_async(message: JobResultMessage):
     
     try:
         async with get_db_context() as db:
-            # 1. 存储知识库数据
-            if message.kb_records and len(message.kb_records) > 0:
-                kb_records = []
-                for record_data in message.kb_records:
-                    kb_record = KBPydantic(**record_data)
-                    kb_records.append(kb_record)
-                
-                if kb_records:
-                    await create_update_kb(kb_records)
-                    logger.info(f"Job {message.job_id} 知识库数据存储成功: {len(kb_records)} 条记录")
-            
-            # 2. 从Redis获取chunks数据
+            # 1. Fetch chunks (Read only)
             redis_service = RedisServiceFactory.get_service()
             chunks_redis_service = ChunksRedisService(redis_service)
             chunks = await chunks_redis_service.get_chunks(message.chunks_job_id)
             
             if not chunks:
-                logger.warning(f"Job {message.job_id} 未找到chunks数据")
+                logger.warning(f"Job {message.job_id} chunks not found")
                 chunks = []
             
-            # 3. 存储JobResult
-            job_result_repo = JobResultRepository()
+            # 2. Use JobLifecycleService for Atomic Transaction (Unit of Work)
+            lifecycle_service = JobLifecycleService()
             inline_payload = {
                 "checksum": message.checksum,
             }
             
-            job_result = await job_result_repo.upsert_job_result(
+            result = await lifecycle_service.finalize_job_success(
                 db,
-                job_id=message.job_id,
-                delivery_mode=message.delivery_mode,
-                document_metadata=None,
-                inline_payload=inline_payload,
-                result_s3_key=message.result_s3_key,
-                result_size=message.zip_size
+                message,
+                chunks,
+                inline_payload
             )
             
-            # 4. 存储Chunks
-            await job_result_repo.replace_chunks(db, job_result.id, chunks)
-            
-            # 5. 更新Job状态为完成
-            await state_machine.mark_completed(
-                db,
-                message.job_id,
-                {
-                    "storage_completed": True,
-                    "stored_count": message.stored_count,
-                    "delivery_mode": message.delivery_mode
-                }
-            )
-            
-            # 6. 清理Redis中的chunks数据
-            await chunks_redis_service.delete_chunks(message.chunks_job_id)
-            
-            logger.info(f"Job {message.job_id} 结果存储完成: stored_count={message.stored_count}")
-            
-            # 7. 处理Webhook和邮件发送（如果启用）
-            await _handle_job_completion_notifications(db, message.job_id, job_result)
-            
-            return {
-                "status": "success",
-                "job_id": message.job_id,
-                "stored_count": message.stored_count
-            }
+            return result
             
     except KnowhereException:
         raise
@@ -378,75 +338,30 @@ async def _handle_failure_async(message: JobFailureMessage):
         async with get_db_context() as db_ctx:
             db = cast(AsyncSession, db_ctx)
             
-            # Get error_code from message (defaults to "UNKNOWN" if not provided)
+            # Extract error details
             error_code = message.error_code or "UNKNOWN"
-            
-            # Extract error_details from metadata (structured data like violations, retry_after)
             error_details = None
             if message.metadata and message.metadata.get("details"):
                 error_details = message.metadata.get("details")
+
+            # Check for refund request
+            should_refund = False
+            if message.metadata and message.metadata.get("refund_credits"):
+                 should_refund = True
             
-            # Update Job status to failed with error_code and error_details
-            success = await state_machine.mark_failed(
-                db,
-                message.job_id,
-                message.error_message,
+            # Use JobLifecycleService for Atomic Transaction (Unit of Work)
+            lifecycle_service = JobLifecycleService()
+            success = await lifecycle_service.finalize_job_failure(
+                db=db,
+                job_id=message.job_id,
+                error_message=message.error_message,
                 error_code=error_code,
-                error_details=error_details
+                error_details=error_details,
+                should_refund=should_refund
             )
             
             if success:
-                logger.info(f"Job {message.job_id} marked as failed: code={error_code}, msg={message.error_message}")
-                
-                # Check if credits refund is needed
-                if message.metadata and message.metadata.get("refund_credits"):
-                    try:
-                        logger.info(f"Refund request detected: job_id={message.job_id}")
-                        from app.services.billing.credits_service import CreditsService
-                        from app.repositories.job_repository import JobRepository
-                        
-                        # Use SELECT FOR UPDATE to prevent race conditions during refund
-                        stmt = select(Job).where(Job.job_id == message.job_id).with_for_update()
-                        result = await db.execute(stmt)
-                        job = result.scalar_one_or_none()
-                        
-                        if job:
-                            # 1. Check if already refunded
-                            if getattr(job, "billing_status", "") == "refunded":
-                                logger.info(f"Refund skipped: Job {message.job_id} already marked as refunded.")
-                            else:
-                                # Refund the actual amount charged (per-page billing)
-                                refund_amount = getattr(job, "credits_charged", 0) or 0
-                                if refund_amount > 0:
-                                    credits_service = CreditsService()
-                                    refund_success = await credits_service.refund_job_credits(
-                                        db,
-                                        str(job.user_id),
-                                        refund_amount,
-                                        message.job_id
-                                    )
-                                    if refund_success:
-                                        logger.info(f"Credits refund successful: job_id={message.job_id}, amount={refund_amount}")
-                                        # Update job billing status
-                                        job.billing_status = "refunded"
-                                    else:
-                                        logger.info(f"Credits refund skipped (already refunded): job_id={message.job_id}")
-                                
-                                # Commit to save changed (if any) and release the lock
-                                await db.commit()
-                    except Exception as e:
-                        logger.error(f"Credits refund failed: {e}", exc_info=True)
-                        await db.rollback()  # Release lock on error
-                
-                # Log detailed error information
-                if message.stack_trace:
-                    logger.error(f"Job {message.job_id} stack trace:\n{message.stack_trace}")
-
-                # Handle failure webhook and email notifications (if enabled)
-                await _handle_job_failure_notifications(
-                    db, message.job_id, message.error_message, message.error_type, error_code, error_details
-                )
-                
+                logger.info(f"Job {message.job_id} failure handled successfully")
                 return {
                     "status": "success",
                     "job_id": message.job_id,
@@ -454,11 +369,10 @@ async def _handle_failure_async(message: JobFailureMessage):
                     "error_message": message.error_message
                 }
             else:
-                logger.warning(f"Job {message.job_id} failed to mark as failed")
-                return {
+                 return {
                     "status": "failed",
                     "job_id": message.job_id,
-                    "reason": "Status update failed"
+                    "reason": "Lifecycle service returned false"
                 }
                 
     except KnowhereException:
@@ -471,134 +385,6 @@ async def _handle_failure_async(message: JobFailureMessage):
         )
 
 
-async def _handle_job_completion_notifications(db, job_id: str, job_result: Any):
-    """
-    Handle Job completion notifications (Webhook and email).
-    
-    Webhook event creation is atomic with the job state update (errors propagate).
-    Email sending is non-critical (errors are logged but not propagated).
-    """
-    from shared.models.schemas.job_metadata import JobMetadataHelper
-    from app.repositories.job_repository import JobRepository
-    from app.services.email.job_email_service import JobEmailService
-    from shared.services.redis import JobMetadataService, RedisServiceFactory
-    from app.services.webhook_service import get_webhook_service
-    
-    job_repo = JobRepository()
-    job = await job_repo.get_job_by_id(db, job_id)
-    
-    if not job:
-        logger.warning(f"Job {job_id} does not exist, skipping notification")
-        return
-    
-    # Webhook notification - best effort, errors logged but don't abort job result
-    if job.webhook_enabled and job.webhook_url:
-        try:
-            # Get webhook URL from job_metadata if available
-            redis_service = RedisServiceFactory.get_service()
-            metadata_service = JobMetadataService(redis_service)
-            job_metadata = await metadata_service.get_metadata(job_id)
-            
-            webhook_url = job.webhook_url
-            if job_metadata:
-                webhook_config = JobMetadataHelper.get_webhook(job_metadata)
-                if webhook_config and webhook_config.get("url"):
-                    webhook_url = webhook_config["url"]
-            
-            webhook_service = get_webhook_service()
-            success = await webhook_service.create_and_publish_completion(
-                db=db,
-                job_id=job_id,
-                webhook_url=webhook_url
-            )
-            logger.info(f"Job completion webhook: job_id={job_id}, success={success}")
-        except Exception as e:
-            # Log error but don't abort - job result is more valuable than webhook
-            logger.error(f"Webhook event creation failed for job {job_id}: {e}", exc_info=True)
-    
-    # Email notification - non-critical, errors logged but not propagated
-    try:
-        from shared.models.database.user import User
-        from sqlalchemy import select
-        result = await db.execute(select(User).where(User.id == job.user_id))
-        user = result.scalar_one_or_none()
-        
-        if user and user.email:
-            email_service = JobEmailService()
-            email_result = await email_service.send_job_completion_email(
-                db=db,
-                job_id=job_id,
-                job_result=job_result,
-                user_email=user.email,
-                user_name=getattr(user, 'full_name', None) or user.email,
-                job_type=job.job_type or "kb_management"
-            )
-            logger.info(f"Job completion email result: job_id={job_id}, user_email={user.email}, result={email_result}")
-    except Exception as e:
-        logger.error(f"Failed to send job completion email: {e}")
+# Helper functions moved to JobLifecycleService
 
-
-async def _handle_job_failure_notifications(
-    db,
-    job_id: str,
-    error_message: str,
-    error_type: str = None,
-    error_code: str = "UNKNOWN",
-    error_details: dict = None
-):
-    """
-    Handle Job failure notifications (Webhook and email).
-    
-    Webhook event creation is atomic with the job state update (errors propagate).
-    Email sending is non-critical (errors are logged but not propagated).
-    """
-    from app.repositories.job_repository import JobRepository
-    from app.services.email.job_email_service import JobEmailService
-    from app.services.webhook_service import get_webhook_service
-    
-    job_repo = JobRepository()
-    job = await job_repo.get_job_by_id(db, job_id)
-    
-    if not job:
-        logger.warning(f"Job {job_id} does not exist, skipping notification")
-        return
-    
-    # Webhook notification - best effort, errors logged but don't abort job result
-    if job.webhook_enabled and job.webhook_url:
-        try:
-            webhook_service = get_webhook_service()
-            success = await webhook_service.create_and_publish_failure(
-                db=db,
-                job_id=job_id,
-                error_message=error_message,
-                error_type=error_type,
-                error_code=error_code,
-                error_details=error_details,
-                webhook_url=job.webhook_url
-            )
-            logger.info(f"Job failure webhook: job_id={job_id}, success={success}")
-        except Exception as e:
-            # Log error but don't abort - job failure state is more important
-            logger.error(f"Webhook event creation failed for job {job_id}: {e}", exc_info=True)
-    
-    # Email notification - non-critical, errors logged but not propagated
-    try:
-        from shared.models.database.user import User
-        from sqlalchemy import select
-        result = await db.execute(select(User).where(User.id == job.user_id))
-        user = result.scalar_one_or_none()
-        
-        if user and user.email:
-            email_service = JobEmailService()
-            email_result = await email_service.send_job_failure_email(
-                db=db,
-                job_id=job_id,
-                user_email=user.email,
-                error_message=error_message,
-                user_name=getattr(user, 'full_name', None) or user.email,
-                job_type=job.job_type or "kb_management"
-            )
-            logger.info(f"Job failure email result: job_id={job_id}, user_email={user.email}, result={email_result}")
-    except Exception as e:
-        logger.error(f"Failed to send job failure email: {e}")
 
