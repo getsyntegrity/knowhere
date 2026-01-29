@@ -68,15 +68,17 @@ class WebhookRepository:
     async def get_webhook_logs(
         self,
         db: AsyncSession,
+        user_id: str,
         job_id: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[List[WebhookLog], int]:
         """
-        Get webhook delivery logs with optional job_id filter.
+        Get webhook delivery logs filtered by user_id (required).
         
         Args:
             db: Database session
+            user_id: ID of the user who owns the logs (Required for security)
             job_id: Optional filter by job ID
             limit: Maximum number of results
             offset: Number of results to skip
@@ -86,12 +88,18 @@ class WebhookRepository:
         """
         try:
             from sqlalchemy import func
+            from shared.models.database.job import Job
             
-            # Base query
-            query = select(WebhookLog).order_by(desc(WebhookLog.created_at))
-            count_query = select(func.count()).select_from(WebhookLog)
+            # Base query - Join with Job to filter by user_id
+            query = select(WebhookLog).join(Job, WebhookLog.job_id == Job.job_id).order_by(desc(WebhookLog.created_at))
+            count_query = select(func.count()).select_from(WebhookLog).join(Job, WebhookLog.job_id == Job.job_id)
+            
+            # Application Security: Always filter by user_id
+            query = query.where(Job.user_id == user_id)
+            count_query = count_query.where(Job.user_id == user_id)
             
             if job_id:
+                # If job_id provided, ensure it belongs to the user (implicit via join, but good to be explicit)
                 query = query.where(WebhookLog.job_id == job_id)
                 count_query = count_query.where(WebhookLog.job_id == job_id)
             

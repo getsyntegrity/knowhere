@@ -51,7 +51,7 @@ async def get_webhook_logs(
         repo = WebhookRepository()
         offset = (page - 1) * page_size
         logs, total = await repo.get_webhook_logs(
-            db=db, job_id=job_id, limit=page_size, offset=offset
+            db=db, user_id=str(current_user.id), job_id=job_id, limit=page_size, offset=offset
         )
         
         return WebhookLogList(
