@@ -1,14 +1,12 @@
 import os
 import re
 import unicodedata
-import uuid
-from collections import Counter, defaultdict
-
 import pandas as pd
-from app.services.common.kb_utils import count_cn_en
-from app.services.document_parser.table_parser import df2html
-from docx.oxml.ns import qn
 from tqdm import tqdm
+from collections import Counter, defaultdict
+from app.services.common.kb_utils import count_cn_en, truncate_text
+from app.services.document_parser.table_parser import df2md
+from docx.oxml.ns import qn
 
 try:
     from markitdown import MarkItDown
@@ -22,7 +20,6 @@ from shared.core.config import settings
 from shared.services.ai import ai_query_service
 # TaskRedis依赖已移除，使用Redis直接追踪
 from shared.services.ai.prompt_service import build_prompt
-from shared.services.ai.response_process_service import eval_response
 from shared.services.ai.response_process_service import eval_response
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException
@@ -231,13 +228,17 @@ def if_no_pos_code(reason_str: str) -> bool:
 # ==================== Level Mapping Functions ====================
 
 def build_level_mapping(df, origin_lvls, mode="max"):
-    """构建层级映射关系"""
+    """构建层级映射关系
+    
+    注意：之前使用 if_no_pos_code 过滤掉 POS 全为 0 的行，
+    但这会导致后续分段中出现"伪未见 codes"，增加处理复杂度。
+    现在改为包含所有行，让 mapping 更完整。
+    """
     df = df.copy()
     df["origin_level"] = origin_lvls
-    mask = df['reason'].apply(lambda x: not if_no_pos_code(x))
-
-    filtered_df = df[mask]
-    mapping = filtered_df.groupby("reason")["level"].apply(list).to_dict()
+    
+    # 直接使用所有行构建 mapping（不再过滤 POS 全为 0 的行）
+    mapping = df.groupby("reason")["level"].apply(list).to_dict()
 
     processed_mapping = {}
     for reason, lvls in mapping.items():
@@ -265,17 +266,14 @@ def build_level_mapping(df, origin_lvls, mode="max"):
 
 
 def execute_level_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
-    """执行层级映射"""
+    """执行层级映射
+    
+    对所有行应用 mapping（不再使用 if_no_pos_code 过滤）
+    """
     def map_row(row):
-        row_code = str(row["reason"]).strip()
-        need_mapping = not if_no_pos_code(row_code)
-
-        if need_mapping:
-            reason = row["reason"]
-            if reason in mapping:
-                return mapping[reason]["mapped_lvl"]
-            else:
-                return row["level"]
+        reason = row["reason"]
+        if reason in mapping:
+            return mapping[reason]["mapped_lvl"]
         return row["level"]
 
     df = df.copy()
@@ -283,6 +281,290 @@ def execute_level_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
     df["level"] = df.apply(map_row, axis=1)
     df["origin_level"] = origin_est_lvls
     return df
+
+
+def extract_non_neg_code(reason_str: str) -> str:
+    """
+    Extract the non-NEG code from reason_str (i.e., the POS code part before NEG)
+    
+    Example: "POS [1, 0, 0] NEG [0, 0, 0]" -> "POS [1, 0, 0]"
+    Example: "3# AND POS [1, 0] NEG [0, 0]" -> "3# AND POS [1, 0]"
+    """
+    if not reason_str or not isinstance(reason_str, str):
+        return ""
+    neg_match = re.search(r'\s*NEG\s*\[', reason_str)
+    if neg_match:
+        return reason_str[:neg_match.start()].strip()
+    return reason_str.strip()
+
+
+def build_non_neg_mapping(lvl_mapping: dict) -> dict:
+    """
+    Build non-NEG code mapping from complete lvl_mapping, select by highest frequency
+    
+    Args:
+        lvl_mapping: reason -> level mapping
+    
+    Returns:
+        non_neg_mapping: {non_neg_code: mapped_lvl}
+    """
+    # collect all levels for each non_neg_code
+    non_neg_levels = {}
+    for reason, info in lvl_mapping.items():
+        non_neg_code = extract_non_neg_code(reason)
+        mapped_lvl = info.get("mapped_lvl", -1)
+        if non_neg_code:
+            if non_neg_code not in non_neg_levels:
+                non_neg_levels[non_neg_code] = []
+            non_neg_levels[non_neg_code].append(mapped_lvl)
+    
+    # select by highest frequency
+    non_neg_mapping = {}
+    for non_neg_code, levels in non_neg_levels.items():
+        positive_levels = [lvl for lvl in levels if lvl > -1]
+        if positive_levels:
+            level_counts = Counter(positive_levels)
+            most_common_level = level_counts.most_common(1)[0][0]
+            non_neg_mapping[non_neg_code] = most_common_level
+        else:
+            non_neg_mapping[non_neg_code] = -1
+    
+    return non_neg_mapping
+
+
+def handle_unseen_codes(
+    df: pd.DataFrame,
+    level_dfs: list,
+    lvl_mapping: dict,
+    output_dir: str = None,
+    window_half_size: int = 10,
+    strategy: str = "double_mapping"
+) -> dict:
+    """
+    Handle unseen codes with configurable strategy
+    
+    Args:
+        df: original complete DataFrame
+        level_dfs: segment DataFrames
+        lvl_mapping: existing level mapping
+        output_dir: output directory (optional, only used for window_llm strategy)
+        window_half_size: window half size (how many rows above and below)
+        strategy: "double_mapping" or "window_llm"
+            - double_mapping: use non-neg code fallback (fast, no LLM call)
+            - window_llm: create windows for LLM to judge (slower, more accurate)
+    
+    Returns:
+        updated lvl_mapping
+    """
+    
+    def extract_reason_signature(reason: str) -> str:
+        """Extract reason signature"""
+        return reason.strip() if reason else ""
+    
+    def has_neg_signal(reason_str: str) -> bool:
+        """Check if NEG signal exists (any value >= 1)"""
+        if not reason_str or not isinstance(reason_str, str):
+            return False
+        neg_match = re.search(r'NEG\s*\[([^\]]*)\]', reason_str)
+        if not neg_match:
+            return False
+        neg_content = neg_match.group(1)
+        try:
+            nums = [int(x.strip()) for x in neg_content.split(',') if x.strip()]
+            return any(x >= 1 for x in nums)
+        except:
+            return False
+
+    def build_context_window(target_idx: int, known_codes_set: set, total_rows: int, half_size: int = 10) -> dict:
+        """
+        Build context window for unseen codes
+        1. window size: half_size
+        2. window should contain at least one known code
+        """
+        min_start = max(0, target_idx - half_size)
+        min_end = min(total_rows - 1, target_idx + half_size)
+        
+        start_idx = min_start
+        end_idx = min_end
+        
+        found_known_above = False
+        found_known_below = False
+        known_positions = []
+        
+        # check above
+        for i in range(start_idx, target_idx):
+            reason = df.iloc[i].get('reason', '')
+            sig = extract_reason_signature(reason)
+            if sig in known_codes_set:
+                found_known_above = True
+                known_positions.append(i)
+        
+        # check below
+        for i in range(target_idx + 1, end_idx + 1):
+            reason = df.iloc[i].get('reason', '')
+            sig = extract_reason_signature(reason)
+            if sig in known_codes_set:
+                found_known_below = True
+                known_positions.append(i)
+        
+        # expand above if needed
+        if not found_known_above and min_start > 0:
+            search_idx = min_start - 1
+            while search_idx >= 0:
+                reason = df.iloc[search_idx].get('reason', '')
+                sig = extract_reason_signature(reason)
+                if sig in known_codes_set:
+                    found_known_above = True
+                    known_positions.append(search_idx)
+                    start_idx = search_idx
+                    break
+                search_idx -= 1
+        
+        # expand below if needed
+        if not found_known_below and min_end < total_rows - 1:
+            search_idx = min_end + 1
+            while search_idx < total_rows:
+                reason = df.iloc[search_idx].get('reason', '')
+                sig = extract_reason_signature(reason)
+                if sig in known_codes_set:
+                    found_known_below = True
+                    known_positions.append(search_idx)
+                    end_idx = search_idx
+                    break
+                search_idx += 1
+        
+        return {
+            'start': start_idx,
+            'end': end_idx,
+            'found_known': found_known_above or found_known_below,
+            'known_positions': known_positions
+        }
+
+    # build non-neg mapping
+    non_neg_mapping = build_non_neg_mapping(lvl_mapping)
+    
+    # get known codes
+    known_codes = set(lvl_mapping.keys())
+    
+    # record all codes from all segments
+    all_codes_in_full = {}
+    for seg_idx, seg_df in enumerate(level_dfs):
+        for _, row in seg_df.iterrows():
+            reason = row.get('reason', '')
+            sig = extract_reason_signature(reason)
+            if sig and sig not in all_codes_in_full:
+                all_codes_in_full[sig] = {'first_seg': seg_idx, 'first_id': row.get('id', 0), 'reason': reason}
+    
+    # find unseen codes
+    unseen_codes = {}
+    unseen_neg_filtered = {}
+    for sig, info in all_codes_in_full.items():
+        if sig in known_codes:
+            continue
+        if has_neg_signal(info['reason']):
+            unseen_neg_filtered[sig] = info
+        else:
+            unseen_codes[sig] = info
+    
+    logger.debug(f"Unseen codes total: {len(unseen_codes) + len(unseen_neg_filtered)}, NEG filtered: {len(unseen_neg_filtered)}, to process: {len(unseen_codes)}")
+    
+    # if neg signal, map to -1
+    for sig in unseen_neg_filtered:
+        lvl_mapping[sig] = {"mapped_lvl": -1, "note": "NEG_FILTERED"}
+    
+    # handle remaining unseen_codes based on strategy
+    if unseen_codes:
+        if strategy == "double_mapping":
+            # Strategy 1: use non-neg code fallback
+            fallback_success = 0
+            fallback_failed = 0
+            failed_codes = []
+            for sig, info in unseen_codes.items():
+                non_neg_code = extract_non_neg_code(sig)
+                if non_neg_code in non_neg_mapping:
+                    mapped_level = non_neg_mapping[non_neg_code]
+                    lvl_mapping[sig] = {"mapped_lvl": mapped_level, "note": f"NON_NEG_FALLBACK from '{non_neg_code}'"}
+                    fallback_success += 1
+                else:
+                    lvl_mapping[sig] = {"mapped_lvl": -1, "note": "NO_MATCH_FALLBACK"}
+                    fallback_failed += 1
+                    failed_codes.append(f"'{non_neg_code}' (from '{sig[:60]}...')" if len(sig) > 60 else f"'{non_neg_code}' (from '{sig}')")
+            
+            logger.debug(f"Double mapping result: success={fallback_success}, failed={fallback_failed}")
+            if failed_codes:
+                logger.debug(f"Failed codes (non_neg not in mapping): {failed_codes[:5]}{'...' if len(failed_codes) > 5 else ''}")
+        
+        elif strategy == "window_llm" and output_dir:
+            # Strategy 2: create windows for LLM to judge
+            total_rows = len(df)
+            windows = []
+            for sig, info in unseen_codes.items():
+                first_id = info['first_id']
+                first_seg = info['first_seg']
+                df_indices = df.index[df['id'] == first_id].tolist()
+                if df_indices:
+                    first_df_idx = df_indices[0]
+                    window_info = build_context_window(first_df_idx, known_codes, total_rows, window_half_size)
+                    windows.append({
+                        'code': sig,
+                        'first_id': first_id,
+                        'first_seg': first_seg,
+                        'start': window_info['start'],
+                        'end': window_info['end'],
+                        'found_known': window_info['found_known']
+                    })
+            
+            # merge windows
+            sorted_windows = sorted(windows, key=lambda x: x['start'])
+            merged_windows = []
+            current_window = None
+            
+            for w in sorted_windows:
+                if current_window is None:
+                    current_window = {'start': w['start'], 'end': w['end'], 'codes': [w['code']], 'segments': [w['first_seg']]}
+                elif w['start'] <= current_window['end']:
+                    current_window['end'] = max(current_window['end'], w['end'])
+                    current_window['codes'].append(w['code'])
+                    current_window['segments'].append(w['first_seg'])
+                else:
+                    merged_windows.append(current_window)
+                    current_window = {'start': w['start'], 'end': w['end'], 'codes': [w['code']], 'segments': [w['first_seg']]}
+            
+            if current_window:
+                merged_windows.append(current_window)
+            
+            # save windows
+            windows_dir = os.path.join(output_dir, "merged_windows")
+            os.makedirs(windows_dir, exist_ok=True)
+            
+            unseen_codes_set = set(unseen_codes.keys())
+            unseen_neg_set = set(unseen_neg_filtered.keys())
+            
+            for i, mw in enumerate(merged_windows):
+                window_df = df.iloc[mw['start']:mw['end'] + 1].copy()
+                
+                def get_code_status(row):
+                    reason = row.get('reason', '')
+                    sig = extract_reason_signature(reason)
+                    if not sig:
+                        return ''
+                    if sig in unseen_codes_set:
+                        return '★ UNSEEN_TARGET'
+                    elif sig in unseen_neg_set:
+                        return 'NEG→-1'
+                    elif sig in known_codes:
+                        return 'KNOWN'
+                    else:
+                        return ''
+                
+                window_df['code_status'] = window_df.apply(get_code_status, axis=1)
+                window_path = os.path.join(windows_dir, f"window_{i+1:02d}_rows_{mw['start']}-{mw['end']}.csv")
+                window_df.to_csv(window_path, index=False, encoding='utf-8-sig')
+            
+            logger.debug(f"Window LLM: {len(merged_windows)} windows created in {windows_dir}")
+            # TODO: use llm to assign level based on window data
+    
+    return lvl_mapping
 
 
 def detect_outlines_md(line):
@@ -301,15 +583,6 @@ def get_max_lvl(code_str: str):
 
 
 def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
-    def truncate_text(text, start_limit, end_limit):
-        text = str(text)
-        total_limit = start_limit + end_limit
-        if len(text) <= total_limit:
-            return text
-        start_part = text[:start_limit]
-        end_part = text[-end_limit:] if end_limit > 0 else ''
-        return f"{start_part}...{end_part}"
-
     raw_headings = df['heading'].tolist()
     df["heading"] = df["heading"].apply(lambda x: truncate_text(x, max_start, max_end))
 
@@ -429,9 +702,10 @@ def remove_by_conditions(text, include_punc=False):
     neg_decimal_only = r"^\d*\.\d+$"  # 0.2 .23
     neg_condition_http = r"(?i)(^https?://\S+|^www\.\S+|^P\.S|^\b\d{0,2}\s*(?:a\.m|p\.m)\b)"
     neg_condition_latex = r"\$[^$]*\\[A-Za-z]+(?:\s*\{[^{}]*\})?[^$]*\$"
+    neg_condition_punc_mid = r"[。！；].+"
     neg_condition_punc_end = r"[.,;，。；]$"
 
-    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex, neg_condition_zero, neg_decimal_only]
+    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex, neg_condition_zero, neg_decimal_only, neg_condition_punc_mid]
 
     neg_triggered_code = []
     for regex in neg_conditions:
@@ -614,12 +888,13 @@ async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_l
     Returns:
         List of dicts with id and level
     """
-    level_html = df2html(df)
-    ot_limit = int(len(level_html) * 1.2)
+    
+    level_md = df2md(df) # df2html(df)
+    ot_limit = int(len(level_md) * 1.2)
     ot_limit = min(ot_limit, max_len)
 
     paras = {"max_tokens": ot_limit, "max_depth": max_depth, "toc_context": toc_context or ""}
-    prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_html, query="", paras=paras)
+    prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_md, query="", paras=paras)
     messages = [
         {"role": "system", "content": "you are a document auditing expert"},
         {"role": "user", "content": prompt}
@@ -758,7 +1033,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
         df4llm = basic_df.drop(columns=["reason"])
         logger.debug(f"DataFrame transformation completed, rows: {len(df4llm)}")
         
-        layout_res = await hiearchy_llm(df4llm, model_name, max_depth, toc_context=None, task="eval-headings")
+        layout_res = await hiearchy_llm(df4llm, model_name, max_depth, toc_hierarchies, task="eval-headings")
         
         base_preds = pd.DataFrame(layout_res)
         base_preds.insert(1, "heading", basic_df["heading"].values)  # insert original headings back
@@ -772,8 +1047,10 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
 
         if len(level_dfs) > 1:
             logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
+
+            lvl_mapping = handle_unseen_codes(raw_preds, level_dfs, lvl_mapping, output_dir)
             for l, level_df in tqdm(enumerate(level_dfs), total=len(level_dfs), desc=f"mapping and post-processing..."):
-                level_df = execute_level_mapping(level_df, lvl_mapping)  # record origin level for debug
+                level_df = execute_level_mapping(level_df, lvl_mapping)
                 full_preds.append(level_df)
         else:
             full_preds.append(base_preds)

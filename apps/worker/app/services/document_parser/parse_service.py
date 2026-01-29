@@ -2,6 +2,7 @@
 main parsing service
 """
 import os
+import re
 
 from shared.core.config import settings
 from shared.utils.file_utils import path_handle
@@ -20,6 +21,47 @@ from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
 from app.services.document_parser.table_parser import parse_xlsx
 from app.services.document_parser.txt_parser import parse_texts
+
+
+def cleanup_unreferenced_images(output_dir: str) -> int:
+    """
+    Clean up unreferenced UUID-named images from the images directory.
+    
+    After document parsing (PDF, DOCX, PPTX, etc.), the images/ directory may contain:
+    1. Processed images: renamed with semantic names like 'image-0-xxx.jpg'
+    2. Unreferenced images: UUID-named (64-char hex) that were parsed as tables/formulas
+    
+    This function removes the unreferenced UUID-named images to reduce final package size.
+    
+    Args:
+        output_dir: The full output directory path
+    
+    Returns:
+        Number of files removed
+    """
+    img_dir = os.path.join(output_dir, "images")
+    if not os.path.isdir(img_dir):
+        return 0
+    
+    # UUID pattern: 64 hex characters followed by image extension
+    uuid_pattern = re.compile(r'^[a-f0-9]{64}\.(?:jpg|jpeg|png|gif|webp)$', re.IGNORECASE)
+    
+    removed_count = 0
+    for filename in os.listdir(img_dir):
+        if uuid_pattern.match(filename):
+            file_path = os.path.join(img_dir, filename)
+            try:
+                os.remove(file_path)
+                removed_count += 1
+                logger.debug(f"Removed unreferenced image: {filename}")
+            except OSError as e:
+                logger.warning(f"Failed to remove {filename}: {e}")
+    
+    if removed_count > 0:
+        logger.info(f"Cleaned up {removed_count} unreferenced UUID-named images from {img_dir}")
+    
+    return removed_count
+
 
 async def checkerboard_inject_parse(
     file_full_path: str, 
@@ -141,6 +183,9 @@ async def checkerboard_inject_parse(
         )
         
     logger.debug(f"full_output_dir: {full_output_dir}")
+    
+    # Post-processing: clean up unreferenced UUID-named images
+    cleanup_unreferenced_images(full_output_dir)
     
     return full_output_dir, parsed_df
 

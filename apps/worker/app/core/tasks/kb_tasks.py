@@ -723,6 +723,7 @@ async def _parse_async(job_id: str, user_id: str):
         source_file_name=source_file_name,
         data_id=data_id,
         job_metadata=job_metadata,
+        parsed_df=add_contents_df,  # Enable kb.csv and hierarchy.json generation
     )
     
     # 提取 checksum 的字符串值（ZipResultService 返回的是字典格式）

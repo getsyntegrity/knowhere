@@ -400,9 +400,22 @@ async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras
 
     path_keys = []
     time_stamp = get_str_time()
+    path_counter = {}  # Track path occurrences for deduplication
 
     for _, row in leaf_dics.iterrows():
         key = row['path_identifier']
+        
+        # Build tentative path to check for duplicates
+        tentative_path = doc_name + split_char + key
+        
+        # Deduplicate: if path already exists, add suffix
+        if tentative_path in path_counter:
+            path_counter[tentative_path] += 1
+            suffix = path_counter[tentative_path]
+            key = f"{key}_{suffix}"  # Modify key with suffix
+        else:
+            path_counter[tentative_path] = 1
+        
         path_keys.append((doc_name + split_char + key))
         bottom_content = '\n'.join(row['content_lst'])
         bottom_tokens = tokenize2stw_remove([bottom_content], base_llm_paras['stopwords'])
@@ -430,7 +443,7 @@ async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras
             )
 
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
-    doc_df = process_dup_paths_df(doc_df)
+    doc_df = process_dup_paths_df(doc_df)  # Kept as backup defense layer
 
     # doc_graph, _ = restore_graph_by_paths(path_keys)
     # graph_path = os.path.join(kb_dir, 'hierarchy.json')
