@@ -212,9 +212,6 @@ class WebhookDispatcher:
         log_event_id = None if is_manual else event.id
         
         try:
-            # We construct log manually here to handle potential detached execution
-            # or we can reuse _log_delivery but need to handle is_manual
-            
             # Combine headers and payload
             combined_payload = {
                 "header": headers,
@@ -342,38 +339,6 @@ class WebhookDispatcher:
             hashlib.sha256
         ).hexdigest()
         return f"sha256={signature}"
-    
-    async def _log_delivery(
-        self,
-        db: AsyncSession,
-        event: WebhookEvent,
-        status_code: Optional[int],
-        duration_ms: int,
-        error_message: Optional[str],
-        request_payload: Dict[str, Any],
-        request_headers: Dict[str, Any]
-    ) -> None:
-        """Log delivery attempt to webhook_logs."""
-        # Combine headers and payload into log storage
-        combined_payload = {
-            "header": request_headers,
-            "payload": request_payload
-        }
-
-        log = WebhookLog(
-            job_id=event.job_id,
-            event_id=event.id,
-            webhook_url=event.target_url,
-            attempt_number=event.attempts + 1,
-            request_payload=combined_payload,
-            signature=self._sign_payload(event.payload, event.secret),
-            idempotency_key=str(uuid.uuid4()),
-            response_status_code=status_code,
-            error_message=error_message,
-            duration_ms=duration_ms
-        )
-        db.add(log)
-        await db.commit()
     
     async def _mark_delivered(self, db: AsyncSession, event: WebhookEvent) -> None:
         """Mark event as delivered."""

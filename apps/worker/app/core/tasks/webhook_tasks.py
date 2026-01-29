@@ -97,24 +97,18 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
     
     # Non-Blocking Jitter Implementation:
     # If this is a retry (attempt > 1) and jitter hasn't been applied yet:
-    # 1. Calculate random jitter delay (Strict 10% of previous wait)
+    # 1. Calculate random jitter delay (e.g., 5s)
     # 2. Reschedule THIS task with countdown=jitter
     # 3. Mark jitter_applied=True in the rescheduled task
     # 4. Return immediately (freeing the worker process)
     if attempt > 1 and not jitter_applied:
         import random
         
-        # Determine previous wait duration
-        # attempt=2 -> came from wait index 0 (1m)
-        # attempt=3 -> came from wait index 1 (10m)
-        prev_idx = min(attempt - 2, len(WAIT_DURATIONS_SECONDS) - 1)
-        if prev_idx < 0: prev_idx = 0  # Should not happen given attempt > 1
-        
-        base_wait = WAIT_DURATIONS_SECONDS[prev_idx]
-        max_jitter = base_wait * 0.1  # Strict 10% jitter
-        
-        jitter_seconds = random.uniform(0, max_jitter)
+        # Attempt 2 (1m wait): 0-6s jitter
+        # Attempt 3+ (10m+ wait): 0-30s jitter
+        max_jitter = 30 if attempt > 2 else 6
 
+        jitter_seconds = random.uniform(0, max_jitter)
         if jitter_seconds > 0.1:
             logger.info(f"Scheduling non-blocking jitter: {jitter_seconds:.2f}s (attempt {attempt})")
             # Use retry to reschedule with countdown. 
