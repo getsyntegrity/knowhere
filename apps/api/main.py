@@ -29,16 +29,6 @@ from app.core.exception_handlers import setup_exception_handlers
 from fastapi_users import FastAPIUsers
 from uuid import UUID
 
-# 动态导入 API 服务特定的 Celery 任务模块
-# 这些模块不在共享包中，而是在 API 服务本地
-try:
-    import app.core.tasks.state_machine_tasks
-    import app.core.tasks.webhook_tasks
-    logger.info("成功导入 API 服务特定的 Celery 任务模块")
-except ImportError as e:
-    logger.warning(f"无法导入某些 Celery 任务模块: {e}")
-    logger.warning("部分 Celery 任务可能不可用")
-
 setup_logging()
 
 @asynccontextmanager

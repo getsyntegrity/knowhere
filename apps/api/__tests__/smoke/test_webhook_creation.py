@@ -38,8 +38,7 @@ async def test_fr01_event_trigger_creates_pending_event(fake_db, webhook_service
     event = await webhook_service.create_job_completion_event(
         db=fake_db,
         job_id=job_id,
-        webhook_url="https://example.com/webhook",
-        webhook_secret="test_secret"
+        webhook_url="https://example.com/webhook"
     )
     
     
@@ -85,31 +84,11 @@ async def test_fr02_rejects_invalid_url_scheme(fake_db, webhook_service):
         await webhook_service.create_job_completion_event(
             db=fake_db,
             job_id=str(uuid4()),
-            webhook_url="ftp://invalid.com/webhook",
-            webhook_secret="secret"
+            webhook_url="ftp://invalid.com/webhook"
         )
     assert "http://" in exc.value.user_message or "https://" in exc.value.user_message
 
-@pytest.mark.asyncio
-async def test_fr02_rejects_empty_secret(fake_db, webhook_service):
-    """
-    FR-02: Webhook secret is required.
-    Verify: Empty secret is rejected.
-    """
-    from shared.core.exceptions.webhook_exceptions import WebhookConfigException
-    
-    # Mock _get_webhook_secret to return None so we can test validation failure
-    with patch.object(webhook_service, '_get_webhook_secret', new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = None
-        
-        with pytest.raises(WebhookConfigException) as exc:
-            await webhook_service.create_job_completion_event(
-                db=fake_db,
-                job_id=str(uuid4()),
-                webhook_url="https://example.com/webhook",
-                webhook_secret=""
-            )
-        assert "secret" in exc.value.user_message.lower()
+
 
 
 # =============================================================================
@@ -127,7 +106,6 @@ async def test_fr09_manual_trigger_dispatcher(fake_db):
     event = WebhookEvent(
         job_id=job_id,
         target_url="https://example.com/webhook",
-        secret="test_secret",
         payload={"status": "manual_test"},
         attempts=0  # Explicitly init attempts
     )
@@ -136,9 +114,30 @@ async def test_fr09_manual_trigger_dispatcher(fake_db):
     mock_response.status = 200
     mock_response.text = AsyncMock(return_value="OK")
     mock_response.__aenter__.return_value = mock_response
-    mock_response.__aexit__.return_value = None
-    
-    with patch("aiohttp.ClientSession.post", return_value=mock_response):
+    # Mock DB execute to return user_id for Job query
+    async def db_execute_side_effect(statement, *args, **kwargs):
+        # Naive check: if it's a select statement, assume it's for Job owner
+        # Since we only expect one query in this test path (get_job_owner)
+        if "jobs" in str(statement):  # Very loose check, or check structure
+             return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
+        
+        # Determine strictness?
+        # Let's try to match what test_webhook_dispatch.py does
+        try:
+            if hasattr(statement, 'froms') and statement.froms and statement.froms[0].name == 'jobs':
+                 return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
+        except:
+            pass
+        return MagicMock(scalars=lambda: [], scalar_one_or_none=lambda: None)
+
+    fake_db.execute = AsyncMock(side_effect=db_execute_side_effect)
+
+    with patch("aiohttp.ClientSession.post", return_value=mock_response), \
+         patch("shared.services.webhook.dispatcher.validate_webhook_url", return_value=(True, None)), \
+         patch.object(dispatcher, "_resolve_secret", new_callable=AsyncMock) as mock_resolve:
+        
+        mock_resolve.return_value = "test_secret"
+        
         success, status_code, duration_ms, error = await dispatcher._send_webhook(
             db=fake_db,
             event=event,
@@ -146,7 +145,7 @@ async def test_fr09_manual_trigger_dispatcher(fake_db):
         )
     
     # Verify result
-    assert success is True
+    assert success is True, f"Dispatch failed with error: {error}"
     assert status_code == 200
     
     # Verify Log persistence 

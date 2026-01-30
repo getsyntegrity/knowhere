@@ -28,8 +28,7 @@ class WebhookService:
         self,
         db: AsyncSession,
         job_id: str,
-        webhook_url: str,
-        webhook_secret: Optional[str] = None
+        webhook_url: str
     ) -> WebhookEvent:
         """
         Create webhook event for job completion.
@@ -38,7 +37,6 @@ class WebhookService:
             db: Database session (in active transaction)
             job_id: Job ID
             webhook_url: Webhook URL
-            webhook_secret: HMAC secret (optional, fetched from metadata if None)
             
         Returns:
             Created WebhookEvent
@@ -52,15 +50,11 @@ class WebhookService:
             # NOTE: result_url and result added by dispatcher at delivery
         }
         
-        # Get secret
-        secret = webhook_secret or await self._get_webhook_secret(job_id)
-        
         # Create event
         event = await self._create_event(
             db=db,
             job_id=job_id,
             target_url=webhook_url,
-            secret=secret,
             payload=payload
         )
         
@@ -75,8 +69,7 @@ class WebhookService:
         error_type: Optional[str] = None,
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None,
-        webhook_url: str = None,
-        webhook_secret: Optional[str] = None
+        webhook_url: str = None
     ) -> WebhookEvent:
         """
         Create webhook event for job failure.
@@ -89,7 +82,6 @@ class WebhookService:
             error_code: Error code
             error_details: Structured error details (optional)
             webhook_url: Webhook URL
-            webhook_secret: HMAC secret (optional, fetched from metadata if None)
             
         Returns:
             Created WebhookEvent
@@ -108,15 +100,11 @@ class WebhookService:
             )
         }
         
-        # Get secret
-        secret = webhook_secret or await self._get_webhook_secret(job_id)
-        
         # Create event
         event = await self._create_event(
             db=db,
             job_id=job_id,
             target_url=webhook_url,
-            secret=secret,
             payload=payload
         )
         
@@ -151,79 +139,12 @@ class WebhookService:
         except Exception as e:
             logger.error(f"Failed to schedule webhook dispatch task: event_id={event_id}, error={e}")
             return False
-    
-    async def create_and_publish_completion(
-        self,
-        db: AsyncSession,
-        job_id: str,
-        webhook_url: str,
-        webhook_secret: Optional[str] = None
-    ) -> bool:
-        """
-        Create job completion webhook and publish immediately (no outbox pattern).
-        
-        Args:
-            db: Database session
-            job_id: Job ID
-            webhook_url: Webhook URL
-            webhook_secret: HMAC secret (optional)
-            
-        Returns:
-            True if created and published successfully
-        """
-        try:
-            event = await self.create_job_completion_event(db, job_id, webhook_url, webhook_secret)
-            await db.commit()
-            return await self.publish_to_queue(event.id)
-        except Exception as e:
-            logger.error(f"Failed to create and publish completion webhook: {e}")
-            await db.rollback()
-            return False
-    
-    async def create_and_publish_failure(
-        self,
-        db: AsyncSession,
-        job_id: str,
-        error_message: str,
-        error_type: Optional[str] = None,
-        error_code: str = "UNKNOWN",
-        error_details: Optional[Dict[str, Any]] = None,
-        webhook_url: str = None,
-        webhook_secret: Optional[str] = None
-    ) -> bool:
-        """
-        Create job failure webhook and publish immediately (no outbox pattern).
-        
-        Args:
-            db: Database session
-            job_id: Job ID
-            error_message: Error message
-            error_type: Error type (optional)
-            error_code: Error code
-            error_details: Error details (optional)
-            webhook_url: Webhook URL
-            webhook_secret: HMAC secret (optional)
-            
-        Returns:
-            True if created and published successfully
-        """
-        try:
-            event = await self.create_job_failure_event(
-                db, job_id, error_message, error_type, error_code, error_details, webhook_url, webhook_secret
-            )
-            await db.commit()
-            return await self.publish_to_queue(event.id)
-        except Exception as e:
-            logger.error(f"Failed to create and publish failure webhook: {e}")
-            await db.rollback()
-            return False
-    
+
     async def _create_event(
         self,
         db: AsyncSession,
         job_id: str,
         target_url: str,
-        secret: str,
         payload: Dict[str, Any]
     ) -> WebhookEvent:
         """
@@ -233,7 +154,6 @@ class WebhookService:
             db: Database session
             job_id: Job ID
             target_url: Webhook URL
-            secret: HMAC secret
             payload: JSON payload
             
         Returns:
@@ -255,17 +175,10 @@ class WebhookService:
                 user_message="Webhook URL must start with http:// or https://."
             )
             
-        if not secret:
-            raise WebhookConfigException(
-                internal_message="Missing webhook secret",
-                user_message="Webhook secret is required for signature verification."
-            )
-        
         # Create event
         event = WebhookEvent(
             job_id=job_id,
             target_url=target_url,
-            secret=secret,
             payload=payload,
             status=WebhookEventStatus.PENDING,
             attempts=0,
@@ -275,31 +188,6 @@ class WebhookService:
         await db.flush()  # Get ID, but don't commit (caller controls transaction)
         
         return event
-    
-    async def _get_webhook_secret(self, job_id: str) -> str:
-        """
-        Get webhook secret from job metadata or use default.
-        
-        Args:
-            job_id: Job ID
-            
-        Returns:
-            Webhook secret
-        """
-        try:
-            redis_service = RedisServiceFactory.get_service()
-            metadata_service = JobMetadataService(redis_service)
-            job_metadata = await metadata_service.get_metadata(job_id)
-            
-            if job_metadata:
-                webhook_config = JobMetadataHelper.get_webhook(job_metadata)
-                if webhook_config and webhook_config.get("secret"):
-                    return webhook_config["secret"]
-        except Exception as e:
-            logger.warning(f"Failed to get webhook secret from metadata: {e}")
-        
-        # Default fallback
-        return "default_webhook_secret"
 
 
 # Singleton

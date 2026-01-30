@@ -23,6 +23,7 @@ from .job_state_audit_log import JobStateAuditLog
 from .job_state_history import JobStateHistory
 from .webhook_log import WebhookLog
 from .webhook import WebhookEvent, WebhookEventStatus
+from .webhook_secret import WebhookSecret, WebhookSecretStatus
 
 # 4. Finally import other models
 # from .oauth_provider import OAuthProvider  # Commented out temporarily to avoid circular imports
@@ -46,5 +47,7 @@ __all__ = [
     "WebhookLog",
     "WebhookEvent",
     "WebhookEventStatus",
+    "WebhookSecret",
+    "WebhookSecretStatus"
     # "OAuthProvider"
 ]

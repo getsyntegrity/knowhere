@@ -66,6 +66,7 @@ shared/models/database/user.py
 shared/models/database/user_roles.py
 shared/models/database/webhook.py
 shared/models/database/webhook_log.py
+shared/models/database/webhook_secret.py
 shared/models/schemas/__init__.py
 shared/models/schemas/api_key.py
 shared/models/schemas/billing.py
@@ -84,10 +85,13 @@ shared/models/schemas/s3_file.py
 shared/models/schemas/user.py
 shared/models/schemas/webhook.py
 shared/models/schemas/word.py
+shared/repositories/webhook_secret_repository.py
 shared/services/ai/__init__.py
 shared/services/ai/ai_query_service.py
 shared/services/ai/prompt_service.py
 shared/services/ai/response_process_service.py
+shared/services/encryption/__init__.py
+shared/services/encryption/fernet_service.py
 shared/services/messaging/__init__.py
 shared/services/messaging/async_config.py
 shared/services/messaging/async_connection.py
@@ -114,7 +118,9 @@ shared/services/storage/adapters/oss_adapter.py
 shared/services/storage/adapters/s3_adapter.py
 shared/services/webhook/__init__.py
 shared/services/webhook/dispatcher.py
+shared/services/webhook/validator.py
 shared/tests/fakes.py
+shared/tests/test_fernet_service.py
 shared/utils/CommonHelper.py
 shared/utils/FileDownUpUtils.py
 shared/utils/OpenAICompatibleClient.py

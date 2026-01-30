@@ -55,7 +55,7 @@ class WebhookEvent(Base):
     
     # Webhook configuration (snapshot at creation time)
     target_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    secret: Mapped[str] = mapped_column(Text, nullable=False)
+
     
     # Payload (job result snapshot)
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)

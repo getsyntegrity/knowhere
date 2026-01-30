@@ -15,21 +15,28 @@ import asyncio
 
 import aiohttp
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # Use standard db context - run_async_task handles the loop reuse
+from shared.core.config import settings
 from shared.core.database import get_db_context
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
+from shared.services.webhook.validator import validate_webhook_url
 
 from shared.models.database.webhook_log import WebhookLog
+from shared.models.database.job import Job
+from shared.repositories.webhook_secret_repository import WebhookSecretRepository
 from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
+from shared.core.exceptions.domain_exceptions import (
+    SystemSettingMissingException,
+    SystemSettingInvalidException
+)
 
-# Configuration constants
+# Constants
 HTTP_TIMEOUT_SECONDS = 10
 MAX_ATTEMPTS = 6
-
-
 
 class WebhookDispatcher:
     """
@@ -149,8 +156,17 @@ class WebhookDispatcher:
         Returns:
             Tuple of (success, status_code, duration_ms, error_message)
         """
+        import uuid
+
         # Generate attempt ID
         attempt_id = str(uuid.uuid4())
+        
+        # SSRF Protection: Validate URL before sending
+        is_valid, ssrf_error = validate_webhook_url(event.target_url)
+        if not is_valid:
+            logger.warning(f"SSRF validation failed: event_id={event.id}, error={ssrf_error}")
+            # Return 400 (Bad Request) to ensure it's treated as a non-retryable client error
+            return False, 400, 0, f"SSRF: {ssrf_error}"
         
         # Enrich payload with job result data at delivery time
         enriched_payload = await self._enrich_payload(event)
@@ -159,15 +175,39 @@ class WebhookDispatcher:
         if is_manual:
             enriched_payload["trigger"] = "manual"
         
+        # Helper to get user_id from job
+        async def _get_job_owner(job_id: str) -> Optional[str]:
+            result = await db.execute(select(Job.user_id).where(Job.job_id == job_id))
+            return result.scalar_one_or_none()
+
+        # Resolve secret (Lazy creation)
+        secret = None
+        try:
+            user_id = await _get_job_owner(event.job_id)
+            if user_id:
+                secret = await self._resolve_secret(db, user_id, event.target_url)
+            else:
+                logger.warning(f"Could not resolve secret: Job {event.job_id} has no user_id")
+        except (SystemSettingMissingException, SystemSettingInvalidException) as e:
+            logger.error(f"Configuration error during secret resolution: {e}")
+            # Return 424 (Failed Dependency) to ensure it's treated as a non-retryable error
+            return False, 424, 0, f"Configuration Error: {e}"
+        except Exception as e:
+            logger.error(f"Secret resolution failed: {e}")
+            
+        if not secret:
+            logger.error(f"No secret found or created/resolved for event {event.id}")
+            # Default to non-retryable error for any secret resolution failure
+            return False, 424, 0, "Secret resolution failed"
+
         # Sign payload
-        signature = self._sign_payload(enriched_payload, event.secret)
+        signature = self._sign_payload(enriched_payload, secret)
         
         # Build headers
         headers = {
             'Content-Type': 'application/json',
             'X-Knowhere-Signature': signature,
             'X-Knowhere-Attempt-ID': attempt_id,
-            'X-Knowhere-Timestamp': str(int(datetime.now(timezone.utc).timestamp())),
             'User-Agent': 'Knowhere-Webhook/1.0'
         }
         
@@ -330,15 +370,56 @@ class WebhookDispatcher:
         # Examples: 400 Bad Request, 401 Unauthorized, 404 Not Found
         return False
     
+    async def _resolve_secret(self, db: AsyncSession, user_id: str, endpoint: str) -> Optional[str]:
+        """
+        Resolve webhook secret using repository (Lazy creation).
+        
+        1. Try to get existing active secret for user/endpoint.
+        2. If not found, create a new one.
+        3. Decrypt and return the raw secret string.
+        """
+        try:
+            # Import here to avoid circular dependency with WebhookDispatcher
+            from shared.repositories.webhook_secret_repository import WebhookSecretRepository
+            repo = WebhookSecretRepository()
+            secret_obj = await repo.get_or_create_secret(db, user_id, endpoint=endpoint)
+            
+            # Update usage timestamp
+            if secret_obj:
+                secret_obj.last_used_at = datetime.utcnow()
+                db.add(secret_obj)
+                # We don't commit here to avoid side effects if the caller aborts, 
+                # but the session will eventually be committed by the caller.
+            
+            # Decrypt
+            return repo.decrypt_secret(secret_obj)
+        except (SystemSettingMissingException, SystemSettingInvalidException):
+            # Re-raise configuration errors so they can be handled as non-retryable
+            raise
+        except Exception as e:
+            logger.error(f"Failed to resolve/create secret for user {user_id}: {e}")
+            return None
+    
     def _sign_payload(self, payload: Dict[str, Any], secret: str) -> str:
-        """Generate HMAC-SHA256 signature."""
+        """
+        Generate timestamped HMAC-SHA256 signature.
+        
+        Format: t=<timestamp>,v1=<signature>
+        Signed content: "{timestamp}.{json_payload}"
+        
+        This prevents replay attacks by binding the signature to the current time.
+        """
+        timestamp = int(time.time())
         payload_str = json.dumps(payload, separators=(',', ':'))
+        signed_content = f"{timestamp}.{payload_str}"
+        
         signature = hmac.new(
             secret.encode('utf-8'),
-            payload_str.encode('utf-8'),
+            signed_content.encode('utf-8'),
             hashlib.sha256
         ).hexdigest()
-        return f"sha256={signature}"
+        
+        return f"t={timestamp},v1={signature}"
     
     async def _mark_delivered(self, db: AsyncSession, event: WebhookEvent) -> None:
         """Mark event as delivered."""

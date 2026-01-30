@@ -12,7 +12,6 @@ class WebhookConfig(BaseModel):
     """Webhook配置"""
 
     url: str = Field(..., description="Webhook回调URL")
-    secret: str = Field(..., description="用于生成签名的密钥")
     
 class ParsingParams(BaseModel):
     """解析参数"""

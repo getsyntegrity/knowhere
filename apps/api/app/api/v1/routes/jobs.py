@@ -31,6 +31,7 @@ from shared.core.exceptions.domain_exceptions import (
     JobOperationException
 )
 from shared.core.exceptions.webhook_exceptions import WebhookConfigException
+from shared.services.webhook.validator import validate_webhook_url
 
 router = APIRouter(tags=["Jobs"])
 
@@ -260,23 +261,12 @@ async def create_job(
         if request.webhook:
             # Check for URL validity
             if request.webhook.url:
-                parsed = urlparse(request.webhook.url)
-                if not all([parsed.scheme, parsed.netloc]):
-                    raise WebhookConfigException(
-                        user_message="Invalid webhook URL format",
-                        internal_message=f"Invalid webhook URL: {request.webhook.url}"
-                    )
-                if parsed.scheme not in ('http', 'https'):
+                is_valid, error_msg = validate_webhook_url(request.webhook.url)
+                if not is_valid:
                      raise WebhookConfigException(
-                        user_message="Webhook URL must be http or https",
-                        internal_message=f"Invalid webhook scheme: {parsed.scheme}"
+                        user_message="Invalid webhook URL",
+                        internal_message=f"Webhook validation failed: {error_msg}"
                     )
-
-            if not request.webhook.secret:
-                raise WebhookConfigException(
-                    internal_message="Missing webhook secret",
-                    user_message="Webhook secret is required for signature verification."
-                )
 
         # 验证文件类型
         if request.source_type == "file" and not validate_file_type(request.file_name):
