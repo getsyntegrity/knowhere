@@ -3,7 +3,7 @@ Job元数据Schema定义
 """
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class JobMetadataBase(BaseModel):
@@ -25,8 +25,7 @@ class JobMetadataBase(BaseModel):
     # 用户配置（创建时初始化）
     user_config: Optional[Dict[str, Any]] = Field(None, description="用户配置")
     
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra='allow')
 
 
 class JobMetadataHelper:

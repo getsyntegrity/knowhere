@@ -3,7 +3,7 @@ API v1 路由总入口
 """
 from app.api.v1 import health
 from app.api.v1.routes import (api_key, auth, billing, email, jobs, knowledge_base,
-                               oauth, s3_events, user_management, version, webhook)
+                               oauth, s3_events, user_management, version, webhook, webhook_secrets)
 from fastapi import APIRouter
 
 api_router = APIRouter()
@@ -39,8 +39,9 @@ api_router.include_router(s3_events.router, prefix="/internal", tags=["Internal"
 
 # 旧接口已删除，统一使用 /v1/jobs 接口
 
-# 注册Webhook管理路由
 api_router.include_router(webhook.router, prefix="/webhooks", tags=["Webhook管理"])
+
+api_router.include_router(webhook_secrets.router, prefix="/webhooks/secrets", tags=["Webhook Secrets"])
 
 # 注册邮件测试路由
 api_router.include_router(email.router, prefix="/email", tags=["邮件测试"])

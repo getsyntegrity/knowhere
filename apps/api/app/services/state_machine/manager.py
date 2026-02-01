@@ -70,12 +70,14 @@ class JobStateMachine:
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None,
         operator_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        auto_commit: bool = True
     ) -> bool:
         """标记Job为失败状态"""
         try:
             result = await self.state_machine.mark_failed(
-                db, job_id, error_message, error_code, error_details, operator_id, metadata
+                db, job_id, error_message, error_code, error_details, operator_id, metadata,
+                auto_commit=auto_commit
             )
             
             # 失败后清除超时
@@ -93,12 +95,13 @@ class JobStateMachine:
         db: AsyncSession, 
         job_id: str, 
         result_metadata: Optional[Dict[str, Any]] = None,
-        operator_id: Optional[str] = None
+        operator_id: Optional[str] = None,
+        auto_commit: bool = True
     ) -> bool:
         """标记Job为完成状态"""
         try:
             result = await self.state_machine.mark_completed(
-                db, job_id, result_metadata, operator_id
+                db, job_id, result_metadata, operator_id, auto_commit=auto_commit
             )
             
             # 完成后清除超时

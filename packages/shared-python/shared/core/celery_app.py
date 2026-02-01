@@ -46,6 +46,49 @@ celery_app.conf.task_queues = (
     # 其他任务队列
     Queue('ai_high_priority', routing_key='ai.high',
           queue_arguments={'x-max-priority': 10}),
+    
+    # ==========================================================
+    # Webhook Queues (DLX-based non-blocking retry)
+    # ==========================================================
+    
+    # 1. Main Work Queue - Workers consume from this
+    Queue('webhook_work', routing_key='webhook.work'),
+    
+    # 2. Wait Queues - NO workers consume from these!
+    #    RabbitMQ holds message for TTL, then dead-letters to webhook_work
+    Queue('webhook_wait_1m', routing_key='webhook.wait.1m',
+          queue_arguments={
+              'x-message-ttl': 60000,  # 60 seconds (1 minute)
+              'x-dead-letter-exchange': '',  # Default exchange
+              'x-dead-letter-routing-key': 'webhook_work'  # Must match QUEUE NAME for default exchange
+          }),
+    Queue('webhook_wait_10m', routing_key='webhook.wait.10m',
+          queue_arguments={
+              'x-message-ttl': 600000,  # 600 seconds (10 minutes)
+              'x-dead-letter-exchange': '',
+              'x-dead-letter-routing-key': 'webhook_work'
+          }),
+    Queue('webhook_wait_30m', routing_key='webhook.wait.30m',
+          queue_arguments={
+              'x-message-ttl': 1800000,  # 1800 seconds (30 minutes)
+              'x-dead-letter-exchange': '',
+              'x-dead-letter-routing-key': 'webhook_work'
+          }),
+    Queue('webhook_wait_2h', routing_key='webhook.wait.2h',
+          queue_arguments={
+              'x-message-ttl': 7200000,  # 7200 seconds (2 hours)
+              'x-dead-letter-exchange': '',
+              'x-dead-letter-routing-key': 'webhook_work'
+          }),
+    Queue('webhook_wait_6h', routing_key='webhook.wait.6h',
+          queue_arguments={
+              'x-message-ttl': 21600000,  # 21600 seconds (6 hours)
+              'x-dead-letter-exchange': '',
+              'x-dead-letter-routing-key': 'webhook_work'
+          }),
+    
+    # 3. Dead Letter Queue - Final failure destination
+    Queue('webhook_dead', routing_key='webhook.dead'),
 )
 
 # 配置Celery
@@ -78,12 +121,20 @@ celery_app.conf.update(
         # 现有任务路由
         'shared.core.tasks.celery_tasks.process_ai_query': {'queue': 'ai_high_priority'},
         
-        # 知识库任务路由（动态路由）
-        'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # 默认中等优先级
+        # Knowledge base tasks (dynamic routing)
+        'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # Default medium priority
         
-        # Webhook任务路由（仅在API服务队列中运行）
-        'app.core.tasks.webhook_tasks.send_webhook_retry_task': {'queue': 'kb_medium'},
-    }
+        # Webhook tasks - route to dedicated webhook work queue
+        'app.core.tasks.webhook_tasks.dispatch_webhook_task': {'queue': 'webhook_work'},
+        'app.core.tasks.webhook_tasks.recover_orphaned_webhooks': {'queue': 'webhook_work'},
+    },
+    # Periodic tasks (Celery Beat)
+    beat_schedule={
+        'recover-orphaned-webhooks': {
+            'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
+            'schedule': 300.0,  # Every 5 minutes
+        },
+    },
 )
 
 def get_celery_app() -> Celery:

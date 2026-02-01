@@ -32,7 +32,8 @@ class StateMachineService:
         transition_reason: str = "normal_transition",
         operator_id: Optional[str] = None,
         operator_type: str = "system",
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        auto_commit: bool = True
     ) -> bool:
         """
         执行状态转换
@@ -44,7 +45,9 @@ class StateMachineService:
             transition_reason: 转换原因
             operator_id: 操作者ID
             operator_type: 操作者类型
+            operator_type: 操作者类型
             metadata: 转换时的额外信息
+            auto_commit: 是否自动提交事务
             
         Returns:
             bool: 转换是否成功
@@ -80,10 +83,15 @@ class StateMachineService:
                     # 6. 设置状态超时
                     await self._set_state_timeout(job_id, to_state)
                     
-                    # 7. 提交数据库事务
-                    await db.commit()
+                    # 7. 提交数据库事务 (仅当auto_commit=True)
+                    if auto_commit:
+                        await db.commit()
+                        logger.info(f"Job {job_id} 状态转换成功: {old_state} -> {to_state}")
+                    else:
+                         # 如果不提交，我们flush以确保后续操作可见
+                        await db.flush()
+                        logger.info(f"Job {job_id} 状态转换暂存 (等待外部提交): {old_state} -> {to_state}")
                     
-                    logger.info(f"Job {job_id} 状态转换成功: {old_state} -> {to_state}")
                     return True
                 else:
                     # 乐观锁冲突，重试
@@ -138,7 +146,8 @@ class StateMachineService:
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None,
         operator_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        auto_commit: bool = True
     ) -> bool:
         """Mark Job as failed state"""
         try:
@@ -154,7 +163,8 @@ class StateMachineService:
             return await self.transition(
                 db, job_id, JobStatus.FAILED.value, 
                 "mark_failed", operator_id, "system",
-                transition_metadata
+                transition_metadata,
+                auto_commit=auto_commit
             )
             
         except Exception as e:
@@ -166,13 +176,15 @@ class StateMachineService:
         db: AsyncSession, 
         job_id: str, 
         result_metadata: Optional[Dict[str, Any]] = None,
-        operator_id: Optional[str] = None
+        operator_id: Optional[str] = None,
+        auto_commit: bool = True
     ) -> bool:
         """标记Job为完成状态"""
         try:
             return await self.transition(
                 db, job_id, JobStatus.DONE.value, 
-                "mark_completed", operator_id, "system", result_metadata
+                "mark_completed", operator_id, "system", result_metadata, 
+                auto_commit=auto_commit
             )
         except Exception as e:
             logger.error(f"标记Job {job_id} 完成状态时出错: {e}")

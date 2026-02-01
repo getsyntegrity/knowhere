@@ -5,14 +5,14 @@ import os
 
 from loguru import logger
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BaseConfig(BaseSettings):
     """基础配置类"""
     
     # 环境配置
-    ENVIRONMENT: str = Field(default="development", description="运行环境")
+    ENVIRONMENT: str = Field(default="production", description="运行环境")
     DEBUG: bool = Field(default=False, description="调试模式")
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
     
@@ -25,6 +25,7 @@ class BaseConfig(BaseSettings):
     SECRET_KEY: str = Field(..., description="JWT密钥")
     ALGORITHM: str = Field(default="HS256", description="JWT算法")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=10080, description="访问令牌过期时间（分钟）")
+    WEBHOOK_MASTER_KEY: str = Field(default="", description="Webhook encryption master key")
     
     # 路径配置
     TMP_PATH: str = Field(..., description="临时文件路径")
@@ -64,8 +65,9 @@ class BaseConfig(BaseSettings):
         logger.info("文件路径验证成功")
         return True
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"  # 忽略额外的环境变量
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"  # 忽略额外的环境变量
+    )

@@ -280,9 +280,22 @@ class CeleryTaskRouter:
             return None
 
 
-# 创建路由器实例
+# Create router instance
 task_router = CeleryTaskRouter()
 
-# 注册路由器到Celery
+# Register router with Celery - combine function routing and static routing
 celery_app = get_celery_app()
-celery_app.conf.task_routes = (task_router.route_task,)
+
+# Save static routes configured in celery_app.py
+static_routes = celery_app.conf.task_routes.copy() if isinstance(celery_app.conf.task_routes, dict) else {}
+
+# Celery supports router list: try function router first, fallback to static dict
+# 1. task_router.route_task: Dynamic routing (based on user subscription, for kb_tasks)
+# 2. static_routes: Static routing (webhook and other fixed routes, from celery_app.py)
+celery_app.conf.task_routes = [
+    task_router.route_task,  # Dynamic routing priority
+    static_routes,           # Fallback to static configuration
+]
+
+
+
