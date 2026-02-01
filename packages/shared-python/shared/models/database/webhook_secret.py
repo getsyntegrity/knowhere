@@ -53,8 +53,6 @@ class WebhookSecret(Base):
     secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     
     # Status
-    # Using String to be compatible with both Enum and string in DB for now, 
-    # but theoretically this maps to the Enum type in Postgres
     status: Mapped[str] = mapped_column(
         String(20), 
         default=WebhookSecretStatus.ACTIVE, 
