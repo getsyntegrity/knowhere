@@ -16,9 +16,9 @@ except ImportError:
         def convert(self, content):
             return content
 from shared.core.config import settings
-# ARQ依赖已移除，使用Celery替代
+# ARQ dependency is removed, use Celery instead
 from shared.services.ai import ai_query_service
-# TaskRedis依赖已移除，使用Redis直接追踪
+# TaskRedis dependency is removed, use Redis directly to track
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from loguru import logger
@@ -29,12 +29,12 @@ from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 def save_intermediate_csv(df: pd.DataFrame, output_dir: str, filename: str):
     """
-    保存中间结果DataFrame为CSV文件，使用utf-8-sig编码以支持中英文
+    save intermediate result to csv file, use utf-8-sig encoding to support Chinese and English
     
     Args:
-        df: 要保存的DataFrame
-        output_dir: 输出目录路径
-        filename: 文件名（不含扩展名）
+        df: DataFrame to save
+        output_dir: output directory path
+        filename: filename (without extension)
     """
     if output_dir is None or df is None or df.empty:
         return
@@ -51,15 +51,15 @@ def save_intermediate_csv(df: pd.DataFrame, output_dir: str, filename: str):
 
 def build_tree_from_dataframe(df):
     """
-    从DataFrame构建纯嵌套JSON树结构
+    develop json tree from dataframe
     
     Args:
-        df: DataFrame，包含 id, heading, level 列
+        df: DataFrame, including id, heading, level columns
     
     Returns:
-        tree: 纯嵌套字典结构
-        node_to_id: 树节点到id的映射（使用唯一的节点key）
-        id_to_row: id到原始行数据的映射
+        tree: pure nested dict structure
+        node_to_id: map from tree node to id (use unique node key)
+        id_to_row: map from id to original row data
     """
     headings = df[df['level'] > -1].copy()
     
@@ -74,23 +74,23 @@ def build_tree_from_dataframe(df):
         row_id = int(row['id'])
         level = int(row['level'])
         
-        # 记录id到row的映射
+        # record id to row mapping
         id_to_row[row_id] = row.to_dict()
         
-        # 找到合适的父节点
+        # find suitable parent node
         while len(stack) > 1 and stack[-1][0] >= level:
             stack.pop()
         
-        # 获取父节点信息
+        # get parent node info
         parent_level, parent_dict, parent_heading, parent_path = stack[-1]
         
-        # 创建树节点的唯一key：如果同一父节点下有重复标题，加上ID后缀
+        # create unique key for tree node: if there are duplicate headings under the same parent, add ID suffix
         tree_node_key = heading_txt
 
         if tree_node_key in parent_dict:
             tree_node_key = f"{heading_txt}#{row_id}"
         
-        # 建立映射：使用(tree_node_key, parent_path)作为key
+        # build mapping: use (tree_node_key, parent_path) as key
         node_key = (tree_node_key, parent_path)
         node_to_id[node_key] = row_id
         id_to_node_info[row_id] = node_key
@@ -103,27 +103,27 @@ def build_tree_from_dataframe(df):
 
 def tree_to_dataframe(tree, node_to_id, original_df):
     """
-    将处理后的树结构转换回DataFrame更新
+    convert processed tree structure back to dataframe
     
     Args:
-        tree: 处理后的纯嵌套字典结构
-        node_to_id: 节点到id的映射 {(tree_node_key, parent_path): id}
-        original_df: 原始DataFrame
+        tree: processed pure nested dict structure
+        node_to_id: map from node to id {(tree_node_key, parent_path): id}
+        original_df: original dataframe
     
     Returns:
-        updated_df: 更新后的DataFrame
+        updated_df: updated dataframe
     """
-    # 从树中提取所有保留的标题
+    # extract all retained headings from tree
     def extract_headings(node_dict, current_level=1, parent_path=""):
-        """递归提取所有标题及其新层级"""
+        """recursively extract all headings and their new levels"""
         results = []
         for tree_node_key, children in node_dict.items():
-            # 使用 (tree_node_key, parent_path) 作为key查找ID
+            # use (tree_node_key, parent_path) as key to find ID
             node_key = (tree_node_key, parent_path)
             row_id = node_to_id.get(node_key, -1)
             
             if row_id >= 0:
-                # 从tree_node_key中提取原始标题（去掉可能的ID后缀）
+                # extract original heading from tree_node_key (remove possible ID suffix)
                 original_heading = tree_node_key.split('#')[0] if '#' in tree_node_key else tree_node_key
                 
                 results.append({
@@ -133,7 +133,7 @@ def tree_to_dataframe(tree, node_to_id, original_df):
                     "tree_key": tree_node_key,
                     "parent_path": parent_path
                 })
-                # 递归处理子节点
+                # recursively process child nodes
                 if isinstance(children, dict) and children:
                     current_path = f"{parent_path}/{tree_node_key}" if parent_path else tree_node_key
                     results.extend(extract_headings(children, current_level + 1, current_path))
@@ -150,9 +150,8 @@ def tree_to_dataframe(tree, node_to_id, original_df):
         row_id = int(row['id'])
         old_level = int(row['level']) if row['level'] not in ['Not Sure', 'nan', -1] else -1
         
-        if old_level > -1:  # 原来是标题
+        if old_level > -1:
             if row_id in preserved_ids:
-                # 找到新的level
                 new_level = next((h['level'] for h in preserved_headings if h['id'] == row_id), old_level)
                 updated_df.at[idx, 'level'] = new_level
                 if new_level != old_level:
@@ -161,23 +160,22 @@ def tree_to_dataframe(tree, node_to_id, original_df):
                 updated_df.at[idx, 'level'] = -1
                 removed_count += 1
 
-    logger.debug(f"Tree变更摘要: 删除标题={removed_count}, 层级变更={level_changed_count}, 保留标题={len(preserved_ids)}")
+    logger.debug(f"Tree changed: removed headings={removed_count}, level changed={level_changed_count}, preserved headings={len(preserved_ids)}")
     return updated_df
 
 
 def remove_isolated_nodes(tree):
     """
-    规则：如果一个标题下只有一个子标题，且该子标题下没有更下级标题，
-         则删除这个孤悬的子标题
+    rules: if a heading has only one child heading, and the child heading has no further child headings,
+         then delete this isolated child heading
     
     Args:
-        tree: 纯嵌套字典结构，格式为 {heading: {子heading: {...}}}
+        tree: pure nested dict structure, format as {heading: {child_heading: {...}}}
     
     Returns:
-        processed_tree: 处理后的树结构
+        processed_tree: processed tree structure
     """    
     def recursive_check_and_remove(node_dict, parent_path=""):
-        """递归检查并删除孤悬标题（不修改原字典，返回新字典）"""
         if not isinstance(node_dict, dict):
             return node_dict
         
@@ -190,7 +188,7 @@ def remove_isolated_nodes(tree):
                 
                 if not grandchildren or (isinstance(grandchildren, dict) and len(grandchildren) == 0):
                     result_dict[heading] = {}
-                    logger.debug(f"移除孤悬子标题: {parent_path}/{heading}/{child_heading}")
+                    logger.debug(f"remove isolated heading: {parent_path}/{heading}/{child_heading}")
                 else:
                     processed_children = recursive_check_and_remove(children, f"{parent_path}/{heading}" if parent_path else heading)
                     result_dict[heading] = processed_children
@@ -206,38 +204,31 @@ def remove_isolated_nodes(tree):
     return processed_tree
 
 
-def if_no_pos_code(reason_str: str) -> bool:
-    """
-    检查 pos_code 是否全为 0
-    reason 格式: "POS [0, 0, ...] NEG [...]"
-    """
-    if not reason_str or not isinstance(reason_str, str):
-        return True
+# def if_no_pos_code(reason_str: str) -> bool:
+#     """
+#     检查 pos_code 是否全为 0
+#     reason 格式: "POS [0, 0, ...] NEG [...]"
+#     """
+#     if not reason_str or not isinstance(reason_str, str):
+#         return True
     
-    pos_match = re.search(r'POS\s*\[([^\]]*)\]', reason_str)
-    if not pos_match:
-        return True
-    pos_content = pos_match.group(1)
-    try:
-        nums = [int(x.strip()) for x in pos_content.split(',') if x.strip()]
-        return all(x == 0 for x in nums)
-    except:
-        return True
+#     pos_match = re.search(r'POS\s*\[([^\]]*)\]', reason_str)
+#     if not pos_match:
+#         return True
+#     pos_content = pos_match.group(1)
+#     try:
+#         nums = [int(x.strip()) for x in pos_content.split(',') if x.strip()]
+#         return all(x == 0 for x in nums)
+#     except:
+#         return True
 
 
 # ==================== Level Mapping Functions ====================
 
 def build_level_mapping(df, origin_lvls, mode="max"):
-    """构建层级映射关系
-    
-    注意：之前使用 if_no_pos_code 过滤掉 POS 全为 0 的行，
-    但这会导致后续分段中出现"伪未见 codes"，增加处理复杂度。
-    现在改为包含所有行，让 mapping 更完整。
-    """
     df = df.copy()
     df["origin_level"] = origin_lvls
     
-    # 直接使用所有行构建 mapping（不再过滤 POS 全为 0 的行）
     mapping = df.groupby("reason")["level"].apply(list).to_dict()
 
     processed_mapping = {}
@@ -266,10 +257,6 @@ def build_level_mapping(df, origin_lvls, mode="max"):
 
 
 def execute_level_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
-    """执行层级映射
-    
-    对所有行应用 mapping（不再使用 if_no_pos_code 过滤）
-    """
     def map_row(row):
         reason = row["reason"]
         if reason in mapping:
@@ -608,18 +595,18 @@ def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
 
 def judge_by_conditions(text, scope=20, return_detail=False, CN_SPECIAL_IDX=12):
     """
-    判断文本的编号模式并返回特征码
+    judge level features as one-hot embeddings for texts
     
     Args:
-        text: 输入文本
-        scope: 检查的文本范围
-        return_detail: 是否返回详细信息（包括单位类型）
-        CN_SPECIAL_IDX: 中文特殊编号的索引位置
+        text: input text
+        scope: text scope for judging
+        return_detail: whether to return detailed information (including unit type)
+        CN_SPECIAL_IDX: index of special Chinese number
     
     Returns:
-        如果 return_detail=False: 返回 pos_triggered_code 列表
-        如果 return_detail=True: 返回 (pos_triggered_code, detail_info) 元组
-            其中 detail_info 是包含额外信息的字典，例如中文单位类型
+        if return_detail=False: return pos_triggered_code list
+        if return_detail=True: return (pos_triggered_code, detail_info) tuple
+            where detail_info is a dictionary containing additional information, such as Chinese unit type
     """
     text = text.replace("\u3000", " ")
     text = unicodedata.normalize("NFKC", text)[:scope]
@@ -640,7 +627,7 @@ def judge_by_conditions(text, scope=20, return_detail=False, CN_SPECIAL_IDX=12):
     # ========== Chinese Bracketing ==========
     regex_cn_brac_paren = r"^[\(\（]\s*[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*\s*[\)\）]"
     regex_cn_brac_right = r"^[一二三四五六七八九十百千万]+(?:\.[一二三四五六七八九十百千万\d]+)*\s*[\)\）]"
-    # ========== Chinese Special (第x章/节/条/款/...) ==========
+    # ========== Chinese Special ==========
     regex_cn_special = r"^第[一二三四五六七八九十百千万\d]+(?:\.[一二三四五六七八九十百千万\d]+)*(章|节|条|部分|款|目|项|编|篇|卷|辑)?(?=$|\s|[A-Za-z0-9\u4e00-\u9fa5])"
     # ========== English Letter Numbering ==========
     regex_letter_dot = r"^[A-Za-z](?:\.\d+)*[\.、](?=\s*\S)"
@@ -735,7 +722,7 @@ def md_heading_match(line, as_is=True):
 
 
 def filter_md_headings(md_lines, num_pos=17, num_neg=6):
-    """过滤Markdown标题候选"""
+    """filter candidate headings for .md"""
     raw_candidates = []
     for i, line in enumerate(md_lines):
         line = line.strip()
@@ -786,7 +773,7 @@ def filter_md_headings(md_lines, num_pos=17, num_neg=6):
 
 
 def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=False):
-    """过滤DOCX标题候选"""
+    """filter candidate headings for docx"""
     def find_docstyle(para_):
         try:
             style_name = para_.style.name
@@ -918,19 +905,19 @@ async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_l
 
 async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None):
     """
-    解析文档标题层级
+    predict title hierarchy
     
     Args:
-        infos: 文档信息
-        doc_type: 文档类型 (pptx, md, docx)
-        toc_hierarchies: TOC层级信息（如果有）
-        prompt_limt: prompt字符限制
-        enable_regx: 是否启用正则匹配
-        smart_parse: 是否使用LLM智能解析
-        model_name: LLM模型名称
-        output_dir: 输出目录，用于保存中间结果CSV
+        infos: document information
+        doc_type: document type (pptx, md, docx)
+        toc_hierarchies: TOC hierarchy information (if any)
+        prompt_limt: prompt character limit
+        enable_regx: whether to enable regex matching
+        smart_parse: whether to use LLM intelligent parsing
+        model_name: LLM model name
+        output_dir: output directory for saving intermediate CSV results
     """
-    logger.info(f"🔥 开始解析文档层级结构: doc_type={doc_type}, smart_parse={smart_parse}, 候选标题数={len(infos)}")
+    logger.info(f"Start to predict title hierarchy: doc_type={doc_type}, smart_parse={smart_parse}, candidate titles={len(infos)}")
     
     if doc_type == "pptx":
         raw_preds = filter_md_headings(infos)
@@ -1069,7 +1056,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
 
 
 def collapse_recursive(df, task, indices, merge_th=3, checked_pairs=None, depth=0):
-    """递归折叠处理"""
+    """recursive collapse"""
     if checked_pairs is None:
         checked_pairs = set()
 
@@ -1128,7 +1115,7 @@ def collapse_recursive(df, task, indices, merge_th=3, checked_pairs=None, depth=
 
 
 def postprocess_headings(df, task, max_depth=-1):
-    """标题后处理"""
+    """postprocess headings"""
     if task == "judge_negs":
         for i, row in df.iterrows():
             neg_code = remove_by_conditions(row['heading'], include_punc=True)
@@ -1199,56 +1186,52 @@ def postprocess_headings(df, task, max_depth=-1):
         return None
 
 
-def parse_outline_hier(markdown_text):
-    """
-    将带缩进的 Markdown 列表转换为嵌套结构，适合one-off策略
-    """
-    lines = markdown_text.strip().splitlines()
-    stack = []
-    root = []
-    for line in lines:
-        line = line.replace('markdown', '')  # handle possible unexpected outputs
-        if not line.strip():
-            continue
+# def parse_outline_hier(markdown_text):
+#     lines = markdown_text.strip().splitlines()
+#     stack = []
+#     root = []
+#     for line in lines:
+#         line = line.replace('markdown', '')  # handle possible unexpected outputs
+#         if not line.strip():
+#             continue
 
-        stripped = line.lstrip()
-        indent = len(line) - len(stripped)
-        match = re.match(r"[-*+] (.+)", stripped)
-        if not match:
-            continue
+#         stripped = line.lstrip()
+#         indent = len(line) - len(stripped)
+#         match = re.match(r"[-*+] (.+)", stripped)
+#         if not match:
+#             continue
 
-        title = match.group(1).strip()
-        node = {"chapter": title, "children": [], 'serial': 1}
-        level = indent // 2  # 每两个空格作为一级（可根据实际情况调整）
-        if level == 0:
-            node['serial'] = len(root)+1
-            root.append(node)
-            stack = [(level, node)]
-        else:
-            while stack and stack[-1][0] >= level:
-                stack.pop()
-            if stack:
-                parent = stack[-1][1]
-                node['serial'] = len(parent['children']) + 1
-                parent["children"].append(node)
-            stack.append((level, node))
-    return root
+#         title = match.group(1).strip()
+#         node = {"chapter": title, "children": [], 'serial': 1}
+#         level = indent // 2  # 每两个空格作为一级（可根据实际情况调整）
+#         if level == 0:
+#             node['serial'] = len(root)+1
+#             root.append(node)
+#             stack = [(level, node)]
+#         else:
+#             while stack and stack[-1][0] >= level:
+#                 stack.pop()
+#             if stack:
+#                 parent = stack[-1][1]
+#                 node['serial'] = len(parent['children']) + 1
+#                 parent["children"].append(node)
+#             stack.append((level, node))
+#     return root
 
 
-def outline_to_markdown(nodes, level=0, path=""):
-    """将大纲转换为Markdown格式"""
-    rows = []
-    def traverse(node_list, level, path_prefix):
-        for node in node_list:
-            split_char = settings.SPLIT_CHAR or "/"
-            current_path = f"{path_prefix} {split_char} {node['chapter']}" if path_prefix else node['chapter']
-            rows.append({
-                "path": current_path,
-                "title": node["chapter"],
-                "thoughts": node.get("thoughts", "").strip(),
-                "level": level
-            })
-            if node.get("children"):
-                traverse(node["children"], level + 1, current_path)
-    traverse(nodes, level, path)
-    return pd.DataFrame(rows)
+# def outline_to_markdown(nodes, level=0, path=""):
+#     rows = []
+#     def traverse(node_list, level, path_prefix):
+#         for node in node_list:
+#             split_char = settings.SPLIT_CHAR or "/"
+#             current_path = f"{path_prefix} {split_char} {node['chapter']}" if path_prefix else node['chapter']
+#             rows.append({
+#                 "path": current_path,
+#                 "title": node["chapter"],
+#                 "thoughts": node.get("thoughts", "").strip(),
+#                 "level": level
+#             })
+#             if node.get("children"):
+#                 traverse(node["children"], level + 1, current_path)
+#     traverse(nodes, level, path)
+#     return pd.DataFrame(rows)

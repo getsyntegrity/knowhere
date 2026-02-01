@@ -92,7 +92,7 @@ async def poll_mineru_task(
                     s3_download_extract_zip(
                         res_zip_url,
                         dest_dir=output_dir,
-                        keep_exts=[".md", ".jpg", ".jpeg", ".png", ".gif"],
+                        keep_exts=[".md", ".jpg", ".jpeg", ".png", ".gif", ".json"],
                     )
                     logger.info(f"PDF parsing completed, Task ID: {task_id}")
                     break
@@ -176,6 +176,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
         "enable_formula": True,
         "enable_table": True,
         "language": "auto",
+        "model_version": "vlm"
     }
 
     logger.info(f"Requesting upload URL for: {filename}")

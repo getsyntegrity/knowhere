@@ -51,9 +51,11 @@ packages/shared-types/generated/
 apps/api/users/
 apps/api/tests/
 apps/worker/debug_*.py
+apps/worker/test_*.py
 apps/worker/debug_users/
 apps/worker/app/tmp_data/
 apps/worker/app/tmp_res/
+apps/worker/app/tmp_files/
 s3-notification.json
 users/
 test_*.csv
