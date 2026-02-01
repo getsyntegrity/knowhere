@@ -12,8 +12,8 @@ from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
 from shared.utils.text_utils import tokenize2stw_remove
 from app.services.document_parser.image_parser import ask_image
 from app.services.document_parser.layout_parser import pred_titles
-from app.services.document_parser.table_parser import (extract_tb_keywords,
-                                                       table2html)
+from app.services.document_parser.table_parser import extract_tb_keywords
+from app.services.document_parser.html_parser import table2html
 from app.services.document_parser.toc_parser import (detect_doc_tocs,
                                                      detect_sdt_toc,
                                                      get_toc_level)

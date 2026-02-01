@@ -16,7 +16,8 @@ from loguru import logger
 from lxml import etree
 
 from app.services.common.kb_utils import normalize_md, truncate_text
-from app.services.document_parser.table_parser import df2html, df2md
+from app.services.document_parser.table_parser import df2md
+from app.services.document_parser.html_parser import df2html
 from app.services.document_parser.layout_parser import hiearchy_llm, judge_by_conditions, remove_by_conditions
 from shared.services.ai import ai_query_service
 from shared.services.ai.prompt_service import build_prompt
@@ -147,6 +148,7 @@ def is_content_line(line: str) -> bool:
     stripped = line.strip().lower()
     
     # Filter out html lines
+    # TODO if table extract it as lines but keep the id span as 1
     if stripped.startswith("<table>"):
         return False
     
