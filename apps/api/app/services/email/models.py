@@ -3,7 +3,7 @@
 """
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class EmailRecipient(BaseModel):
@@ -39,8 +39,8 @@ class EmailMessage(BaseModel):
     user_id: Optional[str] = Field(None, description="用户ID（用于日志记录）")
     job_id: Optional[str] = Field(None, description="任务ID（用于日志记录）")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "to": [{"email": "user@example.com", "name": "User Name"}],
                 "subject": "测试邮件",
@@ -48,6 +48,7 @@ class EmailMessage(BaseModel):
                 "text_content": "Hello",
             }
         }
+    )
 
 
 class EmailSendResult(BaseModel):
@@ -61,8 +62,8 @@ class BatchEmailRequest(BaseModel):
     """批量邮件请求"""
     messages: List[EmailMessage] = Field(..., description="邮件消息列表")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "messages": [
                     {
@@ -78,6 +79,7 @@ class BatchEmailRequest(BaseModel):
                 ]
             }
         }
+    )
 
 
 class BatchEmailResult(BaseModel):

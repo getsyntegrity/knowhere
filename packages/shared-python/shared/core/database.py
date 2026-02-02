@@ -99,6 +99,11 @@ async def get_db_context():
             except Exception as close_error:
                 # 关闭失败时只记录日志，避免在不同事件循环中操作连接
                 logger.warning(f"Database session close failed: {close_error}")
+
+
+
+
+
 # 添加一个辅助函数，用于在无法传入db参数时执行数据库操作
 T = TypeVar('T')
 async def db_operation(operation: Callable[[AsyncSession], Awaitable[T]]) -> T:
@@ -108,6 +113,7 @@ async def db_operation(operation: Callable[[AsyncSession], Awaitable[T]]) -> T:
     """
     async with get_db_context() as db:
         return await operation(db)
+
 Base = declarative_base()
 
 async def create_tables():

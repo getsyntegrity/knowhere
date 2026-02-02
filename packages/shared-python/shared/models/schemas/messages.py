@@ -2,7 +2,7 @@
 消息契约Schema定义
 用于API服务和Worker服务之间的消息通信
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -11,13 +11,8 @@ from pydantic import BaseModel, Field
 class BaseMessage(BaseModel):
     """消息基类"""
     job_id: str = Field(..., description="任务ID")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="消息时间戳")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="消息时间戳")
     message_type: str = Field(..., description="消息类型")
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class JobStatusUpdateMessage(BaseMessage):

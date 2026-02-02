@@ -1,16 +1,19 @@
 """
-Webhook仓储层
+Webhook Repository Layer
+
+Provides database operations for webhook delivery logging.
 """
 from typing import Any, Dict, List, Optional
 
-from shared.models.database.webhook_log import WebhookLog
 from loguru import logger
-from sqlalchemy import and_, desc, select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.models.database.webhook_log import WebhookLog
 
 
 class WebhookRepository:
-    """Webhook仓储类"""
+    """Repository for webhook delivery log operations."""
     
     async def log_webhook_attempt(
         self,
@@ -23,137 +26,95 @@ class WebhookRepository:
         idempotency_key: str,
         response_status_code: Optional[int] = None,
         response_body: Optional[str] = None,
-        error_message: Optional[str] = None
-    ) -> bool:
-        """记录Webhook尝试日志"""
+        error_message: Optional[str] = None,
+        duration_ms: int = 0,
+        event_id: Optional[str] = None,
+    ) -> Optional[WebhookLog]:
+        """
+        Log a webhook delivery attempt.
+        
+        Creates a WebhookLog entry for the delivery attempt with all
+        request and response details for auditing purposes.
+        """
         try:
-            # request_payload 是 Dict，SQLAlchemy 的 JSON 类型会自动序列化
             webhook_log = WebhookLog(
                 job_id=job_id,
+                event_id=event_id,
                 webhook_url=webhook_url,
                 attempt_number=attempt_number,
-                request_payload=request_payload,  # 直接传递 Dict，SQLAlchemy 会自动处理
+                request_payload=request_payload,
                 signature=signature,
                 idempotency_key=idempotency_key,
                 response_status_code=response_status_code,
                 response_body=response_body,
-                error_message=error_message
+                error_message=error_message,
+                duration_ms=duration_ms,
             )
             
             db.add(webhook_log)
             await db.commit()
             
-            logger.info(f"Webhook日志记录成功: job_id={job_id}, attempt={attempt_number}")
-            return True
+            logger.info(
+                f"Webhook log recorded: job_id={job_id}, attempt={attempt_number}, "
+                f"status={response_status_code}, duration_ms={duration_ms}"
+            )
+            return webhook_log
             
         except Exception as e:
-            logger.error(f"记录Webhook日志失败: {e}")
+            logger.error(f"Failed to record webhook log: {e}")
             await db.rollback()
-            return False
+            return None
     
     async def get_webhook_logs(
         self,
         db: AsyncSession,
-        job_id: str,
-        limit: int = 50,
-        offset: int = 0
-    ) -> List[WebhookLog]:
-        """获取Webhook日志"""
-        try:
-            result = await db.execute(
-                select(WebhookLog)
-                .where(WebhookLog.job_id == job_id)
-                .order_by(desc(WebhookLog.created_at))
-                .limit(limit)
-                .offset(offset)
-            )
-            return result.scalars().all()
-        except Exception as e:
-            logger.error(f"获取Webhook日志失败: {e}")
-            return []
-    
-    async def get_webhook_logs_by_url(
-        self,
-        db: AsyncSession,
-        webhook_url: str,
-        limit: int = 50,
-        offset: int = 0
-    ) -> List[WebhookLog]:
-        """根据URL获取Webhook日志"""
-        try:
-            result = await db.execute(
-                select(WebhookLog)
-                .where(WebhookLog.webhook_url == webhook_url)
-                .order_by(desc(WebhookLog.created_at))
-                .limit(limit)
-                .offset(offset)
-            )
-            return result.scalars().all()
-        except Exception as e:
-            logger.error(f"根据URL获取Webhook日志失败: {e}")
-            return []
-    
-    async def get_failed_webhook_logs(
-        self,
-        db: AsyncSession,
-        limit: int = 100
-    ) -> List[WebhookLog]:
-        """获取失败的Webhook日志"""
-        try:
-            result = await db.execute(
-                select(WebhookLog)
-                .where(
-                    and_(
-                        WebhookLog.response_status_code.isnot(None),
-                        WebhookLog.response_status_code >= 400
-                    )
-                )
-                .order_by(desc(WebhookLog.created_at))
-                .limit(limit)
-            )
-            return result.scalars().all()
-        except Exception as e:
-            logger.error(f"获取失败Webhook日志失败: {e}")
-            return []
-    
-    async def get_webhook_stats(
-        self,
-        db: AsyncSession,
+        user_id: str,
         job_id: Optional[str] = None,
-        webhook_url: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """获取Webhook统计信息"""
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[List[WebhookLog], int]:
+        """
+        Get webhook delivery logs filtered by user_id (required).
+        
+        Args:
+            db: Database session
+            user_id: ID of the user who owns the logs (Required for security)
+            job_id: Optional filter by job ID
+            limit: Maximum number of results
+            offset: Number of results to skip
+            
+        Returns:
+            Tuple containing (List of WebhookLog entries, Total count)
+        """
         try:
-            query = select(WebhookLog)
-            conditions = []
+            from sqlalchemy import func
+            from shared.models.database.job import Job
+            
+            # Base query - Join with Job to filter by user_id
+            query = select(WebhookLog).join(Job, WebhookLog.job_id == Job.job_id).order_by(desc(WebhookLog.created_at))
+            count_query = select(func.count()).select_from(WebhookLog).join(Job, WebhookLog.job_id == Job.job_id)
+            
+            # Application Security: Always filter by user_id
+            query = query.where(Job.user_id == user_id)
+            count_query = count_query.where(Job.user_id == user_id)
             
             if job_id:
-                conditions.append(WebhookLog.job_id == job_id)
-            if webhook_url:
-                conditions.append(WebhookLog.webhook_url == webhook_url)
+                # If job_id provided, ensure it belongs to the user (implicit via join, but good to be explicit)
+                query = query.where(WebhookLog.job_id == job_id)
+                count_query = count_query.where(WebhookLog.job_id == job_id)
             
-            if conditions:
-                query = query.where(and_(*conditions))
+            # Application pagination
+            paginated_query = query.limit(limit).offset(offset)
             
-            result = await db.execute(query)
-            logs = result.scalars().all()
+            # Execute
+            result = await db.execute(paginated_query)
+            logs = list(result.scalars().all())
             
-            total_attempts = len(logs)
-            successful_attempts = len([log for log in logs if log.is_success()])
-            failed_attempts = len([log for log in logs if log.is_failed()])
+            count_result = await db.execute(count_query)
+            total = count_result.scalar() or 0
             
-            return {
-                "total_attempts": total_attempts,
-                "successful_attempts": successful_attempts,
-                "failed_attempts": failed_attempts,
-                "success_rate": successful_attempts / total_attempts if total_attempts > 0 else 0
-            }
+            return logs, total
             
         except Exception as e:
-            logger.error(f"获取Webhook统计失败: {e}")
-            return {
-                "total_attempts": 0,
-                "successful_attempts": 0,
-                "failed_attempts": 0,
-                "success_rate": 0
-            }
+            logger.error(f"Failed to get webhook logs: {e}")
+            return [], 0

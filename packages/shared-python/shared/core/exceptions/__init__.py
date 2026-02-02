@@ -14,6 +14,11 @@ from shared.core.exceptions.domain_exceptions import (
     UnknownException,
 )
 from shared.core.exceptions.retryable_exceptions import RETRYABLE_EXCEPTIONS
+from shared.core.exceptions.webhook_exceptions import (
+    WebhookException,
+    WebhookConfigException,
+    WebhookDeliveryException,
+)
 
 __all__ = [
     # Base (do not raise directly)
@@ -30,6 +35,10 @@ __all__ = [
     "UnavailableException",
     "TimeoutException",
     "UnknownException",
+    # Webhook Exceptions
+    "WebhookException",
+    "WebhookConfigException",
+    "WebhookDeliveryException",
     # Celery retry config
     "RETRYABLE_EXCEPTIONS",
 ]
