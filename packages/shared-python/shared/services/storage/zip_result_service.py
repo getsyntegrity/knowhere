@@ -1,6 +1,6 @@
 """
-ZIP 结果包生成服务
-根据 Knowhere-API-ZIP-Spec.md 规范生成 ZIP 包
+ZIP Result Package Generation Service
+Generates ZIP packages according to Knowhere-API-ZIP-Spec.md specification
 """
 import hashlib
 import io
@@ -21,7 +21,7 @@ from shared.core.exceptions.domain_exceptions import StorageServiceException, Kn
 
 
 class ZipResultService:
-    """ZIP 结果包生成服务"""
+    """ZIP Result Package Generation Service"""
 
     def __init__(self):
         pass
@@ -37,59 +37,59 @@ class ZipResultService:
         parsed_df: Optional["pd.DataFrame"] = None,
     ) -> Tuple[str, Dict[str, str], Dict[str, Any], int]:
         """
-        生成 ZIP 结果包
+        Generate ZIP result package
 
         Args:
-            job_id: 任务ID
-            chunks: chunks 数据列表
-            add_dir: 解析目录路径（包含 images/ 和 tables/ 目录）
-            source_file_name: 源文件名
-            data_id: 用户自定义ID
-            job_metadata: 任务元数据
-            parsed_df: 可选，解析后的 DataFrame，用于生成 kb.csv 和 hierarchy.json
+            job_id: Job ID
+            chunks: List of chunks data
+            add_dir: Parsed directory path (contains images/ and tables/ directories)
+            source_file_name: Source file name
+            data_id: User-defined ID
+            job_metadata: Job metadata
+            parsed_df: Optional, parsed DataFrame for generating kb.csv and hierarchy.json
 
         Returns:
             Tuple[zip_file_path, checksum, statistics, zip_size]:
-            - zip_file_path: ZIP 文件路径
+            - zip_file_path: ZIP file path
             - checksum: {"algorithm": "sha256", "value": "..."}
             - statistics: {"total_chunks": int, "text_chunks": int, "image_chunks": int, "table_chunks": int, "total_pages": Optional[int]}
-            - zip_size: ZIP 文件大小（字节）
+            - zip_size: ZIP file size in bytes
         """
         try:
-            # 创建临时 ZIP 文件
+            # Create temporary ZIP file
             temp_dir = tempfile.gettempdir()
             zip_file_path = os.path.join(temp_dir, f"result_{job_id}.zip")
 
-            # 统计 chunks 信息
+            # Calculate chunks statistics
             statistics = self._calculate_statistics(chunks)
 
-            # 收集图片和表格文件信息（需要在格式化 chunks 之前，因为需要文件信息）
+            # Collect image and table file info (must be done before formatting chunks as file info is needed)
             images_dir = os.path.join(add_dir, "images")
             tables_dir = os.path.join(add_dir, "tables")
             image_files_info = self._collect_image_files(chunks, images_dir)
             table_files_info = self._collect_table_files(chunks, tables_dir)
             
-            # 创建图片和表格文件的映射（chunk_id -> file_info）
+            # Create image and table file mappings (chunk_id -> file_info)
             image_files_map = {img["id"]: img for img in image_files_info}
             table_files_map = {tb["id"]: tb for tb in table_files_info}
             
-            # 转换 chunks 数据格式（使用文件信息）
+            # Convert chunks data format (using file info)
             formatted_chunks = self._format_chunks(chunks, image_files_map, table_files_map)
 
-            # 创建 ZIP 包
+            # Create ZIP package
             with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                # 1. 生成 chunks.json
+                # 1. Generate chunks.json
                 chunks_json = json.dumps({"chunks": formatted_chunks}, ensure_ascii=False, indent=2)
                 zip_file.writestr("chunks.json", chunks_json.encode("utf-8"))
 
-                # 2. 尝试添加 full.md（如果存在）
+                # 2. Try to add full.md (if exists)
                 markdown_path = None
                 full_md_path = os.path.join(add_dir, "full.md")
                 if os.path.exists(full_md_path):
                     markdown_path = full_md_path
                     zip_file.write(full_md_path, "full.md")
 
-                # 3. 添加图片文件
+                # 3. Add image files
                 for img_info in image_files_info:
                     source_path = img_info["source_path"]
                     if os.path.exists(source_path):
@@ -98,9 +98,9 @@ class ZipResultService:
                             img_info["zip_path"],
                         )
                     else:
-                        logger.warning(f"图片文件不存在: {source_path}")
+                        logger.warning(f"Image file not found: {source_path}")
 
-                # 4. 添加表格文件
+                # 4. Add table files
                 for table_info in table_files_info:
                     source_path = table_info["source_path"]
                     if os.path.exists(source_path):
@@ -109,31 +109,40 @@ class ZipResultService:
                             table_info["zip_path"],
                         )
                     else:
-                        logger.warning(f"表格文件不存在: {source_path}")
+                        logger.warning(f"Table file not found: {source_path}")
 
-                # 5. 生成 kb.csv 和 hierarchy.json（如果提供了 parsed_df）
+                # 5. Generate kb.csv and hierarchy.json (if parsed_df is provided)
                 has_kb_csv = False
                 has_hierarchy = False
                 if parsed_df is not None and len(parsed_df) > 0:
-                    # 5a. 生成 kb.csv（使用 UTF-8 with BOM 编码，确保中英文 Excel 都能正确打开）
+                    # 5a. Generate kb.csv (using UTF-8 with BOM encoding for Excel compatibility)
                     csv_buffer = io.StringIO()
                     parsed_df.to_csv(csv_buffer, index=False, encoding='utf-8')
-                    # 添加 BOM 头 (\ufeff) 确保 Excel 正确识别 UTF-8
+                    # Add BOM header (\ufeff) to ensure Excel recognizes UTF-8
                     csv_content = '\ufeff' + csv_buffer.getvalue()
                     zip_file.writestr("kb.csv", csv_content.encode("utf-8"))
                     has_kb_csv = True
-                    logger.info(f"已添加 kb.csv，共 {len(parsed_df)} 行")
+                    logger.info(f"Added kb.csv with {len(parsed_df)} rows")
                     
-                    # 5b. 从 parsed_df 的 path 列生成 hierarchy.json
+                    # 5b. Generate hierarchy.json from parsed_df path column
                     if 'path' in parsed_df.columns:
                         path_list = parsed_df['path'].dropna().tolist()
                         hierarchy_dict = self._restore_graph_by_paths(path_list)
                         hierarchy_json = json.dumps(hierarchy_dict, ensure_ascii=False, indent=4)
                         zip_file.writestr("hierarchy.json", hierarchy_json.encode("utf-8"))
                         has_hierarchy = True
-                        logger.info(f"已添加 hierarchy.json")
+                        logger.info(f"Added hierarchy.json")
+                        
+                        # 5c. 生成 hierarchy_view.html
+                        try:
+                            from shared.services.storage.hierarchy_html_generator import generate_hierarchy_html
+                            chunks_dict = {"chunks": formatted_chunks}
+                            html_content = generate_hierarchy_html(hierarchy_dict, chunks_dict)
+                            zip_file.writestr("hierarchy_view.html", html_content.encode("utf-8"))
+                        except Exception as e:
+                            logger.warning(f"genearte hierarchy_view.html fail {e}")
 
-                # 6. 生成 manifest.json（不包含 checksum，checksum 存储在数据库中）
+                # 6. Generate manifest.json (checksum not included, stored in database)
                 manifest = self._generate_manifest(
                     job_id=job_id,
                     data_id=data_id,
@@ -148,15 +157,15 @@ class ZipResultService:
                 manifest_json = json.dumps(manifest, ensure_ascii=False, indent=2)
                 zip_file.writestr("manifest.json", manifest_json.encode("utf-8"))
 
-            # 计算 ZIP 包的 SHA-256
+            # Calculate ZIP package SHA-256
             checksum_value = self._calculate_zip_checksum(zip_file_path)
             checksum = {"algorithm": "sha256", "value": checksum_value}
 
-            # 获取 ZIP 文件大小
+            # Get ZIP file size
             zip_size = os.path.getsize(zip_file_path)
 
             logger.info(
-                f"ZIP 包生成成功: job_id={job_id}, size={zip_size}, checksum={checksum_value[:16]}..."
+                f"ZIP package generated successfully: job_id={job_id}, size={zip_size}, checksum={checksum_value[:16]}..."
             )
 
             return zip_file_path, checksum, statistics, zip_size
@@ -172,7 +181,7 @@ class ZipResultService:
             )
 
     def _calculate_statistics(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """计算统计信息"""
+        """Calculate statistics"""
         total_chunks = len(chunks)
         text_chunks = 0
         image_chunks = 0
@@ -192,7 +201,7 @@ class ZipResultService:
             "text_chunks": text_chunks,
             "image_chunks": image_chunks,
             "table_chunks": table_chunks,
-            "total_pages": None,  # 暂时无法确定页数
+            "total_pages": None,  # Cannot determine page count at this point
         }
 
     def _format_chunks(
@@ -201,16 +210,16 @@ class ZipResultService:
         image_files_map: Dict[str, Dict[str, Any]],
         table_files_map: Dict[str, Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """将 chunks 数据转换为 ZIP 规范格式"""
+        """Convert chunks data to ZIP specification format"""
         
         def safe_parse_rels(type_val, connects):
-            """安全解析关系字段"""
+            """Safely parse relationship fields"""
             rels = []
-            # 从type字段提取关系（多行格式）
+            # Extract relationships from type field (multi-line format)
             if type_val and isinstance(type_val, str):
                 if "\n" in type_val:
                     rels.extend([line.strip() for line in type_val.split("\n")[1:-1] if line.strip()])
-            # 从connectto字段提取关系
+            # Extract relationships from connectto field
             if connects:
                 if isinstance(connects, list):
                     rels.extend([str(c).strip() for c in connects if c])
@@ -226,7 +235,7 @@ class ZipResultService:
             chunk_id = str(chunk.get("chunk_id") or chunk.get("know_id"))
             chunk_type_str = chunk.get("type", "")
             
-            # 确定 chunk type
+            # Determine chunk type
             if "IMAGE" in chunk_type_str.upper() or chunk_type_str == "image":
                 chunk_type = "image"
             elif "TABLE" in chunk_type_str.upper() or chunk_type_str == "table":
@@ -234,28 +243,28 @@ class ZipResultService:
             else:
                 chunk_type = "text"
 
-            # 获取 content
+            # Get content
             content = chunk.get("text") or chunk.get("content", "")
 
-            # 直接使用原始 path，与 kb.csv 保持一致
+            # Use original path directly to match kb.csv
             path = chunk.get("path", "")
 
-            # 获取或构建基础 metadata
+            # Get or build base metadata
             existing_metadata = chunk.get("metadata", {})
             metadata = {
                 "length": existing_metadata.get("length") or len(content),
                 "summary": existing_metadata.get("summary") or chunk.get("summary", ""),
             }
 
-            # 根据类型添加特定字段
+            # Add type-specific fields
             if chunk_type == "text":
                 metadata["tokens"] = existing_metadata.get("tokens") or chunk.get("tokens", 0)
                 metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
                 
-                # 尝试从metadata或原始字段提取relationships
+                # Try to extract relationships from metadata or original fields
                 relationships = existing_metadata.get("relationships")
                 if not relationships:
-                    # 尝试从type和connectto字段解析
+                    # Try to parse from type and connectto fields
                     type_val = chunk.get("type_raw") or chunk_type_str
                     connects = chunk.get("connectto")
                     relationships = safe_parse_rels(type_val, connects)
@@ -263,32 +272,32 @@ class ZipResultService:
                 metadata["relationships"] = relationships if relationships else []
                 
             elif chunk_type == "image":
-                # 从 existing_metadata 或 image_files_map 获取图片信息
+                # Get image info from existing_metadata or image_files_map
                 file_path = existing_metadata.get("file_path")
                 
                 if not file_path:
-                    # 从 image_files_map 获取图片信息
+                    # Get image info from image_files_map
                     img_info = image_files_map.get(chunk_id)
                     if img_info:
                         file_path = img_info["file_path"]
                     else:
-                        # 从path提取或使用默认值
+                        # Extract from path or use default
                         img_name = path.split("/")[-1] if "/" in path else f"image_{chunk_id}.jpg"
                         file_path = f"images/{img_name}"
                 
                 metadata["file_path"] = file_path
                 
             elif chunk_type == "table":
-                # 从 existing_metadata 或 table_files_map 获取表格信息
+                # Get table info from existing_metadata or table_files_map
                 file_path = existing_metadata.get("file_path")
                 
                 if not file_path:
-                    # 从 table_files_map 获取表格信息
+                    # Get table info from table_files_map
                     tb_info = table_files_map.get(chunk_id)
                     if tb_info:
                         file_path = tb_info["file_path"]
                     else:
-                        # 从path提取或使用默认值
+                        # Extract from path or use default
                         tbl_name = path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"
                         file_path = f"tables/{tbl_name}"
                 
@@ -307,78 +316,78 @@ class ZipResultService:
         return formatted
 
     def _clean_path(self, path: str) -> str:
-        """清理 path，只保留逻辑路径"""
+        """Clean path, keep only logical path"""
         if not path:
             return "/"
         
-        # 移除文件系统路径前缀
-        # 例如：.-->users-->KB_DATA_xxx-->目录-->文件.pdf-->章节-->小节
-        # 应该提取：章节-->小节
+        # Remove filesystem path prefix
+        # Example: .-->users-->KB_DATA_xxx-->dir-->file.pdf-->chapter-->section
+        # Should extract: chapter-->section
         
-        # 查找最后一个 .pdf、.docx 等文件扩展名
+        # Find the last .pdf, .docx, etc. file extension
         import re
 
-        # 匹配文件名模式（包含扩展名）
+        # Match filename pattern (with extension)
         file_pattern = r'[^/]+\.(pdf|docx|doc|txt|md|xlsx|xls|pptx|ppt)'
         match = re.search(file_pattern, path, re.IGNORECASE)
         
         if match:
-            # 提取文件名后的部分
+            # Extract the part after filename
             path_after_file = path[match.end():]
-            # 清理路径分隔符
+            # Clean path separators
             path_after_file = path_after_file.replace("-->", "/").strip("/")
             if path_after_file:
                 return path_after_file
         
-        # 如果找不到文件模式，尝试清理常见前缀
+        # If no file pattern found, try to clean common prefixes
         path = path.replace("-->", "/")
-        # 移除开头的路径分隔符和空段
+        # Remove leading path separators and empty segments
         path = "/".join([p for p in path.split("/") if p and p not in ["", ".", "users"]])
         return path if path else "/"
 
     def _collect_image_files(
         self, chunks: List[Dict[str, Any]], images_dir: str
     ) -> List[Dict[str, Any]]:
-        """收集图片文件信息"""
+        """Collect image file information"""
         image_files = []
         
         if not os.path.exists(images_dir):
             return image_files
 
-        # 获取所有图片文件
+        # Get all image files
         image_files_map = {}
         for filename in os.listdir(images_dir):
             file_path = os.path.join(images_dir, filename)
             if os.path.isfile(file_path):
                 image_files_map[filename] = file_path
 
-        # 从 chunks 中匹配图片
+        # Match images from chunks
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
             
-            # 支持标准化后的类型："image" 或旧格式 "IMAGE_xxx"
+            # Support standardized type: "image" or legacy format "IMAGE_xxx"
             if chunk_type != "image" and "IMAGE" not in chunk_type:
                 continue
 
-            # 尝试从 chunk 的 path 字段获取原始文件名
+            # Try to get original filename from chunk's path field
             original_path = chunk.get("path", "")
             if original_path:
-                # 统一处理路径分隔符：将 --> 替换为 /，然后提取文件名
+                # Normalize path separators: replace --> with /, then extract filename
                 normalized_path = original_path.replace("-->", "/")
                 original_name = os.path.basename(normalized_path)
             else:
                 original_name = None
             
-            # 如果找不到原始文件名，尝试从 images_dir 中查找
+            # If original filename not found, try to find from images_dir
             if not original_name:
-                # 尝试匹配 chunk_id 相关的文件
+                # Try to match files related to chunk_id
                 for filename in image_files_map.keys():
                     if str(chunk_id) in filename or filename.startswith("图"):
                         original_name = filename
                         break
 
-            # 获取文件扩展名
+            # Get file extension
             if original_name:
                 _, ext = os.path.splitext(original_name)
                 ext = ext.lstrip(".") or "jpg"
@@ -389,7 +398,7 @@ class ZipResultService:
             if original_name and original_name in image_files_map:
                 source_path = image_files_map[original_name]
             else:
-                # 如果找不到，使用第一个未使用的图片文件
+                # If not found, use the first unused image file
                 for filename, file_path in image_files_map.items():
                     if filename not in [img["original_name"] for img in image_files]:
                         source_path = file_path
@@ -399,10 +408,10 @@ class ZipResultService:
                         break
 
             if not source_path:
-                logger.warning(f"无法找到图片文件: chunk_id={chunk_id}, original_name={original_name}")
+                logger.warning(f"Cannot find image file: chunk_id={chunk_id}, original_name={original_name}")
                 continue
 
-            # 获取图片尺寸
+            # Get image dimensions
             width = None
             height = None
             try:
@@ -413,25 +422,25 @@ class ZipResultService:
 
             file_size = os.path.getsize(source_path)
             
-            # 优先使用 metadata 中的 file_path，否则使用 original_name，最后使用 chunk_id
+            # Priority: use file_path from metadata, then original_name, finally chunk_id
             metadata = chunk.get("metadata", {})
             if metadata and isinstance(metadata, dict):
-                # metadata.file_path 格式: "images/xxx.jpg"
+                # metadata.file_path format: "images/xxx.jpg"
                 zip_file_path = metadata.get("file_path")
                 if zip_file_path and zip_file_path.startswith("images/"):
-                    # 使用 metadata 中的完整路径
+                    # Use complete path from metadata
                     zip_path = zip_file_path
-                    # 提取文件名作为 original_name
+                    # Extract filename as original_name
                     if not original_name:
                         original_name = metadata.get("original_name") or os.path.basename(zip_file_path)
                 else:
-                    # 如果 metadata 中没有 file_path，使用 original_name 或 chunk_id
+                    # If metadata has no file_path, use original_name or chunk_id
                     if original_name:
                         zip_path = f"images/{original_name}"
                     else:
                         zip_path = f"images/{chunk_id}.{ext}"
             else:
-                # 如果没有 metadata，使用 original_name 或 chunk_id
+                # If no metadata, use original_name or chunk_id
                 if original_name:
                     zip_path = f"images/{original_name}"
                 else:
@@ -454,40 +463,40 @@ class ZipResultService:
     def _collect_table_files(
         self, chunks: List[Dict[str, Any]], tables_dir: str
     ) -> List[Dict[str, Any]]:
-        """收集表格文件信息"""
+        """Collect table file information"""
         table_files = []
         
         if not os.path.exists(tables_dir):
             return table_files
 
-        # 获取所有表格文件
+        # Get all table files
         table_files_map = {}
         for filename in os.listdir(tables_dir):
             file_path = os.path.join(tables_dir, filename)
             if os.path.isfile(file_path) and filename.endswith(".html"):
                 table_files_map[filename] = file_path
 
-        # 从 chunks 中匹配表格
+        # Match tables from chunks
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
             
-            # 支持标准化后的类型："table" 或旧格式 "TABLE_xxx"
+            # Support standardized type: "table" or legacy format "TABLE_xxx"
             if chunk_type != "table" and "TABLE" not in chunk_type:
                 continue
 
-            # 尝试从 chunk 的 path 字段获取原始文件名
+            # Try to get original filename from chunk's path field
             original_path = chunk.get("path", "")
             if original_path:
-                # 统一处理路径分隔符：将 --> 替换为 /，然后提取文件名
+                # Normalize path separators: replace --> with /, then extract filename
                 normalized_path = original_path.replace("-->", "/")
                 original_name = os.path.basename(normalized_path)
             else:
                 original_name = None
             
-            # 如果找不到原始文件名，尝试从 tables_dir 中查找
+            # If original filename not found, try to find from tables_dir
             if not original_name:
-                # 尝试匹配 chunk_id 相关的文件
+                # Try to match files related to chunk_id
                 for filename in table_files_map.keys():
                     if str(chunk_id) in filename or filename.startswith("表"):
                         original_name = filename
@@ -497,7 +506,7 @@ class ZipResultService:
             if original_name and original_name in table_files_map:
                 source_path = table_files_map[original_name]
             else:
-                # 如果找不到，使用第一个未使用的表格文件
+                # If not found, use the first unused table file
                 for filename, file_path in table_files_map.items():
                     if filename not in [tb["original_name"] for tb in table_files]:
                         source_path = file_path
@@ -505,30 +514,30 @@ class ZipResultService:
                         break
 
             if not source_path:
-                logger.warning(f"无法找到表格文件: chunk_id={chunk_id}, original_name={original_name}")
+                logger.warning(f"Cannot find table file: chunk_id={chunk_id}, original_name={original_name}")
                 continue
 
             file_size = os.path.getsize(source_path)
             
-            # 优先使用 metadata 中的 file_path，否则使用 original_name，最后使用 chunk_id
+            # Priority: use file_path from metadata, then original_name, finally chunk_id
             metadata = chunk.get("metadata", {})
             if metadata and isinstance(metadata, dict):
-                # metadata.file_path 格式: "tables/xxx.html"
+                # metadata.file_path format: "tables/xxx.html"
                 zip_file_path = metadata.get("file_path")
                 if zip_file_path and zip_file_path.startswith("tables/"):
-                    # 使用 metadata 中的完整路径
+                    # Use complete path from metadata
                     zip_path = zip_file_path
-                    # 提取文件名作为 original_name
+                    # Extract filename as original_name
                     if not original_name:
                         original_name = metadata.get("original_name") or os.path.basename(zip_file_path)
                 else:
-                    # 如果 metadata 中没有 file_path，使用 original_name 或 chunk_id
+                    # If metadata has no file_path, use original_name or chunk_id
                     if original_name:
                         zip_path = f"tables/{original_name}"
                     else:
                         zip_path = f"tables/{chunk_id}.html"
             else:
-                # 如果没有 metadata，使用 original_name 或 chunk_id
+                # If no metadata, use original_name or chunk_id
                 if original_name:
                     zip_path = f"tables/{original_name}"
                 else:
@@ -558,8 +567,8 @@ class ZipResultService:
         has_kb_csv: bool = False,
         has_hierarchy: bool = False,
     ) -> Dict[str, Any]:
-        """生成 manifest.json"""
-        # 准备 images 数组（只保留必要字段：id, file_path, size_bytes, format, width, height）
+        """Generate manifest.json"""
+        # Prepare images array (keep only necessary fields: id, file_path, size_bytes, format, width, height)
         images = []
         for img_info in image_files_info:
             images.append({
@@ -571,7 +580,7 @@ class ZipResultService:
                 "height": img_info.get("height"),
             })
 
-        # 准备 tables 数组（只保留必要字段：id, file_path, size_bytes, format）
+        # Prepare tables array (keep only necessary fields: id, file_path, size_bytes, format)
         tables = []
         for table_info in table_files_info:
             tables.append({
@@ -601,7 +610,7 @@ class ZipResultService:
         return manifest
 
     def _calculate_zip_checksum(self, zip_file_path: str) -> str:
-        """计算 ZIP 文件的 SHA-256 校验和"""
+        """Calculate SHA-256 checksum of ZIP file"""
         sha256_hash = hashlib.sha256()
         with open(zip_file_path, "rb") as f:
             for byte_block in iter(lambda: f.read(4096), b""):
@@ -610,22 +619,22 @@ class ZipResultService:
 
     def _restore_graph_by_paths(self, paths: List[str]) -> Dict[str, Any]:
         """
-        从路径列表重建层级结构
+        Rebuild hierarchical structure from path list
         
         Args:
-            paths: 路径列表，如 ["dir/file.pdf/第一章/第一节", "dir/file.pdf/第二章"]
+            paths: Path list, e.g. ["dir/file.pdf/chapter1/section1", "dir/file.pdf/chapter2"]
         
         Returns:
-            嵌套字典结构，如 {"dir": {"file.pdf": {"第一章": {"第一节": {}}, "第二章": {}}}}
+            Nested dict structure, e.g. {"dir": {"file.pdf": {"chapter1": {"section1": {}}, "chapter2": {}}}}
         """
         root_dict: Dict[str, Any] = {}
         
-        # 支持多种分隔符
+        # Support multiple separators
         for path in paths:
             if not path:
                 continue
             
-            # 统一分隔符：支持 "-->", "/", "\\"
+            # Normalize separators: support "-->", "/", "\\"
             normalized_path = path.replace("-->", "/").replace("\\", "/")
             nodes = [n.strip() for n in normalized_path.split("/") if n.strip()]
             

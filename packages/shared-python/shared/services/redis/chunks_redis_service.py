@@ -82,14 +82,15 @@ class ChunksRedisService:
 
         chunks = []
         for i, (_, row) in enumerate(df.iterrows()):
-            # 基础字段
-            know_id = row.get("know_id", uuid.uuid4())
-            chunk_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(know_id)))
+            know_id = row.get("know_id")
+            if know_id and not (pd is not None and pd.isna(know_id)):
+                chunk_id = str(know_id)
+            else:
+                chunk_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(uuid.uuid4())))
             content = str(row.get("content", ""))
             path = str(row.get("path", ""))
             type_val = row.get("type", "")
 
-            # 确定chunk类型
             if isinstance(type_val, str):
                 if type_val.startswith("PTXT"):
                     chunk_type = "text"

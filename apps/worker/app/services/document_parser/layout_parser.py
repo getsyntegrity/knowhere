@@ -721,8 +721,24 @@ def md_heading_match(line, as_is=True):
         return line, -1
 
 
-def filter_md_headings(md_lines, num_pos=17, num_neg=6):
-    """filter candidate headings for .md"""
+def filter_md_headings(md_lines, num_pos=17, num_neg=6, layout_json_path=None):
+    """filter candidate headings for .md
+    
+    Args:
+        md_lines: list of markdown lines
+        num_pos: number of positive conditions  
+        num_neg: number of negative conditions
+        layout_json_path: optional path to layout.json for META features (size ranking)
+    """
+    # Create MetadataContext if layout_json_path is provided
+    meta_ctx = None
+    if layout_json_path:
+        try:
+            from .metadata_extractor import MetadataContext
+            meta_ctx = MetadataContext(md_lines, layout_json_path)
+        except Exception as e:
+            logger.warning(f"Failed to create MetadataContext: {e}")
+    
     raw_candidates = []
     for i, line in enumerate(md_lines):
         line = line.strip()
@@ -739,6 +755,8 @@ def filter_md_headings(md_lines, num_pos=17, num_neg=6):
             zero_pos_code = [0] * num_pos
             zero_neg_code = [0] * num_neg
             str_lvl = f"POS {zero_pos_code} NEG {zero_neg_code}"
+            if meta_ctx:
+                str_lvl += " META [0, 0]"
             line = "resource or annotation"
         else:
             line_clean, hash_lvl = md_heading_match(line, as_is=False)  # detect "#" in .md lines
@@ -756,6 +774,11 @@ def filter_md_headings(md_lines, num_pos=17, num_neg=6):
             else:
                 code_lvl = -1
                 code_str = f"POS {pos_code} NEG {neg_code}"
+
+            # Add META suffix if MetadataContext is available
+            if meta_ctx:
+                size_rank, occurrence = meta_ctx.get_meta_for_line(line_clean)
+                code_str += meta_ctx.format_meta_suffix(size_rank, occurrence)
 
             if hash_lvl<=0:
                 est_lvl = code_lvl
@@ -903,7 +926,7 @@ async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_l
         raise
 
 
-async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None):
+async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None):
     """
     predict title hierarchy
     
@@ -916,13 +939,14 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
         smart_parse: whether to use LLM intelligent parsing
         model_name: LLM model name
         output_dir: output directory for saving intermediate CSV results
+        layout_json_path: path to layout.json for META features (optional)
     """
     logger.info(f"Start to predict title hierarchy: doc_type={doc_type}, smart_parse={smart_parse}, candidate titles={len(infos)}")
     
     if doc_type == "pptx":
         raw_preds = filter_md_headings(infos)
     elif doc_type == "md":
-        raw_preds = filter_md_headings(infos)
+        raw_preds = filter_md_headings(infos, layout_json_path=layout_json_path)
     elif doc_type == "docx":
         raw_preds = filter_doc_headings(infos, enable_regx)
     else:
@@ -1147,6 +1171,11 @@ def postprocess_headings(df, task, max_depth=-1):
                 next_row = df.iloc[j]
                 next_content = str(next_row['heading']).strip()
                 next_level = next_row['level']
+
+                # Skip merge if ID is not continuous (indicates table/image was skipped in between)
+                expected_id = row['id'] + (j - i)
+                if next_row['id'] != expected_id:
+                    break
 
                 # both current and next rows are not heading & current row has no punctuation -> merge
                 current_not_punc = not punc_pattern.search(current_content[-2:])
