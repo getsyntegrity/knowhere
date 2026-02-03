@@ -2,7 +2,7 @@
 知识库相关控制器 - 仅保留必要的API
 """
 
-from app.core.dependencies import get_current_user_id, get_redis_service
+from app.core.dependencies import get_current_user_id
 # from shared.models.database.user import User
 from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDto,
                                       FileDirectoryListDto,

@@ -23,18 +23,18 @@ async def get_current_user_id(
     db: AsyncSession = Depends(get_db)
 ) -> str:
     """
-    获取当前用户ID
-    支持两种模式：
-    1. 内部通信签名验证 (X-User-Id, X-Timestamp, X-Signature)
-    2. API Key验证 (Authorization: Bearer sk_...)
+    Get current user ID.
+    Supports two authentication modes:
+    1. Internal communication signature verification (X-User-Id, X-Timestamp, X-Signature)
+    2. API Key verification (Authorization: Bearer sk_...)
     """
-    # 模式1：签名验证 (用于Dashboard/Internal)
+    # Mode 1: Signature verification (for Dashboard/Internal)
     if x_user_id and x_timestamp and x_signature:
         # 1. Validate Timestamp
         try:
             ts = int(x_timestamp)
             now = int(time.time() * 1000)
-            # 允许5分钟的时间误差
+            # Allow 5 minutes time difference
             if abs(now - ts) > 5 * 60 * 1000:
                 raise AuthException(user_message="Request timestamp expired")
         except ValueError:
@@ -61,7 +61,7 @@ async def get_current_user_id(
 
         return x_user_id
 
-    # 模式2：API Key验证 (用于外部Client)
+    # Mode 2: API Key verification (for external clients)
     if authorization:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() == "bearer" and token.startswith("sk_"):
@@ -72,7 +72,7 @@ async def get_current_user_id(
             else:
                 raise AuthException(user_message="Invalid API Key")
 
-    # 认证失败
+    # Authentication failed
     raise AuthException(
         user_message="Authentication required. Provide X-User-Id/Signature headers or API Key."
     )

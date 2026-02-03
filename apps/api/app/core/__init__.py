@@ -12,9 +12,6 @@ from shared.core.database import get_db
 from shared.core.logging import setup_logging
 from shared.core.security import get_password_hash, verify_password
 
-# 依赖注入 - API专用，保留在API中
-from .dependencies import (get_current_user, get_redis_service,
-                           get_redis_service_factory)
 # 响应处理 - API专用，保留在API中
 from .response import ResponseCode
 
@@ -36,11 +33,6 @@ __all__ = [
     # 安全
     'get_password_hash',
     'verify_password',
-    
-    # 依赖
-    'get_current_user',
-    'get_redis_service',
-    'get_redis_service_factory',
     
     # 响应
     'ResponseCode',

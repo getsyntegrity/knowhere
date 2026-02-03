@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Text, BigInteger, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
-from shared.models.database.base import Base
+from shared.core.database import Base
 
 class UserBalance(Base):
     """

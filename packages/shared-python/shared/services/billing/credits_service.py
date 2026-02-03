@@ -74,7 +74,7 @@ class CreditsService:
         
         # Get initial credits amount
         initial_dollars = getattr(settings, "FREE_PLAN_INITIAL_CREDITS", 5)
-       initial_amount = MicroDollar.from_dollars(initial_dollars).amount
+        initial_amount = MicroDollar.from_dollars(initial_dollars).amount
         
         # Create balance record
         balance_entry = UserBalance(

@@ -9,7 +9,7 @@ import stripe
 from shared.core.config import settings
 from shared.core.logging import logger
 from sqlalchemy import select, func, String, cast
-from app.repositories.credits_repository import CreditsRepository
+from shared.repositories.credits_repository import CreditsRepository
 from app.repositories.payment_record_repository import PaymentRecordRepository
 from app.services.billing.price_config_service import PriceConfigService
 from shared.services.billing import CreditsService

@@ -80,7 +80,7 @@ class CreditsRepository:
         )
         return result.scalar_one_or_none()
     
-   async def update_balance(
+    async def update_balance(
         self, 
         session: AsyncSession, 
         user_id: str, 
