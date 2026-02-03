@@ -225,8 +225,8 @@ class JobLifecycleService:
     async def _send_completion_email(self, db: AsyncSession, job_id: str, job_result: Any):
         """Send job completion email (Best effort)"""
         try:
-            from shared.models.database.user import User
-            from sqlalchemy import select
+            # from shared.models.database.user import User
+            # from sqlalchemy import select
             
             # Re-fetch or reuse job. db is now clean (new transaction or same session after commit).
             # Accessing properties should be safe.
@@ -234,8 +234,10 @@ class JobLifecycleService:
             if not job: 
                 return
 
-            result = await db.execute(select(User).where(User.id == job.user_id))
-            user = result.scalar_one_or_none()
+            # Note: User table removed. Email sending temporarily disabled until email can be sourced elsewhere.
+            # result = await db.execute(select(User).where(User.id == job.user_id))
+            # user = result.scalar_one_or_none()
+            user = None
             
             if user and user.email:
                 email_service = JobEmailService()
@@ -253,15 +255,17 @@ class JobLifecycleService:
     async def _send_failure_email(self, db: AsyncSession, job_id: str, error_message: str):
         """Send job failure email (Best effort)"""
         try:
-            from shared.models.database.user import User
-            from sqlalchemy import select
+            # from shared.models.database.user import User
+            # from sqlalchemy import select
             
             job = await self.job_repo.get_job_by_id(db, job_id)
             if not job:
                 return
 
-            result = await db.execute(select(User).where(User.id == job.user_id))
-            user = result.scalar_one_or_none()
+            # Note: User table removed. Email sending temporarily disabled.
+            # result = await db.execute(select(User).where(User.id == job.user_id))
+            # user = result.scalar_one_or_none()
+            user = None
             
             if user and user.email:
                 email_service = JobEmailService()

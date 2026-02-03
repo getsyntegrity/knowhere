@@ -2,17 +2,17 @@
 API v1 路由总入口
 """
 from app.api.v1 import health
-from app.api.v1.routes import (api_key, auth, billing, email, jobs, knowledge_base,
-                               oauth, s3_events, user_management, version, webhook, webhook_secrets)
+from app.api.v1.routes import (api_key, billing, email, jobs, knowledge_base,
+                               s3_events, version, webhook, webhook_secrets)
 from fastapi import APIRouter
 
 api_router = APIRouter()
 
-# 注册认证路由
-api_router.include_router(auth.router, tags=["认证"])
+# 注册认证路由 - 已移除
+# api_router.include_router(auth.router, tags=["认证"])
 
-# 注册OAuth认证路由
-api_router.include_router(oauth.router, prefix="/auth/oauth", tags=["OAuth认证"])
+# 注册OAuth认证路由 - 已移除
+# api_router.include_router(oauth.router, prefix="/auth/oauth", tags=["OAuth认证"])
 
 # 注册API Key管理路由
 api_router.include_router(api_key.router, prefix="/auth", tags=["API Key管理"])
@@ -20,8 +20,8 @@ api_router.include_router(api_key.router, prefix="/auth", tags=["API Key管理"]
 # 注册计费路由
 api_router.include_router(billing.router, prefix="/billing", tags=["计费管理"])
 
-# 注册用户管理路由
-api_router.include_router(user_management.router, prefix="/user", tags=["用户管理"])
+# 注册用户管理路由 - 已移除
+# api_router.include_router(user_management.router, prefix="/user", tags=["用户管理"])
 
 # 注册知识库路由（保留目录管理功能）
 api_router.include_router(knowledge_base.router, prefix="/kb", tags=["知识库"])

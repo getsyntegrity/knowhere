@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi_users.schemas import BaseUserUpdate
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from shared.models.database.user import UserType
+# from shared.models.database.user import UserType
 
 
 class UserBase(BaseModel):
@@ -16,7 +16,7 @@ class UserBase(BaseModel):
     email: EmailStr = Field(..., description="邮箱地址")
     username: Optional[str] = Field(None, min_length=3, max_length=50, description="用户名")
     phone: Optional[str] = Field(None, pattern=r"^1[3-9]\d{9}$", description="手机号")
-    user_type: str = Field(default=UserType.USER.value, description="用户类型")
+    user_type: str = Field(default="user", description="用户类型")
 
 
 class UserCreate(UserBase):

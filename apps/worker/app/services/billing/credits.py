@@ -7,7 +7,7 @@ from sqlalchemy import select, update, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.config import settings
-from shared.models.database.user import User
+from shared.models.database.user_balance import UserBalance
 from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.payment_record import PaymentRecord
 from shared.core.billing import MicroDollar
@@ -35,7 +35,7 @@ async def deduct_credits(
     
     # Check current balance
     balance_result = await session.execute(
-        select(User.credits_balance).where(User.id == user_id)
+        select(UserBalance.credits_balance).where(UserBalance.user_id == user_id)
     )
     current_balance = balance_result.scalar_one_or_none() or 0
     
@@ -61,9 +61,9 @@ async def deduct_credits(
             
             # Deduct expired amount
             expire_result = await session.execute(
-                update(User)
-                .where(and_(User.id == user_id, User.credits_balance >= expired_amount))
-                .values(credits_balance=User.credits_balance - expired_amount)
+                update(UserBalance)
+                .where(and_(UserBalance.user_id == user_id, UserBalance.credits_balance >= expired_amount))
+                .values(credits_balance=UserBalance.credits_balance - expired_amount)
             )
             
             if expire_result.rowcount > 0:
@@ -89,9 +89,9 @@ async def deduct_credits(
     
     # Atomic deduct with balance check
     result = await session.execute(
-        update(User)
-        .where(and_(User.id == user_id, User.credits_balance >= amount_micros))
-        .values(credits_balance=User.credits_balance - amount_micros)
+        update(UserBalance)
+        .where(and_(UserBalance.user_id == user_id, UserBalance.credits_balance >= amount_micros))
+        .values(credits_balance=UserBalance.credits_balance - amount_micros)
     )
     
     if result.rowcount == 0:

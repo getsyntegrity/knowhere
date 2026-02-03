@@ -7,14 +7,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, DateTime, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
 
 if TYPE_CHECKING:
-    from shared.models.database.user import User
+    pass
 
 
 class EmailLog(Base):
@@ -25,9 +25,8 @@ class EmailLog(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
     # 关联用户（可选，某些邮件可能不关联用户）
-    user_id: Mapped[Optional[UUID]] = mapped_column(
-        UUID(as_uuid=True), 
-        ForeignKey("users.id", ondelete="SET NULL"), 
+    user_id: Mapped[Optional[str]] = mapped_column(
+        Text, 
         nullable=True,
         index=True
     )
@@ -54,7 +53,7 @@ class EmailLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     
     # 关系
-    user: Mapped[Optional["User"]] = relationship("User", lazy="select")
+    # 关系
     
     # 索引
     __table_args__ = (

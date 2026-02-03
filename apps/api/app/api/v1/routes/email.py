@@ -3,10 +3,10 @@
 """
 from typing import Optional
 
-from app.core.dependencies import get_current_user, get_db
+from app.core.dependencies import get_current_user_id, get_db
 from app.services.email import EmailService
 from app.services.email.models import EmailMessage, EmailRecipient, EmailSendResult
-from shared.models.database.user import User
+# from shared.models.database.user import User
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +48,7 @@ class EmailTestResponse(BaseModel):
 @router.post("/test", response_model=EmailTestResponse, summary="测试邮件发送")
 async def test_email(
     request: EmailTestRequest,
-    current_user: User = Depends(get_current_user),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -70,7 +70,7 @@ async def test_email(
                 user_email=request.to_email,
                 user_name=request.user_name or request.to_email,
                 db=db,
-                user_id=str(current_user.id)
+                user_id=user_id
             )
         
         elif request.email_type == "purchase_confirmation":
@@ -85,7 +85,7 @@ async def test_email(
                 amount=request.amount,
                 user_name=request.user_name or request.to_email,
                 db=db,
-                user_id=str(current_user.id)
+                user_id=user_id
             )
         
         elif request.email_type == "job_completion":
@@ -101,7 +101,7 @@ async def test_email(
                 download_url=request.download_url,
                 user_name=request.user_name or request.to_email,
                 db=db,
-                user_id=str(current_user.id)
+                user_id=user_id
             )
         
         elif request.email_type == "job_failure":
@@ -117,7 +117,7 @@ async def test_email(
                 error_message=request.error_message,
                 user_name=request.user_name or request.to_email,
                 db=db,
-                user_id=str(current_user.id)
+                user_id=user_id
             )
         
         elif request.email_type == "custom":
@@ -132,7 +132,7 @@ async def test_email(
                 html_content=request.html_content,
                 text_content=request.text_content,
                 email_type="custom",
-                user_id=str(current_user.id),
+                user_id=user_id,
             )
             result = await email_service.send_email(message, db=db)
         

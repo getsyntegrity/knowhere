@@ -12,12 +12,11 @@ from sqlalchemy import select, func, String, cast
 from app.repositories.credits_repository import CreditsRepository
 from app.repositories.subscription_repository import SubscriptionRepository
 from app.repositories.payment_record_repository import PaymentRecordRepository
-from app.repositories.user_repository import UserRepository
 from app.services.billing.price_config_service import PriceConfigService
 from app.services.billing.credits_service import CreditsService
 from shared.models.database.subscription import Subscription
 from shared.models.database.payment_record import PaymentRecord
-from shared.models.database.user import User
+from shared.models.database.user_balance import UserBalance
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from shared.core.exceptions.domain_exceptions import (
@@ -41,7 +40,6 @@ class StripeService:
         self.subscription_repo = SubscriptionRepository()
         self.credits_repo = CreditsRepository()
         self.payment_record_repo = PaymentRecordRepository()
-        self.user_repo = UserRepository()
         self.price_config_service = PriceConfigService()
         self.credits_service = CreditsService()
     
@@ -83,7 +81,8 @@ class StripeService:
         price_id: str,
         success_url: str,
         cancel_url: str,
-        quantity: int
+        quantity: int,
+        email: Optional[str] = None
     ) -> str:
         """创建Credits包支付会话"""
         try:
@@ -95,37 +94,47 @@ class StripeService:
                     violations=[{"field": "price_id", "description": f"Price ID {price_id} is not a credits package"}]
                 )
 
-            user = await self.user_repo.get(db, user_id)
-            if not user:
-                raise NotFoundException(
-                    resource="User",
-                    resource_id=user_id,
-                    internal_message="User not found for credits checkout"
-                )
+            # Ensure user is initialized (UserBalance exists)
+            await self.credits_service.ensure_user_initialized(db, user_id)
             
-            customer_id = user.stripe_customer_id
+            user_balance = await self.credits_repo.get_user_balance(db, user_id)
+            if not user_balance:
+                 # Should not happen after ensure_user_initialized
+                 raise ValidationException(internal_message=f"Failed to initialize user balance for {user_id}")
+
+            customer_id = user_balance.stripe_customer_id
+            
             if not customer_id:
                 # 尝试通过邮箱查找现有 Customer
-                if user.email:
-                    existing_customers = stripe.Customer.list(email=user.email, limit=1)
+                if email:
+                    existing_customers = stripe.Customer.list(email=email, limit=1)
                     if existing_customers.data:
                         customer_id = existing_customers.data[0].id
                 
                 if not customer_id:
                     # 创建新的 Customer
+                    if not email:
+                         # For new customers, we prefer having an email.
+                         # If no email provided, we can't create a good customer record.
+                         # But technically Stripe allows it.
+                         # Let's require email for now or use a placeholder? 
+                         # Better: Require email for new billing profiles.
+                         raise ValidationException(
+                             user_message="Email required for first-time payment",
+                             violations=[{"field": "email", "description": "Email is required to create a billing profile"}]
+                         )
+
                     customer_params = {
-                        'email': user.email,
+                        'email': email,
                         'metadata': {'user_id': str(user_id)}
                     }
-                    if user.username:
-                        customer_params['name'] = user.username
+                    # Username is not available without User model, omit it.
                     
                     customer = stripe.Customer.create(**customer_params)
                     customer_id = customer.id
                 
                 # 更新用户的 stripe_customer_id
-                user.stripe_customer_id = customer_id
-                await db.commit()
+                await self.credits_repo.update_stripe_customer_id(db, user_id, customer_id)
 
             # 统一的 metadata（必须是字符串，确保 charge/refund 时可取到 user_id）
             metadata = {
@@ -660,12 +669,13 @@ class StripeService:
 
         # 同步扣减用户余额（credits_refunded 为负数表示扣除）
         if credits_refunded is not None and credits_refunded < 0:
-            from sqlalchemy import update
-            from shared.models.database.user import User
-            await db.execute(
-                update(User)
-                .where(User.id == user_id)
-                .values(credits_balance=User.credits_balance + credits_refunded)
+            await self.credits_service.add_credits(
+                db,
+                user_id,
+                credits_refunded,
+                reason="Refund adjustment",
+                transaction_type="refund",
+                transaction_metadata={"refund_id": refund_id, "charge_id": charge_id}
             )
 
         refund_metadata = {

@@ -21,8 +21,8 @@ class Subscription(Base):
     """订阅计划模型"""
     __tablename__ = "subscriptions"
     
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))    # 关联用户
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     plan_type: Mapped[str] = mapped_column(String(50), nullable=False)  # free, plus, pro
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False)  # active, canceled, past_due
@@ -34,7 +34,7 @@ class Subscription(Base):
     
     # 关系
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    user: Mapped[User] = relationship("User", back_populates="subscriptions", lazy="select")
+    # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
     
     def __repr__(self):
         return f"<Subscription(id={self.id}, plan_type='{self.plan_type}', status='{self.status}')>"

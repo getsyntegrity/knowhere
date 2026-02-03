@@ -14,7 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from shared.core.database import Base
 
 if TYPE_CHECKING:
-    from shared.models.database.user import User
+    pass
 
 
 class PaymentRecord(Base):
@@ -23,8 +23,8 @@ class PaymentRecord(Base):
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)    # 用户关联
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     payment_type: Mapped[str] = mapped_column(String(50), nullable=False)  # subscription/credits_package
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)  # 支付金额（分）
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default='CNY')
@@ -38,7 +38,7 @@ class PaymentRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # 关系
-    user: Mapped[User] = relationship("User", lazy="select")
+    # 关系
     
     __table_args__ = (
         UniqueConstraint('checkout_session_id', name='uq_payment_record_checkout_session_id'),

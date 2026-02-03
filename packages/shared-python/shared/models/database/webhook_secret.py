@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UUID
+from sqlalchemy import DateTime, Index, String, Text, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
@@ -40,9 +40,8 @@ class WebhookSecret(Base):
     )
     
     # User association
-    user_id: Mapped[UUID] = mapped_column(
-        UUID(as_uuid=True), 
-        ForeignKey("users.id", ondelete="CASCADE"), 
+    user_id: Mapped[str] = mapped_column(
+        Text, 
         nullable=False
     )
     

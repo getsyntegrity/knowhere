@@ -11,9 +11,8 @@ from urllib.parse import urlparse
 
 from shared.core.constants.system import SystemConstants
 from shared.core.config import settings
-from app.core.dependencies import get_current_user_dual_auth, get_db
+from app.core.dependencies import get_current_user_id, get_db
 from shared.core.state_machine.states import JobStatus
-from shared.models.database.user import User
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
                                     JobResponse, JobResultResponse)
 from app.repositories.job_repository import JobRepository
@@ -108,13 +107,13 @@ async def start_workflow_for_job(
         )
 
 
-def check_job_permission(job, current_user: User) -> None:
+def check_job_permission(job, user_id: str) -> None:
     """
     检查任务权限
 
     Args:
         job: 任务对象
-        current_user: 当前用户
+        user_id: 当前用户ID
 
     Raises:
         HTTPException: 权限不足时抛出异常
@@ -122,11 +121,11 @@ def check_job_permission(job, current_user: User) -> None:
     if not job:
         raise NotFoundException(
             resource="Job",
-            resource_id=str(current_user.id),
+            resource_id=user_id,
             internal_message="Job not found"
         )
 
-    if str(job.user_id) != str(current_user.id):
+    if str(job.user_id) != user_id:
         raise PermissionDeniedException(
             user_message="You don't have permission to access this job",
             resource="Job"
@@ -238,7 +237,7 @@ def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
 @router.post("/", include_in_schema=False)
 async def create_job(
     request: JobCreate,
-    current_user: User = Depends(get_current_user_dual_auth),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -316,7 +315,9 @@ async def create_job(
             job = await job_repo.create_job(
                 db=db,
                 job_id=job_id,
-                user_id=str(current_user.id),
+                job_id=job_id,
+                user_id=user_id,
+                job_type=job_type,
                 job_type=job_type,
                 source_type="file",
                 file_path=None,  # 文件还未上传
@@ -353,7 +354,9 @@ async def create_job(
             job_info = {
                 "job_id": job_id,
                 "s3_key": s3_key,
-                "user_id": str(current_user.id),
+                "s3_key": s3_key,
+                "user_id": user_id,
+                "webhook_enabled": bool(request.webhook and request.webhook.url),
                 "webhook_enabled": bool(request.webhook and request.webhook.url),
                 "job_type": job_type,
                 "source_type": "file",
@@ -406,7 +409,9 @@ async def create_job(
                 job = await job_repo.create_job(
                     db=db,
                     job_id=job_id,
-                    user_id=str(current_user.id),
+                    job_id=job_id,
+                    user_id=user_id,
+                    job_type=job_type,
                     job_type=job_type,
                     source_type="url",
                     file_path=None,
@@ -435,7 +440,9 @@ async def create_job(
                 job_info = {
                     "job_id": job_id,
                     "s3_key": s3_key,
-                    "user_id": str(current_user.id),
+                    "s3_key": s3_key,
+                    "user_id": user_id,
+                    "webhook_enabled": bool(request.webhook and request.webhook.url),
                     "webhook_enabled": bool(request.webhook and request.webhook.url),
                     "job_type": job_type,
                     "source_type": "url",
@@ -448,7 +455,7 @@ async def create_job(
                 celery_app = get_celery_app()
                 upload_url_file_task = celery_app.signature('app.core.tasks.kb_tasks.upload_url_file_task')
                 upload_url_file_task.apply_async(
-                    args=[job_id, request.source_url, str(current_user.id)],
+                    args=[job_id, request.source_url, user_id],
                     kwargs={'job_type': job_type}
                 )
 
@@ -494,9 +501,8 @@ async def list_jobs(
     job_status: Optional[str] = Query(None, description="状态过滤"),
     job_type: Optional[str] = Query(None, description="任务类型过滤"),
     recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
-    start_time: Optional[datetime] = Query(None, description="开始时间，ISO格式"),
     end_time: Optional[datetime] = Query(None, description="结束时间，ISO格式"),
-    current_user: User = Depends(get_current_user_dual_auth),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -528,7 +534,7 @@ async def list_jobs(
         # 获取符合条件的总记录数
         total_count = await job_repo.count_jobs_by_user(
             db=db,
-            user_id=str(current_user.id),
+            user_id=user_id,
             created_after=created_after,
             created_before=created_before,
         )
@@ -536,7 +542,7 @@ async def list_jobs(
         # 获取任务列表
         jobs = await job_repo.get_jobs_by_user(
             db=db,
-            user_id=str(current_user.id),
+            user_id=user_id,
             limit=page_size,
             offset=(page - 1) * page_size,
             created_after=created_after,
@@ -657,7 +663,7 @@ async def list_jobs(
 async def get_job_result(
     job_id: str,
     response: Response,
-    current_user: User = Depends(get_current_user_dual_auth),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -672,7 +678,7 @@ async def get_job_result(
         rate_limit_service = RateLimitService(redis_service)
 
         rate_limit_info = await rate_limit_service.check_rate_limit(
-            str(current_user.id), "get_job_result"
+            user_id, "get_job_result"
         )
 
         # 设置响应头
@@ -693,7 +699,7 @@ async def get_job_result(
 
         # 获取Job并检查权限
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, current_user)
+        check_job_permission(job, user_id)
 
         status_for_api = job.status
 

@@ -12,22 +12,22 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from shared.core.config import redis_pool_manager, settings
 from shared.core.database import engine, Base, safe_dispose_engine
 from shared.core.logging import setup_logging
-from shared.models.database.user import User
-from shared.models.schemas.user import UserCreate, UserUpdate, UserRead
+# from shared.models.database.user import User
+# from shared.models.schemas.user import UserCreate, UserUpdate, UserRead
 
 # 从本地 API 项目导入
 from loguru import logger
 from contextlib import asynccontextmanager
 from app.api.api_router import api_router
 from app.core.middleware import setup_cors, LoggingMiddleware
-from app.core.users import get_user_manager
-from app.core.jwt import auth_backend
+# from app.core.users import get_user_manager
+# from app.core.jwt import auth_backend
 from app.core.image_cli import ImageCli
-from app.middleware.api_key_auth_middleware import api_key_auth_middleware
+# from app.middleware.api_key_auth_middleware import api_key_auth_middleware
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
-from fastapi_users import FastAPIUsers
-from uuid import UUID
+# from fastapi_users import FastAPIUsers
+# from uuid import UUID
 
 setup_logging()
 
@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"添加 stripe_customer_id 字段失败: {e}")
     
     # 导入所有模型以确保它们被注册
-    from shared.models.database import user
+    # from shared.models.database import user
     
     # 预热数据库连接池
     from shared.core.database import prewarm_connection_pool
@@ -148,7 +148,7 @@ def create_app() -> FastAPI:
     # app.add_middleware(api_key_auth_middleware)
 
     # 创建 FastAPI Users 实例
-    fastapi_users = FastAPIUsers[User, UUID](get_user_manager, [auth_backend])
+    # fastapi_users = FastAPIUsers[User, UUID](get_user_manager, [auth_backend])
 
     # 注册 FastAPI Users 路由 - 这些路由已经在 auth.py 中注册了，不需要重复注册
 

@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.payment_record import PaymentRecord
-from shared.models.database.user import User
+from shared.models.database.user_balance import UserBalance
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,11 +42,29 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
     async def get_balance(self, session: AsyncSession, user_id: str) -> int:
         """获取用户Credits余额"""
         result = await session.execute(
-            select(User.credits_balance)
-            .where(User.id == user_id)
+            select(UserBalance.credits_balance)
+            .where(UserBalance.user_id == user_id)
         )
         balance = result.scalar_one_or_none()
         return balance or 0
+
+    async def get_user_balance(self, session: AsyncSession, user_id: str) -> UserBalance | None:
+        """Get UserBalance record"""
+        result = await session.execute(
+            select(UserBalance).where(UserBalance.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def update_stripe_customer_id(self, session: AsyncSession, user_id: str, stripe_customer_id: str) -> bool:
+        """Update Stripe Customer ID"""
+        from sqlalchemy import update
+        result = await session.execute(
+            update(UserBalance)
+            .where(UserBalance.user_id == user_id)
+            .values(stripe_customer_id=stripe_customer_id)
+        )
+        # Caller commits
+        return result.rowcount > 0
     
     async def cap_balance(self, session: AsyncSession, user_id: str, max_balance: int) -> bool:
         """
@@ -55,9 +73,9 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
         """
         from sqlalchemy import update
         result = await session.execute(
-            update(User)
-            .where(User.id == user_id)
-            .where(User.credits_balance > max_balance)
+            update(UserBalance)
+            .where(UserBalance.user_id == user_id)
+            .where(UserBalance.credits_balance > max_balance)
             .values(credits_balance=max_balance)
         )
         await session.commit()
@@ -70,9 +88,9 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
         """
         from sqlalchemy import update
         result = await session.execute(
-            update(User)
-            .where(User.id == user_id)
-            .values(credits_balance=User.credits_balance + amount)
+            update(UserBalance)
+            .where(UserBalance.user_id == user_id)
+            .values(credits_balance=UserBalance.credits_balance + amount)
         )
         # Note: Commit removed - caller controls transaction
         return result.rowcount > 0
@@ -84,9 +102,9 @@ class CreditsRepository(BaseRepository[CreditsTransaction, dict, dict]):
         """
         from sqlalchemy import and_, update
         result = await session.execute(
-            update(User)
-            .where(and_(User.id == user_id, User.credits_balance >= amount))
-            .values(credits_balance=User.credits_balance - amount)
+            update(UserBalance)
+            .where(and_(UserBalance.user_id == user_id, UserBalance.credits_balance >= amount))
+            .values(credits_balance=UserBalance.credits_balance - amount)
         )
         # Note: Commit removed - caller controls transaction
         return result.rowcount > 0

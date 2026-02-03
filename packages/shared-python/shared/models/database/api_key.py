@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, Boolean, DateTime, String, Text
+# from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
@@ -19,7 +19,7 @@ class APIKey(Base):
     __tablename__ = "api_keys"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # 加密存储
     key_mask: Mapped[str] = mapped_column(String(50), nullable=False)  # 掩码后的API Key（用于显示）
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # API Key 名称
@@ -30,9 +30,8 @@ class APIKey(Base):
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 最后使用时间
     
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    user: Mapped[User] = relationship("User", back_populates="api_keys", lazy="select")
-    
-    def __repr__(self):
+    # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
+    # user: Mapped["User"] = relationship("User", back_populates="api_keys", lazy="select")
         return f"<APIKey(id={self.id}, name='{self.name}', user_id='{self.user_id}')>"
     
     def is_expired(self) -> bool:

@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, BigInteger, String, Text
+# from sqlalchemy.dialects.postgresql import UUID  # Removed UUID import if unused or use standard UUID for id
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from shared.models.database.job_result import JobResult
     from shared.models.database.job_state_audit_log import JobStateAuditLog
     from shared.models.database.job_state_history import JobStateHistory
-    from shared.models.database.user import User
+    # from shared.models.database.user import User
     from shared.models.database.webhook_log import WebhookLog
 
 
@@ -31,7 +31,8 @@ class Job(Base):
     job_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
     # 用户关联
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # 用户关联
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     
     # 任务基本信息
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)  # kb_management
@@ -65,7 +66,8 @@ class Job(Base):
     
     # 关系
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    user: Mapped["User"] = relationship("User", back_populates="jobs", lazy="select")
+    # 关系
+    # user: Mapped["User"] = relationship("User", back_populates="jobs", lazy="select")
     state_history: Mapped[list["JobStateHistory"]] = relationship("JobStateHistory", back_populates="job", cascade="all, delete-orphan")
     state_audit_logs: Mapped[list["JobStateAuditLog"]] = relationship("JobStateAuditLog", back_populates="job", cascade="all, delete-orphan")
     webhook_logs: Mapped[list["WebhookLog"]] = relationship("WebhookLog", back_populates="job", cascade="all, delete-orphan")
@@ -73,7 +75,6 @@ class Job(Base):
     
     # 索引
     __table_args__ = (
-        Index('idx_job_user_id', 'user_id'),
         Index('idx_job_status', 'status'),
         Index('idx_job_type', 'job_type'),
         Index('idx_job_created_at', 'created_at'),

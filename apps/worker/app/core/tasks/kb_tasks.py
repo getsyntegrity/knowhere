@@ -561,7 +561,7 @@ async def _parse_async(job_id: str, user_id: str):
                     await db.commit()
                     
                 raise InsufficientCreditsException(
-                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required}).",
+                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required.amount}).",
                     required_credits=micro_dollar_required.amount,
                     internal_message="Insufficient credits"
                 )

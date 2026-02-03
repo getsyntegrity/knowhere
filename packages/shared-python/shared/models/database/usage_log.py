@@ -19,7 +19,7 @@ class UsageLog(Base):
     __tablename__ = "usage_logs"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     api_key_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     method: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -32,7 +32,7 @@ class UsageLog(Base):
     
     # 关系
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    user: Mapped[User] = relationship("User", back_populates="usage_logs", lazy="select")
+    # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
     # api_key: Mapped[Optional["APIKey"]] = relationship("APIKey", back_populates="usage_logs")  # 暂时注释掉避免循环导入
     
     def __repr__(self):

@@ -10,13 +10,56 @@ from shared.core.logging import logger
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from app.repositories.credits_repository import CreditsRepository
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy import select
+from shared.models.database.user_balance import UserBalance
 
 class CreditsService:
     """Credits管理服务"""
     
     def __init__(self):
         self.repository = CreditsRepository()
+
+    async def ensure_user_initialized(self, session: AsyncSession, user_id: str):
+        """
+        Private User Initialization.
+        Checks if user exists (has balance record). If not, initializes with default reward.
+        """
+        result = await session.execute(select(UserBalance).where(UserBalance.user_id == user_id))
+        if result.scalars().first():
+            return
+
+        # New User Reward Logic
+        from shared.models.database.payment_record import PaymentRecord
+        from shared.models.database.credits_transaction import CreditsTransaction
+        
+        initial_amount = MicroDollar.from_dollars(getattr(settings, "FREE_PLAN_INITIAL_CREDITS", 5)).amount
+        
+        balance_entry = UserBalance(user_id=user_id, credits_balance=initial_amount)
+        session.add(balance_entry)
+        
+        # 1. Bonus Transaction
+        transaction = CreditsTransaction(
+            user_id=user_id, 
+            credits_amount=initial_amount,
+            description="New user registration bonus",
+            transaction_type="initial_grant"
+        )
+        session.add(transaction)
+        
+        # 2. Payment Record
+        payment = PaymentRecord(
+            user_id=user_id,
+            payment_type="system_grant",
+            amount_cents=0,
+            currency="USD",
+            status="succeeded",
+            credits_amount=initial_amount,
+            extra_metadata={"reason": "initial_grant"},
+            processed_at=datetime.utcnow()
+        )
+        session.add(payment)
+        await session.flush()
+
     
     async def check_balance(self, session: AsyncSession, user_id: str) -> int:
         """
@@ -25,6 +68,7 @@ class CreditsService:
         - 限制为最近 N 天（env: CREDITS_VALID_DAYS，默认90天）内支付获得的额度上限
         - 如果余额超过有效期内额度，会下调并同步更新到数据库
         """
+        await self.ensure_user_initialized(session, user_id)
         user_balance = await self.repository.get_balance(session, user_id)
         valid_days = getattr(settings, "CREDITS_VALID_DAYS", 90)
         recent_credits = await self.repository.get_recent_payment_credits(session, user_id, valid_days)
@@ -96,6 +140,7 @@ class CreditsService:
         transaction_metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """增加Credits"""
+        await self.ensure_user_initialized(session, user_id)
         # 1. 增加Credits
         success = await self.repository.add_credits(session, user_id, amount)
         

@@ -11,12 +11,13 @@ from .job import Job
 from .job_result import JobChunk, JobResult
 from .subscription import Subscription
 from .usage_log import UsageLog
+from .user_balance import UserBalance  # Added
 from .stripe_price_config import StripePriceConfig
 from .payment_record import PaymentRecord
 
 # Import models in dependency order
 # 1. First import base models (no foreign key dependencies)
-from .user import Role, User, UserType
+# from .user import Role, User, UserType
 
 # 3. Job-related log models
 from .job_state_audit_log import JobStateAuditLog
@@ -29,13 +30,14 @@ from .webhook_secret import WebhookSecret, WebhookSecretStatus
 # from .oauth_provider import OAuthProvider  # Commented out temporarily to avoid circular imports
 
 __all__ = [
-    "User",
-    "Role", 
-    "UserType",
+    # "User", 
+    # "Role", 
+    # "UserType",
     "APIKey",
     "Subscription",
     "CreditsTransaction",
     "UsageLog",
+    "UserBalance",  # Added
     "EmailLog",
     "Job",
     "JobResult",

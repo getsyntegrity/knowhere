@@ -17,6 +17,9 @@ class AuthConfig(BaseSettings):
     USERS_VERIFY_TOKEN_SECRET: str = Field(default="", description="用户验证令牌密钥")
     USERS_RESET_PASSWORD_TOKEN_SECRET: str = Field(default="", description="密码重置令牌密钥")
     
+    # 内部API通信配置
+    INTERNAL_API_SECRET: str = Field(default="", description="内部API签名验证密钥")
+    
     # 邮件配置（可选）
     SMTP_TLS: bool = Field(default=True, description="SMTP TLS")
     SMTP_PORT: Optional[int] = Field(default=None, description="SMTP 端口")

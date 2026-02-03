@@ -19,9 +19,9 @@ from httpx import AsyncClient, ASGITransport
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from main import app
-from shared.models.database.user import User
+# from shared.models.database.user import User
 from shared.core.database import get_db
-from app.core.dependencies import get_current_user_dual_auth
+from app.core.dependencies import get_current_user_id
 
 
 # =============================================================================
@@ -32,16 +32,9 @@ def create_mock_user(
     user_id: str = None,
     email: str = "test@example.com",
     username: str = "testuser"
-) -> User:
-    """Create a mock User object for testing."""
-    mock_user = MagicMock(spec=User)
-    mock_user.id = uuid4() if user_id is None else user_id
-    mock_user.email = email
-    mock_user.username = username
-    mock_user.is_active = True
-    mock_user.is_verified = True
-    mock_user.is_superuser = False
-    return mock_user
+):
+    """Create a mock User ID for testing."""
+    return user_id or str(uuid4())
 
 
 # =============================================================================
@@ -65,30 +58,30 @@ async def mock_db() -> AsyncMock:
 # =============================================================================
 
 @pytest.fixture
-def mock_user() -> User:
-    """Create a mock authenticated user."""
+def mock_user_id() -> str:
+    """Create a mock authenticated user ID."""
     return create_mock_user()
 
 
 @pytest_asyncio.fixture
-async def authenticated_client(mock_user: User, mock_db: AsyncMock) -> AsyncGenerator[AsyncClient, None]:
+async def authenticated_client(mock_user_id: str, mock_db: AsyncMock) -> AsyncGenerator[AsyncClient, None]:
     """
     Create an async test client with mocked authentication.
     
     This overrides the FastAPI dependencies to:
-    - Return a mock user for all auth-protected endpoints
+    - Return a mock user ID for all auth-protected endpoints
     - Use a mock database session
     """
-    # Override auth dependency to return mock user
-    async def mock_get_current_user_dual_auth():
-        return mock_user
+    # Override auth dependency to return mock user ID
+    async def mock_get_current_user_id():
+        return mock_user_id
     
     # Override database dependency to return mock session
     async def mock_get_db():
         yield mock_db
     
     # Apply dependency overrides
-    app.dependency_overrides[get_current_user_dual_auth] = mock_get_current_user_dual_auth
+    app.dependency_overrides[get_current_user_id] = mock_get_current_user_id
     app.dependency_overrides[get_db] = mock_get_db
     
     transport = ASGITransport(app=app)
