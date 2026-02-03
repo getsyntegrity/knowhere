@@ -19,7 +19,7 @@ class APIKey(Base):
     __tablename__ = "api_keys"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # 加密存储
     key_mask: Mapped[str] = mapped_column(String(50), nullable=False)  # 掩码后的API Key（用于显示）
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # API Key 名称
@@ -30,8 +30,9 @@ class APIKey(Base):
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 最后使用时间
     
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
     # user: Mapped["User"] = relationship("User", back_populates="api_keys", lazy="select")
+    
+    def __repr__(self):
         return f"<APIKey(id={self.id}, name='{self.name}', user_id='{self.user_id}')>"
     
     def is_expired(self) -> bool:

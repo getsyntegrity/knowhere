@@ -23,8 +23,9 @@ class PaymentRecord(Base):
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)    # 用户关联
-    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    # 用户关联
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
     payment_type: Mapped[str] = mapped_column(String(50), nullable=False)  # subscription/credits_package
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)  # 支付金额（分）
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default='CNY')

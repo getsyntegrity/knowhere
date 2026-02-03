@@ -31,8 +31,7 @@ class Job(Base):
     job_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
     # 用户关联
-    # 用户关联
-    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # 任务基本信息
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)  # kb_management

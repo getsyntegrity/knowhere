@@ -120,9 +120,6 @@ class JobLifecycleService:
                 except Exception as e:
                     logger.error(f"Failed to publish completion webhook (Event persisted): {e}")
 
-            # 7c. Send Email (Best Effort)
-            await self._send_completion_email(db, job_id, job_result)
-
             return {
                 "status": "success",
                 "job_id": job_id,
@@ -213,69 +210,9 @@ class JobLifecycleService:
                 except Exception as e:
                     logger.error(f"Failed to publish failure webhook: {e}")
 
-            await self._send_failure_email(db, job_id, error_message)
-
             return True
 
         except Exception as e:
             logger.error(f"Failed to finalize job failure {job_id}: {e}")
             await db.rollback()
             raise e
-
-    async def _send_completion_email(self, db: AsyncSession, job_id: str, job_result: Any):
-        """Send job completion email (Best effort)"""
-        try:
-            # from shared.models.database.user import User
-            # from sqlalchemy import select
-            
-            # Re-fetch or reuse job. db is now clean (new transaction or same session after commit).
-            # Accessing properties should be safe.
-            job = await self.job_repo.get_job_by_id(db, job_id)
-            if not job: 
-                return
-
-            # Note: User table removed. Email sending temporarily disabled until email can be sourced elsewhere.
-            # result = await db.execute(select(User).where(User.id == job.user_id))
-            # user = result.scalar_one_or_none()
-            user = None
-            
-            if user and user.email:
-                email_service = JobEmailService()
-                await email_service.send_job_completion_email(
-                    db=db,
-                    job_id=job_id,
-                    job_result=job_result,
-                    user_email=user.email,
-                    user_name=getattr(user, 'full_name', None) or user.email,
-                    job_type=job.job_type or "kb_management"
-                )
-        except Exception as e:
-            logger.error(f"Failed to send job completion email: {e}")
-        
-    async def _send_failure_email(self, db: AsyncSession, job_id: str, error_message: str):
-        """Send job failure email (Best effort)"""
-        try:
-            # from shared.models.database.user import User
-            # from sqlalchemy import select
-            
-            job = await self.job_repo.get_job_by_id(db, job_id)
-            if not job:
-                return
-
-            # Note: User table removed. Email sending temporarily disabled.
-            # result = await db.execute(select(User).where(User.id == job.user_id))
-            # user = result.scalar_one_or_none()
-            user = None
-            
-            if user and user.email:
-                email_service = JobEmailService()
-                await email_service.send_job_failure_email(
-                    db=db,
-                    job_id=job_id,
-                    user_email=user.email,
-                    error_message=error_message,
-                    user_name=getattr(user, 'full_name', None) or user.email,
-                    job_type=job.job_type or "kb_management"
-                )
-        except Exception as e:
-            logger.error(f"Failed to send job failure email: {e}")
