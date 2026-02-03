@@ -10,6 +10,8 @@ from shared.models.database.webhook_secret import WebhookSecret, WebhookSecretSt
 
 
 from main import app
+from app.core.dependencies import get_current_user_id
+from shared.core.database import get_db
 from httpx import AsyncClient, ASGITransport
 
 
@@ -19,15 +21,25 @@ TEST_USER_ID = "test_user_123"
 @pytest.fixture
 async def authenticated_client(mock_db):
     """
-    Authenticated client that uses X-User-Id header (no local user architecture).
+    Authenticated client using dependency override (no local user architecture).
     """
+    # Override auth dependency to return test user ID
+    async def mock_get_current_user_id():
+        return TEST_USER_ID
+    
+    # Override database dependency
+    async def mock_get_db():
+        yield mock_db
+    
+    app.dependency_overrides[get_current_user_id] = mock_get_current_user_id
+    app.dependency_overrides[get_db] = mock_get_db
+    
     transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport, 
-        base_url="http://test",
-        headers={"X-User-Id": TEST_USER_ID}
-    ) as ac:
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    
+    # Clear overrides after test
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture

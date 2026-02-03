@@ -11,10 +11,6 @@ from loguru import logger
 from shared.core.exceptions.domain_exceptions import AuthException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# ============================================================================
-# 新版 Header-Based 签名认证依赖
-# ============================================================================
-
 async def get_current_user_id(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_timestamp: Optional[str] = Header(None, alias="X-Timestamp"),
@@ -43,7 +39,7 @@ async def get_current_user_id(
         # 2. Verify Signature
         # Payload format: {user_id}:{timestamp}
         payload = f"{x_user_id}:{x_timestamp}"
-        secret = settings.AUTH.INTERNAL_API_SECRET
+        secret = settings.INTERNAL_API_SECRET
         
         if not secret:
             logger.warning("INTERNAL_API_SECRET is not set! Signature verification might fail or be insecure.")

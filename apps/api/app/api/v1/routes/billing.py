@@ -2,6 +2,7 @@
 计费相关 API
 """
 
+from shared.models.schemas.billing import BuyCreditsPackageRequest
 from datetime import datetime, timedelta
 from typing import Optional
 

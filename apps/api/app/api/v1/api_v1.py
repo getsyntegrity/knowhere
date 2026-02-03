@@ -2,7 +2,7 @@
 API v1 路由总入口
 """
 from app.api.v1 import health
-from app.api.v1.routes import (api_key, billing, email, jobs, knowledge_base,
+from app.api.v1.routes import (api_key, billing, jobs, knowledge_base,
                                s3_events, version, webhook, webhook_secrets)
 from fastapi import APIRouter
 
@@ -42,9 +42,6 @@ api_router.include_router(s3_events.router, prefix="/internal", tags=["Internal"
 api_router.include_router(webhook.router, prefix="/webhooks", tags=["Webhook管理"])
 
 api_router.include_router(webhook_secrets.router, prefix="/webhooks/secrets", tags=["Webhook Secrets"])
-
-# 注册邮件测试路由
-api_router.include_router(email.router, prefix="/email", tags=["邮件测试"])
 
 # 注册健康检查路由
 api_router.include_router(health.router, prefix="/health", tags=["健康检查"])

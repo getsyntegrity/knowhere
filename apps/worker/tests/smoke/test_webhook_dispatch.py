@@ -59,8 +59,10 @@ async def test_fr03_failure_increments_attempts(fake_db, dispatcher):
             # Naive check for table name in compiled statement or object structure
             # Since mocking is hard, we'll assume if it's NOT checking for ID of the event, it's the job query
             # But safer: check if table name "jobs" is involved
-            if hasattr(statement, 'froms') and statement.froms and statement.froms[0].name == 'jobs':
-                 return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
+            if hasattr(statement, 'get_final_froms'):
+                froms = statement.get_final_froms()
+                if froms and froms[0].name == 'jobs':
+                    return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
         except:
             pass
         
@@ -98,8 +100,10 @@ async def test_fr03_max_attempts_marks_failed(fake_db, dispatcher):
     # Mock DB execute with smart side effect
     async def db_execute_side_effect(statement, *args, **kwargs):
         try:
-            if hasattr(statement, 'froms') and statement.froms and statement.froms[0].name == 'jobs':
-                 return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
+            if hasattr(statement, 'get_final_froms'):
+                froms = statement.get_final_froms()
+                if froms and froms[0].name == 'jobs':
+                    return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
         except:
             pass
         return MagicMock(scalars=lambda: FakeScalarResult(fake_db.storage), scalar_one_or_none=lambda: fake_db.storage[0] if fake_db.storage else None)
@@ -139,8 +143,10 @@ async def test_fr04_successful_delivery_marks_delivered(fake_db, dispatcher):
     # Mock DB execute with smart side effect
     async def db_execute_side_effect(statement, *args, **kwargs):
         try:
-            if hasattr(statement, 'froms') and statement.froms and statement.froms[0].name == 'jobs':
-                 return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
+            if hasattr(statement, 'get_final_froms'):
+                froms = statement.get_final_froms()
+                if froms and froms[0].name == 'jobs':
+                    return MagicMock(scalar_one_or_none=MagicMock(return_value="user_123"))
         except:
             pass
         return MagicMock(scalars=lambda: FakeScalarResult(fake_db.storage), scalar_one_or_none=lambda: fake_db.storage[0] if fake_db.storage else None)

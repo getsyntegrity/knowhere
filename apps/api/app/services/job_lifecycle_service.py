@@ -12,7 +12,6 @@ from app.repositories.job_result_repository import JobResultRepository
 from app.repositories.knowledge_base_repository import create_update_kb
 from app.services.state_machine.manager import JobStateMachine
 from app.services.webhook_service import get_webhook_service
-from app.services.email.job_email_service import JobEmailService
 from shared.services.billing import CreditsService
 
 from shared.models.schemas.messages import JobResultMessage

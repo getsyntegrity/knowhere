@@ -6,17 +6,18 @@ def custom_openapi(app: FastAPI):
     if app.openapi_schema:
         return app.openapi_schema
     
-    # 1. 获取默认的 OpenAPI 字典
+    # 1. Get default OpenAPI dictionary
     openapi_schema = get_openapi(
         title="Custom API",
         version="1.0.0",
         routes=app.routes,
     )
     
-    # 2. 使用 jsonref 解析所有的 $ref 并替换为原始数据
-    # replace_refs=True 会将所有引用替换为实际内容
-    resolved_schema = jsonref.replace_refs(openapi_schema)
+    # 2. Use jsonref to resolve all $refs and replace with raw data
+    # replace_refs=True will replace all references with actual content
+    # proxies=False ensures return of pure Python objects (dict/list) instead of jsonref proxy objects
+    # Otherwise FastAPI's json.dumps will raise TypeError: Object of type dict is not JSON serializable
+    resolved_schema = jsonref.replace_refs(openapi_schema, proxies=False)
     
-    # 注意：jsonref 返回的是包装对象，转回普通 dict
-    app.openapi_schema = dict(resolved_schema)
+    app.openapi_schema = resolved_schema
     return app.openapi_schema

@@ -315,9 +315,7 @@ async def create_job(
             job = await job_repo.create_job(
                 db=db,
                 job_id=job_id,
-                job_id=job_id,
                 user_id=user_id,
-                job_type=job_type,
                 job_type=job_type,
                 source_type="file",
                 file_path=None,  # 文件还未上传
@@ -354,9 +352,7 @@ async def create_job(
             job_info = {
                 "job_id": job_id,
                 "s3_key": s3_key,
-                "s3_key": s3_key,
                 "user_id": user_id,
-                "webhook_enabled": bool(request.webhook and request.webhook.url),
                 "webhook_enabled": bool(request.webhook and request.webhook.url),
                 "job_type": job_type,
                 "source_type": "file",
@@ -409,9 +405,7 @@ async def create_job(
                 job = await job_repo.create_job(
                     db=db,
                     job_id=job_id,
-                    job_id=job_id,
                     user_id=user_id,
-                    job_type=job_type,
                     job_type=job_type,
                     source_type="url",
                     file_path=None,
@@ -440,9 +434,7 @@ async def create_job(
                 job_info = {
                     "job_id": job_id,
                     "s3_key": s3_key,
-                    "s3_key": s3_key,
                     "user_id": user_id,
-                    "webhook_enabled": bool(request.webhook and request.webhook.url),
                     "webhook_enabled": bool(request.webhook and request.webhook.url),
                     "job_type": job_type,
                     "source_type": "url",
@@ -501,6 +493,7 @@ async def list_jobs(
     job_status: Optional[str] = Query(None, description="状态过滤"),
     job_type: Optional[str] = Query(None, description="任务类型过滤"),
     recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
+    start_time: Optional[datetime] = Query(None, description="开始时间，ISO格式"),
     end_time: Optional[datetime] = Query(None, description="结束时间，ISO格式"),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
