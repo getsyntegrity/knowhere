@@ -53,6 +53,38 @@ def get_leaf_dics(node, path=[]):
     return leaf_dic_paths
 
 
+def _find_img_context(headings_stack, max_chars=100):
+    """Find the nearest non-table/image text context by looking backward in headings_stack.
+    
+    Args:
+        headings_stack: Stack of heading dicts with 'content' lists
+        max_chars: Maximum characters to return (truncated if exceeded)
+        
+    Returns:
+        The nearest valid text context, or empty string if none found
+    """
+    from app.services.common.kb_utils import truncate_text
+    
+    try:
+        content_list = headings_stack[-1].get('content', [])
+        # Traverse backward to find non-table/image content
+        for item in reversed(content_list):
+            item_stripped = str(item).strip()
+            # Skip TABLE_ and IMAGE_ identifiers
+            if item_stripped.startswith('TABLE_') or item_stripped.startswith('IMAGE_'):
+                continue
+            # Found valid text
+            if item_stripped:
+                return truncate_text(item_stripped, max_chars, 0)
+        return ""
+    except Exception as e:
+        raise DocxParsingException(
+            user_message="Failed to process document content",
+            reason="CONTENT_PROCESSING_FAILED",
+            internal_message=str(e),
+            original_exception=e
+        )
+
 
 async def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, img_count, smart_summary=False):
     time_stamp = get_str_time()
@@ -61,14 +93,10 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
         base_url=settings.ALI_URL
     )
 
-    try:
-        last_context = (headings_stack[-1]['content'][-1]).strip()
-        last_context = re.sub(re.compile(r'(TABLE_.*?_TABLE|IMAGE_.*?_IMAGE)'), '', last_context)
-    except:
-        last_context = ""
+    last_context = _find_img_context(headings_stack)
 
     img_ext = os.path.splitext(img_file["image_name"])[-1]
-    raw_img_name = process_path_texts(f"图-{current_heading} {last_context}", last=30) + str(img_count)
+    raw_img_name = process_path_texts(f"image-{str(img_count+1)} {current_heading} {last_context}", last=30)
     img_raw_path = os.path.join(img_dir, f'{raw_img_name}{img_ext}')
 
     with open(img_raw_path, 'wb') as image_file:
@@ -77,61 +105,106 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
     if smart_summary:
         image_summary = await ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
         if image_summary is None:
-            image_summary = f"Image Section: {current_heading}\nImage Context: {last_context}"
+            image_summary = last_context
     else:
-        image_summary = f"Image Section: {current_heading}\nImage Context: {last_context}"
+        image_summary = last_context
 
-    img_name = process_path_texts(f"图-{current_heading} {image_summary}", last=30) + str(img_count)
+    img_name = process_path_texts(f"image-{str(img_count+1)} {current_heading} {image_summary}", last=30)
     img_path = os.path.join(img_dir, f'{img_name}{img_ext}')
-    os.rename(img_raw_path, img_path)
+    os.rename(img_raw_path, img_path) # if summary fails, renaming is not applied
 
-    img_id = 'IMAGE_' + gen_str_codes(image_summary) + '_IMAGE'
-    img_kid = gen_str_codes(img_id + str(uuid.uuid4()))
+    temp_uid = gen_str_codes(image_summary)
+    img_id = 'IMAGE_' + temp_uid + '_IMAGE'
+
     img_bottom_content = img_id + '\nImage Summary:\n' + image_summary + '\n'
-    # Use relative path for images (avoid absolute path in path column)
     img_path = f"images/{img_name}{img_ext}"
 
     headings_stack[-1]['content'].append(img_bottom_content)
-    df_list.append([img_bottom_content, img_path, img_id, len(img_bottom_content), "", image_summary, img_kid, "", "", time_stamp])
+    df_list.append([img_bottom_content, img_path, img_id, len(img_bottom_content), "", image_summary, temp_uid, "", "", time_stamp])
     return headings_stack, df_list
+
+
+def _first_cols_rows(table_block, max_items=10, max_chars=20):
+    """Extract deduplicated first row and first column texts from a table block.
+    
+    Args:
+        table_block: python-docx Table object
+        max_items: Maximum number of items to extract (default 10)
+        max_chars: Maximum characters per item (default 20)
+        
+    Returns:
+        Tuple of (first_row_text, first_col_text) with ' | ' as separator
+    """
+    from app.services.common.kb_utils import truncate_text
+    
+    first_row_text = ""
+    first_col_text = ""
+    
+    if not table_block.rows:
+        return first_row_text, first_col_text
+    
+    # First row extraction (deduplicated, order preserved, max items, truncated)
+    seen_row = set()
+    unique_row_cells = []
+    for cell in table_block.rows[0].cells:
+        if len(unique_row_cells) >= max_items:
+            break
+        cell_text = cell.text.strip()
+        if cell_text and cell_text not in seen_row:
+            seen_row.add(cell_text)
+            unique_row_cells.append(truncate_text(cell_text, max_chars, 0))
+    first_row_text = ' | '.join(unique_row_cells) if unique_row_cells else ""
+    
+    # First column extraction (deduplicated, order preserved, max items, truncated)
+    seen_col = set()
+    unique_col_cells = []
+    for row in table_block.rows:
+        if len(unique_col_cells) >= max_items:
+            break
+        if row.cells:
+            cell_text = row.cells[0].text.strip()
+            if cell_text and cell_text not in seen_col:
+                seen_col.add(cell_text)
+                unique_col_cells.append(truncate_text(cell_text, max_chars, 0))
+    first_col_text = ' | '.join(unique_col_cells) if unique_col_cells else ""
+    
+    return first_row_text, first_col_text
+
 
 async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_count, smart_summary=False):
     time_stamp = get_str_time()
     tb_html_str = table2html(block)
     if not tb_html_str.strip():
-        return headings_stack
+        return headings_stack, df_list
 
-    try:
-        last_context = (headings_stack[-1]['content'][-1]).strip()
-        last_context = re.sub(re.compile(r'(TABLE_.*?_TABLE|IMAGE_.*?_IMAGE)'), '', last_context)
-    except:
-        last_context = ''
-
-    raw_tb_name = ' '.join([cell.text.strip() for cell in block.rows[0].cells]) if block.rows else f"Table_{table_count}_Header"
-    tb_keywords = extract_tb_keywords(tb_html_str)
+    # Extract first row and first column headers
+    first_row_text, first_col_text = _first_cols_rows(block)
+    
+    
+    tb_keywords = ';'.join(filter(None, [first_row_text.replace(' | ', ';') if first_row_text else '']))
     if smart_summary:
         tb_summary = await extract_summary_keywords(tb_html_str, type_="summary")
         if tb_summary is None:
-            tb_summary = f"Table Section: {current_heading}\nTable Context: {last_context}\nHeader Info: {raw_tb_name}"
+            tb_summary = f"First Row: {first_row_text}\nFirst Column: {first_col_text}"
     else:
-        tb_summary = f"Table Section: {current_heading}\nTable Context: {last_context}\nHeader Info: {raw_tb_name}"
+        tb_summary = f"First Row: {first_row_text}\nFirst Column: {first_col_text}"
 
-    tb_name = process_path_texts(f"表-{raw_tb_name} {tb_summary}", last=30) + str(table_count)
-    table_id = 'TABLE_' + gen_str_codes(tb_html_str) + '_TABLE'
-    table_kid = gen_str_codes(table_id + str(uuid.uuid4()))
-    tb_bottom_content = table_id + '\nTable Summary:\n' + tb_summary + '\n'
+    temp_uid = gen_str_codes((tb_html_str + str(table_count)))
+    table_id = 'TABLE_' + temp_uid + '_TABLE'
+
+    raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
+    tb_name = process_path_texts(f"table-{str(table_count+1)} {raw_tb_name}", last=30)
     tb_path = os.path.join(tb_dir, f'{tb_name}.html')
 
-    soup = BeautifulSoup(tb_html_str, features='html.parser')
-    tb_html_str = soup.prettify()
     with open(tb_path, 'w', encoding='utf-8') as f:
         f.write(tb_html_str)
 
     # Use relative path for tables (avoid absolute path in path column)
     tb_path = f"tables/{tb_name}.html"
-    headings_stack[-1]['content'].append(tb_bottom_content)
-    df_list.append([tb_bottom_content, tb_path, table_id, len(tb_bottom_content), tb_keywords, tb_summary, table_kid, "", "", time_stamp])
+    headings_stack[-1]['content'].append(table_id)
+    df_list.append([tb_html_str, tb_path, table_id, len(tb_html_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp])
     return headings_stack, df_list
+
 
 def iter_block_items(doc_data):
     doc_stream = io.BytesIO(doc_data)
@@ -277,6 +350,7 @@ def iter_block_items(doc_data):
             ele_num += 1
             map_index += 1
 
+
 async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", start_text="", end_text="", relative_root=None):
     doc_data = await load_file_bytes(docx_path, file_url=file_url)
 
@@ -368,7 +442,8 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
             image_count += 1
             current_heading = last_heading_before_block
 
-        elif label == 'TABLE': # TODO: handle cross-page tables
+        elif label == 'TABLE': 
+            # TODO: handle cross-page tables
             headings_stack, df_list = await handle_table(
                 df_list, block, tb_dir, headings_stack,
                 current_heading, table_count, llm_paras["summary_table"]
@@ -379,10 +454,8 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
         else: # TODO: handle latex, etc.
             pass
 
-    # record training data
-    # heading_data['binary_level'] = heading_data['level'].apply(lambda x: 1 if not x is None else 0)
-    # heading_data.to_csv(os.path.join(kb_dir, 'table_train.csv'), encoding='utf-8-sig')
     return {'content' : doc_structure}, df_list
+
 
 async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, relative_root=None):
     split_char = settings.SPLIT_CHAR or "/"
@@ -443,11 +516,6 @@ async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras
             )
 
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
-    doc_df = process_dup_paths_df(doc_df)  # Kept as backup defense layer
-
-    # doc_graph, _ = restore_graph_by_paths(path_keys)
-    # graph_path = os.path.join(kb_dir, 'hierarchy.json')
-    # with open(graph_path, 'w', encoding='utf-8') as f:
-    #     json.dump(doc_graph, f, ensure_ascii=False, indent=4)
+    doc_df = process_dup_paths_df(doc_df)
     return doc_df
 

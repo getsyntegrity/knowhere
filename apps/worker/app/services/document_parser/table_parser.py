@@ -651,19 +651,22 @@ def parse_headers_from_excel(
 
 
 def identify_tables(line):
+    """Identify if a line contains a table.
+    
+    Note: For HTML tables, use merge_html_tables() from html_parser.py 
+    to preprocess multi-line tables before calling this function.
+    """
+    # HTML table: complete <table>...</table> in one line
     html_tb_pattern = r'<table.*?>.*?</table>'
     tables = re.findall(html_tb_pattern, line, re.DOTALL)
     if bool(tables):
-        form = 'html'
-        return True, form, tables
+        return True, 'html', tables
     
-    md_tb_match = line.startswith('|') and line.endswith('|')
-    if md_tb_match:
-        form = 'md'
-        return True, form, tables
-    else:
-        return False, None, None
-    # TODO other forms of tables...
+    # MD table: lines starting and ending with |
+    if line.startswith('|') and line.endswith('|'):
+        return True, 'md', []
+    
+    return False, None, None
 
 
 def df2md(tb_df: pd.DataFrame,
@@ -735,7 +738,6 @@ def df2md(tb_df: pd.DataFrame,
     # Combine all parts
     lines = [header_line, separator_line] + data_lines
     return "\n".join(lines)
-
 
 
 def clean_html_tb(html: str) -> str:
@@ -856,6 +858,15 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
 
 
 def extract_tb_keywords(tb_str, form="html"):
+    """Extract keywords from table headers.
+    
+    TODO: Current implementation has issues with:
+    1. colspan/rowspan in HTML - causes column count mismatch when converting to DataFrame
+    2. MultiIndex headers - tb_htmlstr_to_df only uses first row as headers, losing hierarchy
+    
+    For now, consider using _first_cols_rows() from doc_parser.py as a simpler alternative
+    that extracts deduplicated first row and first column text.
+    """
     if form=='html':
         tb_df = tb_htmlstr_to_df(tb_str)
     else:

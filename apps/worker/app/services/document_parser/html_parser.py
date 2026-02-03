@@ -84,31 +84,239 @@ def tb_htmlstr_to_df(html_str):
     return df
 
     
-def table2html(table: DocxTable) -> str:
-    """Convert a DOCX table to HTML string.
+def merge_html_tables(lines: list) -> list:
+    """Merge multi-line HTML tables into single lines.
     
-    Handles nested tables recursively.
+    MinerU and some parsers output HTML tables with line breaks inside.
+    This function joins all lines from <table> to </table> into a single line.
+    
+    Args:
+        lines: List of text lines (already stripped)
+    
+    Returns:
+        List of lines with HTML tables merged into single lines
+    """
+    merged_lines = []
+    in_table = False
+    table_buffer = []
+    
+    for line in lines:
+        if '<table' in line and not in_table:
+            in_table = True
+            table_buffer = [line]
+            # Handle single-line complete table
+            if '</table>' in line:
+                merged_lines.append(' '.join(table_buffer))
+                table_buffer = []
+                in_table = False
+        elif in_table:
+            table_buffer.append(line)
+            if '</table>' in line:
+                merged_lines.append(' '.join(table_buffer))
+                table_buffer = []
+                in_table = False
+        else:
+            merged_lines.append(line)
+    
+    # Handle unclosed table at end of file
+    if table_buffer:
+        merged_lines.append(' '.join(table_buffer))
+    
+    return merged_lines
+
+    
+def first_cols_rows_html(html_str, max_items=10, max_chars=20):
+    """Extract first row and first column from HTML table string.
+    
+    This function mirrors the logic of _first_cols_rows in doc_parser.py
+    but works with HTML strings instead of DOCX Table objects.
+    
+    Args:
+        html_str: HTML table string
+        max_items: Maximum number of items to extract (default 10)
+        max_chars: Maximum characters per item (default 20)
+        
+    Returns:
+        Tuple of (first_row_text, first_col_text) with ' | ' as separator
+    """
+    from app.services.common.kb_utils import truncate_text
+    
+    soup = BeautifulSoup(html_str, 'html.parser')
+    table = soup.find('table')
+    if not table:
+        return "", ""
+    
+    rows = table.find_all('tr')
+    if not rows:
+        return "", ""
+    
+    # First row extraction (deduplicated, order preserved, max items, truncated)
+    first_row_cells = rows[0].find_all(['td', 'th'])
+    seen_row = set()
+    unique_row = []
+    for cell in first_row_cells:
+        if len(unique_row) >= max_items:
+            break
+        text = cell.get_text(strip=True)
+        if text and text not in seen_row:
+            seen_row.add(text)
+            unique_row.append(truncate_text(text, max_chars, 0))
+    first_row_text = ' | '.join(unique_row) if unique_row else ""
+    
+    # First column extraction (deduplicated, order preserved, max items, truncated)
+    seen_col = set()
+    unique_col = []
+    for row in rows:
+        if len(unique_col) >= max_items:
+            break
+        cells = row.find_all(['td', 'th'])
+        if cells:
+            text = cells[0].get_text(strip=True)
+            if text and text not in seen_col:
+                seen_col.add(text)
+                unique_col.append(truncate_text(text, max_chars, 0))
+    first_col_text = ' | '.join(unique_col) if unique_col else ""
+    
+    return first_row_text, first_col_text
+
+
+def table2html(table: DocxTable) -> str:
+    """Convert a DOCX table to HTML string with proper colspan/rowspan handling.
+    
+    Handles merged cells by:
+    - Detecting horizontal merges via comparing cell._tc objects
+    - Detecting vertical merges via vMerge XML attribute
+    - Generating proper colspan and rowspan attributes
     
     Args:
         table: python-docx Table object
         
     Returns:
-        HTML string representation of the table
+        HTML string representation of the table with merged cells
     """
-    html = "<table border='1'>"
-    for row in table.rows:
-        html += "<tr>"
+    from lxml import etree
+    
+    NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    
+    def get_cell_vmerge(cell):
+        """Get vMerge status: 'restart', 'continue', or None"""
+        tc = cell._tc
+        tcPr = tc.find('.//w:tcPr', namespaces=NS)
+        if tcPr is not None:
+            vMerge = tcPr.find('.//w:vMerge', namespaces=NS)
+            if vMerge is not None:
+                val = vMerge.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
+                return val if val else 'continue'  # If no val attribute, it's a continuation
+        return None
+    
+    n_rows = len(table.rows)
+    if n_rows == 0:
+        return "<table border='1'></table>"
+    
+    # Build grid: track unique cells and their positions
+    # grid[row][col] = (cell_tc_id, cell, is_new_cell)
+    # We use id(cell._tc) as unique identifier for cells
+    
+    grid = []
+    for row_idx, row in enumerate(table.rows):
+        row_data = []
+        prev_tc_id = None
         for cell in row.cells:
-            html += "<td>"
-            if cell.tables:
-                for nested_table in cell.tables:
-                    html += table2html(nested_table)
+            tc_id = id(cell._tc)
+            is_new = (tc_id != prev_tc_id)
+            row_data.append((tc_id, cell, is_new))
+            prev_tc_id = tc_id
+        grid.append(row_data)
+    
+    n_cols = len(grid[0]) if grid else 0
+    
+    # Calculate colspan for each cell (count consecutive cells with same _tc)
+    colspan_grid = [[0] * n_cols for _ in range(n_rows)]
+    
+    for row_idx in range(n_rows):
+        col_idx = 0
+        while col_idx < n_cols:
+            tc_id = grid[row_idx][col_idx][0]
+            span = 1
+            while col_idx + span < n_cols and grid[row_idx][col_idx + span][0] == tc_id:
+                span += 1
+            colspan_grid[row_idx][col_idx] = span
+            col_idx += span
+    
+    # Calculate rowspan for cells with vMerge='restart'
+    rowspan_grid = [[1] * n_cols for _ in range(n_rows)]
+    
+    for col_idx in range(n_cols):
+        row_idx = 0
+        while row_idx < n_rows:
+            cell = grid[row_idx][col_idx][1]
+            vmerge = get_cell_vmerge(cell)
+            
+            if vmerge == 'restart':
+                # Count how many 'continue' cells follow
+                span = 1
+                while row_idx + span < n_rows:
+                    next_cell = grid[row_idx + span][col_idx][1]
+                    next_vmerge = get_cell_vmerge(next_cell)
+                    if next_vmerge == 'continue':
+                        span += 1
+                    else:
+                        break
+                rowspan_grid[row_idx][col_idx] = span
+                row_idx += span
+            elif vmerge == 'continue':
+                # This cell is part of a vertical merge, mark as 0 (skip)
+                rowspan_grid[row_idx][col_idx] = 0
+                row_idx += 1
             else:
-                html += cell.text.strip().replace('\n', '<br>')
-            html += "</td>"
-        html += "</tr>"
-    html += "</table>"
-    return html
+                row_idx += 1
+    
+    # Build HTML
+    html_parts = ["<table border='1'>"]
+    
+    for row_idx in range(n_rows):
+        html_parts.append("<tr>")
+        col_idx = 0
+        
+        while col_idx < n_cols:
+            tc_id, cell, is_new = grid[row_idx][col_idx]
+            
+            # Skip if this cell is a horizontal continuation
+            if not is_new:
+                col_idx += 1
+                continue
+            
+            # Skip if this cell is a vertical continuation
+            rowspan = rowspan_grid[row_idx][col_idx]
+            if rowspan == 0:
+                col_idx += 1
+                continue
+            
+            colspan = colspan_grid[row_idx][col_idx]
+            
+            # Build cell content
+            if cell.tables:
+                # Nested table
+                content = ''.join(table2html(nested_table) for nested_table in cell.tables)
+            else:
+                content = cell.text.strip().replace('\n', '<br/>')
+            
+            # Build attributes
+            attrs = []
+            if colspan > 1:
+                attrs.append(f'colspan="{colspan}"')
+            if rowspan > 1:
+                attrs.append(f'rowspan="{rowspan}"')
+            
+            attr_str = ' ' + ' '.join(attrs) if attrs else ''
+            html_parts.append(f"<td{attr_str}>{content}</td>")
+            
+            col_idx += colspan
+        
+        html_parts.append("</tr>")
+    
+    html_parts.append("</table>")
+    return ''.join(html_parts)
 
 
 def render_multiindex_thead(columns: pd.MultiIndex, escape: bool = False) -> str:
