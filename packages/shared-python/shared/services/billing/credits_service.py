@@ -175,7 +175,6 @@ class CreditsService:
         Returns:
             Current credits balance
         """
-        await self.ensure_user_initialized(session, user_id)
         return await self.repository.get_balance(session, user_id)
     
     async def add_credits(
@@ -247,6 +246,7 @@ class CreditsService:
         Raises:
             InsufficientCreditsException: If insufficient credits
         """
+        await self.ensure_user_initialized(session, user_id)
         # Check current balance (read from materialized view)
         current_balance = await self.get_balance(session, user_id)
         if current_balance < amount:

@@ -130,8 +130,7 @@ class StripeService:
                     customer = stripe.Customer.create(**customer_params)
                     customer_id = customer.id
                 
-                # 更新用户的 stripe_customer_id
-                await self.credits_repo.update_stripe_customer_id(db, user_id, customer_id)
+                user_balance.stripe_customer_id = customer_id
 
             # 统一的 metadata（必须是字符串，确保 charge/refund 时可取到 user_id）
             metadata = {

@@ -54,5 +54,5 @@ async def get_current_user_id(
 
     # Authentication failed
     raise AuthException(
-        user_message="Authentication required. Provide X-User-Id/Signature headers or API Key."
+        user_message="Authentication required. Provide X-User-Id/Signature headers."
     )
