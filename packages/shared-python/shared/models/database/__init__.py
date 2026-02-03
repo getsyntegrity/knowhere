@@ -9,13 +9,11 @@ from .credits_transaction import CreditsTransaction
 from .job import Job
 from .job_result import JobChunk, JobResult
 from .usage_log import UsageLog
-from .user_balance import UserBalance  # Added
+from .user_balance import UserBalance 
 from .stripe_price_config import StripePriceConfig
 from .payment_record import PaymentRecord
 
-# Import models in dependency order
-# 1. First import base models (no foreign key dependencies)
-# from .user import Role, User, UserType
+from .user import User
 
 # 3. Job-related log models
 from .job_state_audit_log import JobStateAuditLog
@@ -25,13 +23,11 @@ from .webhook import WebhookEvent, WebhookEventStatus
 from .webhook_secret import WebhookSecret, WebhookSecretStatus
 
 __all__ = [
-    # "User", 
-    # "Role", 
-    # "UserType",
+    "User", 
     "APIKey",
     "CreditsTransaction",
     "UsageLog",
-    "UserBalance",  # Added
+    "UserBalance",
     "Job",
     "JobResult",
     "JobChunk",
@@ -44,5 +40,4 @@ __all__ = [
     "WebhookEventStatus",
     "WebhookSecret",
     "WebhookSecretStatus"
-    # "OAuthProvider"
 ]

@@ -26,21 +26,27 @@ def upgrade() -> None:
     
     The model defines these indexes but they were not created in the original migration.
     """
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_indexes = [idx['name'] for idx in inspector.get_indexes('webhook_secrets')]
+
     # Add composite index on user_id and endpoint
-    op.create_index(
-        'idx_webhook_secrets_user_endpoint',
-        'webhook_secrets',
-        ['user_id', 'endpoint'],
-        unique=False
-    )
+    if 'idx_webhook_secrets_user_endpoint' not in existing_indexes:
+        op.create_index(
+            'idx_webhook_secrets_user_endpoint',
+            'webhook_secrets',
+            ['user_id', 'endpoint'],
+            unique=False
+        )
     
     # Add index on status
-    op.create_index(
-        'idx_webhook_secrets_status',
-        'webhook_secrets',
-        ['status'],
-        unique=False
-    )
+    if 'idx_webhook_secrets_status' not in existing_indexes:
+        op.create_index(
+            'idx_webhook_secrets_status',
+            'webhook_secrets',
+            ['status'],
+            unique=False
+        )
 
 
 def downgrade() -> None:

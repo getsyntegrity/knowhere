@@ -1,5 +1,5 @@
 """
-API Key 数据模型
+API Key Data Model
 """
 from __future__ import annotations
 
@@ -15,19 +15,19 @@ from shared.core.database import Base
 
 
 class APIKey(Base):
-    """API Key 模型"""
+    """API Key Model"""
     __tablename__ = "api_keys"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
-    key_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # 加密存储
-    key_mask: Mapped[str] = mapped_column(String(50), nullable=False)  # 掩码后的API Key（用于显示）
-    name: Mapped[str] = mapped_column(String(255), nullable=False)  # API Key 名称
-    enabled_modules: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # 启用的功能模块
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 过期时间
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # 是否激活
+    key_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # Encrypted storage
+    key_mask: Mapped[str] = mapped_column(String(50), nullable=False)  # Masked API Key (for display)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)  # API Key Name
+    enabled_modules: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Enabled functional modules
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # Expiration time
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # Active status
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 最后使用时间
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # Last used time
     
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
     # user: Mapped["User"] = relationship("User", back_populates="api_keys", lazy="select")
@@ -36,11 +36,11 @@ class APIKey(Base):
         return f"<APIKey(id={self.id}, name='{self.name}', user_id='{self.user_id}')>"
     
     def is_expired(self) -> bool:
-        """检查是否过期"""
+        """Check if expired"""
         if self.expires_at is None:
             return False
         return datetime.utcnow() > self.expires_at
     
     def is_valid(self) -> bool:
-        """检查是否有效"""
+        """Check if valid"""
         return self.is_active and not self.is_expired()

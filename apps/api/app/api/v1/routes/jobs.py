@@ -11,7 +11,8 @@ from urllib.parse import urlparse
 
 from shared.core.constants.system import SystemConstants
 from shared.core.config import settings
-from app.core.dependencies import get_current_user_id, get_db
+from shared.core.database import get_db
+from app.core.dependencies import get_current_user_id 
 from shared.core.state_machine.states import JobStatus
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
                                     JobResponse, JobResultResponse)

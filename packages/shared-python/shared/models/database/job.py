@@ -1,5 +1,5 @@
 """
-Job数据模型 - 用户API业务任务
+Job Data Model - User API Business Task
 """
 from __future__ import annotations
 
@@ -24,25 +24,25 @@ if TYPE_CHECKING:
 
 
 class Job(Base):
-    """Job模型 - 用户API业务任务"""
+    """Job Model - User API Business Task"""
     __tablename__ = "jobs"
     
-    # 主键
+    # Primary Key
     job_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
-    # 用户关联
+    # User Association
     user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     
-    # 任务基本信息
+    # Basic Job Info
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)  # kb_management
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # PRD状态: pending, waiting-file, running, converting, done, failed
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # PRD Status: pending, waiting-file, running, converting, done, failed
     
-    # 文件信息
+    # File Info
     source_type: Mapped[str] = mapped_column(String(20), nullable=False)  # direct_upload, url
-    file_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # 原始文件路径
-    s3_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # S3存储键
+    file_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # Original file path
+    s3_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # S3 Key
     
-    # Webhook配置
+    # Webhook Config
     webhook_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     webhook_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
@@ -51,10 +51,10 @@ class Job(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Canonical error code (e.g., INVALID_ARGUMENT, INTERNAL_ERROR)
     
-    # 版本控制（乐观锁）
+    # Version Control (Optimistic Lock)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     
-    # 时间戳
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
@@ -65,14 +65,14 @@ class Job(Base):
     
     # 关系
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    # 关系
+    # Relationships
     # user: Mapped["User"] = relationship("User", back_populates="jobs", lazy="select")
     state_history: Mapped[list["JobStateHistory"]] = relationship("JobStateHistory", back_populates="job", cascade="all, delete-orphan")
     state_audit_logs: Mapped[list["JobStateAuditLog"]] = relationship("JobStateAuditLog", back_populates="job", cascade="all, delete-orphan")
     webhook_logs: Mapped[list["WebhookLog"]] = relationship("WebhookLog", back_populates="job", cascade="all, delete-orphan")
     job_result: Mapped[Optional["JobResult"]] = relationship("JobResult", back_populates="job", uselist=False, lazy="selectin")
     
-    # 索引
+    # Indexes
     __table_args__ = (
         Index('idx_job_status', 'status'),
         Index('idx_job_type', 'job_type'),
@@ -84,9 +84,9 @@ class Job(Base):
         return f"<Job(job_id={self.job_id}, type='{self.job_type}', status='{self.status}')>"
     
     def is_terminal_state(self) -> bool:
-        """检查是否为终态"""
+        """Check if terminal state"""
         return self.status in ['done', 'failed']
     
     def is_processing(self) -> bool:
-        """检查是否正在处理中"""
+        """Check if processing"""
         return self.status == 'running'

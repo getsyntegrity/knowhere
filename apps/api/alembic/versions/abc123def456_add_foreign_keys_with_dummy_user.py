@@ -50,11 +50,12 @@ def upgrade() -> None:
     if result.scalar() == 0:
         print(f"  Creating dummy user...")
         bind.execute(text(f"""
-            INSERT INTO "user" (id, email, name, created_at)
+            INSERT INTO "user" (id, email, name, "createdAt", "updatedAt")
             VALUES (
                 '{DUMMY_USER_ID}',
                 'dev-placeholder@knowhere.internal',
                 'Development Placeholder User',
+                NOW(),
                 NOW()
             )
         """))
@@ -77,7 +78,7 @@ def upgrade() -> None:
     # STEP 3: Drop old FK constraints on user_id
     print("\n[STEP 3] Dropping old foreign key constraints...")
     tables_with_user_id = [
-        'user_balances', 'jobs', 'credits_transactions',
+        'jobs', 'credits_transactions',
         'api_keys', 'usage_logs', 'payment_records', 'webhook_secrets'
     ]
     
@@ -128,11 +129,6 @@ def upgrade() -> None:
     # STEP 5: Add new FK constraints
     print("\n[STEP 5] Adding foreign key constraints (all RESTRICT)...")
     fk_configs = [
-        {
-            'table': 'user_balances',
-            'fk': 'fk_user_balances_user_id',
-            'index': 'idx_user_balances_user_id'
-        },
         {
             'table': 'jobs',
             'fk': 'fk_jobs_user_id',
@@ -216,7 +212,6 @@ def downgrade() -> None:
     print("Downgrading migration...")
     
     fk_configs = [
-        {'table': 'user_balances', 'fk': 'fk_user_balances_user_id', 'index': 'idx_user_balances_user_id'},
         {'table': 'jobs', 'fk': 'fk_jobs_user_id', 'index': 'idx_jobs_user_id'},
         {'table': 'credits_transactions', 'fk': 'fk_credits_transactions_user_id', 'index': 'idx_credits_transactions_user_id'},
         {'table': 'api_keys', 'fk': 'fk_api_keys_user_id', 'index': 'idx_api_keys_user_id'},

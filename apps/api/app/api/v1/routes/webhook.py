@@ -12,7 +12,8 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user_id, get_db
+from shared.core.database import get_db
+from app.core.dependencies import get_current_user_id
 from app.repositories.job_repository import JobRepository
 from app.repositories.webhook_repository import WebhookRepository
 from shared.services.webhook import get_webhook_dispatcher

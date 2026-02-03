@@ -10,7 +10,8 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user_id, get_db
+from shared.core.database import get_db
+from app.core.dependencies import get_current_user_id
 from shared.repositories.webhook_secret_repository import WebhookSecretRepository
 from shared.core.exceptions.domain_exceptions import NotFoundException
 # from shared.models.database.user import User

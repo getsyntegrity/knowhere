@@ -1,5 +1,5 @@
 """
-Credits 交易记录数据模型
+Credits Transaction Data Model
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from shared.core.database import Base
 
 
 class CreditsTransaction(Base):
-    """Credits 交易记录模型"""
+    """Credits Transaction Model"""
     __tablename__ = "credits_transactions"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -35,9 +35,9 @@ class CreditsTransaction(Base):
         return f"<CreditsTransaction(id={self.id}, amount={self.credits_amount}, type='{self.transaction_type}')>"
     
     def is_credit(self) -> bool:
-        """检查是否为增加Credits"""
+        """Check if it adds credits"""
         return self.credits_amount > 0
     
     def is_debit(self) -> bool:
-        """检查是否为扣除Credits"""
+        """Check if it deducts credits"""
         return self.credits_amount < 0
