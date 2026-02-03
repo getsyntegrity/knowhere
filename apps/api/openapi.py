@@ -13,11 +13,61 @@ def custom_openapi(app: FastAPI):
         routes=app.routes,
     )
     
-    # 2. Use jsonref to resolve all $refs and replace with raw data
-    # replace_refs=True will replace all references with actual content
-    # proxies=False ensures return of pure Python objects (dict/list) instead of jsonref proxy objects
-    # Otherwise FastAPI's json.dumps will raise TypeError: Object of type dict is not JSON serializable
-    resolved_schema = jsonref.replace_refs(openapi_schema, proxies=False)
+    # 2. Safely Dereference while keeping schema flattened
+    # We use a 'seen' set to track recursive references, similar to how JSON.stringify handles circular structures.
     
-    app.openapi_schema = resolved_schema
+    def dereference(schema: dict, definitions: dict, seen: set = None) -> dict:
+        """
+        Recursively resolve $ref pointers. 
+        If a circular reference is detected (same model visited twice in the path), 
+        it stops recursion and leaves the $ref as is.
+        """
+        if seen is None:
+            seen = set()
+
+        if isinstance(schema, list):
+            return [dereference(item, definitions, seen.copy()) for item in schema]
+        
+        if isinstance(schema, dict):
+            if "$ref" in schema:
+                ref_path = schema["$ref"]
+                if ref_path.startswith("#/components/schemas/"):
+                    model_name = ref_path.split("/")[-1]
+                    
+                    # Cycle detection: if we have already seen this model in the current traversal path, stop!
+                    if model_name in seen:
+                        return schema  # Return original { $ref: ... } to avoid infinite loop
+                    
+                    if model_name in definitions:
+                        # Add current model to seen path
+                        new_seen = seen.copy()
+                        new_seen.add(model_name)
+                        
+                        # Dereference the target definition
+                        return dereference(definitions[model_name], definitions, new_seen)
+                
+                return schema
+            
+            # Helper for processing dict items
+            return {
+                k: dereference(v, definitions, seen.copy())
+                for k, v in schema.items()
+            }
+            
+        return schema
+
+    try:
+        # Extract existing definitions to use for lookup
+        definitions = openapi_schema.get("components", {}).get("schemas", {})
+        
+        # Dereference the paths section (main entry point)
+        resolved_paths = dereference(openapi_schema.get("paths", {}), definitions)
+        openapi_schema["paths"] = resolved_paths
+        
+    except Exception as e:
+        print(f"Warning: OpenAPI dereferencing failed: {e}")
+        # Fallback to original schema
+        pass
+
+    app.openapi_schema = openapi_schema
     return app.openapi_schema
