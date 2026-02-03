@@ -8,6 +8,9 @@ from sqlalchemy import text
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+# Import custom OpenAPI function
+from openapi import custom_openapi
+
 # 从共享包导入
 from shared.core.config import redis_pool_manager, settings
 from shared.core.database import engine, Base, safe_dispose_engine
@@ -129,6 +132,9 @@ def create_app() -> FastAPI:
     
     # 设置全局异常处理器
     setup_exception_handlers(app)
+    
+    # Set up custom OpenAPI schema (flattens $ref references)
+    app.openapi = lambda: custom_openapi(app)
     
     return app
 

@@ -6,10 +6,8 @@ Ensure all models are correctly imported to avoid circular import issues
 # 2. Then import models that depend on User
 from .api_key import APIKey
 from .credits_transaction import CreditsTransaction
-from .email_log import EmailLog
 from .job import Job
 from .job_result import JobChunk, JobResult
-from .subscription import Subscription
 from .usage_log import UsageLog
 from .user_balance import UserBalance  # Added
 from .stripe_price_config import StripePriceConfig
@@ -34,11 +32,9 @@ __all__ = [
     # "Role", 
     # "UserType",
     "APIKey",
-    "Subscription",
     "CreditsTransaction",
     "UsageLog",
     "UserBalance",  # Added
-    "EmailLog",
     "Job",
     "JobResult",
     "JobChunk",

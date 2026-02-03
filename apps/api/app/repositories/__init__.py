@@ -13,8 +13,6 @@ from .knowledge_base_repository import (create_directory, create_update_kb,
                                         get_directories_by_user,
                                         get_directory_contents,
                                         update_directory)
-from .oauth_repository import OAuthRepository
-from .subscription_repository import SubscriptionRepository
 from .usage_log_repository import UsageLogRepository
 from .user_repository import UserRepository
 from .webhook_repository import WebhookRepository
@@ -33,8 +31,6 @@ __all__ = [
     "delete_kb_content",
     "UserRepository",
     "APIKeyRepository",
-    "OAuthRepository",
-    "SubscriptionRepository",
     "CreditsRepository",
     "UsageLogRepository",
     "WebhookRepository",

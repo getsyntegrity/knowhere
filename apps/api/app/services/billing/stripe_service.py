@@ -10,11 +10,9 @@ from shared.core.config import settings
 from shared.core.logging import logger
 from sqlalchemy import select, func, String, cast
 from app.repositories.credits_repository import CreditsRepository
-from app.repositories.subscription_repository import SubscriptionRepository
 from app.repositories.payment_record_repository import PaymentRecordRepository
 from app.services.billing.price_config_service import PriceConfigService
 from shared.services.billing import CreditsService
-from shared.models.database.subscription import Subscription
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user_balance import UserBalance
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,7 +35,6 @@ class StripeService:
                 internal_message="Stripe API key not configured"
             )
         stripe.api_key = settings.STRIPE_SECRET_KEY
-        self.subscription_repo = SubscriptionRepository()
         self.credits_repo = CreditsRepository()
         self.payment_record_repo = PaymentRecordRepository()
         self.price_config_service = PriceConfigService()
@@ -284,65 +281,7 @@ class StripeService:
         await db.flush()  # 获取ID但不提交
         
         try:
-            if mode == 'subscription':
-                # 订阅类型
-                plan_id = metadata.get('plan_id')
-                stripe_subscription_id = session.get('subscription')
-                
-                if not plan_id or not stripe_subscription_id:
-                    logger.error(f"订阅信息不完整: plan_id={plan_id}, subscription_id={stripe_subscription_id}")
-                    return {'status': 'error', 'message': 'Incomplete subscription info'}
-                
-                # 从价格配置获取商品描述等信息
-                try:
-                    price_id = await self.price_config_service.get_plan_price_id(db, plan_id)
-                    price_config = await self.price_config_service.get_price_config(db, price_id)
-                    # 更新支付记录的extra_metadata，添加商品信息
-                    payment_record.extra_metadata = {
-                        **payment_metadata,
-                        'product_description': f"{plan_id.upper()} 订阅套餐",
-                        'plan_id': plan_id,
-                        'price_id': price_id,
-                        'product_metadata': price_config.extra_metadata or {}  # 从价格配置获取商品描述等信息
-                    }
-                except Exception as e:
-                    logger.warning(f"获取价格配置信息失败: {e}，使用默认值")
-                    payment_record.extra_metadata = {
-                        **payment_metadata,
-                        'product_description': f"{plan_id.upper()} 订阅套餐",
-                        'plan_id': plan_id
-                    }
-                
-                # 创建订阅记录
-                subscription = Subscription(
-                    user_id=user_id,
-                    plan_type=plan_id,
-                    stripe_subscription_id=stripe_subscription_id,
-                    status='active',
-                    start_date=datetime.utcnow(),
-                    subscription_metadata={'session_id': session_id}
-                )
-                db.add(subscription)
-                await db.flush()  # 获取ID但不提交
-                
-                # 更新支付记录
-                payment_record.status = 'succeeded'
-                payment_record.plan_id = plan_id
-                payment_record.stripe_subscription_id = stripe_subscription_id
-                payment_record.processed_at = datetime.utcnow()
-                await db.commit()
-                await db.refresh(payment_record)
-                
-                logger.info(f"订阅创建成功: user_id={user_id}, plan_id={plan_id}, subscription_id={stripe_subscription_id}")
-                return {
-                    'status': 'success',
-                    'event_type': 'checkout.session.completed',
-                    'user_id': user_id,
-                    'plan_id': plan_id,
-                    'payment_type': 'subscription'
-                }
-            
-            elif mode == 'payment' and payment_type == 'credits_package':
+            if mode == 'payment' and payment_type == 'credits_package':
                 # Credits包类型
                 price_id = metadata.get('price_id')
                 
@@ -527,27 +466,7 @@ class StripeService:
         if not subscription_id:
             logger.warning("Invoice缺少subscription ID")
             return {'status': 'ignored', 'message': 'Missing subscription_id'}
-        
-        try:
-            # 根据Stripe订阅ID查找本地订阅记录
-            subscription = await self.subscription_repo.get_by_stripe_subscription_id(db, subscription_id)
-            if subscription:
-                # 更新订阅状态为active
-                await self.subscription_repo.update_status(db, subscription.id, 'active')
-                logger.info(f"订阅续费成功: subscription_id={subscription_id}")
-            else:
-                logger.warning(f"未找到本地订阅记录: stripe_subscription_id={subscription_id}")
-            
-            return {'status': 'success', 'subscription_id': subscription_id}
-        except KnowhereException:
-            raise
-        except Exception as e:
-            logger.error(f"处理invoice.payment_succeeded失败: {e}", exc_info=True)
-            raise StripeServiceException(
-                internal_message=f"处理invoice.payment_succeeded失败: {str(e)}",
-                original_exception=e
-            )
-    
+
     async def _handle_subscription_deleted(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理订阅删除事件"""
         subscription = event['data']['object']
@@ -718,25 +637,4 @@ class StripeService:
             "payment_intent_id": payment_intent_id,
             "refund_id": refund_id,
         }
-    
-    async def get_subscription(self, stripe_subscription_id: str) -> Dict[str, Any]:
-        """获取订阅信息"""
-        try:
-            subscription = stripe.Subscription.retrieve(stripe_subscription_id)
-            return subscription
-        except stripe.StripeError as e:
-            logger.error(f"获取订阅信息失败: {e}")
-            raise StripeServiceException(
-                internal_message=f"Failed to get Stripe subscription: {e}"
-            )
-    
-    async def cancel_subscription(self, stripe_subscription_id: str) -> Dict[str, Any]:
-        """取消订阅"""
-        try:
-            subscription = stripe.Subscription.delete(stripe_subscription_id)  # type: ignore[arg-type]
-            return subscription
-        except stripe.StripeError as e:
-            logger.error(f"取消订阅失败: {e}")
-            raise StripeServiceException(
-                internal_message=f"Failed to cancel Stripe subscription: {e}"
-            )
+

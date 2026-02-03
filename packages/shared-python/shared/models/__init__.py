@@ -6,7 +6,6 @@ from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.job import Job
 from shared.models.database.job_state_history import JobStateHistory
 from shared.models.database.oauth_provider import OAuthProvider
-from shared.models.database.subscription import Subscription
 from shared.models.database.usage_log import UsageLog
 
 # 导入所有模型以确保它们被注册
@@ -18,7 +17,6 @@ __all__ = [
     # "User",
     "APIKey", 
     "Job",
-    "Subscription",
     "CreditsTransaction",
     "UsageLog",
     "JobStateHistory",
