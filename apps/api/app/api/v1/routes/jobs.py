@@ -808,7 +808,7 @@ async def get_job_result(
 async def confirm_upload(
     job_id: str,
     request: Optional[ConfirmUploadRequest] = None,
-    current_user: User = Depends(get_current_user_dual_auth),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -819,7 +819,7 @@ async def confirm_upload(
 
         # 获取Job并检查权限
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, current_user)
+        check_job_permission(job, user_id)
 
         # 检查任务状态
         logger.info(f"Confirm upload - Job {job_id} current status: {job.status}")
@@ -855,7 +855,7 @@ async def confirm_upload(
             job_id=job_id,
             job_type=job.job_type,
             source_type="file",
-            user_id=str(current_user.id),
+            user_id=user_id,
         )
 
         return {"message": "文件上传确认成功，任务已开始处理"}

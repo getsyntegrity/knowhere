@@ -13,7 +13,6 @@ class UserBalance(Base):
 
     user_id: Mapped[str] = mapped_column(Text, primary_key=True)
     credits_balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    stripe_customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
