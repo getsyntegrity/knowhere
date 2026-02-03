@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, BigInteger, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, BigInteger, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,7 +25,7 @@ class PaymentRecord(Base):
     payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
     # 用户关联
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     payment_type: Mapped[str] = mapped_column(String(50), nullable=False)  # subscription/credits_package
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)  # 支付金额（分）
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default='CNY')

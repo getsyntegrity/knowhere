@@ -15,7 +15,7 @@ from shared.models.schemas.billing import (BuyCreditsRequest,
                                         PaymentIntentResponse,
                                         TransactionHistoryResponse,
                                         UsageStatsResponse)
-from app.services.billing.credits_service import CreditsService
+from shared.services.billing import CreditsService
 from app.services.billing.stripe_service import StripeService
 from fastapi import APIRouter, Depends, Request, Query, status
 from sqlalchemy import func, select
@@ -80,7 +80,7 @@ async def get_credits_balance(
     credits_service = CreditsService()
     
     try:
-        balance_micro_dollar = await credits_service.check_balance(db, user_id)
+        balance_micro_dollar = await credits_service.get_balance(db, user_id)
         
         # 默认限制
         limit_micro_dollar = MicroDollar.from_dollars(1000).amount

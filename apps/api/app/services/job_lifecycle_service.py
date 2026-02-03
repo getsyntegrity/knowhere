@@ -13,7 +13,7 @@ from app.repositories.knowledge_base_repository import create_update_kb
 from app.services.state_machine.manager import JobStateMachine
 from app.services.webhook_service import get_webhook_service
 from app.services.email.job_email_service import JobEmailService
-from app.services.billing.credits_service import CreditsService
+from shared.services.billing import CreditsService
 
 from shared.models.schemas.messages import JobResultMessage
 from shared.models.database.knowledge_base import KBPydantic
@@ -175,7 +175,7 @@ class JobLifecycleService:
                     if billing_status != "refunded":
                         credits_service = CreditsService()
                         await credits_service.refund_job_credits(
-                            db,
+                            session=db,
                             user_id=str(job.user_id),
                             amount=amount_to_refund,
                             job_id=job_id

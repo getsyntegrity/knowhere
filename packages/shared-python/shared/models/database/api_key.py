@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
 # from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,7 +19,7 @@ class APIKey(Base):
     __tablename__ = "api_keys"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # 加密存储
     key_mask: Mapped[str] = mapped_column(String(50), nullable=False)  # 掩码后的API Key（用于显示）
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # API Key 名称

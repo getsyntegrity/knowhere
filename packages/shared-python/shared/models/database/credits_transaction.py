@@ -19,7 +19,7 @@ class CreditsTransaction(Base):
     __tablename__ = "credits_transactions"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     credits_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)  # In micro-dollars: $1.00 = 1,000,000; positive=add, negative=deduct
     transaction_type: Mapped[str] = mapped_column(String(50), nullable=False)  # purchase, usage, bonus, refund
     stripe_payment_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)

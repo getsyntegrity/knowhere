@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, BigInteger, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text
 # from sqlalchemy.dialects.postgresql import UUID  # Removed UUID import if unused or use standard UUID for id
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,7 +31,7 @@ class Job(Base):
     job_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
     # 用户关联
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     
     # 任务基本信息
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)  # kb_management

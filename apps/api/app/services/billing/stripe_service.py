@@ -13,7 +13,7 @@ from app.repositories.credits_repository import CreditsRepository
 from app.repositories.subscription_repository import SubscriptionRepository
 from app.repositories.payment_record_repository import PaymentRecordRepository
 from app.services.billing.price_config_service import PriceConfigService
-from app.services.billing.credits_service import CreditsService
+from shared.services.billing import CreditsService
 from shared.models.database.subscription import Subscription
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user_balance import UserBalance
@@ -381,10 +381,10 @@ class StripeService:
                 
                 # 增加Credits
                 await self.credits_service.add_credits(
-                    db,
-                    user_id,
-                    credits_amount,
-                    f"购买Credits包: {product_description}",
+                    session=db,
+                    user_id=user_id,
+                    amount=credits_amount,
+                    reason=f"购买Credits包: {product_description}",
                     stripe_payment_id=session.get('payment_intent')
                 )
                 
@@ -486,10 +486,10 @@ class StripeService:
             
             # 增加Credits
             await self.credits_service.add_credits(
-                db,
-                user_id,
-                credits_amount,
-                f"buy credits - {credits_amount} Credits",
+                session=db,
+                user_id=user_id,
+                amount=credits_amount,
+                reason=f"buy credits - {credits_amount} Credits",
                 stripe_payment_id=payment_intent_id
             )
             
@@ -670,9 +670,9 @@ class StripeService:
         # 同步扣减用户余额（credits_refunded 为负数表示扣除）
         if credits_refunded is not None and credits_refunded < 0:
             await self.credits_service.add_credits(
-                db,
-                user_id,
-                credits_refunded,
+                session=db,
+                user_id=user_id,
+                amount=credits_refunded,
                 reason="Refund adjustment",
                 transaction_type="refund",
                 transaction_metadata={"refund_id": refund_id, "charge_id": charge_id}

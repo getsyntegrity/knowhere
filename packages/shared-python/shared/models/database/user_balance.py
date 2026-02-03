@@ -11,7 +11,7 @@ class UserBalance(Base):
     """
     __tablename__ = "user_balances"
 
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), primary_key=True)
     credits_balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

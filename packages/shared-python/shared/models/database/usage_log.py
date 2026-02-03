@@ -19,7 +19,7 @@ class UsageLog(Base):
     __tablename__ = "usage_logs"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     api_key_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     method: Mapped[str] = mapped_column(String(10), nullable=False)
