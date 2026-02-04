@@ -1,25 +1,30 @@
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 import hmac
 import hashlib
 import time
 
+from shared.core.database import get_db
 from shared.core.config import settings
-from fastapi import Header, Request
+from app.services.auth.api_key_service import APIKeyService
+from fastapi import Depends, Request, status, Header
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import AuthException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 async def get_current_user_id(
-    request: Request,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_timestamp: Optional[str] = Header(None, alias="X-Timestamp"),
     x_signature: Optional[str] = Header(None, alias="X-Signature"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    db: AsyncSession = Depends(get_db)
 ) -> str:
     """
     Get current user ID.
     Supports two authentication modes:
-    Internal communication signature verification (X-User-Id, X-Timestamp, X-Signature)
+    1. Internal communication signature verification (X-User-Id, X-Timestamp, X-Signature)
+    2. API Key verification (Authorization: Bearer sk_...)
     """
-    # Signature verification (for Dashboard/Internal)
+    # Mode 1: Signature verification (for Dashboard/Internal)
     if x_user_id and x_timestamp and x_signature:
         # 1. Validate Timestamp
         try:
@@ -52,7 +57,18 @@ async def get_current_user_id(
 
         return x_user_id
 
+    # Mode 2: API Key verification (for external clients)
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token.startswith("sk_"):
+            api_key_service = APIKeyService()
+            user_id = await api_key_service.validate_api_key(db, token)
+            if user_id:
+                return user_id
+            else:
+                raise AuthException(user_message="Invalid API Key")
+
     # Authentication failed
     raise AuthException(
-        user_message="Authentication required. Provide X-User-Id/Signature headers."
+        user_message="Authentication required. Provide X-User-Id/Signature headers or API Key."
     )
