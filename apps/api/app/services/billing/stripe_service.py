@@ -169,9 +169,12 @@ class StripeService:
             }
 
             session = stripe.checkout.Session.create(**session_params)
+
+            await db.commit()
+
             return str(session.url or "")
         except stripe.StripeError as e:
-            logger.error(f"创建Credits包支付会话失败: {e}")
+            logger.error(f"Stripe credits checkout session failed: {e}")
             raise StripeServiceException(
                 internal_message=f"Stripe credits checkout session failed: {e}"
             )
@@ -221,7 +224,7 @@ class StripeService:
             logger.error(f"Invalid signature: {e}")
             raise AuthException(
                 user_message="Invalid webhook signature",
-                reason="WEBHOOK_SIGNATURE_INVALID"
+                internal_message=f"Webhook signature verification failed: {e}"
             )
     
     async def _process_webhook_event(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
