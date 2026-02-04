@@ -580,8 +580,8 @@ async def _parse_async(job_id: str, user_id: str):
                 
                 # Re-raise with enhanced error message
                 raise InsufficientCreditsException(
-                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required.to_dollars()}).",
-                    required_credits=micro_dollar_required.to_dollars(),
+                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required.to_credit()}).",
+                    required_credits=micro_dollar_required.to_credit(),
                     internal_message=f"job_id={job_id}, user_id={job_user_id}, page_count={page_count}, required_credits={micro_dollar_required.amount}"
                 )
     

@@ -179,12 +179,3 @@ class MicroDollar:
             Float display credits with 4 decimal precision (e.g., 10.0005)
         """
         return round(self._amount / self.SCALE, 4)
-
-    def to_dollars(self) -> float:
-        """
-        Convert to float dollars (for display only, not calculations).
-        
-        Returns:
-            Float dollar amount
-        """
-        return self._amount / self.SCALE
