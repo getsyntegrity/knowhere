@@ -34,7 +34,7 @@ class ParseUsageResponse(BaseModel):
     """使用概览响应"""
     request_total: int
     mom_growth: float
-    credits_used: int
+    credits_used: float
     estimated_amount: Optional[float]
     success_rate: float
     avg_processing_time: float
@@ -249,7 +249,6 @@ async def get_transaction_history(
 @router.get("/price-configs", summary="获取价格配置列表")
 async def get_price_configs(
     product_type: Optional[str] = Query(None, description="产品类型: subscription 或 credits_package"),
-    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
     """获取价格配置列表（订阅或Credits包）"""
@@ -354,7 +353,6 @@ async def buy_credits_package(
     stripe_service = StripeService()
     
     try:
-        # 使用环境变量配置的前端URL
         frontend_url = settings.FRONTEND_URL
         success_url = f"{frontend_url}/billing?success=true&type=credits_package"
         cancel_url = f"{frontend_url}/billing?canceled=true"
