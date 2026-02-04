@@ -1,3 +1,4 @@
+from shared.core.exceptions.domain_exceptions import SystemSettingMissingException
 from typing import Any, Dict, Optional, Tuple
 import hmac
 import hashlib
@@ -42,8 +43,7 @@ async def get_current_user_id(
         secret = settings.INTERNAL_API_SECRET
         
         if not secret:
-            logger.warning("INTERNAL_API_SECRET is not set! Signature verification might fail or be insecure.")
-            # In production, this should probably raise an error
+            raise SystemSettingMissingException("INTERNAL_API_SECRET is not set!")
 
         if secret:
             expected_signature = hmac.new(
