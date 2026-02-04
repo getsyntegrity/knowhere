@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text
-# from sqlalchemy.dialects.postgresql import UUID  # Removed UUID import if unused or use standard UUID for id
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
@@ -19,7 +18,6 @@ if TYPE_CHECKING:
     from shared.models.database.job_result import JobResult
     from shared.models.database.job_state_audit_log import JobStateAuditLog
     from shared.models.database.job_state_history import JobStateHistory
-    # from shared.models.database.user import User
     from shared.models.database.webhook_log import WebhookLog
 
 
@@ -66,7 +64,6 @@ class Job(Base):
     # 关系
     # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
     # Relationships
-    # user: Mapped["User"] = relationship("User", back_populates="jobs", lazy="select")
     state_history: Mapped[list["JobStateHistory"]] = relationship("JobStateHistory", back_populates="job", cascade="all, delete-orphan")
     state_audit_logs: Mapped[list["JobStateAuditLog"]] = relationship("JobStateAuditLog", back_populates="job", cascade="all, delete-orphan")
     webhook_logs: Mapped[list["WebhookLog"]] = relationship("WebhookLog", back_populates="job", cascade="all, delete-orphan")

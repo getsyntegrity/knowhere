@@ -134,7 +134,13 @@ async def parse_usage_overview(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    返回使用概览
+    返回使用概览：
+    - 请求总数
+    - 同比上月增长（最近30天 vs 再前30天）
+    - 已用积分（从credits_transactions表统计，包含usage和refund类型）
+    - 预估金额（取第一个 credits_package 的单价：amount_cents/(100*credits_amount)）
+    - 成功率（jobs: done 占所有状态总数）
+    - 平均处理时间（jobs: updated_at - created_at，秒）
     """
     try:
         now = datetime.utcnow()
@@ -148,12 +154,18 @@ async def parse_usage_overview(
         )
         total_requests = request_row.scalar_one() or 0
 
-        # 已用积分
+        # 已用积分：从credits_transactions表统计usage和refund类型
+        # usage类型为负数（扣除），refund类型为正数（退还）
+        # 净消耗 = abs(sum(usage + refund)), then convert to display credits
         credits_row = await db.execute(
             select(func.coalesce(func.sum(CreditsTransaction.credits_amount), 0))
             .where(CreditsTransaction.user_id == user_id)
             .where(CreditsTransaction.transaction_type.in_(["usage", "refund"]))
         )
+        # Cast Decimal to int is safe here because:
+        # 1. Source column is BigInteger (whole numbers only)
+        # 2. Postgres returns Decimal to avoid overflow
+        # 3. Sum of integers has no fractional part, so int() is lossless
         total_micro_credits_used = int(abs(credits_row.scalar_one() or 0)) 
 
 
@@ -391,8 +403,6 @@ async def stripe_webhook(
         sig_header = request.headers.get('stripe-signature')
         
         result = await stripe_service.handle_webhook(db, payload, sig_header)
-        
-        # 移除发送邮件逻辑，因为依赖本地User表
         
         return result
         

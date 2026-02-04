@@ -15,22 +15,15 @@ from openapi import custom_openapi
 from shared.core.config import redis_pool_manager, settings
 from shared.core.database import engine, Base, safe_dispose_engine
 from shared.core.logging import setup_logging
-# from shared.models.database.user import User
-# from shared.models.schemas.user import UserCreate, UserUpdate, UserRead
 
 # 从本地 API 项目导入
 from loguru import logger
 from contextlib import asynccontextmanager
 from app.api.api_router import api_router
 from app.core.middleware import setup_cors, LoggingMiddleware
-# from app.core.users import get_user_manager
-# from app.core.jwt import auth_backend
 from app.core.image_cli import ImageCli
-# from app.middleware.api_key_auth_middleware import api_key_auth_middleware
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
-# from fastapi_users import FastAPIUsers
-# from uuid import UUID
 
 setup_logging()
 
@@ -107,11 +100,6 @@ def create_app() -> FastAPI:
 
     # 添加API Key认证中间件
     # app.add_middleware(api_key_auth_middleware)
-
-    # 创建 FastAPI Users 实例
-    # fastapi_users = FastAPIUsers[User, UUID](get_user_manager, [auth_backend])
-
-    # 注册 FastAPI Users 路由 - 这些路由已经在 auth.py 中注册了，不需要重复注册
 
     @app.get("/", tags=["Root"])
     async def read_root():

@@ -19,7 +19,6 @@ from httpx import AsyncClient, ASGITransport
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from main import app
-# from shared.models.database.user import User
 from shared.core.database import get_db
 from app.core.dependencies import get_current_user_id
 

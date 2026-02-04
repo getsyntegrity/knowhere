@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
-import jsonref
 
 def custom_openapi(app: FastAPI):
     if app.openapi_schema:

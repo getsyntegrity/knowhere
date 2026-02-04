@@ -11,7 +11,6 @@ from shared.models.database.webhook_log import WebhookLog
 
 # 确保所有模型都被正确注册
 __all__ = [
-    # "User",
     "APIKey", 
     "Job",
     "CreditsTransaction",

@@ -3,7 +3,6 @@
 """
 
 from app.core.dependencies import get_current_user_id
-# from shared.models.database.user import User
 from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDto,
                                       FileDirectoryListDto,
                                       FileDirectoryUpdateDto)

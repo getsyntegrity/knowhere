@@ -114,7 +114,6 @@ class StripeService:
                          # For new customers, we prefer having an email.
                          # If no email provided, we can't create a good customer record.
                          # But technically Stripe allows it.
-                         # Let's require email for now or use a placeholder? 
                          # Better: Require email for new billing profiles.
                          raise ValidationException(
                              user_message="Email required for first-time payment",

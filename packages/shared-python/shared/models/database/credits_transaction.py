@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from sqlalchemy import JSON, DateTime, ForeignKey, BigInteger, String, Text
-# from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base

@@ -14,7 +14,6 @@ from shared.core.database import get_db
 from app.core.dependencies import get_current_user_id
 from shared.repositories.webhook_secret_repository import WebhookSecretRepository
 from shared.core.exceptions.domain_exceptions import NotFoundException
-# from shared.models.database.user import User
 
 
 router = APIRouter(tags=["Webhook Secrets"])
