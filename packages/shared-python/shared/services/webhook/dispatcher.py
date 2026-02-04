@@ -386,7 +386,7 @@ class WebhookDispatcher:
             
             # Update usage timestamp
             if secret_obj:
-                secret_obj.last_used_at = datetime.now(timezone.utc)
+                secret_obj.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.add(secret_obj)
                 # We don't commit here to avoid side effects if the caller aborts, 
                 # but the session will eventually be committed by the caller.
@@ -425,21 +425,21 @@ class WebhookDispatcher:
         """Mark event as delivered."""
         event.status = WebhookEventStatus.DELIVERED
         event.attempts += 1
-        event.updated_at = datetime.now(timezone.utc)
+        event.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         logger.info(f"WebhookEvent delivered: {event.id}")
     
     async def _mark_failed(self, db: AsyncSession, event: WebhookEvent) -> None:
         """Mark event as failed (max retries exceeded)."""
         event.status = WebhookEventStatus.FAILED
-        event.updated_at = datetime.now(timezone.utc)
+        event.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         logger.warning(f"WebhookEvent failed permanently: {event.id}")
     
     async def _increment_attempts(self, db: AsyncSession, event: WebhookEvent) -> None:
         """Increment attempt count for failed delivery (Celery will retry)."""
         event.attempts += 1
-        event.updated_at = datetime.now(timezone.utc)
+        event.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         logger.info(f"WebhookEvent attempt incremented: {event.id}, attempts={event.attempts}")
 
