@@ -72,7 +72,7 @@ async def buy_credits(
         )
 
 
-@router.get("/credits", summary="获取Credits余额")
+@router.get("/credits", summary="获取Credits余额", response_model=CreditsBalanceResponse)
 async def get_credits_balance(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
