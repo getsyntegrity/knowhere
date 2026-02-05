@@ -1,74 +1,129 @@
-from shared.core.exceptions.domain_exceptions import SystemSettingMissingException
-from typing import Any, Dict, Optional, Tuple
-import hmac
-import hashlib
-import time
+from datetime import timedelta
+from typing import Any
 
-from shared.core.database import get_db
-from shared.core.config import settings
+import jwt
+from jwt import PyJWKClient
+
 from app.services.auth.api_key_service import APIKeyService
-from fastapi import Depends, Request, status, Header
+from fastapi import Depends, Header
 from loguru import logger
-from shared.core.exceptions.domain_exceptions import AuthException
+from shared.core.config import settings
+from shared.core.database import get_db
+from shared.core.exceptions.domain_exceptions import (
+    AuthException,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+
+# Standard JWKS endpoint path (fixed, following OpenID Connect convention)
+JWKS_ENDPOINT_PATH = "/api/auth/jwks"
+
+# Cache settings: 1 week in seconds
+JWKS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 604800 seconds
+
+# Cached PyJWKClient instance
+_jwks_client: PyJWKClient | None = None
+
+
+def _get_jwks_client() -> PyJWKClient:
+    """
+    Get or create a cached PyJWKClient instance.
+    
+    The JWKS endpoint is constructed from INTERNAL_DASHBOARD_ENDPOINT + fixed path.
+    PyJWKClient caches the JWKS response for 1 week.
+    """
+    global _jwks_client
+    
+    if _jwks_client is None:
+        jwks_url = f"{settings.INTERNAL_DASHBOARD_ENDPOINT}{JWKS_ENDPOINT_PATH}"
+        _jwks_client = PyJWKClient(
+            jwks_url,
+            cache_jwk_set=True,
+            lifespan=JWKS_CACHE_TTL_SECONDS,
+            timeout=30
+        )
+        logger.info(f"Initialized JWKS client with endpoint: {jwks_url}")
+    
+    return _jwks_client
+
+
+def _get_verification_key(token: str) -> Any:
+    """
+    Get the verification key for the JWT from the JWKS endpoint.
+    
+    Uses PyJWKClient's built-in cache with 1 week TTL.
+    """
+    try:
+        jwks_client = _get_jwks_client()
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        return signing_key.key
+    except jwt.PyJWKClientError as e:
+        logger.error(f"Failed to fetch JWKS: {e}")
+        raise AuthException(internal_message=f"Failed to fetch verification key from JWKS endpoint: {e}")
+    except jwt.PyJWKSetError as e:
+        logger.error(f"Invalid JWKS format: {e}")
+        raise AuthException(internal_message=f"Invalid JWKS format: {e}")
+
+
+def decode_jwt_token(token: str) -> str:
+    """
+    Decode and validate JWT token using JWKS.
+    
+    Expected JWT claims:
+    - id/sub: User ID
+    - exp: Expiration
+    """
+    try:
+        key = _get_verification_key(token)
+
+        # Decode and Verify
+        payload = jwt.decode(
+            token,
+            key,
+            algorithms=["HS256", "RS256", "EdDSA"],
+            leeway=timedelta(seconds=30),
+            options={"verify_aud": False}
+        )
+        
+        # Extract user_id from 'id' claim
+        user_id = payload.get("id")
+        
+        if not user_id:
+            raise AuthException(user_message="Token missing 'id' claim")
+        
+        return user_id
+        
+    except jwt.ExpiredSignatureError:
+        raise AuthException(user_message="Token has expired")
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"Invalid JWT token: {e}")
+        raise AuthException(user_message="Invalid token")
+
+
 async def get_current_user_id(
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    x_timestamp: Optional[str] = Header(None, alias="X-Timestamp"),
-    x_signature: Optional[str] = Header(None, alias="X-Signature"),
-    authorization: Optional[str] = Header(None, alias="Authorization"),
-    db: AsyncSession = Depends(get_db)
+    authorization: str = Header(..., description="Bearer <token> OR internal signature auth"),
+    db: AsyncSession = Depends(get_db),
 ) -> str:
     """
-    Get current user ID.
-    Supports two authentication modes:
-    1. Internal communication signature verification (X-User-Id, X-Timestamp, X-Signature)
-    2. API Key verification (Authorization: Bearer sk_...)
     """
-    # Mode 1: Signature verification (for Dashboard/Internal)
-    if x_user_id and x_timestamp and x_signature:
-        # 1. Validate Timestamp
-        try:
-            ts = int(x_timestamp)
-            now = int(time.time() * 1000)
-            # Allow 5 minutes time difference
-            if abs(now - ts) > 5 * 60 * 1000:
-                raise AuthException(user_message="Request timestamp expired")
-        except ValueError:
-            raise AuthException(user_message="Invalid timestamp format")
-
-        # 2. Verify Signature
-        # Payload format: {user_id}:{timestamp}
-        payload = f"{x_user_id}:{x_timestamp}"
-        secret = settings.INTERNAL_API_SECRET
-        
-        if not secret:
-            raise SystemSettingMissingException("INTERNAL_API_SECRET is not set!")
-
-        if secret:
-            expected_signature = hmac.new(
-                secret.encode(),
-                payload.encode(),
-                hashlib.sha256
-            ).hexdigest()
-
-            if not hmac.compare_digest(expected_signature, x_signature):
-                raise AuthException(user_message="Invalid request signature")
-
-        return x_user_id
-
-    # Mode 2: API Key verification (for external clients)
-    if authorization:
-        scheme, _, token = authorization.partition(" ")
-        if scheme.lower() == "bearer" and token.startswith("sk_"):
-            api_key_service = APIKeyService()
-            user_id = await api_key_service.validate_api_key(db, token)
-            if user_id:
-                return user_id
-            else:
-                raise AuthException(user_message="Invalid API Key")
-
-    # Authentication failed
-    raise AuthException(
-        user_message="Authentication required. Provide X-User-Id/Signature headers or API Key."
-    )
+    if not authorization:
+        raise AuthException(
+            user_message="Authentication required. Provide Authorization header."
+        )
+    
+    # Parse Authorization header
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise AuthException(user_message="Invalid Authorization header format")
+    
+    # Mode 1: API Key verification (for external clients)
+    if token.startswith("sk_"):
+        api_key_service = APIKeyService()
+        user_id = await api_key_service.validate_api_key(db, token)
+        if user_id:
+            return user_id
+        else:
+            raise AuthException(user_message="Invalid API Key")
+    
+    # Mode 2: JWT verification (for Dashboard/Internal)
+    return decode_jwt_token(token)

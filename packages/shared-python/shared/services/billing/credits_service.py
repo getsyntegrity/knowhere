@@ -34,6 +34,22 @@ class CreditsService:
     3. Update user_balance (materialized view)
     4. All in ONE database transaction
     
+    User Initialization:
+    --------------------
+    The `ensure_user_initialized()` method is called in TWO contexts:
+    
+    1. **Credit modification operations** (add_credits, deduct_credits):
+       Called as a safety check before modifying credits. This ensures
+       the user balance exists before any write operation. And we can
+       not ensure the /billing/credits endpoint is called before any
+       credit modification operation.
+    
+    2. **Read-only endpoints** (e.g., GET /billing/credits):
+       MUST be called explicitly by the API route. This is necessary because
+       `get_balance()` is intentionally kept fast (no initialization check)
+       for performance. Without this call in the route, first-time users
+       would see 0 balance instead of their initial credits.
+    
     Usage:
     ------
     Both API and Worker modules can use this:
@@ -177,6 +193,54 @@ class CreditsService:
         """
         return await self.repository.get_balance(session, user_id)
     
+    async def _check_and_expire_credits(
+        self,
+        session: AsyncSession,
+        user_id: str
+    ) -> int:
+        """
+        Check and expire old credits before balance operations.
+        This is called during credit modifications, not on reads.
+        
+        Logic:
+        - Get current balance from materialized view
+        - Get total credits from payments within valid period
+        - If balance exceeds valid credits, expire the difference
+        
+        Args:
+            session: Database session
+            user_id: User ID
+            
+        Returns:
+            Amount expired (0 if nothing expired)
+        """
+        valid_days = getattr(settings, "CREDITS_VALID_DAYS", 365)
+        current_balance = await self.repository.get_balance(session, user_id)
+        recent_credits = await self.repository.get_recent_payment_credits(
+            session, user_id, valid_days
+        )
+
+        if recent_credits < current_balance:
+            expired_amount = current_balance - recent_credits
+            
+            # Use ledger pattern to record expiration
+            await self._apply_transaction_and_update_balance(
+                session=session,
+                user_id=user_id,
+                amount=-expired_amount,
+                transaction_type="expiration",
+                description=f"Credits expired (>{valid_days} days old)"
+            )
+            
+            logger.info(
+                f"Credits expired: user_id={user_id}, amount={expired_amount}, "
+                f"remaining={recent_credits}"
+            )
+            
+            return expired_amount
+        
+        return 0
+    
     async def add_credits(
         self,
         session: AsyncSession,
@@ -203,6 +267,9 @@ class CreditsService:
             New balance after addition
         """
         await self.ensure_user_initialized(session, user_id)
+        
+        # Check and expire old credits before adding new ones
+        await self._check_and_expire_credits(session, user_id)
         
         new_balance = await self._apply_transaction_and_update_balance(
             session=session,
@@ -247,7 +314,11 @@ class CreditsService:
             InsufficientCreditsException: If insufficient credits
         """
         await self.ensure_user_initialized(session, user_id)
-        # Check current balance (read from materialized view)
+        
+        # Check and expire old credits before deducting
+        await self._check_and_expire_credits(session, user_id)
+        
+        # Check current balance (read from materialized view, after expiration)
         current_balance = await self.get_balance(session, user_id)
         if current_balance < amount:
             raise InsufficientCreditsException(
@@ -328,49 +399,6 @@ class CreditsService:
         logger.info(f"Job refunded: job_id={job_id}, amount={amount}, new_balance={new_balance}")
         return new_balance
     
-    async def expire_old_credits(
-        self,
-        session: AsyncSession,
-        user_id: str,
-        valid_days: int = 90
-    ) -> int:
-        """
-        Expire credits older than valid_days.
-        Should be called by scheduled job, not on every balance check.
-        
-        Args:
-            session: Database session
-            user_id: User ID
-            valid_days: Credits validity period in days
-            
-        Returns:
-            Amount expired (0 if nothing expired)
-        """
-        current_balance = await self.get_balance(session, user_id)
-        recent_credits = await self.repository.get_recent_payment_credits(
-            session, user_id, valid_days
-        )
-        
-        if recent_credits < current_balance:
-            expired_amount = current_balance - recent_credits
-            
-            # Use ledger pattern to record expiration
-            await self._apply_transaction_and_update_balance(
-                session=session,
-                user_id=user_id,
-                amount=-expired_amount,  # Negative
-                transaction_type="expiration",
-                description=f"Credits expired (>{valid_days} days old)"
-            )
-            
-            logger.info(
-                f"Credits expired: user_id={user_id}, amount={expired_amount}, "
-                f"remaining={recent_credits}"
-            )
-            
-            return expired_amount
-        
-        return 0
     
     async def get_usage_stats(
         self,

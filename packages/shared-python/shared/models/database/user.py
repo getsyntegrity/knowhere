@@ -4,6 +4,8 @@ Note: User data is actually managed by the Dashboard. This model is only used fo
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,6 +17,8 @@ class User(Base):
     __tablename__ = "user"
     
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    email: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     def __repr__(self):
-        return f"<User(id={self.id})>"
+        return f"<User(id={self.id}, email={self.email})>"
+

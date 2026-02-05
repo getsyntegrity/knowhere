@@ -25,7 +25,6 @@ class BuyCreditsPackageRequest(BaseModel):
     quantity: int = Field(default=1, gt=0, description="购买数量")
 
 
-
 class CreditsBalanceResponse(BaseModel):
     """Credits余额响应"""
     credits_balance: float

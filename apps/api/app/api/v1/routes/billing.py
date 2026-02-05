@@ -81,6 +81,10 @@ async def get_credits_balance(
     credits_service = CreditsService()
     
     try:
+        # Ensure user is initialized
+        await credits_service.ensure_user_initialized(db, user_id)
+        await db.commit()
+        
         balance_micro_dollar = await credits_service.get_balance(db, user_id)
         
         # 默认限制
@@ -362,9 +366,18 @@ async def buy_credits_package(
     db: AsyncSession = Depends(get_db)
 ):
     """通过价格ID购买Credits包"""
+    from sqlalchemy import select
+    from shared.models.database.user import User
+    
     stripe_service = StripeService()
     
     try:
+        # Query user email from database
+        result = await db.execute(
+            select(User.email).where(User.id == user_id)
+        )
+        user_email = result.scalar_one_or_none()
+        
         frontend_url = settings.FRONTEND_URL
         success_url = f"{frontend_url}/billing?success=true&type=credits_package"
         cancel_url = f"{frontend_url}/billing?canceled=true"
@@ -376,7 +389,7 @@ async def buy_credits_package(
             success_url=success_url,
             cancel_url=cancel_url,
             quantity=request.quantity,
-            email=request.email
+            email=user_email,
         )
         
         return CheckoutSessionResponse(

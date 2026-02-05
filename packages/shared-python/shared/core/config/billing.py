@@ -27,8 +27,8 @@ class BillingConfig(BaseSettings):
         description="Micro dollars per page ($0.0015 = 1500 micros)"
     )
     LOW_BALANCE_THRESHOLD: int = Field(default=10_000_000, description="low micro dollars threshold, 10 credits")
-    CREDITS_VALID_DAYS: int = Field(default=90, description="Credits有效期（天），过期点数失效")
-    
+    CREDITS_VALID_DAYS: int = Field(default=365, description="Credits有效期（天），过期点数失效")
+
     # 订阅计划价格（美分）
     PLUS_PLAN_PRICE: int = Field(default=999, description="Plus计划价格（美分）")
     PRO_PLAN_PRICE: int = Field(default=2999, description="Pro计划价格（美分）")
