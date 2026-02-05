@@ -5,7 +5,6 @@
 fastapi==0.115.14
 uvicorn==0.34.3
 starlette==0.46.2
-openapi==2.0.0
 
 # 数据库相关
 sqlalchemy==2.0.42

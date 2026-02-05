@@ -9,7 +9,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import custom OpenAPI function
-from openapi import custom_openapi
+from custom_openapi import custom_openapi
 
 # 从共享包导入
 from shared.core.config import redis_pool_manager, settings
