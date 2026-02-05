@@ -47,7 +47,7 @@ from shared.services.redis.chunks_redis_service import ChunksRedisService
 from shared.services.storage.zip_result_service import ZipResultService
 from app.services.workload.page_estimator import PageEstimator
 from app.services.document_parser.parse_service import checkerboard_inject_parse
-from app.services.billing import deduct_credits
+from shared.services.billing import CreditsService
 
 # Get Celery application
 celery_app = get_celery_app()
@@ -548,9 +548,27 @@ async def _parse_async(job_id: str, user_id: str):
             # Calculate billing using BillingCalculator
             billing_calc = BillingCalculator()
             micro_dollar_required = billing_calc.calculate_page_cost(page_count)
-            billing_success = await deduct_credits(db, job_user_id, micro_dollar_required, billing_calc.format_description(page_count, filename))
             
-            if not billing_success:
+            # Deduct credits using shared service
+            try:
+                credits_service = CreditsService()
+                new_balance = await credits_service.deduct_credits(
+                    session=db,
+                    user_id=job_user_id,
+                    amount=micro_dollar_required.amount,
+                    reason=billing_calc.format_description(page_count, filename)
+                )
+                
+                # Update job billing info
+                if job:
+                    job.page_count = page_count
+                    job.credits_charged = micro_dollar_required.amount
+                    job.billing_status = "charged"
+                
+                await db.commit()
+                logger.info(f"Billing successful: job_id={job_id}, credits_charged={micro_dollar_required.amount}, new_balance={new_balance}")
+                
+            except InsufficientCreditsException as e:
                 logger.error(f"Billing failed: job_id={job_id}, user_id={job_user_id}")
                 if local_temp_path and os.path.exists(local_temp_path):
                     os.unlink(local_temp_path)
@@ -559,21 +577,13 @@ async def _parse_async(job_id: str, user_id: str):
                 if job:
                     job.billing_status = "billing_failed"
                     await db.commit()
-                    
+                
+                # Re-raise with enhanced error message
                 raise InsufficientCreditsException(
-                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required}).",
-                    required_credits=micro_dollar_required.amount,
-                    internal_message="Insufficient credits"
+                    user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required.to_credit()}).",
+                    required_credits=micro_dollar_required.to_credit(),
+                    internal_message=f"job_id={job_id}, user_id={job_user_id}, page_count={page_count}, required_credits={micro_dollar_required.amount}"
                 )
-            
-            # Update job billing info
-            if job:
-                job.page_count = page_count
-                job.credits_charged = micro_dollar_required.amount
-                job.billing_status = "charged"
-            
-            await db.commit()
-            logger.info(f"Billing successful: job_id={job_id}, credits_charged={micro_dollar_required.amount}")
     
     # Store in Redis
     await metadata_service.update_metadata(job_id, {

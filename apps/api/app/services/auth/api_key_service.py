@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import List, Optional
 
 from shared.models.database.api_key import APIKey
-from shared.models.database.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
@@ -71,12 +70,12 @@ class APIKeyService:
         
         return api_key
     
-    async def validate_api_key(self, session: AsyncSession, api_key: str) -> Optional[User]:
-        """验证API Key"""
+    async def validate_api_key(self, session: AsyncSession, api_key: str) -> Optional[str]:
+        """验证API Key，返回user_id"""
         # 1. 从缓存获取（如果实现了缓存）
         user_id = await self._get_cached_user_id(api_key)
         if user_id:
-            return await self._get_user_by_id(session, user_id)
+            return user_id
         
         # 2. 从数据库获取
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
@@ -91,7 +90,7 @@ class APIKeyService:
         # 4. 缓存结果
         await self._cache_api_key(api_key, str(api_key_record.user_id))
         
-        return await self._get_user_by_id(session, str(api_key_record.user_id))
+        return str(api_key_record.user_id)
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
         """撤销API Key（直接删除）"""
@@ -155,6 +154,7 @@ class APIKeyService:
         
         # 3. 更新数据库
         from sqlalchemy import update
+        from shared.models.database.api_key import APIKey
         await session.execute(
             update(APIKey)
             .where(APIKey.id == api_key_id)
@@ -179,14 +179,6 @@ class APIKeyService:
         # 如果启用了所有模块或包含指定模块
         enabled_modules = api_key_record.enabled_modules or []
         return "all" in enabled_modules or module in enabled_modules
-    
-    async def _get_user_by_id(self, session: AsyncSession, user_id: str) -> Optional[User]:
-        """根据ID获取用户"""
-        from sqlalchemy import select
-        result = await session.execute(
-            select(User).where(User.id == user_id)
-        )
-        return result.scalar_one_or_none()
     
     async def _cache_api_key(self, api_key: str, user_id: str):
         """缓存API Key到Redis"""

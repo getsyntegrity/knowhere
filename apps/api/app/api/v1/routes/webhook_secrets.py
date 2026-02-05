@@ -10,10 +10,10 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_db
+from shared.core.database import get_db
+from app.core.dependencies import get_current_user_id
 from shared.repositories.webhook_secret_repository import WebhookSecretRepository
 from shared.core.exceptions.domain_exceptions import NotFoundException
-from shared.models.database.user import User
 
 
 router = APIRouter(tags=["Webhook Secrets"])
@@ -96,7 +96,7 @@ def to_full_response(secret) -> SecretFullResponse:
 
 @router.get("", response_model=SecretListResponse, summary="List Webhook Secrets")
 async def list_secrets(
-    current_user: User = Depends(get_current_user),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -106,7 +106,7 @@ async def list_secrets(
     and see the full value (one-time display).
     """
     repo = WebhookSecretRepository()
-    secrets = await repo.list_secrets(db, str(current_user.id))
+    secrets = await repo.list_secrets(db, user_id)
     
     return SecretListResponse(
         secrets=[to_response(s) for s in secrets],
@@ -117,7 +117,7 @@ async def list_secrets(
 @router.post("", response_model=SecretResponse | SecretFullResponse, summary="Create Webhook Secret")
 async def create_secret(
     request: SecretCreateRequest,
-    current_user: User = Depends(get_current_user),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -129,14 +129,14 @@ async def create_secret(
     repo = WebhookSecretRepository()
     
     # Check if secret already exists for this endpoint
-    existing = await repo.get_active_secret(db, str(current_user.id), request.endpoint)
+    existing = await repo.get_active_secret(db, user_id, request.endpoint)
     if existing:
         # Return existing secret (masked, because we can't decrypt for display)
         # Type verification: This returns SecretResponse, which is valid for the union return type
         return to_response(existing)
     
     # Create new secret
-    secret = await repo.create_secret(db, str(current_user.id), request.endpoint)
+    secret = await repo.create_secret(db, user_id, request.endpoint)
     
     # Return with raw secret visible (one-time)
     return to_full_response(secret)
@@ -145,7 +145,7 @@ async def create_secret(
 @router.delete("/{secret_id}", summary="Revoke Webhook Secret")
 async def revoke_secret(
     secret_id: str,
-    current_user: User = Depends(get_current_user),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -155,7 +155,7 @@ async def revoke_secret(
     """
     repo = WebhookSecretRepository()
     
-    success = await repo.revoke_secret(db, secret_id, str(current_user.id))
+    success = await repo.revoke_secret(db, secret_id, user_id)
     
     if not success:
         raise NotFoundException(

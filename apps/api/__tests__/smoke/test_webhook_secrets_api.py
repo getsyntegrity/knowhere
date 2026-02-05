@@ -10,8 +10,36 @@ from shared.models.database.webhook_secret import WebhookSecret, WebhookSecretSt
 
 
 from main import app
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user_id
+from shared.core.database import get_db
 from httpx import AsyncClient, ASGITransport
+
+
+TEST_USER_ID = "test_user_123"
+
+
+@pytest.fixture
+async def authenticated_client(mock_db):
+    """
+    Authenticated client using dependency override (no local user architecture).
+    """
+    # Override auth dependency to return test user ID
+    async def mock_get_current_user_id():
+        return TEST_USER_ID
+    
+    # Override database dependency
+    async def mock_get_db():
+        yield mock_db
+    
+    app.dependency_overrides[get_current_user_id] = mock_get_current_user_id
+    app.dependency_overrides[get_db] = mock_get_db
+    
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+    
+    # Clear overrides after test
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -19,30 +47,14 @@ def mock_secret():
     """Create a mock WebhookSecret object."""
     secret = MagicMock(spec=WebhookSecret)
     secret.id = f"ws_{uuid4().hex[:24]}"
-    secret.user_id = str(uuid4())
+    secret.user_id = TEST_USER_ID  # Use constant instead of random UUID
     secret.endpoint = "https://example.com/webhook"
     secret.secret_encrypted = "encrypted_value"
     secret.status = WebhookSecretStatus.ACTIVE
     secret.created_at = datetime.utcnow()
-    secret._raw_secret = "whsec_test123" # Mock decrypted value
+    secret._raw_secret = "whsec_test123"  # Mock decrypted value
     return secret
 
-
-@pytest.fixture
-async def authenticated_client(mock_user, mock_db):
-    """
-    Local authenticated client that overrides get_current_user.
-    """
-    async def mock_get_current_user():
-        return mock_user
-        
-    app.dependency_overrides[get_current_user] = mock_get_current_user
-    
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-    
-    app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio

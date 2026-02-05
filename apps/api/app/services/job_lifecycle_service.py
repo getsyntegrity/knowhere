@@ -12,8 +12,7 @@ from app.repositories.job_result_repository import JobResultRepository
 from app.repositories.knowledge_base_repository import create_update_kb
 from app.services.state_machine.manager import JobStateMachine
 from app.services.webhook_service import get_webhook_service
-from app.services.email.job_email_service import JobEmailService
-from app.services.billing.credits_service import CreditsService
+from shared.services.billing import CreditsService
 
 from shared.models.schemas.messages import JobResultMessage
 from shared.models.database.knowledge_base import KBPydantic
@@ -120,9 +119,6 @@ class JobLifecycleService:
                 except Exception as e:
                     logger.error(f"Failed to publish completion webhook (Event persisted): {e}")
 
-            # 7c. Send Email (Best Effort)
-            await self._send_completion_email(db, job_id, job_result)
-
             return {
                 "status": "success",
                 "job_id": job_id,
@@ -178,7 +174,7 @@ class JobLifecycleService:
                     if billing_status != "refunded":
                         credits_service = CreditsService()
                         await credits_service.refund_job_credits(
-                            db,
+                            session=db,
                             user_id=str(job.user_id),
                             amount=amount_to_refund,
                             job_id=job_id
@@ -213,65 +209,9 @@ class JobLifecycleService:
                 except Exception as e:
                     logger.error(f"Failed to publish failure webhook: {e}")
 
-            await self._send_failure_email(db, job_id, error_message)
-
             return True
 
         except Exception as e:
             logger.error(f"Failed to finalize job failure {job_id}: {e}")
             await db.rollback()
             raise e
-
-    async def _send_completion_email(self, db: AsyncSession, job_id: str, job_result: Any):
-        """Send job completion email (Best effort)"""
-        try:
-            from shared.models.database.user import User
-            from sqlalchemy import select
-            
-            # Re-fetch or reuse job. db is now clean (new transaction or same session after commit).
-            # Accessing properties should be safe.
-            job = await self.job_repo.get_job_by_id(db, job_id)
-            if not job: 
-                return
-
-            result = await db.execute(select(User).where(User.id == job.user_id))
-            user = result.scalar_one_or_none()
-            
-            if user and user.email:
-                email_service = JobEmailService()
-                await email_service.send_job_completion_email(
-                    db=db,
-                    job_id=job_id,
-                    job_result=job_result,
-                    user_email=user.email,
-                    user_name=getattr(user, 'full_name', None) or user.email,
-                    job_type=job.job_type or "kb_management"
-                )
-        except Exception as e:
-            logger.error(f"Failed to send job completion email: {e}")
-        
-    async def _send_failure_email(self, db: AsyncSession, job_id: str, error_message: str):
-        """Send job failure email (Best effort)"""
-        try:
-            from shared.models.database.user import User
-            from sqlalchemy import select
-            
-            job = await self.job_repo.get_job_by_id(db, job_id)
-            if not job:
-                return
-
-            result = await db.execute(select(User).where(User.id == job.user_id))
-            user = result.scalar_one_or_none()
-            
-            if user and user.email:
-                email_service = JobEmailService()
-                await email_service.send_job_failure_email(
-                    db=db,
-                    job_id=job_id,
-                    user_email=user.email,
-                    error_message=error_message,
-                    user_name=getattr(user, 'full_name', None) or user.email,
-                    job_type=job.job_type or "kb_management"
-                )
-        except Exception as e:
-            logger.error(f"Failed to send job failure email: {e}")

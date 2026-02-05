@@ -6,7 +6,10 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, relationship
 
 from shared.core.database import Base
-from shared.models.database.user import utc_now
+from datetime import datetime
+
+def utc_now():
+    return datetime.utcnow()
 
 
 class ContentBase(Base):

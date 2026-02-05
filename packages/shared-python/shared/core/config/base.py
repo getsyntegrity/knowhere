@@ -26,6 +26,7 @@ class BaseConfig(BaseSettings):
     ALGORITHM: str = Field(default="HS256", description="JWT算法")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=10080, description="访问令牌过期时间（分钟）")
     WEBHOOK_MASTER_KEY: str = Field(default="", description="Webhook encryption master key")
+    INTERNAL_DASHBOARD_ENDPOINT: str = Field(default="http://localhost:3000", description="Internal Dashboard endpoint")
     
     # 路径配置
     TMP_PATH: str = Field(..., description="临时文件路径")

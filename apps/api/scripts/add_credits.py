@@ -13,9 +13,7 @@ repo_root = os.path.dirname(os.path.dirname(api_root))
 shared_python_path = os.path.join(repo_root, "packages", "shared-python")
 sys.path.append(shared_python_path)
 
-from shared.core.database import get_db_context
-from app.services.billing.credits_service import CreditsService
-from app.repositories.user_repository import UserRepository
+from shared.services.billing import CreditsService
 from shared.core.billing import MicroDollar
 
 async def main():
