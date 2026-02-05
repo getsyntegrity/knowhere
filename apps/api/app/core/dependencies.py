@@ -101,7 +101,7 @@ def decode_jwt_token(token: str) -> str:
 
 
 async def get_current_user_id(
-    authorization: str = Header(..., description="Bearer <token> OR internal signature auth"),
+    authorization: str | None = Header(default=None, description="Bearer <token> OR internal signature auth"),
     db: AsyncSession = Depends(get_db),
 ) -> str:
     """
