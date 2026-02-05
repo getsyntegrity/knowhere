@@ -43,6 +43,7 @@ COPY --from=builder /app/venv /app/venv
 COPY packages/shared-python /app/packages/shared-python
 
 # 复制API服务代码（只复制必要的文件，排除venv、logs等）
+COPY apps/api/custom_openapi.py /app/
 COPY apps/api/main.py /app/
 COPY apps/api/alembic.ini /app/
 COPY apps/api/requirements.txt /app/
