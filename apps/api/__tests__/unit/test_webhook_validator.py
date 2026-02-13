@@ -1,52 +1,50 @@
 """
-Tests for webhook URL validator with comprehensive SSRF protection.
+Tests for webhook URL validator with SSRF protection (adapted from safehttpx).
 
-Covers: scheme enforcement, IP classification, cloud metadata blocking,
-IP obfuscation detection, DNS resolution, Google DNS fallback,
-async validation with IP pinning, and domain whitelist.
+Covers: scheme enforcement, IP classification,
+async validation with IP pinning, and DNS failure.
 """
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 from shared.services.webhook.validator import (
-    validate_webhook_url,
     validate_webhook_url_async,
-    detect_ip_obfuscation,
-    classify_ip,
-    is_cloud_metadata_ip,
-    resolve_all_ips,
+    is_public_ip,
+    async_validate_url,
     WebhookValidationResult,
 )
 
 
 # ── Scheme enforcement ──────────────────────────────────────────────
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("url,expected_valid,error_fragment", [
     ("https://example.com/webhook", True, None),
     ("http://example.com/webhook", False, "Must be HTTPS"),
     ("ftp://example.com", False, "Invalid scheme"),
     ("https://", False, "URL must have a hostname"),
 ])
-def test_validation_scheme_basic(url, expected_valid, error_fragment):
-    with patch("shared.services.webhook.validator.app_config") as mock_config:
+async def test_validation_scheme_basic(url, expected_valid, error_fragment):
+    with patch("shared.services.webhook.validator.app_config") as mock_config, \
+         patch("shared.services.webhook.validator.async_validate_url", new_callable=AsyncMock, return_value="93.184.216.34"):
         mock_config.ENVIRONMENT = "production"
-        is_valid, error = validate_webhook_url(url)
-        assert is_valid == expected_valid
+        result = await validate_webhook_url_async(url)
+        assert result.is_valid == expected_valid
         if error_fragment:
-            assert error and error_fragment in error
+            assert result.error_message and error_fragment in result.error_message
 
 
-@patch("shared.services.webhook.validator.app_config")
-def test_validation_dev_mode(mock_config):
-    mock_config.ENVIRONMENT = "development"
-    with patch("shared.services.webhook.validator.resolve_all_ips", return_value=["93.184.216.34"]):
-        is_valid, error = validate_webhook_url("http://example.com/webhook")
-    assert is_valid is True
-    assert error is None
+@pytest.mark.asyncio
+async def test_validation_dev_mode():
+    with patch("shared.services.webhook.validator.app_config") as mock_config, \
+         patch("shared.services.webhook.validator.async_validate_url", new_callable=AsyncMock, return_value="93.184.216.34"):
+        mock_config.ENVIRONMENT = "development"
+        result = await validate_webhook_url_async("http://example.com/webhook")
+    assert result.is_valid is True
 
 
 # ── IP classification ────────────────────────────────────────────────
 
-@pytest.mark.parametrize("ip_str,expected_safe", [
+@pytest.mark.parametrize("ip_str,expected_public", [
     ("93.184.216.34", True),       # Public IPv4
     ("8.8.8.8", True),             # Google DNS
     ("127.0.0.1", False),          # Loopback
@@ -58,67 +56,31 @@ def test_validation_dev_mode(mock_config):
     ("::1", False),                # IPv6 loopback
     ("fe80::1", False),            # IPv6 link-local
     ("fd00::1", False),            # IPv6 ULA (private)
-    ("100.64.0.1", False),          # Carrier-Grade NAT (not caught by ipaddress)
-    ("100.127.255.254", False),     # CGNAT upper bound
+    ("100.64.0.1", False),         # Carrier-Grade NAT
+    ("100.127.255.254", False),    # CGNAT upper bound
 ])
-def test_classify_ip(ip_str, expected_safe):
-    is_safe, error = classify_ip(ip_str)
-    assert is_safe == expected_safe
+def test_is_public_ip(ip_str, expected_public):
+    assert is_public_ip(ip_str) == expected_public
 
 
-# ── Cloud metadata blocking ──────────────────────────────────────────
+# ── Cloud metadata IPs blocked via is_public_ip ──────────────────────
 
-@pytest.mark.parametrize("hostname", [
-    "169.254.169.254",
-    "metadata.google.internal",
-    "metadata.goog",
-    "[fd00:ec2::254]",
+@pytest.mark.parametrize("ip_str", [
+    "169.254.169.254",     # AWS/GCP metadata (link-local)
+    "fd00:ec2::254",       # AWS IPv6 metadata (private)
+    "169.254.170.2",       # AWS ECS task metadata (link-local)
+    "100.100.100.200",     # Alibaba Cloud metadata (CGNAT)
 ])
-def test_cloud_metadata_hostname_blocked(hostname):
-    with patch("shared.services.webhook.validator.app_config") as mock_config:
-        mock_config.ENVIRONMENT = "production"
-        is_valid, error = validate_webhook_url(f"https://{hostname}/latest/meta-data")
-    assert is_valid is False
-    assert "metadata" in error.lower() or "blocked" in error.lower()
-
-
-@pytest.mark.parametrize("ip_str,expected_blocked", [
-    ("169.254.169.254", True),     # AWS/GCP metadata
-    ("fd00:ec2::254", True),       # AWS IPv6 metadata
-    ("169.254.170.2", True),       # AWS ECS task metadata
-    ("100.100.100.200", True),     # Alibaba Cloud metadata
-    ("8.8.8.8", False),            # Not metadata
-])
-def test_cloud_metadata_ip_detection(ip_str, expected_blocked):
-    import ipaddress
-    ip_obj = ipaddress.ip_address(ip_str)
-    assert is_cloud_metadata_ip(ip_obj) == expected_blocked
-
-
-# ── IP obfuscation detection ─────────────────────────────────────────
-
-@pytest.mark.parametrize("hostname,expected_obfuscated", [
-    ("2130706433", True),          # Decimal for 127.0.0.1
-    ("0177.0.0.1", True),         # Octal for 127.0.0.1
-    ("0x7f000001", True),         # Hex for 127.0.0.1
-    ("::ffff:127.0.0.1", True),   # IPv6-mapped IPv4
-    ("[::ffff:127.0.0.1]", True), # Bracketed IPv6-mapped IPv4
-    ("example.com", False),        # Normal hostname
-    ("93.184.216.34", False),      # Normal IP (not obfuscated)
-])
-def test_ip_obfuscation_detection(hostname, expected_obfuscated):
-    is_obfuscated, msg = detect_ip_obfuscation(hostname)
-    assert is_obfuscated == expected_obfuscated
+def test_cloud_metadata_ips_blocked(ip_str):
+    assert is_public_ip(ip_str) is False
 
 
 # ── Async validation with IP pinning ─────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_async_validation_returns_pinned_ip():
-    """validate_webhook_url_async should return a validated IP for connection pinning."""
     with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=["93.184.216.34"]), \
-         patch("shared.services.webhook.validator.resolve_via_google_dns", new_callable=AsyncMock, return_value=[]):
+         patch("shared.services.webhook.validator.async_validate_url", new_callable=AsyncMock, return_value="93.184.216.34"):
         mock_config.ENVIRONMENT = "production"
         result = await validate_webhook_url_async("https://example.com/webhook")
     assert result.is_valid is True
@@ -128,79 +90,46 @@ async def test_async_validation_returns_pinned_ip():
 
 @pytest.mark.asyncio
 async def test_async_validation_blocks_private_ip():
-    """Async validator should reject URLs that resolve to private IPs."""
     with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=["10.0.0.1"]), \
-         patch("shared.services.webhook.validator.resolve_via_google_dns", new_callable=AsyncMock, return_value=[]):
+         patch("shared.services.webhook.validator.async_validate_url", new_callable=AsyncMock, side_effect=ValueError("Hostname evil.com failed validation")):
         mock_config.ENVIRONMENT = "production"
         result = await validate_webhook_url_async("https://evil.com/webhook")
     assert result.is_valid is False
-    assert "Private" in result.error_message
-
-
-@pytest.mark.asyncio
-async def test_async_validation_google_dns_catches_rebinding():
-    """If Google DNS returns a private IP (even if system DNS returned public), block it."""
-    with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=["93.184.216.34"]), \
-         patch("shared.services.webhook.validator.resolve_via_google_dns", new_callable=AsyncMock, return_value=["10.0.0.1"]):
-        mock_config.ENVIRONMENT = "production"
-        result = await validate_webhook_url_async("https://rebinding.example.com/webhook")
-    assert result.is_valid is False
-    assert "Google DNS" in result.error_message
-
-
-@pytest.mark.asyncio
-async def test_async_validation_domain_whitelist():
-    """Domain whitelist should reject non-whitelisted domains."""
-    with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=["93.184.216.34"]), \
-         patch("shared.services.webhook.validator.resolve_via_google_dns", new_callable=AsyncMock, return_value=[]):
-        mock_config.ENVIRONMENT = "production"
-        result = await validate_webhook_url_async(
-            "https://evil.com/webhook",
-            allowed_domains=["trusted.com", "api.trusted.com"],
-        )
-    assert result.is_valid is False
-    assert "whitelist" in result.error_message.lower()
+    assert "failed validation" in result.error_message
 
 
 @pytest.mark.asyncio
 async def test_async_validation_dns_failure():
-    """Should reject URLs where DNS resolution returns no results."""
     with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=[]), \
-         patch("shared.services.webhook.validator.resolve_via_google_dns", new_callable=AsyncMock, return_value=[]):
+         patch("shared.services.webhook.validator.async_validate_url", new_callable=AsyncMock, side_effect=ValueError("Unable to resolve hostname nonexistent.invalid")):
         mock_config.ENVIRONMENT = "production"
         result = await validate_webhook_url_async("https://nonexistent.invalid/webhook")
     assert result.is_valid is False
-    assert "DNS resolution failed" in result.error_message
+    assert "Unable to resolve" in result.error_message
 
 
-# ── SSRF blocking (sync wrapper) ─────────────────────────────────────
+# ── async_validate_url (safehttpx core) ──────────────────────────────
 
-def test_sync_validation_blocks_loopback():
-    with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=["127.0.0.1"]):
-        mock_config.ENVIRONMENT = "production"
-        is_valid, error = validate_webhook_url("https://localhost/webhook")
-    assert is_valid is False
-    assert "Loopback" in error
-
-
-def test_sync_validation_blocks_private():
-    with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=["192.168.1.1"]):
-        mock_config.ENVIRONMENT = "production"
-        is_valid, error = validate_webhook_url("https://internal.corp/webhook")
-    assert is_valid is False
-    assert "Private" in error
+@pytest.mark.asyncio
+async def test_async_validate_url_returns_first_public_ip():
+    import socket
+    mock_addrinfo = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+    ]
+    with patch("asyncio.get_event_loop") as mock_loop:
+        mock_loop.return_value.getaddrinfo = AsyncMock(return_value=mock_addrinfo)
+        ip = await async_validate_url("example.com")
+    assert ip == "93.184.216.34"
 
 
-def test_sync_validation_allows_public():
-    with patch("shared.services.webhook.validator.app_config") as mock_config, \
-         patch("shared.services.webhook.validator.resolve_all_ips", return_value=["93.184.216.34"]):
-        mock_config.ENVIRONMENT = "production"
-        is_valid, error = validate_webhook_url("https://example.com/webhook")
-    assert is_valid is True
-    assert error is None
+@pytest.mark.asyncio
+async def test_async_validate_url_rejects_all_private():
+    import socket
+    mock_addrinfo = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 0)),
+    ]
+    with patch("asyncio.get_event_loop") as mock_loop:
+        mock_loop.return_value.getaddrinfo = AsyncMock(return_value=mock_addrinfo)
+        with pytest.raises(ValueError, match="failed validation"):
+            await async_validate_url("evil.com")
+
