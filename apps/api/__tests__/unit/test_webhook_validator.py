@@ -58,6 +58,8 @@ def test_validation_dev_mode(mock_config):
     ("::1", False),                # IPv6 loopback
     ("fe80::1", False),            # IPv6 link-local
     ("fd00::1", False),            # IPv6 ULA (private)
+    ("100.64.0.1", False),          # Carrier-Grade NAT (not caught by ipaddress)
+    ("100.127.255.254", False),     # CGNAT upper bound
 ])
 def test_classify_ip(ip_str, expected_safe):
     is_safe, error = classify_ip(ip_str)

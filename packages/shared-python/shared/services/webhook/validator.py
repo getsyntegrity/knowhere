@@ -207,6 +207,13 @@ def classify_ip(ip_str: str) -> Tuple[bool, Optional[str]]:
     if ip_obj.is_unspecified:
         return False, f"Unspecified addresses are not allowed: {ip_str}"
 
+    # Carrier-Grade NAT (100.64.0.0/10)
+    # Used by Tailscale, K8s internal services, and some cloud load balancers.
+    if isinstance(ip_obj, ipaddress.IPv4Address):
+        cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+        if ip_obj in cgnat_network:
+            return False, f"Carrier-Grade NAT addresses are not allowed: {ip_str}"
+
     # Check IPv6-mapped IPv4 — the mapped IPv4 part must also be public
     if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
         mapped_v4 = ip_obj.ipv4_mapped
