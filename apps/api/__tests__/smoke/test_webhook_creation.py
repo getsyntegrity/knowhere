@@ -133,9 +133,14 @@ async def test_fr09_manual_trigger_dispatcher(fake_db):
     fake_db.execute = AsyncMock(side_effect=db_execute_side_effect)
 
     with patch("aiohttp.ClientSession.post", return_value=mock_response), \
-         patch("shared.services.webhook.dispatcher.validate_webhook_url", return_value=(True, None)), \
+         patch("shared.services.webhook.dispatcher.validate_webhook_url_async", new_callable=AsyncMock) as mock_validate, \
          patch.object(dispatcher, "_resolve_secret", new_callable=AsyncMock) as mock_resolve:
-        
+
+        # Return a valid WebhookValidationResult with pinned IP
+        from shared.services.webhook.validator import WebhookValidationResult
+        mock_validate.return_value = WebhookValidationResult(
+            is_valid=True, validated_ip="93.184.216.34", hostname="example.com"
+        )
         mock_resolve.return_value = "test_secret"
         
         success, status_code, duration_ms, error = await dispatcher._send_webhook(

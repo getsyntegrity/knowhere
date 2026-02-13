@@ -1,67 +1,79 @@
 """
 Webhook Validation Utilities
 
-Provides validation logic for webhook URLs, including SSRF protection.
+SSRF protection via DNS resolution + is_global check + IP pinning.
 """
-import os
-import socket
+import asyncio
 import ipaddress
+import socket
+from dataclasses import dataclass
+from typing import Optional
 from urllib.parse import urlparse
-from typing import Tuple, Optional
-
 
 from shared.core.config import app_config
 
-def validate_webhook_url(url: str) -> Tuple[bool, Optional[str]]:
+
+# ── Core SSRF checks ─────────────────────
+
+
+def is_public_ip(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
+
+
+async def async_validate_url(hostname: str) -> str:
+    """Validate hostname resolves to a public IP. Returns pinned IP."""
+    try:
+        loop = asyncio.get_event_loop()
+        addrinfo = await loop.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"Unable to resolve hostname {hostname}: {exc}") from exc
+
+    for family, _, _, _, sockaddr in addrinfo:
+        ip_address = sockaddr[0]
+        if family in (socket.AF_INET, socket.AF_INET6) and is_public_ip(ip_address):
+            return ip_address
+
+    raise ValueError(f"Hostname {hostname} failed validation")
+
+
+# ── Integration wrapper for our dispatcher ────────────────────────────
+
+
+@dataclass
+class WebhookValidationResult:
+    """Result of webhook URL validation, including pinned IP for anti-DNS-rebinding."""
+    is_valid: bool
+    error_message: Optional[str] = None
+    validated_ip: Optional[str] = None
+    hostname: Optional[str] = None
+
+
+async def validate_webhook_url_async(url: str) -> WebhookValidationResult:
     """
-    Validate target URL for SSRF protection.
-    
-    Checks:
-    1. Scheme must be https (or http in DEV mode)
-    2. Hostname must resolve to public IP
-    3. Reject private/loopback/link-local IPs
-    
-    Args:
-        url: Target URL to validate
-        
-    Returns:
-        Tuple of (is_valid, error_message)
+    Async webhook URL validation with SSRF protection and IP pinning.
+
+    Returns WebhookValidationResult with validated_ip for the dispatcher
+    to pin the connection to, eliminating the DNS rebinding TOCTOU window.
     """
     try:
         parsed = urlparse(url)
-        
-        # 1. Scheme check
-        is_dev = app_config.ENVIRONMENT.lower() in ('dev', 'development', 'local')
-        allowed_schemes = ['https'] if not is_dev else ['https', 'http']
-        
+        is_dev: bool = app_config.ENVIRONMENT.lower() in ("dev", "development", "local")
+        allowed_schemes: list[str] = ["https"] if not is_dev else ["https", "http"]
         if parsed.scheme not in allowed_schemes:
-            return False, f"Invalid scheme: {parsed.scheme}. Must be HTTPS."
-        
-        # 2. Hostname must exist
-        hostname = parsed.hostname
+            return WebhookValidationResult(is_valid=False, error_message=f"Invalid scheme: {parsed.scheme}. Must be HTTPS.")
+        hostname: Optional[str] = parsed.hostname
         if not hostname:
-            return False, "URL must have a hostname"
-        
-        # 3. Resolve DNS and check IP
-        try:
-            ip_str = socket.gethostbyname(hostname)
-            ip = ipaddress.ip_address(ip_str)
-        except socket.gaierror as e:
-            return False, f"DNS resolution failed: {e}"
-        
-        # 4. Block private/reserved IPs
-        if ip.is_loopback:
-            return False, f"Loopback addresses are not allowed: {ip_str}"
-        if ip.is_private:
-            return False, f"Private network addresses are not allowed: {ip_str}"
-        if ip.is_link_local:
-            return False, f"Link-local addresses are not allowed: {ip_str}"
-        if ip.is_multicast:
-            return False, f"Multicast addresses are not allowed: {ip_str}"
-        if ip.is_reserved:
-            return False, f"Reserved addresses are not allowed: {ip_str}"
-        
-        return True, None
-        
-    except Exception as e:
-        return False, f"URL validation failed: {e}"
+            return WebhookValidationResult(is_valid=False, error_message="URL must have a hostname")
+        validated_ip: str = await async_validate_url(hostname)
+        return WebhookValidationResult(
+            is_valid=True, validated_ip=validated_ip, hostname=hostname,
+        )
+    except ValueError as exc:
+        return WebhookValidationResult(is_valid=False, error_message=str(exc))
+    except Exception as exc:
+        return WebhookValidationResult(
+            is_valid=False, error_message=f"URL validation failed: {exc}",
+        )

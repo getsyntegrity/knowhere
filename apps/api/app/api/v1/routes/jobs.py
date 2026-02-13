@@ -31,7 +31,7 @@ from shared.core.exceptions.domain_exceptions import (
     JobOperationException
 )
 from shared.core.exceptions.webhook_exceptions import WebhookConfigException
-from shared.services.webhook.validator import validate_webhook_url
+from shared.services.webhook.validator import validate_webhook_url_async
 
 router = APIRouter(tags=["Jobs"])
 
@@ -261,11 +261,11 @@ async def create_job(
         if request.webhook:
             # Check for URL validity
             if request.webhook.url:
-                is_valid, error_msg = validate_webhook_url(request.webhook.url)
-                if not is_valid:
+                validation_result = await validate_webhook_url_async(request.webhook.url)
+                if not validation_result.is_valid:
                      raise WebhookConfigException(
                         user_message="Invalid webhook URL",
-                        internal_message=f"Webhook validation failed: {error_msg}"
+                        internal_message=f"Webhook validation failed: {validation_result.error_message}"
                     )
 
         # 验证文件类型

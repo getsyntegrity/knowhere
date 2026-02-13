@@ -224,6 +224,14 @@ async def handle_sns_event(body: bytes):
             try:
                 s3_event_data = json.loads(sns_message['Message'])
                 logger.info(f"S3事件数据: {s3_event_data}")
+                
+                # Skip S3 test events — AWS/LocalStack sends these when
+                # bucket notification configuration is first applied.
+                # They lack the standard Records[] structure.
+                if isinstance(s3_event_data, dict) and s3_event_data.get('Event') == 's3:TestEvent':
+                    logger.info("Skip S3 test event")
+                    return {"message": "S3 test event confirmed and skipped"}
+                
                 s3_event = S3Event(**s3_event_data)
                 
                 # 处理上传事件
