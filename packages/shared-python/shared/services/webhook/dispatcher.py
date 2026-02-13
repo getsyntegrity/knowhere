@@ -7,6 +7,7 @@ Called by Celery task for async processing.
 import hashlib
 import hmac
 import json
+import socket
 import time
 import uuid
 from datetime import datetime, timezone
@@ -23,7 +24,10 @@ from sqlalchemy.orm import selectinload
 from shared.core.config import settings
 from shared.core.database import get_db_context
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
-from shared.services.webhook.validator import validate_webhook_url
+from shared.services.webhook.validator import (
+    validate_webhook_url_async,
+    WebhookValidationResult,
+)
 
 from shared.models.database.webhook_log import WebhookLog
 from shared.models.database.job import Job
@@ -160,13 +164,12 @@ class WebhookDispatcher:
 
         # Generate attempt ID
         attempt_id = str(uuid.uuid4())
-        
-        # SSRF Protection: Validate URL before sending
-        is_valid, ssrf_error = validate_webhook_url(event.target_url)
-        if not is_valid:
-            logger.warning(f"SSRF validation failed: event_id={event.id}, error={ssrf_error}")
-            # Return 400 (Bad Request) to ensure it's treated as a non-retryable client error
-            return False, 400, 0, f"SSRF: {ssrf_error}"
+
+        # SSRF Protection
+        validation: WebhookValidationResult = await validate_webhook_url_async(event.target_url)
+        if not validation.is_valid:
+            logger.warning(f"SSRF validation failed: event_id={event.id}, error={validation.error_message}")
+            return False, 400, 0, f"SSRF: {validation.error_message}"
         
         # Enrich payload with job result data at delivery time
         enriched_payload = await self._enrich_payload(event)
@@ -215,21 +218,65 @@ class WebhookDispatcher:
         status_code = None
         error_message = None
         success = False
-        
+
         try:
-            async with aiohttp.ClientSession() as session:
+            # IP Pinning: Use a custom resolver that returns ONLY the pre-validated IP.
+            # This eliminates the DNS rebinding TOCTOU window — aiohttp will connect
+            # to the pinned IP while the Host header preserves the original hostname.
+            pinned_ip: str = validation.validated_ip
+            original_hostname: str = validation.hostname
+
+            # Detect address family from the pinned IP
+            pinned_family: int = (
+                socket.AF_INET6
+                if ":" in pinned_ip
+                else socket.AF_INET
+            )
+
+            class PinnedResolver(aiohttp.abc.AbstractResolver):
+                """Resolver that always returns the pre-validated IP address."""
+                async def resolve(
+                    self, host: str, port: int = 0, family: int = socket.AF_INET
+                ) -> list[dict[str, Any]]:
+                    return [{
+                        "hostname": host,
+                        "host": pinned_ip,
+                        "port": port,
+                        "family": pinned_family,
+                        "proto": 0,
+                        "flags": socket.AI_NUMERICHOST,
+                    }]
+
+                async def close(self) -> None:
+                    pass
+
+            connector = aiohttp.TCPConnector(
+                resolver=PinnedResolver(),
+                # Disable redirect following to prevent redirect-based SSRF
+                # (attacker returns 302 → http://169.254.169.254/...)
+            )
+            async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(
                     event.target_url,
                     json=enriched_payload,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+                    timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS),
+                    allow_redirects=False,  # Block redirect-based SSRF
                 ) as response:
                     duration_ms = int((time.time() - start_time) * 1000)
                     status_code = response.status
-                    
+
+                    # Treat 3xx as non-success (redirect-based SSRF prevention)
                     if 200 <= response.status < 300:
                         logger.info(f"Webhook delivered: event_id={event.id}, status={response.status}")
                         success = True
+                    elif 300 <= response.status < 400:
+                        logger.warning(
+                            f"Webhook redirect blocked (SSRF protection): "
+                            f"event_id={event.id}, status={response.status}"
+                        )
+                        error_message = f"Redirect blocked: HTTP {response.status}"
+                        success = False
                     else:
                         logger.warning(f"Webhook failed: event_id={event.id}, status={response.status}")
                         error_message = f"HTTP {response.status}"
