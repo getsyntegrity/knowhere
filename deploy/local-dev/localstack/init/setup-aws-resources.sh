@@ -66,7 +66,7 @@ echo "🔗 订阅SNS到webhook..."
 aws --endpoint-url=http://localhost:4566 sns subscribe \
   --topic-arn "$TOPIC_ARN" \
   --protocol http \
-  --notification-endpoint http://host.docker.internal:5005/v1/internal/s3-events
+  --notification-endpoint http://localhost:5005/v1/internal/s3-events
 
 # 配置S3事件通知
 echo "⚡ 配置S3事件通知..."
