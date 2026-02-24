@@ -94,6 +94,9 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
     )
 
     last_context = _find_img_context(headings_stack)
+    
+    # Image index (always present)
+    image_index = f"image-{img_count + 1}"
 
     img_ext = os.path.splitext(img_file["image_name"])[-1]
     raw_img_name = process_path_texts(f"image-{str(img_count+1)} {current_heading} {last_context}", last=30)
@@ -102,25 +105,42 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
     with open(img_raw_path, 'wb') as image_file:
         image_file.write(img_file["data"])
 
+    # LLM summary (optional, with fallback to last_context)
+    llm_summary = None
     if smart_summary:
-        image_summary = await ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
-        if image_summary is None:
-            image_summary = last_context
+        llm_summary = await ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
+    
+    # Fallback: LLM summary -> last_context -> None
+    if llm_summary:
+        img_summary = llm_summary
+    elif last_context:
+        img_summary = last_context
     else:
-        image_summary = last_context
+        img_summary = None
 
-    img_name = process_path_texts(f"image-{str(img_count+1)} {current_heading} {image_summary}", last=30)
+    img_name = process_path_texts(f"image-{str(img_count+1)} {current_heading} {img_summary or ''}", last=30)
     img_path = os.path.join(img_dir, f'{img_name}{img_ext}')
     os.rename(img_raw_path, img_path) # if summary fails, renaming is not applied
 
-    temp_uid = gen_str_codes(image_summary)
+    temp_uid = gen_str_codes(img_summary or image_index)
     img_id = 'IMAGE_' + temp_uid + '_IMAGE'
 
-    img_bottom_content = img_id + '\nImage Summary:\n' + image_summary + '\n'
+    # Build img_summary_field for df_list: image-n + optional summary
+    if img_summary:
+        img_summary_field = f"{image_index}\n{img_summary}"
+    else:
+        img_summary_field = image_index
+    
+    # Build image_ref for heading_stack: image-n + optional summary + image_id
+    if img_summary:
+        image_ref = f"\n{image_index}\n{img_summary}\n{img_id}\n"
+    else:
+        image_ref = f"\n{image_index}\n{img_id}\n"
+    
     img_path = f"images/{img_name}{img_ext}"
 
-    headings_stack[-1]['content'].append(img_bottom_content)
-    df_list.append([img_bottom_content, img_path, img_id, len(img_bottom_content), "", image_summary, temp_uid, "", "", time_stamp])
+    headings_stack[-1]['content'].append(image_ref)
+    df_list.append([image_ref, img_path, img_id, len(image_ref), "", img_summary_field, temp_uid, "", "", time_stamp])
     return headings_stack, df_list
 
 
@@ -180,14 +200,24 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     # Extract first row and first column headers
     first_row_text, first_col_text = _first_cols_rows(block)
     
+    # Combine first row and first column as keywords for table retrieval
+    row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
+    col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
+    tb_keywords = ';'.join(filter(None, [row_kw, col_kw]))
     
-    tb_keywords = ';'.join(filter(None, [first_row_text.replace(' | ', ';') if first_row_text else '']))
+    # Table index (always present)
+    table_index = f"table-{table_count + 1}"
+    
+    # LLM summary (optional, only when smart_summary is enabled and succeeds)
+    llm_summary = None
     if smart_summary:
-        tb_summary = await extract_summary_keywords(tb_html_str, type_="summary")
-        if tb_summary is None:
-            tb_summary = f"First Row: {first_row_text}\nFirst Column: {first_col_text}"
+        llm_summary = await extract_summary_keywords(tb_html_str, type_="summary")
+    
+    # Build tb_summary for df_list: table-n + optional LLM summary
+    if llm_summary:
+        tb_summary = f"{table_index}\n{llm_summary}"
     else:
-        tb_summary = f"First Row: {first_row_text}\nFirst Column: {first_col_text}"
+        tb_summary = table_index
 
     temp_uid = gen_str_codes((tb_html_str + str(table_count)))
     table_id = 'TABLE_' + temp_uid + '_TABLE'
@@ -201,7 +231,12 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
 
     # Use relative path for tables (avoid absolute path in path column)
     tb_path = f"tables/{tb_name}.html"
-    headings_stack[-1]['content'].append(table_id)
+    # Build table_ref for heading_stack: table-n + optional LLM summary + table_id
+    if llm_summary:
+        table_ref = f"\n{table_index}\n{llm_summary}\n{table_id}\n"
+    else:
+        table_ref = f"\n{table_index}\n{table_id}\n"
+    headings_stack[-1]['content'].append(table_ref)
     df_list.append([tb_html_str, tb_path, table_id, len(tb_html_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp])
     return headings_stack, df_list
 

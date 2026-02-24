@@ -242,23 +242,46 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
 
         else: # no path change, remain in the same hierarchy
             # a. handle lines containing images
-            img_name = path_handle(last_context[:10], mode="clean_single")
-            img_name = f"image-{str(img_count)}-{img_name}"
-            imgs = await detect_summary_img_md(line, img_name, output_dir, mode=base_llm_paras['summary_image'])
+            img_name_context = path_handle(last_context[:10], mode="clean_single")
+            img_name = f"image-{str(img_count)}-{img_name_context}"
+            # Pass semantic context (not img_name) to avoid "image-" prefix duplication
+            imgs = await detect_summary_img_md(line, last_context, output_dir, mode=base_llm_paras['summary_image'])
 
             for img_path, img_summary in imgs:
                 img_suffix = os.path.splitext(img_path)[-1]
                 update_img_path = os.path.join(img_dir, f"{img_name}{img_suffix}")
                 os.rename(os.path.join(output_dir, img_path), update_img_path) # update image path, not using uuid
                 
-                temp_uid = gen_str_codes((img_summary + img_path.split(os.sep)[-1] + str(img_count)))
+                # Image index (always present)
+                image_index = f"image-{img_count}"
+                
+                # Fallback: LLM summary -> last_context -> None
+                if img_summary:
+                    effective_summary = img_summary
+                elif last_context:
+                    effective_summary = last_context
+                else:
+                    effective_summary = None
+                
+                temp_uid = gen_str_codes((effective_summary or image_index) + img_path.split(os.sep)[-1] + str(img_count))
                 img_id = 'IMAGE_' + temp_uid + '_IMAGE'
                 
-                img_content = img_id + '\nImage Summary:\n' + img_summary + '\n'
-                content = content + ('\n' + img_content + '\n')
+                # Build img_summary_field for df_list: image-n + optional summary
+                if effective_summary:
+                    img_summary_field = f"{image_index}\n{effective_summary}"
+                else:
+                    img_summary_field = image_index
+                
+                # Build image_ref for content: image-n + optional summary + image_id
+                if effective_summary:
+                    img_content = f"\n{image_index}\n{effective_summary}\n{img_id}\n"
+                else:
+                    img_content = f"\n{image_index}\n{img_id}\n"
+                
+                content = content + img_content
 
                 relative_img_path = f"images/{img_name}{img_suffix}"
-                df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary, temp_uid, "", "", time_stamp])
+                df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary_field, temp_uid, "", "", time_stamp])
                 img_count += 1
 
             # b. handle lines containing tables
@@ -288,20 +311,35 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
                 # Extract first row and first column for summary (consistent with docx)
                 first_row_text, first_col_text = first_cols_rows_html(tb_str)
                 
-                tb_keywords = ';'.join(filter(None, [first_row_text.replace(' | ', ';') if first_row_text else '']))
+                # Combine first row and first column as keywords for table retrieval
+                row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
+                col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
+                tb_keywords = ';'.join(filter(None, [row_kw, col_kw]))
+                
+                # Table index (always present)
+                table_index = f"table-{table_count}"
+                
+                # LLM summary (optional, only when summary_table is enabled and succeeds)
+                llm_summary = None
                 if base_llm_paras['summary_table']:
-                    tb_summary = await extract_summary_keywords(tb_str, type_="summary")
-                    if tb_summary is None:
-                        tb_summary = f"First Row: {first_row_text}\nFirst Column: {first_col_text}"
+                    llm_summary = await extract_summary_keywords(tb_str, type_="summary")
+                
+                # Build tb_summary for df_list: table-n + optional LLM summary
+                if llm_summary:
+                    tb_summary = f"{table_index}\n{llm_summary}"
                 else:
-                    tb_summary = f"First Row: {first_row_text}\nFirst Column: {first_col_text}"
+                    tb_summary = table_index
                 
                 raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
                 tb_name = path_handle(f"table-{str(table_count)} {raw_tb_name}", mode="clean_single")
                 temp_uid = gen_str_codes((tb_str + str(table_count)))
                 table_id = 'TABLE_' + temp_uid + '_TABLE'
 
-                content = content + ('\n' + table_id + '\n' + tb_summary + '\n')
+                # Build table_ref for content: table-n + optional LLM summary + table_id
+                if llm_summary:
+                    content = content + f'\n{table_index}\n{llm_summary}\n{table_id}\n'
+                else:
+                    content = content + f'\n{table_index}\n{table_id}\n'
                 tb_path = os.path.join(tb_dir, f"{tb_name}.html")
                 # Add border to HTML tables for consistent display
                 tb_str_with_border = tb_str.replace('<table>', "<table border='1'>").replace('<table ', "<table border='1' ")

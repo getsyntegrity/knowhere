@@ -116,5 +116,11 @@ deploy/aliyun/deploy-config.sh
 LICENSE.txt
 .terraform
 
+# Codex 生成的文件
+.venv_unstructured/
+PROJECT.md
+TABLE_PARSER_OPTIMIZATION.md
+TODO.md
+
 doc-deploy/
 deploy/aliyun/ack/*.md
