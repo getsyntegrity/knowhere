@@ -1,7 +1,16 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-02-23 15:22 — 初始化 TASKS.md（从 PROJECT.md + todo.md 合并生成）
-> **Current branch**: `feat/eric/parsing-update`
+> **Last session**: 2026-02-25 — iLoveAPI PPTX→PDF 集成 + image-only PDF 渲染管线
+> **Current branch**: feat/eric/parsing-update
+
+---
+
+## 0. Session Stats
+
+| 日期 | 时长 | 输入 token (估) | 输出 token (估) | 摘要 |
+|------|------|----------------|----------------|------|
+| 2026-02-23 | 6m | ~100 | ~4K | 修复 skill 自动触发失败问题，改造 check-skills workflow |
+| 2026-02-25 | ~1h 10m | ~3K | ~30K | iLoveAPI 集成、PPTX 解析 pipeline 重构为流式处理 + image-only PDF |
 
 ---
 
@@ -102,7 +111,7 @@ sequenceDiagram
 | `.pdf` | `pdf_parser.py` → `parse_pdfs()` | PDF 解析 (支持 precision mode) |
 | `.docx` | `doc_parser.py` → `parse_docx()` | DOCX，提取标题层级、表格、图片 |
 | `.xlsx` | `table_parser.py` → `parse_xlsx()` | Excel，精准合并单元格和 MultiIndex 表头 |
-| `.pptx` | `pdf_parser.py` (复用) | PPTX → PDF → 解析 |
+| `.pptx` | `pptx_parser.py` → `parse_pptx()` | PPTX → iLoveAPI PDF → image-only PDF → MinerU VLM |
 | `.md` | `md_parser.py` → `parse_md()` | Markdown，BFS 标题优化 |
 | `.txt` | `txt_parser.py` → `parse_texts()` | 纯文本 → MD 方式解析 |
 | `.png/.jpg` | `image_parser.py` → `parse_image()` | 图片 OCR + LLM 摘要 |
@@ -125,11 +134,13 @@ sequenceDiagram
 
 ### 🔴 In Progress
 
-*(无进行中的任务)*
+*(无)*
 
 ### 🟡 TODO
 
 #### High Priority — Document Parser
+
+- [ ] **Table Parser 优化** (P0-P3) — HTML 表头展开、层级扁平化、行索引增强、自动表头行数检测 → 详见 [TABLE_PARSER_OPTIMIZATION.md](./TABLE_PARSER_OPTIMIZATION.md)
 
 - [ ] **LLM 层级判断** — `layout_parser.py:552` 使用 LLM 基于窗口数据分配 heading level
 - [ ] **TOC 过滤** — `doc_parser.py:404` 当前临时移除 TOC 区域，需正式处理
@@ -150,10 +161,6 @@ sequenceDiagram
 - [ ] **计费统计** — `billing.py:124,126` 计算实际成功率、获取 top endpoints
 - [ ] **用户识别** — `moesif_middleware.py:130,135` 从 JWT/API Key 解析 user ID
 
-#### Normal Priority — Table Parser 优化
-
-- [ ] **Table Parser 优化** (P0-P3) — HTML 表头展开、层级扁平化、行索引增强、自动表头行数检测 → 详见 [TABLE_PARSER_OPTIMIZATION.md](./TABLE_PARSER_OPTIMIZATION.md)
-
 #### Low Priority
 
 - [ ] **Celery 优化** — `celery_router.py:197` 简化版本，后续优化异步操作
@@ -161,7 +168,7 @@ sequenceDiagram
 
 ### ✅ Done
 
-*(暂无已完成任务)*
+- [x] ~~PPTX 公式渲染~~ — iLoveAPI + image-only PDF 管线，解决 MinerU 公式识别为 `????` 的问题 (completed: 2026-02-25)
 
 ### 📋 Code-Level TODOs
 
@@ -189,6 +196,7 @@ sequenceDiagram
 
 | 日期 | 类型 | 描述 | 涉及文件 |
 |------|------|------|---------|
+| 2026-02-25 | feature | iLoveAPI PPTX→PDF 集成 + image-only PDF 渲染管线 (流式处理，bytes in→bytes out) | `pptx_parser.py`, `parse_service.py`, `ai.py`, `.env` |
 
 ---
 
@@ -224,9 +232,9 @@ cd packages/shared-python && pytest
 
 | 文件 | 说明 |
 |------|------|
-| `apps/api/.env` | API 环境变量 |
-| `apps/worker/.env` | Worker 环境变量 |
-| `packages/shared-python/shared/core/config/` | Python 配置类 |
+| `apps/api/.env` | API 环境变量 (含 ILOVEAPI_* 配置) |
+| `apps/worker/.env` | Worker 环境变量 (含 ILOVEAPI_* 配置) |
+| `packages/shared-python/shared/core/config/` | Python 配置类 (AIConfig) |
 | `deploy/docker-compose.prod.yml` | 生产 Docker Compose |
 | `deploy/local-dev/` | 本地开发 Docker Compose |
 
@@ -240,6 +248,7 @@ cd packages/shared-python && pytest
 | 修改文档结构/标题检测 | `layout_parser.py` |
 | 修改 DOCX 解析 | `doc_parser.py` |
 | 修改 PDF 解析 | `pdf_parser.py` |
+| 修改 PPTX 解析 | `pptx_parser.py` |
 | 修改数据库表 | `packages/shared-python/shared/models/database/` + `alembic/` |
 | 修改 AI 逻辑 | `packages/shared-python/shared/services/ai/` |
 | 修改 Redis 逻辑 | `packages/shared-python/shared/services/redis/` |

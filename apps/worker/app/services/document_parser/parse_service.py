@@ -19,6 +19,7 @@ from app.services.document_parser.fragment_parser import parse_fragment
 from app.services.document_parser.image_parser import parse_image
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
+from app.services.document_parser.pptx_parser import parse_pptx
 from app.services.document_parser.table_parser import parse_xlsx
 from app.services.document_parser.txt_parser import parse_texts
 
@@ -159,7 +160,14 @@ async def checkerboard_inject_parse(
     elif '.pptx' in file_path_lower:
         logger.debug(f"file type is pptx")
         if filename and file_full_path:
-            parsed_df = await parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, mode="api", relative_root=relative_root)
+            parsed_df = await parse_pptx(
+                file_full_path, filename=filename,
+                output_dir=full_output_dir,
+                base_llm_paras=base_llm_paras,
+                strategy="to_pdf_api",
+                relative_root=relative_root,
+                baseurl=baseurl
+            )
 
     elif '.md' in file_path_lower:
         logger.debug(f"file type is md")
