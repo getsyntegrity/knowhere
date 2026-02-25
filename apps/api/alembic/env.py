@@ -9,7 +9,7 @@ from alembic import context
 # 导入我们的数据库配置和模型
 from shared.core.config import settings
 from shared.core.database import Base
-from shared.models.database import api_key, credits_transaction, usage_log, knowledge_base, stripe_price_config, payment_record, user_balance, webhook_secret, user
+from shared.models.database import api_key, credits_transaction, knowledge_base, stripe_price_config, payment_record, user_balance, webhook_secret, user
 
 # 创建同步数据库URL（将asyncpg替换为psycopg2）
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
