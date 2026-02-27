@@ -434,7 +434,7 @@ def first_cols_rows_html(html_str, max_items=10, max_chars=20):
     return first_row_text, first_col_text
 
 
-def table2html(table: DocxTable) -> str:
+def table2html(table: DocxTable, cell_image_map: dict = None) -> str:
     """Convert a DOCX table to HTML string with proper colspan/rowspan handling.
     
     Handles merged cells by:
@@ -444,6 +444,9 @@ def table2html(table: DocxTable) -> str:
     
     Args:
         table: python-docx Table object
+        cell_image_map: Optional dict mapping (row_idx, col_idx) to image description
+                        strings. col_idx corresponds to the unique tc index in each row
+                        (matching XML <w:tc> ordering, not expanded python-docx cells).
         
     Returns:
         HTML string representation of the table with merged cells
@@ -531,6 +534,7 @@ def table2html(table: DocxTable) -> str:
     for row_idx in range(n_rows):
         html_parts.append("<tr>")
         col_idx = 0
+        unique_col_idx = 0  # Tracks unique tc index per row (matches XML <w:tc> order)
         
         while col_idx < n_cols:
             tc_id, cell, is_new = grid[row_idx][col_idx]
@@ -543,6 +547,7 @@ def table2html(table: DocxTable) -> str:
             # Skip if this cell is a vertical continuation
             rowspan = rowspan_grid[row_idx][col_idx]
             if rowspan == 0:
+                unique_col_idx += 1
                 col_idx += 1
                 continue
             
@@ -555,6 +560,12 @@ def table2html(table: DocxTable) -> str:
             else:
                 content = cell.text.strip().replace('\n', '<br/>')
             
+            # Append image descriptions if available
+            if cell_image_map:
+                img_desc = cell_image_map.get((row_idx, unique_col_idx))
+                if img_desc:
+                    content += f'<br/><em>{img_desc}</em>'
+            
             # Build attributes
             attrs = []
             if colspan > 1:
@@ -565,6 +576,7 @@ def table2html(table: DocxTable) -> str:
             attr_str = ' ' + ' '.join(attrs) if attrs else ''
             html_parts.append(f"<td{attr_str}>{content}</td>")
             
+            unique_col_idx += 1
             col_idx += colspan
         
         html_parts.append("</tr>")
