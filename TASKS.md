@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-02-25 — iLoveAPI PPTX→PDF 集成 + image-only PDF 渲染管线
+> **Last session**: 2026-02-26 — Table Parser P0 评估 + MD 分隔线修复 + 关键词去重
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -11,6 +11,7 @@
 |------|------|----------------|----------------|------|
 | 2026-02-23 | 6m | ~100 | ~4K | 修复 skill 自动触发失败问题，改造 check-skills workflow |
 | 2026-02-25 | ~1h 10m | ~3K | ~30K | iLoveAPI 集成、PPTX 解析 pipeline 重构为流式处理 + image-only PDF |
+| 2026-02-26 | ~1h 10m | ~5K | ~40K | Table Parser P0 评估（HTMLHeaderExpander 移植+回滚）、MD 分隔线修复、关键词去重 |
 
 ---
 
@@ -140,7 +141,7 @@ sequenceDiagram
 
 #### High Priority — Document Parser
 
-- [ ] **Table Parser 优化** (P0-P3) — HTML 表头展开、层级扁平化、行索引增强、自动表头行数检测 → 详见 [TABLE_PARSER_OPTIMIZATION.md](./TABLE_PARSER_OPTIMIZATION.md)
+- [ ] **表格内嵌图片解析** — 完善 DOCX/PDF/MD 表格中带图的处理
 
 - [ ] **LLM 层级判断** — `layout_parser.py:552` 使用 LLM 基于窗口数据分配 heading level
 - [ ] **TOC 过滤** — `doc_parser.py:404` 当前临时移除 TOC 区域，需正式处理
@@ -169,6 +170,8 @@ sequenceDiagram
 ### ✅ Done
 
 - [x] ~~PPTX 公式渲染~~ — iLoveAPI + image-only PDF 管线，解决 MinerU 公式识别为 `????` 的问题 (completed: 2026-02-25)
+- [x] ~~MD 分隔线过滤~~ — `extract_tables_by_forms('md')` 过滤 `---` 分隔行 (completed: 2026-02-26)
+- [x] ~~关键词跨行列去重~~ — doc_parser + md_parser 首行首列合并时消除重复 (completed: 2026-02-26)
 
 ### 📋 Code-Level TODOs
 
@@ -197,6 +200,8 @@ sequenceDiagram
 | 日期 | 类型 | 描述 | 涉及文件 |
 |------|------|------|---------|
 | 2026-02-25 | feature | iLoveAPI PPTX→PDF 集成 + image-only PDF 渲染管线 (流式处理，bytes in→bytes out) | `pptx_parser.py`, `parse_service.py`, `ai.py`, `.env` |
+| 2026-02-26 | fix | MD 表格分隔线过滤 + 关键词跨行列去重 | `table_parser.py`, `doc_parser.py`, `md_parser.py` |
+| 2026-02-26 | feature | HTMLHeaderExpander 类移植到 html_parser.py（备用，未集成到解析流程） | `html_parser.py` |
 
 ---
 

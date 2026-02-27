@@ -311,10 +311,13 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
                 # Extract first row and first column for summary (consistent with docx)
                 first_row_text, first_col_text = first_cols_rows_html(tb_str)
                 
-                # Combine first row and first column as keywords for table retrieval
+                # Combine first row and first column as keywords for table retrieval (with dedup)
                 row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
                 col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
-                tb_keywords = ';'.join(filter(None, [row_kw, col_kw]))
+                # Cross-dedup: remove col keywords already present in row keywords
+                row_set = set(row_kw.split(';')) if row_kw else set()
+                col_parts = [k for k in col_kw.split(';') if k and k not in row_set]
+                tb_keywords = ';'.join(filter(None, [row_kw] + col_parts))
                 
                 # Table index (always present)
                 table_index = f"table-{table_count}"

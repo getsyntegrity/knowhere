@@ -12,7 +12,6 @@ from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
 from shared.utils.text_utils import tokenize2stw_remove
 from app.services.document_parser.image_parser import ask_image
 from app.services.document_parser.layout_parser import pred_titles
-from app.services.document_parser.table_parser import extract_tb_keywords
 from app.services.document_parser.html_parser import table2html
 from app.services.document_parser.toc_parser import (detect_doc_tocs,
                                                      detect_sdt_toc,
@@ -200,10 +199,14 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     # Extract first row and first column headers
     first_row_text, first_col_text = _first_cols_rows(block)
     
-    # Combine first row and first column as keywords for table retrieval
+    # Combine first row and first column as keywords for table retrieval (with dedup)
     row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
     col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
-    tb_keywords = ';'.join(filter(None, [row_kw, col_kw]))
+    # Cross-dedup: remove col keywords already present in row keywords
+    row_set = set(row_kw.split(';')) if row_kw else set()
+    col_parts = [k for k in col_kw.split(';') if k and k not in row_set]
+    tb_keywords = ';'.join(filter(None, [row_kw] + col_parts))
+    raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
     
     # Table index (always present)
     table_index = f"table-{table_count + 1}"
@@ -222,7 +225,6 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     temp_uid = gen_str_codes((tb_html_str + str(table_count)))
     table_id = 'TABLE_' + temp_uid + '_TABLE'
 
-    raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
     tb_name = process_path_texts(f"table-{str(table_count+1)} {raw_tb_name}", last=30)
     tb_path = os.path.join(tb_dir, f'{tb_name}.html')
 
