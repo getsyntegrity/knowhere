@@ -173,6 +173,25 @@ class RedisService:
                 operation="EXPIRE",
                 original_exception=e
             )
+
+    async def ttl(self, key: str) -> int:
+        """获取键的剩余TTL（秒）"""
+        try:
+            client = await self._get_client()
+            full_key = self._build_key(key)
+
+            async def _operation():
+                return await client.ttl(full_key)
+
+            result = await self._execute_with_retry(_operation)
+            return int(result)
+        except Exception as e:
+            logger.error(f"Redis TTL operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"TTL operation failed: {str(e)}",
+                operation="TTL",
+                original_exception=e
+            )
     
     # ==================== 列表操作 ====================
     

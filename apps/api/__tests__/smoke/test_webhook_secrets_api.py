@@ -5,7 +5,7 @@ import pytest
 import pytest_asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 
 from shared.models.database.webhook_secret import WebhookSecret, WebhookSecretStatus
 
@@ -53,7 +53,7 @@ def mock_secret():
     secret.endpoint = "https://example.com/webhook"
     secret.secret_encrypted = "encrypted_value"
     secret.status = WebhookSecretStatus.ACTIVE
-    secret.created_at = datetime.utcnow()
+    secret.created_at = datetime.now(timezone.utc)
     secret._raw_secret = "whsec_test123"  # Mock decrypted value
     return secret
 

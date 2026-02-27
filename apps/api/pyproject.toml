@@ -20,6 +20,7 @@ dependencies = [
     "aiohttp==3.12.15",
     "loguru==0.7.3",
     "moesifapi==1.5.5",
+    "limits>=5.8,<6",
 ]
 
 [dependency-groups]

@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Standard JWKS endpoint path (fixed, following OpenID Connect convention)
 JWKS_ENDPOINT_PATH = "/api/auth/jwks"
 
-# Cache settings: 1 week in seconds
-JWKS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 604800 seconds
+# Cache settings: 1 hour in seconds
+JWKS_CACHE_TTL_SECONDS = 60 * 60  # 3600 seconds
 
 # Cached PyJWKClient instance
 _jwks_client: PyJWKClient | None = None
@@ -30,7 +30,7 @@ def _get_jwks_client() -> PyJWKClient:
     Get or create a cached PyJWKClient instance.
     
     The JWKS endpoint is constructed from INTERNAL_DASHBOARD_ENDPOINT + fixed path.
-    PyJWKClient caches the JWKS response for 1 week.
+    PyJWKClient caches the JWKS response for 1 hour.
     """
     global _jwks_client
     
@@ -51,7 +51,7 @@ def _get_verification_key(token: str) -> Any:
     """
     Get the verification key for the JWT from the JWKS endpoint.
     
-    Uses PyJWKClient's built-in cache with 1 week TTL.
+    Uses PyJWKClient's built-in cache with 1 hour TTL.
     """
     try:
         jwks_client = _get_jwks_client()

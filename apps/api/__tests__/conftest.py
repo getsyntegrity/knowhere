@@ -20,7 +20,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from main import app
 from shared.core.database import get_db
-from app.services.rate_limit.dependencies import with_current_user
+from app.services.rate_limit.dependencies import (
+    require_billing_limits,
+    with_current_user,
+)
 from app.services.rate_limit.data_structures import CurrentUser
 
 
@@ -76,12 +79,18 @@ async def authenticated_client(mock_user_id: str, mock_db: AsyncMock) -> AsyncGe
     async def mock_with_current_user():
         return CurrentUser(user_id=mock_user_id, user_tier="free")
 
+    # Override billing-limit dependency so tests do not require
+    # global RateLimitConfig/Redis bootstrap.
+    async def mock_require_billing_limits():
+        return CurrentUser(user_id=mock_user_id, user_tier="free")
+
     # Override database dependency to return mock session
     async def mock_get_db():
         yield mock_db
 
     # Apply dependency overrides
     app.dependency_overrides[with_current_user] = mock_with_current_user
+    app.dependency_overrides[require_billing_limits] = mock_require_billing_limits
     app.dependency_overrides[get_db] = mock_get_db
     
     transport = ASGITransport(app=app)

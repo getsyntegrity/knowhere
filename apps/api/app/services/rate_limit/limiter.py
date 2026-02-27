@@ -45,7 +45,7 @@ class RateLimiter:
             return
 
         rate_item = self._config.parse_rate(f"{rpm}/minute")
-        namespace = "system_rpm"
+        namespace = self._config.namespaced_namespace("system_rpm")
         identifier = f"{user_id}:{matched_pattern}"
 
         is_allowed: bool = await self._config.sliding_window.hit(
@@ -94,7 +94,7 @@ class RateLimiter:
             return
 
         rate_item = self._config.parse_rate(f"{rpm}/minute")
-        namespace = "billing_rpm"
+        namespace = self._config.namespaced_namespace("billing_rpm")
         identifier = user_id
 
         is_allowed: bool = await self._config.sliding_window.hit(
@@ -143,7 +143,7 @@ class RateLimiter:
             return
 
         rate_item = self._config.parse_rate(f"{quota}/day")
-        namespace = "daily_quota"
+        namespace = self._config.namespaced_namespace("daily_quota")
         identifier = user_id
 
         is_allowed: bool = await self._config.fixed_window.hit(

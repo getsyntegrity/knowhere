@@ -4,12 +4,14 @@ FastAPI dependencies for the rate-limit layer.
 Dependency chain (outermost -> innermost):
     require_billing_limits  ->  with_current_user  ->  get_current_user_id
                             ->  generate_job_id
+                            ->  get_db
 
 ``with_current_user`` resolves identity (user_id + user_tier), caches it in
 Redis, and enforces the system-wide RPM limit (Layer 0).
 
-``require_billing_limits`` enforces the billing layers (RPM, concurrency
-semaphore, daily quota) and yields control to the route handler.
+``require_billing_limits`` enforces billing RPM (Layer 1) and yields control
+to the route handler. Concurrency (Layer 2) and daily quota (Layer 3) are
+enforced just before insert in the create-job route.
 """
 
 import os
@@ -20,7 +22,8 @@ from typing import AsyncGenerator
 
 from fastapi import Depends, Request
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user_id
 from shared.core.config import redis_pool_manager
@@ -31,19 +34,27 @@ from app.services.rate_limit.config import (
 from app.services.rate_limit.data_structures import CurrentUser, TierLimits
 from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.limiter import RateLimiter
-from app.services.rate_limit.semaphore import ConcurrencySemaphore
 from app.services.rate_limit.system_rpm import find_system_rpm
-from shared.core.database import get_db_context
+from shared.core.database import get_db, get_db_context
 from shared.core.exceptions.domain_exceptions import (
     RateLimitException,
     UnavailableException,
 )
+from shared.core.state_machine.states import JobStatus
 from shared.models.database.api_key import APIKey
+from shared.models.database.job import Job
+from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 
 _RATE_LIMIT_BYPASSED: bool = os.getenv("RATE_LIMIT_BYPASSED", "").lower() == "true"
 
 _DEFAULT_TIER: str = "free"
+_ACTIVE_JOB_STATES: tuple[str, ...] = (
+    JobStatus.WAITING_FILE.value,
+    JobStatus.PENDING.value,
+    JobStatus.RUNNING.value,
+    JobStatus.CONVERTING.value,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +211,8 @@ async def with_current_user(
 
 
 # ---------------------------------------------------------------------------
-# require_billing_limits -- Layers 1-3 (billing RPM, semaphore, daily quota)
+# require_billing_limits -- Layer 1
+# (billing RPM)
 # ---------------------------------------------------------------------------
 
 _RETRY_AFTER_SECONDS: int = 15
@@ -210,19 +222,19 @@ async def require_billing_limits(
     request: Request,
     current_user: CurrentUser = Depends(with_current_user),
     job_id: str = Depends(generate_job_id),
+    _db: AsyncSession = Depends(get_db),
 ) -> AsyncGenerator[CurrentUser, None]:
-    """Enforce billing-layer rate limits around the route handler.
+    """Enforce billing RPM (Layer 1) around the route handler.
 
     This is an async-generator (yield) dependency so that teardown logic
-    (semaphore release) runs after the route handler completes.
+    can run after the route handler completes.
 
-    Layers enforced before yield:
+    Layer enforced before yield:
         1. Billing RPM  -- per-user requests-per-minute
-        2. Concurrency semaphore -- max parallel in-flight requests
-        3. Daily quota (free tier only) -- hard daily cap
 
-    Teardown (after yield):
-        Always release the semaphore slot when the request completes.
+    Layers enforced inside route just before insert:
+        2. Non-terminal jobs concurrency -- max pending/running jobs
+        3. Daily quota (free tier only) -- hard daily cap
 
     On any Redis failure the dependency raises 503 (fail-close) because
     billing enforcement must not be silently skipped.
@@ -250,42 +262,73 @@ async def require_billing_limits(
         return
 
     redis_service = redis_pool_manager.get_redis_service()
-    raw_redis = None
-    semaphore_acquired: bool = False
-
     try:
-        try:
-            raw_redis = await redis_service._get_client()
-        except Exception as exc:
-            raise UnavailableException(
-                internal_message=f"Redis error acquiring client: {exc}",
-                retry_after=_RETRY_AFTER_SECONDS,
-            )
+        await redis_service._get_client()
+    except Exception as exc:
+        raise UnavailableException(
+            internal_message=f"Redis error acquiring client: {exc}",
+            retry_after=_RETRY_AFTER_SECONDS,
+        )
 
-        # -- Layer 1: billing RPM --
-        limiter = RateLimiter(config)
-        try:
-            await limiter.check_billing_rpm(
-                current_user.user_id, tier_limits.rpm_limit
-            )
-        except RateLimitException:
-            raise
-        except Exception as exc:
-            raise UnavailableException(
-                internal_message=(
-                    f"Redis error in billing RPM check: {exc}"
-                ),
-                retry_after=_RETRY_AFTER_SECONDS,
-            )
+    # -- Layer 1: billing RPM --
+    limiter = RateLimiter(config)
+    try:
+        await limiter.check_billing_rpm(
+            current_user.user_id, tier_limits.rpm_limit
+        )
+    except RateLimitException:
+        raise
+    except Exception as exc:
+        raise UnavailableException(
+            internal_message=(
+                f"Redis error in billing RPM check: {exc}"
+            ),
+            retry_after=_RETRY_AFTER_SECONDS,
+        )
 
-        # -- Layer 2: concurrency semaphore --
-        semaphore = ConcurrencySemaphore()
+    # -- Hand control to the route handler --
+    request.state.rate_limit_tier_limits = tier_limits
+    request.state.job_id = job_id
+    yield current_user
+
+
+async def enforce_job_creation_capacity(
+    request: Request,
+    db: AsyncSession,
+    current_user: CurrentUser,
+) -> None:
+    """Enforce Layers 2-3 immediately before job insert."""
+    if _RATE_LIMIT_BYPASSED:
+        return
+
+    config = RateLimitConfig.get_instance()
+    tier_limits = getattr(request.state, "rate_limit_tier_limits", None)
+    if not isinstance(tier_limits, TierLimits):
+        tier_limits = config.tier_map.get(current_user.user_tier)
+
+    if tier_limits is None:
+        logger.error(
+            "rate_limit: no tier config for tier='{}', user_id={}",
+            current_user.user_tier,
+            current_user.user_id,
+        )
+        raise UnavailableException(
+            internal_message=(
+                f"Missing tier config for tier={current_user.user_tier}"
+            ),
+            retry_after=_RETRY_AFTER_SECONDS,
+        )
+
+    limiter = RateLimiter(config)
+
+    # -- Layer 2: non-terminal jobs concurrency (DB-locked) --
+    if tier_limits.max_concurrent_jobs != -1:
         try:
-            semaphore_acquired = await semaphore.acquire(
-                raw_redis, current_user.user_id, job_id,
-                tier_limits.max_concurrent_jobs,
+            await _acquire_user_concurrency_lock(db, current_user.user_id)
+            active_jobs = await _count_non_terminal_jobs(
+                db, current_user.user_id
             )
-            if not semaphore_acquired:
+            if active_jobs >= tier_limits.max_concurrent_jobs:
                 raise RateLimitException(
                     retry_after=CONCURRENCY_RETRY_AFTER_SECONDS,
                     limit=tier_limits.max_concurrent_jobs,
@@ -300,46 +343,25 @@ async def require_billing_limits(
         except Exception as exc:
             raise UnavailableException(
                 internal_message=(
-                    f"Redis error in semaphore acquire: {exc}"
+                    f"DB error in concurrency check: {exc}"
                 ),
                 retry_after=_RETRY_AFTER_SECONDS,
             )
 
-        # -- Layer 3: daily quota --
-        if tier_limits.daily_quota != -1:
-            try:
-                await limiter.check_daily_quota(
-                    current_user.user_id, tier_limits.daily_quota
-                )
-            except RateLimitException:
-                # Release semaphore before re-raising.
-                await _safe_release_semaphore(
-                    semaphore, raw_redis, current_user.user_id, job_id
-                )
-                semaphore_acquired = False
-                raise
-            except Exception as exc:
-                await _safe_release_semaphore(
-                    semaphore, raw_redis, current_user.user_id, job_id
-                )
-                semaphore_acquired = False
-                raise UnavailableException(
-                    internal_message=(
-                        f"Redis error in daily quota check: {exc}"
-                    ),
-                    retry_after=_RETRY_AFTER_SECONDS,
-                )
-
-        # -- Hand control to the route handler --
-        request.state.job_id = job_id
-        yield current_user
-
-    finally:
-        # Teardown: always release semaphore on request completion.
-        if semaphore_acquired and raw_redis is not None:
-            semaphore = ConcurrencySemaphore()
-            await _safe_release_semaphore(
-                semaphore, raw_redis, current_user.user_id, job_id
+    # -- Layer 3: daily quota --
+    if tier_limits.daily_quota != -1:
+        try:
+            await limiter.check_daily_quota(
+                current_user.user_id, tier_limits.daily_quota
+            )
+        except RateLimitException:
+            raise
+        except Exception as exc:
+            raise UnavailableException(
+                internal_message=(
+                    f"Redis error in daily quota check: {exc}"
+                ),
+                retry_after=_RETRY_AFTER_SECONDS,
             )
 
 
@@ -348,20 +370,26 @@ async def require_billing_limits(
 # ---------------------------------------------------------------------------
 
 
-async def _safe_release_semaphore(
-    semaphore: ConcurrencySemaphore,
-    redis,
+async def _acquire_user_concurrency_lock(
+    db: AsyncSession,
     user_id: str,
-    job_id: str,
 ) -> None:
-    """Release a semaphore slot, swallowing errors to avoid masking the
-    original exception during teardown."""
-    try:
-        await semaphore.release(redis, user_id, job_id)
-    except Exception:
-        logger.warning(
-            "rate_limit: failed to release semaphore for "
-            "user_id={}, job_id={}",
-            user_id,
-            job_id,
-        )
+    """Acquire a per-user row lock to serialize concurrent job creation."""
+    result = await db.execute(
+        select(User.id).where(User.id == user_id).with_for_update()
+    )
+    if result.scalar_one_or_none() is None:
+        raise RuntimeError(f"User row not found for user_id={user_id}")
+
+
+async def _count_non_terminal_jobs(
+    db: AsyncSession,
+    user_id: str,
+) -> int:
+    """Count non-terminal jobs for a user in the current transaction."""
+    result = await db.execute(
+        select(func.count(Job.job_id))
+        .where(Job.user_id == user_id)
+        .where(Job.status.in_(_ACTIVE_JOB_STATES))
+    )
+    return int(result.scalar_one() or 0)

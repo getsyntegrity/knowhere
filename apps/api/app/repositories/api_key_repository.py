@@ -73,7 +73,6 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
             .where(APIKey.id == api_key_id)
             .values(last_used_at=datetime.utcnow())
         )
-        await session.commit()
         return result.rowcount > 0
     
     async def deactivate(self, session: AsyncSession, api_key_id: str) -> bool:

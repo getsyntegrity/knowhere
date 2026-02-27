@@ -15,7 +15,7 @@ from .payment_record import PaymentRecord
 
 # Import models in dependency order
 # 1. First import base models (no foreign key dependencies)
-from .user import Role, User, UserType
+from .user import User
 
 # 3. Job-related log models
 from .job_state_audit_log import JobStateAuditLog
@@ -31,8 +31,6 @@ from .system_limit import SystemLimit
 
 __all__ = [
     "User",
-    "Role",
-    "UserType",
     "APIKey",
     "CreditsTransaction",
 

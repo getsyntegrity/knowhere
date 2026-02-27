@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
@@ -75,6 +75,14 @@ class Job(Base):
         Index('idx_job_type', 'job_type'),
         Index('idx_job_created_at', 'created_at'),
         Index('idx_job_user_status', 'user_id', 'status'),
+        Index(
+            'idx_job_user_active_states',
+            'user_id',
+            'status',
+            postgresql_where=text(
+                "status IN ('waiting-file', 'pending', 'running', 'converting')"
+            ),
+        ),
     )
     
     def __repr__(self):

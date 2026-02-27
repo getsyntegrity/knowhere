@@ -62,23 +62,48 @@ async def lifespan(app: FastAPI):
 
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
 
-    # Initialize rate limiter rules from DB and start Pub/Sub listener
-    try:
-        from app.services.rate_limit.config import RateLimitConfig
-        redis_url = redis_pool_manager.config.get_connection_url()
-        RateLimitConfig.get_instance(redis_url)
+    # Initialize rate limiter rules from DB and start Pub/Sub listener.
+    # Fail fast on init errors so we don't serve with partially enforced limits.
+    from app.services.rate_limit.config import RateLimitConfig
+    from shared.core.database import AsyncSessionFactory
 
-        redis_service = redis_pool_manager.get_redis_service()
-        from shared.core.database import AsyncSessionFactory
-        async with AsyncSessionFactory() as session:
-            await load_rules(session, redis_service)
-        logger.info("rate limiter rules loaded")
-    except Exception as e:
-        logger.error(f"rate limiter initialization failed: {e}")
+    redis_url = redis_pool_manager.config.get_connection_url()
+    RateLimitConfig.get_instance(redis_url)
+    redis_service = redis_pool_manager.get_redis_service()
+    async with AsyncSessionFactory() as session:
+        await load_rules(session, redis_service, publish_updates=True)
+    logger.info("rate limiter rules loaded")
 
-    _pubsub_listener = RateLimitPubSubListener(redis_pool_manager.get_redis_service())
+    _pubsub_listener = RateLimitPubSubListener(redis_service)
     await _pubsub_listener.start()
     app.state.pubsub_listener = _pubsub_listener
+
+    async def _rate_limit_rule_sync_loop():
+        sync_interval = int(
+            os.getenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "300")
+        )
+        while True:
+            try:
+                await asyncio.sleep(sync_interval)
+                async with AsyncSessionFactory() as session:
+                    changed = await load_rules(
+                        session,
+                        redis_service,
+                        publish_updates=True,
+                    )
+                logger.debug(
+                    "rate limit rules periodic DB sync finished",
+                    changed=changed,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"rate limit rules periodic DB sync failed: {e}")
+
+    app.state.rate_limit_rule_sync_task = asyncio.create_task(
+        _rate_limit_rule_sync_loop(),
+        name="rate_limit_rule_sync",
+    )
 
     try:
         from app.services.messaging_service import messaging_service
@@ -93,6 +118,12 @@ async def lifespan(app: FastAPI):
     # Stop rate limiter Pub/Sub listener
     if hasattr(app.state, "pubsub_listener"):
         await app.state.pubsub_listener.stop()
+    if hasattr(app.state, "rate_limit_rule_sync_task"):
+        app.state.rate_limit_rule_sync_task.cancel()
+        try:
+            await app.state.rate_limit_rule_sync_task
+        except asyncio.CancelledError:
+            pass
 
     try:
         from app.services.messaging_service import messaging_service

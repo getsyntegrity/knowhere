@@ -6,20 +6,17 @@ to the resolved identity (user_id, user_tier) so that tier lookups do not hit
 the database on every request.
 
 Key patterns (all prefixed with REDIS_KEY_PREFIX from config):
-    JWT:     {PREFIX}:identity:jwt:{user_id}
-    API key: {PREFIX}:identity:apikey:{api_key_hash}
-    Reverse: {PREFIX}:identity:apikeys:{user_id}
+    JWT:     {REDIS_KEY_PREFIX}identity:jwt:{user_id}
+    API key: {REDIS_KEY_PREFIX}identity:apikey:{api_key_hash}
+    Reverse: {REDIS_KEY_PREFIX}identity:apikeys:{user_id}
 """
 
 import json
 from typing import Optional
 
 from loguru import logger
-from shared.core.config import settings
 from shared.services.redis.redis_service import RedisService
-
-# Resolved from the shared config so every service uses the same namespace.
-_PREFIX: str = settings.REDIS_KEY_PREFIX
+from app.services.rate_limit.config import REDIS_KEY_PREFIX
 
 # Default TTL for JWT identity cache entries (1 hour).
 _JWT_TTL_SECONDS: int = 3600
@@ -37,15 +34,15 @@ class IdentityCache:
 
     @staticmethod
     def _jwt_key(user_id: str) -> str:
-        return f"identity:jwt:{user_id}"
+        return f"{REDIS_KEY_PREFIX}identity:jwt:{user_id}"
 
     @staticmethod
     def _apikey_key(api_key_hash: str) -> str:
-        return f"identity:apikey:{api_key_hash}"
+        return f"{REDIS_KEY_PREFIX}identity:apikey:{api_key_hash}"
 
     @staticmethod
     def _reverse_key(user_id: str) -> str:
-        return f"identity:apikeys:{user_id}"
+        return f"{REDIS_KEY_PREFIX}identity:apikeys:{user_id}"
 
     # ------------------------------------------------------------------
     # Read
@@ -122,8 +119,11 @@ class IdentityCache:
             # API-key cache entries belonging to this user.
             reverse_key: str = self._reverse_key(user_id)
             await redis.sadd(reverse_key, api_key_hash)
-            # Keep reverse index TTL aligned with the API-key cache TTL.
-            await redis.expire(reverse_key, effective_ttl)
+            # Keep reverse index TTL at least as long as the longest
+            # surviving API-key cache entry for this user.
+            current_ttl = await redis.ttl(reverse_key)
+            if current_ttl in (-2, -1) or current_ttl < effective_ttl:
+                await redis.expire(reverse_key, effective_ttl)
         except Exception:
             logger.warning(
                 "identity_cache: failed to set apikey identity "

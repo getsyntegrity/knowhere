@@ -18,9 +18,8 @@ from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
 # ---------------------------------------------------------------------------
 
 DEFAULT_SYSTEM_RPM: int = 1000
-MAX_JOB_DURATION_SECONDS: int = 3600
 CONCURRENCY_RETRY_AFTER_SECONDS: int = 5
-RATE_LIMIT_KEY_PREFIX: str = "knowhere-api:"
+REDIS_KEY_PREFIX: str = "knowhere-api:"
 
 _RATE_LIMIT_BYPASSED_ENV: str = "RATE_LIMIT_BYPASSED"
 
@@ -42,7 +41,7 @@ class RateLimitConfig:
     _instance: Optional["RateLimitConfig"] = None
 
     def __init__(
-        self, redis_url: str, key_prefix: str = RATE_LIMIT_KEY_PREFIX
+        self, redis_url: str, key_prefix: str = REDIS_KEY_PREFIX
     ) -> None:
         from limits import parse as parse_rate  # noqa: F811
         from limits.aio.storage import RedisStorage
@@ -81,7 +80,7 @@ class RateLimitConfig:
     def get_instance(
         cls,
         redis_url: Optional[str] = None,
-        key_prefix: str = RATE_LIMIT_KEY_PREFIX,
+        key_prefix: str = REDIS_KEY_PREFIX,
     ) -> "RateLimitConfig":
         if cls._instance is None:
             if redis_url is None:
@@ -158,3 +157,12 @@ class RateLimitConfig:
     def parse_rate(self, rate_string: str):
         """Thin wrapper around limits.parse()."""
         return self._parse_rate(rate_string)
+
+    def namespaced_namespace(self, namespace: str) -> str:
+        """Build a Redis-safe namespace scoped by the configured key prefix."""
+        base = (
+            f"{self._key_prefix}rate_limit"
+            if self._key_prefix.endswith(":")
+            else f"{self._key_prefix}:rate_limit"
+        )
+        return f"{base}:{namespace}"

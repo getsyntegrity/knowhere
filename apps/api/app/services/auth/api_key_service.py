@@ -1,6 +1,7 @@
 """
 API Key 管理服务
 """
+import asyncio
 import hashlib
 import uuid
 from datetime import datetime
@@ -11,6 +12,7 @@ from app.repositories.api_key_repository import APIKeyRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import ValidationException, NotFoundException, KnowhereException, APIKeyOperationException
+from shared.core.database import get_db_context
 from shared.core.config import redis_pool_manager
 from app.services.rate_limit.identity_cache import identity_cache
 
@@ -85,14 +87,10 @@ class APIKeyService:
         
         if not api_key_record or not api_key_record.is_valid():
             return None
-        
-        # 3. 更新最后使用时间（best-effort）
-        try:
-            await self.repository.update_last_used(session, api_key_record.id)
-        except Exception as e:
-            logger.warning(f"更新API Key最后使用时间失败(忽略): {e}")
-            await session.rollback()
-        
+
+        # 3. 更新最后使用时间（best-effort async，不阻塞请求路径）
+        self._schedule_last_used_update(str(api_key_record.id))
+
         # 4. 缓存结果
         await self._cache_api_key(api_key, str(api_key_record.user_id))
         
@@ -199,6 +197,24 @@ class APIKeyService:
     async def _cache_api_key(self, api_key: str, user_id: str):
         """缓存API Key到Redis"""
         # TODO: 实现Redis缓存
+
+    def _schedule_last_used_update(self, api_key_id: str) -> None:
+        """Schedule a best-effort background update for api_keys.last_used_at."""
+        try:
+            asyncio.create_task(
+                self._update_last_used_best_effort(api_key_id),
+                name=f"api_key_last_used:{api_key_id}",
+            )
+        except Exception as e:
+            logger.warning(f"调度API Key最后使用时间更新失败(忽略): {e}")
+
+    async def _update_last_used_best_effort(self, api_key_id: str) -> None:
+        """Best-effort async update; failures are logged but never propagated."""
+        try:
+            async with get_db_context() as db:
+                await self.repository.update_last_used(db, api_key_id)
+        except Exception as e:
+            logger.warning(f"更新API Key最后使用时间失败(忽略): {e}")
     
     async def _get_cached_user_id(self, api_key: str) -> Optional[str]:
         """从缓存获取用户ID"""
