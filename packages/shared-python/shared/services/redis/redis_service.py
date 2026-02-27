@@ -18,6 +18,7 @@ from shared.utils.redis_retry import RedisHealthChecker, RedisRetry
 
 class RedisService:
     """Redis服务抽象层"""
+    _KEY_PREFIX: str = "knowhere-api"
     
     def __init__(self, config_manager: Optional[RedisConfigManager] = None):
         if config_manager is None:
@@ -57,7 +58,7 @@ class RedisService:
     
     def _build_key(self, key: str) -> str:
         """构建完整的键名"""
-        prefix = self.config_manager.config.REDIS_KEY_PREFIX
+        prefix = self._KEY_PREFIX
         return f"{prefix}:{key}" if not key.startswith(prefix) else key
     
     # ==================== 基础操作 ====================

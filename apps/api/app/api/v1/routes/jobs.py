@@ -12,7 +12,12 @@ from urllib.parse import urlparse
 from shared.core.constants.system import SystemConstants
 from shared.core.config import settings
 from shared.core.database import get_db
-from app.core.dependencies import get_current_user_id 
+from app.services.rate_limit.dependencies import (
+    with_current_user,
+    generate_job_id,
+    require_billing_limits,
+    CurrentUser,
+)
 from shared.core.state_machine.states import JobStatus
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
                                     JobResponse, JobResultResponse)
@@ -20,14 +25,13 @@ from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
 from shared.services.storage.file_upload_service import FileUploadService
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.exceptions.domain_exceptions import (
     ValidationException,
     NotFoundException,
     PermissionDeniedException,
-    RateLimitException,
     JobOperationException
 )
 from shared.core.exceptions.webhook_exceptions import WebhookConfigException
@@ -238,7 +242,8 @@ def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
 @router.post("/", include_in_schema=False)
 async def create_job(
     request: JobCreate,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(require_billing_limits),
+    job_id: str = Depends(generate_job_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -290,9 +295,6 @@ async def create_job(
                     violations=[{"field": "source_url", "description": "URL file type not supported"}]
                 )
 
-        # 生成job_id
-        job_id = f"job_{uuid.uuid4().hex[:12]}"
-
         job_type = "kb_management"
 
         # 简化版：不再在API层获取user_config，Worker直接使用settings.USERS_DATA_PATH
@@ -316,7 +318,7 @@ async def create_job(
             job = await job_repo.create_job(
                 db=db,
                 job_id=job_id,
-                user_id=user_id,
+                user_id=current_user.user_id,
                 job_type=job_type,
                 source_type="file",
                 file_path=None,  # 文件还未上传
@@ -353,7 +355,7 @@ async def create_job(
             job_info = {
                 "job_id": job_id,
                 "s3_key": s3_key,
-                "user_id": user_id,
+                "user_id": current_user.user_id,
                 "webhook_enabled": bool(request.webhook and request.webhook.url),
                 "job_type": job_type,
                 "source_type": "file",
@@ -406,7 +408,7 @@ async def create_job(
                 job = await job_repo.create_job(
                     db=db,
                     job_id=job_id,
-                    user_id=user_id,
+                    user_id=current_user.user_id,
                     job_type=job_type,
                     source_type="url",
                     file_path=None,
@@ -435,7 +437,7 @@ async def create_job(
                 job_info = {
                     "job_id": job_id,
                     "s3_key": s3_key,
-                    "user_id": user_id,
+                    "user_id": current_user.user_id,
                     "webhook_enabled": bool(request.webhook and request.webhook.url),
                     "job_type": job_type,
                     "source_type": "url",
@@ -448,7 +450,7 @@ async def create_job(
                 celery_app = get_celery_app()
                 upload_url_file_task = celery_app.signature('app.core.tasks.kb_tasks.upload_url_file_task')
                 upload_url_file_task.apply_async(
-                    args=[job_id, request.source_url, user_id],
+                    args=[job_id, request.source_url, current_user.user_id],
                     kwargs={'job_type': job_type}
                 )
 
@@ -496,7 +498,7 @@ async def list_jobs(
     recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
     start_time: Optional[datetime] = Query(None, description="开始时间，ISO格式"),
     end_time: Optional[datetime] = Query(None, description="结束时间，ISO格式"),
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -528,7 +530,7 @@ async def list_jobs(
         # 获取符合条件的总记录数
         total_count = await job_repo.count_jobs_by_user(
             db=db,
-            user_id=user_id,
+            user_id=current_user.user_id,
             created_after=created_after,
             created_before=created_before,
         )
@@ -536,7 +538,7 @@ async def list_jobs(
         # 获取任务列表
         jobs = await job_repo.get_jobs_by_user(
             db=db,
-            user_id=user_id,
+            user_id=current_user.user_id,
             limit=page_size,
             offset=(page - 1) * page_size,
             created_after=created_after,
@@ -656,44 +658,18 @@ async def list_jobs(
 )
 async def get_job_result(
     job_id: str,
-    response: Response,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     获取任务结果 - 符合PRD第5.1.3节规范
     """
     try:
-        # 速率限制检查
-        from shared.services.redis import RedisServiceFactory
-        from shared.services.redis.rate_limit_service import RateLimitService
-
-        redis_service = RedisServiceFactory.get_service()
-        rate_limit_service = RateLimitService(redis_service)
-
-        rate_limit_info = await rate_limit_service.check_rate_limit(
-            user_id, "get_job_result"
-        )
-
-        # 设置响应头
-        response.headers["RateLimit-Limit"] = str(rate_limit_info["limit"])
-        response.headers["RateLimit-Remaining"] = str(rate_limit_info["remaining"])
-        response.headers["RateLimit-Reset"] = str(rate_limit_info["reset"])
-
-        # If rate limit exceeded, return 429 error
-        if not rate_limit_info["allowed"]:
-            import time
-            retry_after_seconds = max(1, int(rate_limit_info["reset"] - time.time()))
-            raise RateLimitException(
-                limit=rate_limit_info["limit"],
-                retry_after=retry_after_seconds
-            )
-
         job_repo = JobRepository()
 
         # 获取Job并检查权限
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, user_id)
+        check_job_permission(job, current_user.user_id)
 
         status_for_api = job.status
 
@@ -785,8 +761,6 @@ async def get_job_result(
         raise
     except PermissionDeniedException:
         raise
-    except RateLimitException:
-        raise
     except Exception as e:
         logger.error(f"获取任务结果失败: {e}")
         raise JobOperationException(
@@ -802,7 +776,7 @@ async def get_job_result(
 async def confirm_upload(
     job_id: str,
     request: Optional[ConfirmUploadRequest] = None,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -813,7 +787,7 @@ async def confirm_upload(
 
         # 获取Job并检查权限
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, user_id)
+        check_job_permission(job, current_user.user_id)
 
         # 检查任务状态
         logger.info(f"Confirm upload - Job {job_id} current status: {job.status}")
@@ -849,7 +823,7 @@ async def confirm_upload(
             job_id=job_id,
             job_type=job.job_type,
             source_type="file",
-            user_id=user_id,
+            user_id=current_user.user_id,
         )
 
         return {"message": "文件上传确认成功，任务已开始处理"}

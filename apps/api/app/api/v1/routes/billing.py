@@ -9,7 +9,7 @@ from typing import Optional
 from pydantic import BaseModel
 from shared.core.database import get_db
 from shared.core.config import settings
-from app.core.dependencies import get_current_user_id
+from app.services.rate_limit.dependencies import with_current_user, CurrentUser
 from shared.models.schemas.billing import (BuyCreditsRequest,
                                         CheckoutSessionResponse,
                                         CreditsBalanceResponse,
@@ -43,7 +43,7 @@ class ParseUsageResponse(BaseModel):
 @router.post("/buy-credits", summary="Buy Credits")
 async def buy_credits(
     request: BuyCreditsRequest,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Buy credits via Stripe payment intent"""
@@ -55,7 +55,7 @@ async def buy_credits(
         amount_cents = int(amount_cny * 100)  # Convert to cents
         
         payment_intent = await stripe_service.create_payment_intent(
-            user_id=user_id,
+            user_id=current_user.user_id,
             amount=amount_cents,
             credits_amount=MicroDollar.from_dollars(request.credits_amount),
             currency='cny'
@@ -74,7 +74,7 @@ async def buy_credits(
 
 @router.get("/credits", summary="Get Credits Balance", response_model=CreditsBalanceResponse)
 async def get_credits_balance(
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get the current credits balance for the authenticated user"""
@@ -82,10 +82,10 @@ async def get_credits_balance(
     
     try:
         # Ensure user is initialized
-        await credits_service.ensure_user_initialized(db, user_id)
+        await credits_service.ensure_user_initialized(db, current_user.user_id)
         await db.commit()
-        
-        balance_micro_dollar = await credits_service.get_balance(db, user_id)
+
+        balance_micro_dollar = await credits_service.get_balance(db, current_user.user_id)
         
         # Default limit
         limit_micro_dollar = MicroDollar.from_dollars(1000).amount
@@ -108,14 +108,14 @@ async def get_credits_balance(
 @router.get("/usage", summary="Get Usage Statistics")
 async def get_usage_stats(
     period: str = "month",
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get usage statistics for the authenticated user"""
     credits_service = CreditsService()
     
     try:
-        stats = await credits_service.get_usage_stats(db, user_id, period)
+        stats = await credits_service.get_usage_stats(db, current_user.user_id, period)
         
         return UsageStatsResponse(
             period=stats["period"],
@@ -134,7 +134,7 @@ async def get_usage_stats(
 
 @router.get("/parse-usage", summary="Get Parse Usage Overview", response_model=ParseUsageResponse)
 async def parse_usage_overview(
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -156,7 +156,7 @@ async def parse_usage_overview(
         # Net consumption = abs(sum(usage + refund)), then convert to display credits
         credits_row = await db.execute(
             select(func.coalesce(func.sum(CreditsTransaction.credits_amount), 0))
-            .where(CreditsTransaction.user_id == user_id)
+            .where(CreditsTransaction.user_id == current_user.user_id)
             .where(CreditsTransaction.transaction_type.in_(["usage", "refund"]))
         )
         # Cast Decimal to int is safe here because:
@@ -171,7 +171,7 @@ async def parse_usage_overview(
                 func.count().filter(Job.status == "done").label("done_cnt"),
                 func.count().filter(Job.status.in_(["done", "failed"])).label("terminal_cnt"),
                 func.avg(func.extract("epoch", Job.updated_at - Job.created_at)).label("avg_secs"),
-            ).where(Job.user_id == user_id)
+            ).where(Job.user_id == current_user.user_id)
         )
         job_stats = job_row.first() or (0, 0, 0.0)
         done_cnt = getattr(job_stats, "done_cnt", 0) or 0
@@ -210,14 +210,14 @@ async def parse_usage_overview(
 @router.get("/history", summary="Get Transaction History")
 async def get_transaction_history(
     limit: int = 50,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get credits transaction history for the authenticated user"""
     credits_service = CreditsService()
     
     try:
-        transactions = await credits_service.get_transaction_history(db, user_id, limit)
+        transactions = await credits_service.get_transaction_history(db, current_user.user_id, limit)
         
         transaction_list = [
             TransactionHistoryResponse(
@@ -338,7 +338,7 @@ async def get_price_configs(
 @router.post("/buy-credits-package", summary="Buy Credits Package by Price ID")
 async def buy_credits_package(
     request: BuyCreditsPackageRequest,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Buy a credits package by its Stripe price ID"""
@@ -350,7 +350,7 @@ async def buy_credits_package(
     try:
         # Query user email from database
         result = await db.execute(
-            select(User.email).where(User.id == user_id)
+            select(User.email).where(User.id == current_user.user_id)
         )
         user_email = result.scalar_one_or_none()
         
@@ -360,7 +360,7 @@ async def buy_credits_package(
         
         checkout_url = await stripe_service.create_checkout_session_for_credits_package(
             db=db,
-            user_id=user_id,
+            user_id=current_user.user_id,
             price_id=request.price_id,
             success_url=success_url,
             cancel_url=cancel_url,

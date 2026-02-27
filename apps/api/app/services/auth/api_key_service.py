@@ -11,6 +11,8 @@ from app.repositories.api_key_repository import APIKeyRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import ValidationException, NotFoundException, KnowhereException, APIKeyOperationException
+from shared.core.config import redis_pool_manager
+from app.services.rate_limit.identity_cache import identity_cache
 
 class APIKeyService:
     """API Key管理服务"""
@@ -84,8 +86,12 @@ class APIKeyService:
         if not api_key_record or not api_key_record.is_valid():
             return None
         
-        # 3. 更新最后使用时间
-        await self.repository.update_last_used(session, api_key_record.id)
+        # 3. 更新最后使用时间（best-effort）
+        try:
+            await self.repository.update_last_used(session, api_key_record.id)
+        except Exception as e:
+            logger.warning(f"更新API Key最后使用时间失败(忽略): {e}")
+            await session.rollback()
         
         # 4. 缓存结果
         await self._cache_api_key(api_key, str(api_key_record.user_id))
@@ -117,6 +123,11 @@ class APIKeyService:
             logger.info("事务已提交")
             # 4. 清理缓存
             await self._remove_cached_api_key(api_key_id)
+            await identity_cache.invalidate_apikey(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+                api_key.key_hash,
+            )
         
         return success
     
@@ -165,6 +176,11 @@ class APIKeyService:
         # 4. 更新缓存
         await self._cache_api_key(new_api_key, user_id)
         await self._remove_cached_api_key(api_key_id)
+        await identity_cache.invalidate_apikey(
+            redis_pool_manager.get_redis_service(),
+            user_id,
+            api_key.key_hash,
+        )
         
         return new_api_key
     
@@ -219,6 +235,13 @@ class APIKeyService:
             api_key.is_active = not api_key.is_active
             await session.commit()
             await session.refresh(api_key)
+
+            if not api_key.is_active:
+                await identity_cache.invalidate_apikey(
+                    redis_pool_manager.get_redis_service(),
+                    user_id,
+                    api_key.key_hash,
+                )
             
             logger.info(f"API Key状态切换成功: {api_key_id}, 新状态: {api_key.is_active}")
             return True

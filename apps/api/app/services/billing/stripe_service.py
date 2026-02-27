@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 import stripe
 from shared.core.config import settings
+from shared.core.config import redis_pool_manager
 from shared.core.logging import logger
 from sqlalchemy import select, func, String, cast
 from shared.repositories.credits_repository import CreditsRepository
@@ -24,6 +25,8 @@ from shared.core.exceptions.domain_exceptions import (
     StripeServiceException,
     AuthException
 )
+from app.services.rate_limit.identity_cache import identity_cache
+from app.services.rate_limit.tier_service import TierService
 
 class StripeService:
     """Stripe支付服务"""
@@ -334,6 +337,14 @@ class StripeService:
                 payment_record.processed_at = datetime.utcnow()
                 await db.commit()
                 await db.refresh(payment_record)
+
+                # Refresh billing tier after payment success and invalidate
+                # cached identities so new limits apply on next request.
+                await TierService.refresh_tier(user_id, db)
+                await identity_cache.invalidate_user(
+                    redis_pool_manager.get_redis_service(),
+                    user_id,
+                )
                 
                 logger.info(f"Credits包购买成功: user_id={user_id}, credits={credits_amount}, price_id={price_id}")
                 return {
@@ -439,6 +450,12 @@ class StripeService:
             payment_record.processed_at = datetime.utcnow()
             await db.commit()
             await db.refresh(payment_record)
+
+            await TierService.refresh_tier(user_id, db)
+            await identity_cache.invalidate_user(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+            )
             
             logger.info(f"buy credits success: user_id={user_id}, credits={credits_amount}, payment_intent_id={payment_intent_id}")
             return {
@@ -638,4 +655,3 @@ class StripeService:
             "payment_intent_id": payment_intent_id,
             "refund_id": refund_id,
         }
-

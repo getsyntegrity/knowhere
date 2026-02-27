@@ -24,6 +24,8 @@ from app.core.middleware import setup_cors, LoggingMiddleware
 from app.core.image_cli import ImageCli
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
+from app.services.rate_limit.rule_loader import load_rules
+from app.services.rate_limit.pubsub_listener import RateLimitPubSubListener
 
 setup_logging()
 
@@ -59,7 +61,25 @@ async def lifespan(app: FastAPI):
     logger.info("Redis connection pool created.")
 
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-    
+
+    # Initialize rate limiter rules from DB and start Pub/Sub listener
+    try:
+        from app.services.rate_limit.config import RateLimitConfig
+        redis_url = redis_pool_manager.config.get_connection_url()
+        RateLimitConfig.get_instance(redis_url)
+
+        redis_service = redis_pool_manager.get_redis_service()
+        from shared.core.database import AsyncSessionFactory
+        async with AsyncSessionFactory() as session:
+            await load_rules(session, redis_service)
+        logger.info("rate limiter rules loaded")
+    except Exception as e:
+        logger.error(f"rate limiter initialization failed: {e}")
+
+    _pubsub_listener = RateLimitPubSubListener(redis_pool_manager.get_redis_service())
+    await _pubsub_listener.start()
+    app.state.pubsub_listener = _pubsub_listener
+
     try:
         from app.services.messaging_service import messaging_service
         await messaging_service.start()
@@ -69,7 +89,11 @@ async def lifespan(app: FastAPI):
     
     logger.info("knowledge library API service started!")
     yield
-    
+
+    # Stop rate limiter Pub/Sub listener
+    if hasattr(app.state, "pubsub_listener"):
+        await app.state.pubsub_listener.stop()
+
     try:
         from app.services.messaging_service import messaging_service
         await messaging_service.stop()
