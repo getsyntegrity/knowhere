@@ -12,7 +12,7 @@ from .knowledge_base_repository import (create_directory, create_update_kb,
                                         get_directories_by_user,
                                         get_directory_contents,
                                         update_directory)
-from .usage_log_repository import UsageLogRepository
+
 from .webhook_repository import WebhookRepository
 
 __all__ = [
@@ -28,7 +28,7 @@ __all__ = [
     "get_directory_contents",
     "delete_kb_content",
     "APIKeyRepository",
-    "UsageLogRepository",
+
     "WebhookRepository",
 ]
 
