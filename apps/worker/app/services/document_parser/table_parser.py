@@ -764,6 +764,9 @@ def extract_tables_by_forms(tb_txt, form):
         tb_df = tb_df.drop(columns=tb_df.columns[0])  # Drop extra leading column
         tb_df = tb_df.drop(columns=tb_df.columns[-1]) # Drop extra trailing column
         tb_df.columns = tb_df.columns.str.strip()  # Clean up headers
+        # Filter out MD separator lines (e.g. "---", ":---:", "---:")
+        separator_pattern = r'^[\s\-:]+$'
+        tb_df = tb_df[~tb_df.apply(lambda row: row.astype(str).str.match(separator_pattern).all(), axis=1)]
         tb_strs = tb_df.to_html(index=False)
     else:
         tb_strs = None # UNDER DEVELOPMENT other forms of tables...

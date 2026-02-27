@@ -12,7 +12,6 @@ from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
 from shared.utils.text_utils import tokenize2stw_remove
 from app.services.document_parser.image_parser import ask_image
 from app.services.document_parser.layout_parser import pred_titles
-from app.services.document_parser.table_parser import extract_tb_keywords
 from app.services.document_parser.html_parser import table2html
 from app.services.document_parser.toc_parser import (detect_doc_tocs,
                                                      detect_sdt_toc,
@@ -191,26 +190,91 @@ def _first_cols_rows(table_block, max_items=10, max_chars=20):
     return first_row_text, first_col_text
 
 
-async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_count, smart_summary=False):
+async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_count,
+                       summary_table=False, summary_image=False,
+                       cell_images=None, img_dir=None, img_count=0):
     time_stamp = get_str_time()
-    tb_html_str = table2html(block)
+    
+    # Process cell images: save to disk + optional LLM summary
+    cell_image_map = {}  # {(row, col): "description text"} for table2html
+    table_img_entries = []  # df_list entries for images
+    
+    if cell_images:
+        for (row_idx, col_idx), images in cell_images.items():
+            descriptions = []
+            for img_data in images:
+                img_count += 1
+                img_ext = os.path.splitext(img_data['image_name'])[-1]
+                image_index = f"image-{img_count}"
+                
+                # Save image to disk
+                img_name = process_path_texts(
+                    f"table-{table_count+1}-{image_index} {current_heading}", last=30
+                )
+                img_save_path = os.path.join(img_dir, f'{img_name}{img_ext}')
+                with open(img_save_path, 'wb') as f:
+                    f.write(img_data['data'])
+                
+                # LLM summary (optional)
+                img_summary = None
+                if summary_image:
+                    try:
+                        client = OpenAI(api_key=settings.ALI_API_KEY, base_url=settings.ALI_URL)
+                        img_summary = await ask_image(
+                            client, img_dir, [f'{img_name}{img_ext}'],
+                            title_text=current_heading
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to summarize table image: {e}")
+                
+                effective_desc = img_summary or image_index
+                descriptions.append(f"[{effective_desc}]")
+                
+                # Also add as IMAGE entry in df_list for indexing
+                temp_uid = gen_str_codes(effective_desc + str(img_count))
+                img_id = 'IMAGE_' + temp_uid + '_IMAGE'
+                img_summary_field = f"{image_index}\n{img_summary}" if img_summary else image_index
+                relative_img_path = f"images/{img_name}{img_ext}"
+                if img_summary:
+                    image_ref = f"\n{image_index}\n{img_summary}\n{img_id}\n"
+                else:
+                    image_ref = f"\n{image_index}\n{img_id}\n"
+                table_img_entries.append([
+                    image_ref, relative_img_path, img_id,
+                    len(image_ref), "", img_summary_field,
+                    temp_uid, "", "", time_stamp
+                ])
+            
+            cell_image_map[(row_idx, col_idx)] = ' '.join(descriptions)
+        
+        logger.info(f"Extracted {sum(len(v) for v in cell_images.values())} images from table-{table_count+1} cells")
+    
+    # Generate HTML with image descriptions embedded
+    tb_html_str = table2html(block, cell_image_map=cell_image_map if cell_image_map else None)
     if not tb_html_str.strip():
-        return headings_stack, df_list
+        return headings_stack, df_list, img_count
+
+    # Add table image entries to df_list
+    df_list.extend(table_img_entries)
 
     # Extract first row and first column headers
     first_row_text, first_col_text = _first_cols_rows(block)
     
-    # Combine first row and first column as keywords for table retrieval
+    # Combine first row and first column as keywords for table retrieval (with dedup)
     row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
     col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
-    tb_keywords = ';'.join(filter(None, [row_kw, col_kw]))
+    # Cross-dedup: remove col keywords already present in row keywords
+    row_set = set(row_kw.split(';')) if row_kw else set()
+    col_parts = [k for k in col_kw.split(';') if k and k not in row_set]
+    tb_keywords = ';'.join(filter(None, [row_kw] + col_parts))
+    raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
     
     # Table index (always present)
     table_index = f"table-{table_count + 1}"
     
     # LLM summary (optional, only when smart_summary is enabled and succeeds)
     llm_summary = None
-    if smart_summary:
+    if summary_table:
         llm_summary = await extract_summary_keywords(tb_html_str, type_="summary")
     
     # Build tb_summary for df_list: table-n + optional LLM summary
@@ -222,7 +286,6 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     temp_uid = gen_str_codes((tb_html_str + str(table_count)))
     table_id = 'TABLE_' + temp_uid + '_TABLE'
 
-    raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
     tb_name = process_path_texts(f"table-{str(table_count+1)} {raw_tb_name}", last=30)
     tb_path = os.path.join(tb_dir, f'{tb_name}.html')
 
@@ -238,7 +301,7 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
         table_ref = f"\n{table_index}\n{table_id}\n"
     headings_stack[-1]['content'].append(table_ref)
     df_list.append([tb_html_str, tb_path, table_id, len(tb_html_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp])
-    return headings_stack, df_list
+    return headings_stack, df_list, img_count
 
 
 def iter_block_items(doc_data):
@@ -352,24 +415,31 @@ def iter_block_items(doc_data):
                 else:
                     tbl = Table(elem, doc)
 
-                yield ele_num, tbl, 'TABLE', None
+                # Extract images from each cell, keyed by (row_idx, col_idx)
+                cell_images = {}  # {(row_idx, col_idx): [{'image_name', 'data', 'size'}]}
+                for row_idx, tr in enumerate(elem.findall('.//w:tr', namespaces=ns)):
+                    for col_idx, tc in enumerate(tr.findall('.//w:tc', namespaces=ns)):
+                        blips = tc.xpath('.//a:blip', namespaces=ns)
+                        imgs_in_cell = []
+                        for b in blips:
+                            rid = b.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                            target = rel_map.get(rid)
+                            if not target or not target.startswith('media/'):
+                                continue
+                            data = docx.read('word/' + target)
+                            if len(data) < 10 * 1024:  # Skip small images (<10KB, likely icons)
+                                continue
+                            imgs_in_cell.append({
+                                'image_name': target.split('/')[-1],
+                                'data': data,
+                                'size': len(data),
+                            })
+                        if imgs_in_cell:
+                            cell_images[(row_idx, col_idx)] = imgs_in_cell
+
+                yield ele_num, tbl, 'TABLE', cell_images if cell_images else None
                 ele_num += 1
                 map_index += 1
-
-                blips = elem.xpath('.//a:blip', namespaces=ns)
-                for b in blips:
-                    rid = b.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
-                    target = rel_map.get(rid)
-                    if not target or not target.startswith('media/'):
-                        continue
-                    data = docx.read('word/' + target)
-                    yield (ele_num, tbl, 'IMAGE', {
-                        'image_name': target.split('/')[-1],
-                        'from': 'table',
-                        'size': len(data),
-                        'data': data
-                    })
-                    ele_num += 1
             else:
                 continue
 
@@ -479,9 +549,12 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
 
         elif label == 'TABLE': 
             # TODO: handle cross-page tables
-            headings_stack, df_list = await handle_table(
+            headings_stack, df_list, image_count = await handle_table(
                 df_list, block, tb_dir, headings_stack,
-                current_heading, table_count, llm_paras["summary_table"]
+                current_heading, table_count,
+                summary_table=llm_paras["summary_table"],
+                summary_image=llm_paras["summary_image"],
+                cell_images=meta, img_dir=img_dir, img_count=image_count
             )
             table_count += 1
             current_heading = last_heading_before_block

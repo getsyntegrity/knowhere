@@ -95,6 +95,14 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
                 return resp.get('answer', resp)
             return resp
         else:
+            # Validate summary quality: reject null, HTML echo, or overly long responses
+            if resp is None:
+                return ""
+            if isinstance(resp, str):
+                resp_stripped = resp.strip().lower()
+                # LLM returned "null" as instructed when content is too sparse
+                if resp_stripped == "null" or resp_stripped == "none":
+                    return ""
             return resp
 
     except Exception as e:

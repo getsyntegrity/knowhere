@@ -1,28 +1,22 @@
 ---
-description: how to discover and use installed agent skills from ~/.agents/skills/
+description: "CRITICAL — Run at EVERY conversation start: scan ~/.agents/skills/ and .agent/skills/ for installed skills, read each SKILL.md, and check if the user's message matches any trigger condition. Also triggered by: 开始工作, 开始coding, 收工, 结束工作, 同步云端, 推送代码, find a skill, search skills, how do I do X, is there a skill for X."
 ---
 
-# Check Installed Skills
+# Skill Auto-Discovery & Trigger
 
-Before searching the web or using manual approaches for specialized capabilities, always check for pre-installed skills.
+## Installed Skills
+
+| Skill | Location | Triggers |
+|-------|----------|----------|
+| `project_tracker` | `~/.agents/skills/project_tracker/SKILL.md` | 开始工作, 开始coding, 收工, 结束工作, let's begin, wrap up |
+| `find-skills` | `~/.agents/skills/find-skills/SKILL.md` | how do I do X, find a skill, search skills |
+| `git_sync` | `~/.agents/skills/git_sync/SKILL.md` | 同步云端, 推送代码, push to staging, sync to remote |
 
 ## Steps
 
-1. List the contents of `~/.agents/skills/` to see all globally installed skills
-```bash
-ls ~/.agents/skills/
-```
+// turbo-all
 
-2. If a relevant skill is found, read its SKILL.md
-```bash
-cat ~/.agents/skills/<skill-name>/SKILL.md
-```
-
-3. Follow the instructions documented in the SKILL.md file
-
-## Example
-
-If the user asks to "find a skill" or "search skills.sh":
-- Check if `~/.agents/skills/find-skills/` exists
-- Read its SKILL.md
-- Run `npx skills find <query>` as documented
+1. Read the `SKILL.md` of every skill listed above (use `view_file` on each path).
+2. Match the user's message against each skill's trigger conditions using **semantic matching** (not exact string).
+3. If a match is found, **execute that skill's documented behavior immediately**.
+4. If no match, proceed normally.

@@ -28,12 +28,14 @@ def build_prompt(task, texts, query, **kwargs):
     if task == 'summary':
         max_tokens = kwargs['paras']['max_tokens']
         prompt = f"""
-        You will receive a text passage:
+        You will receive a text passage (which may include HTML tables or structured data):
         '''
         {texts}
         '''
         Your task and requirements:
         - Extract the main content of the material, not exceeding {max_tokens} characters
+        - If the input is an HTML table, summarize its structure and key data points in natural language, do NOT return the HTML code itself
+        - If the input content is too short, mostly empty, or lacks meaningful text to summarize, return exactly: null
         - Your response must be in the SAME LANGUAGE as the input text
         - Do not return any additional explanations beyond the extracted main content
         """
