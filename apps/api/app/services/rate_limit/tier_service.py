@@ -53,22 +53,13 @@ class TierService:
                 break
 
         # Step 4: persist the tier on user_balances
-        try:
-            stmt_update = (
-                update(UserBalance)
-                .where(UserBalance.user_id == user_id)
-                .values(user_tier=new_tier)
-            )
-            await session.execute(stmt_update)
-            await session.commit()
-        except Exception:
-            logger.warning(
-                "Failed to persist tier to user_balances, "
-                "user_id=%s tier=%s",
-                user_id,
-                new_tier,
-            )
-            await session.rollback()
+        # NOTE: caller is responsible for commit/rollback.
+        stmt_update = (
+            update(UserBalance)
+            .where(UserBalance.user_id == user_id)
+            .values(user_tier=new_tier)
+        )
+        await session.execute(stmt_update)
 
         logger.info(
             "Tier refreshed: user_id=%s total_micro=%d new_tier=%s",
