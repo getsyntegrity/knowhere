@@ -19,11 +19,12 @@ from shared.models.database.user_balance import UserBalance
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from shared.core.exceptions.domain_exceptions import (
-    SystemSettingMissingException, 
-    ValidationException, 
+    SystemSettingMissingException,
+    ValidationException,
     NotFoundException,
     StripeServiceException,
-    AuthException
+    AuthException,
+    KnowhereException,
 )
 from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.tier_service import TierService
@@ -34,8 +35,7 @@ class StripeService:
     def __init__(self):
         if not settings.STRIPE_SECRET_KEY:
             raise SystemSettingMissingException(
-                setting_name="STRIPE_SECRET_KEY",
-                internal_message="Stripe API key not configured"
+                internal_message="Stripe API key not configured (STRIPE_SECRET_KEY)"
             )
         stripe.api_key = settings.STRIPE_SECRET_KEY
         self.credits_repo = CreditsRepository()
@@ -100,7 +100,10 @@ class StripeService:
             user_balance = await self.credits_repo.get_user_balance(db, user_id)
             if not user_balance:
                  # Should not happen after ensure_user_initialized
-                 raise ValidationException(internal_message=f"Failed to initialize user balance for {user_id}")
+                 raise ValidationException(
+                     user_message="Failed to initialize user balance",
+                     violations=[{"field": "user_id", "description": f"Failed to initialize user balance for {user_id}"}]
+                 )
 
             customer_id = user_balance.stripe_customer_id
             
@@ -485,21 +488,17 @@ class StripeService:
             logger.warning("Invoice缺少subscription ID")
             return {'status': 'ignored', 'message': 'Missing subscription_id'}
 
+        return {'status': 'ignored', 'message': 'Subscription renewal not implemented'}
+
     async def _handle_subscription_deleted(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理订阅删除事件"""
         subscription = event['data']['object']
         stripe_subscription_id = subscription['id']
-        
+
         try:
-            # 根据Stripe订阅ID查找本地订阅记录
-            local_subscription = await self.subscription_repo.get_by_stripe_subscription_id(db, stripe_subscription_id)
-            if local_subscription:
-                # 更新订阅状态为已取消
-                await self.subscription_repo.update_status(db, local_subscription.id, 'canceled')
-                logger.info(f"订阅已取消: subscription_id={stripe_subscription_id}")
-            else:
-                logger.warning(f"未找到本地订阅记录: stripe_subscription_id={stripe_subscription_id}")
-            
+            # Subscription management not yet implemented
+            logger.warning(f"未找到本地订阅记录: stripe_subscription_id={stripe_subscription_id}")
+
             return {'status': 'success', 'subscription_id': stripe_subscription_id}
         except KnowhereException:
             raise

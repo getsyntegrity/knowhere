@@ -2,11 +2,13 @@
 统一Jobs API路由（符合PRD规范）
 """
 
+from __future__ import annotations
+
 from shared.core.billing import MicroDollar
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional, cast
 from urllib.parse import urlparse
 
 from shared.core.constants.system import SystemConstants
@@ -21,7 +23,7 @@ from app.services.rate_limit.dependencies import (
 )
 from shared.core.state_machine.states import JobStatus
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
-                                    JobResponse, JobResultResponse)
+                                    JobResponse, JobResultResponse, StandardErrorObject)
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
@@ -136,40 +138,33 @@ def check_job_permission(job, user_id: str) -> None:
     if str(job.user_id) != user_id:
         raise PermissionDeniedException(
             user_message="You don't have permission to access this job",
-            resource="Job"
         )
 
 
-def _build_error_response(job, job_metadata: Optional[dict] = None) -> Optional[dict]:
+def _build_error_response(job: Any, job_metadata: Optional[dict] = None) -> Optional[StandardErrorObject]:
     """
-    Build StandardErrorObject dict for embedded error pattern.
-    
-    This returns the same error structure as synchronous API errors,
-    enabling clients to use the same error handling for both sync
-    and async (job) errors.
-    
+    Build StandardErrorObject for embedded error pattern.
+
     Args:
         job: Job object with job_id, error_code, and error_message
         job_metadata: Job metadata dict that may contain error_details
-        
+
     Returns:
-        dict: StandardErrorObject (code, message, request_id, details) or None
+        StandardErrorObject or None
     """
     if not job.error_message:
         return None
-    
-    from shared.core.response import build_standard_error_response
-    
+
     # Extract error_details from job_metadata if present
     error_details = None
     if job_metadata and isinstance(job_metadata, dict):
         error_details = job_metadata.get("error_details")
-    
-    return build_standard_error_response(
+
+    return StandardErrorObject(
         code=job.error_code or "UNKNOWN",
         message=job.error_message,
         request_id=job.job_id,
-        details=error_details
+        details=error_details,
     )
 
 
@@ -278,7 +273,7 @@ async def create_job(
                     )
 
         # 验证文件类型
-        if payload.source_type == "file" and not validate_file_type(payload.file_name):
+        if payload.source_type == "file" and payload.file_name and not validate_file_type(payload.file_name):
             supported_formats = get_supported_formats()
             raise ValidationException(
                 user_message=f"Unsupported file type. Supported formats: {supported_formats}",
@@ -289,8 +284,8 @@ async def create_job(
         elif payload.source_type == "url":
             # 验证URL文件类型
             parsed_url = urlparse(payload.source_url)
-            url_file_name = (
-                os.path.basename(parsed_url.path) or f"url_file_{uuid.uuid4().hex[:8]}"
+            url_file_name: str = (
+                str(os.path.basename(parsed_url.path)) or f"url_file_{uuid.uuid4().hex[:8]}"
             )
             if not validate_file_type(url_file_name):
                 supported_formats = get_supported_formats()
@@ -320,6 +315,7 @@ async def create_job(
 
         if payload.source_type == "file":
             # 文件上传模式 - 申请萝卜坑
+            assert payload.file_name is not None
             file_extension = os.path.splitext(payload.file_name)[1]
             s3_key = f"uploads/{job_id}{file_extension}"
             job_metadata["source_file_name"] = payload.file_name
@@ -393,7 +389,7 @@ async def create_job(
             try:
                 # 解析URL获取文件名和扩展名
                 parsed_url = urlparse(payload.source_url)
-                source_file_name = os.path.basename(parsed_url.path) or f"url_file_{uuid.uuid4().hex[:8]}"
+                source_file_name: str = str(os.path.basename(parsed_url.path)) or f"url_file_{uuid.uuid4().hex[:8]}"
                 
                 # 提前验证文件类型（快速失败）
                 if not validate_file_type(source_file_name):
@@ -591,19 +587,19 @@ async def list_jobs(
             result_url_expires_at = job.created_at  # 默认使用创建时间
             
             if job_result and job_result.result_s3_key:
-                result_url_info = await upload_service.generate_download_url(
+                result_url_info = cast(Dict[str, Any], await upload_service.generate_download_url(
                     job_result.result_s3_key
-                )
+                ))
                 result_url = result_url_info["download_url"]
-                
+
                 # 从 inline_payload 获取 checksum（只包含 checksum）
                 if job_result.inline_payload:
                     result = job_result.inline_payload
-                
+
                 # 处理result_url_expires_at字段
                 if result_url:
                     from datetime import datetime, timedelta
-                    expires_in = result_url_info.get("expires_in", 3600)
+                    expires_in = int(result_url_info.get("expires_in", 3600))
                     result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
             original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
@@ -686,6 +682,7 @@ async def get_job_result(
         # 获取Job并检查权限
         job = await job_repo.get_job_by_id(db, job_id)
         check_job_permission(job, current_user.user_id)
+        assert job is not None
 
         status_for_api = job.status
 
@@ -716,16 +713,16 @@ async def get_job_result(
         
         if job_result and job_result.result_s3_key:
             upload_service = FileUploadService()
-            result_url_info = await upload_service.generate_download_url(
+            result_url_info = cast(Dict[str, Any], await upload_service.generate_download_url(
                 job_result.result_s3_key
-            )
+            ))
             result_url = result_url_info["download_url"]
-            expires_in = result_url_info["expires_in"]
-            
+            expires_in = int(result_url_info["expires_in"])
+
             # 从 inline_payload 获取 checksum 和 statistics
             if job_result.inline_payload:
                 result = job_result.inline_payload
-            
+
             # 处理result_url_expires_at字段
             if result_url:
                 from datetime import datetime, timedelta

@@ -5,6 +5,7 @@
 import asyncio
 import json
 from typing import Any, Dict, Optional
+from shared.core.exceptions.domain_exceptions import KnowhereException
 
 import aio_pika
 from aio_pika import IncomingMessage
