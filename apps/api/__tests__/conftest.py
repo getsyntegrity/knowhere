@@ -32,7 +32,7 @@ from app.services.rate_limit.data_structures import CurrentUser
 # =============================================================================
 
 def create_mock_user(
-    user_id: str = None,
+    user_id: str | None = None,
     email: str = "test@example.com",
     username: str = "testuser"
 ):

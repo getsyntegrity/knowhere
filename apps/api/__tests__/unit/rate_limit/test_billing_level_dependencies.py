@@ -1,7 +1,9 @@
+from typing import cast
 from types import SimpleNamespace
 
 import pytest
 from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 fakeredis = pytest.importorskip("fakeredis.aioredis")
 
@@ -12,6 +14,8 @@ from shared.core.exceptions.domain_exceptions import (
     RateLimitException,
     UnavailableException,
 )
+
+_FAKE_DB = cast(AsyncSession, object())
 
 
 class _FakeConfig:
@@ -139,7 +143,7 @@ async def test_require_billing_limits_sets_job_state_and_tier_limits(monkeypatch
     job_id = "job_ok"
 
     agen = deps.require_billing_limits(
-        request=request, current_user=user, job_id=job_id, _db=object()
+        request=request, current_user=user, job_id=job_id, _db=_FAKE_DB
     )
     yielded_user = await agen.__anext__()
     assert yielded_user == user
@@ -185,7 +189,7 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
     user = CurrentUser(user_id="u_tier_2", user_tier="tier_2")
 
     agen = deps.require_billing_limits(
-        request=request, current_user=user, job_id="job_tier_2", _db=object()
+        request=request, current_user=user, job_id="job_tier_2", _db=_FAKE_DB
     )
     yielded_user = await agen.__anext__()
     assert yielded_user == user
@@ -196,7 +200,7 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
             request=request,
             current_user=user,
             job_id="job_tier_2_2",
-            _db=object(),
+            _db=_FAKE_DB,
         )
         await agen.__anext__()
     assert exc_info.value.limit == 1
@@ -236,7 +240,7 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
     tier1_user = CurrentUser(user_id="u_tier_1", user_tier="tier_1")
 
     agen = deps.require_billing_limits(
-        request=request, current_user=free_user, job_id="job_free_1", _db=object()
+        request=request, current_user=free_user, job_id="job_free_1", _db=_FAKE_DB
     )
     await agen.__anext__()
     await agen.aclose()
@@ -246,7 +250,7 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
             request=request,
             current_user=free_user,
             job_id="job_free_2",
-            _db=object(),
+            _db=_FAKE_DB,
         )
         await agen.__anext__()
 
@@ -255,7 +259,7 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
             request=request,
             current_user=tier1_user,
             job_id=f"job_tier1_{i}",
-            _db=object(),
+            _db=_FAKE_DB,
         )
         yielded_user = await agen.__anext__()
         assert yielded_user == tier1_user
@@ -287,7 +291,7 @@ async def test_require_billing_limits_raises_unavailable_when_redis_unreachable(
 
     with pytest.raises(UnavailableException) as exc_info:
         agen = deps.require_billing_limits(
-            request=request, current_user=user, job_id="job_down", _db=object()
+            request=request, current_user=user, job_id="job_down", _db=_FAKE_DB
         )
         await agen.__anext__()
 
@@ -330,7 +334,7 @@ async def test_require_billing_limits_raises_unavailable_when_tier_config_missin
             request=request,
             current_user=user,
             job_id="job_missing_tier",
-            _db=object(),
+            _db=_FAKE_DB,
         )
         await agen.__anext__()
 
@@ -362,8 +366,7 @@ async def test_enforce_job_creation_capacity_allows_when_active_jobs_below_limit
     )
     user = CurrentUser(user_id="u_ok", user_tier="free")
 
-    await deps.enforce_job_creation_capacity(request, object(), user)
-
+    await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
 
 @pytest.mark.asyncio
 async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkeypatch):
@@ -382,18 +385,27 @@ async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkey
 
     request = _make_request()
     request.state.rate_limit_tier_limits = TierLimits(
-        rpm_limit=60,
+        rpm_limit=2,
         max_concurrent_jobs=1,
         daily_quota=10,
     )
     user = CurrentUser(user_id="u_full", user_tier="free")
 
     with pytest.raises(RateLimitException) as exc_info:
-        await deps.enforce_job_creation_capacity(request, object(), user)
-
+        await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
     exc = exc_info.value
+    assert exc.retry_after == 30
     assert exc.details.get("period") == "concurrent"
     assert exc.details.get("limit") == 1
+    assert exc.details.get("active_jobs") == 1
+    assert exc.details.get("available_slots") == 0
+
+
+def test_compute_concurrency_retry_after_seconds_uses_rpm_spacing_floor():
+    base = deps.CONCURRENCY_RETRY_AFTER_SECONDS
+    assert deps._compute_concurrency_retry_after_seconds(base, 2) == 30
+    assert deps._compute_concurrency_retry_after_seconds(base, 60) == 30
+    assert deps._compute_concurrency_retry_after_seconds(base, -1) == 30
 
 
 @pytest.mark.asyncio
@@ -420,8 +432,7 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_db_lock_fai
     user = CurrentUser(user_id="u_db_err", user_tier="free")
 
     with pytest.raises(UnavailableException) as exc_info:
-        await deps.enforce_job_creation_capacity(request, object(), user)
-
+        await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
     assert "DB error in concurrency check" in exc_info.value.internal_message
 
 
@@ -451,8 +462,7 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_daily_quota
     user = CurrentUser(user_id="u_daily_err", user_tier="free")
 
     with pytest.raises(UnavailableException) as exc_info:
-        await deps.enforce_job_creation_capacity(request, object(), user)
-
+        await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
     assert "Redis error in daily quota check" in exc_info.value.internal_message
 
 
