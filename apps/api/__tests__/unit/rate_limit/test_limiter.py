@@ -111,3 +111,17 @@ async def test_check_daily_quota_uses_fixed_window_and_raises_day_period():
     assert exc.limit == 20
     assert exc.period == "day"
     assert fixed.hit_calls[0][1] == "knowhere-api:rate_limit:daily_quota"
+
+
+@pytest.mark.asyncio
+async def test_check_daily_quota_caps_retry_after_at_one_hour():
+    far_future_reset = int(time.time()) + 72_000  # 20 hours away
+    fixed = _Window(hit_allowed=False, remaining=0, reset_time=far_future_reset)
+    limiter = RateLimiter(_config(fixed=fixed))
+
+    with pytest.raises(RateLimitException) as exc_info:
+        await limiter.check_daily_quota("u_daily", 10)
+
+    exc = exc_info.value
+    assert exc.retry_after <= 3600
+    assert exc.details["reset"] == far_future_reset

@@ -14,6 +14,8 @@ from loguru import logger
 from app.services.rate_limit.config import RateLimitConfig
 from shared.core.exceptions.domain_exceptions import RateLimitException
 
+MAX_DAILY_QUOTA_RETRY_AFTER_SECONDS: int = 3600
+
 
 class RateLimiter:
     """
@@ -157,7 +159,10 @@ class RateLimiter:
                 f"Daily quota exceeded: user={user_id}, limit={quota}/day"
             )
             exc = RateLimitException(
-                retry_after=headers["retry_after"],
+                retry_after=min(
+                    headers["retry_after"],
+                    MAX_DAILY_QUOTA_RETRY_AFTER_SECONDS,
+                ),
                 limit=quota,
                 period="day",
                 internal_message=(
