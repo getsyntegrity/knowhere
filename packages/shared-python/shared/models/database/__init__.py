@@ -8,7 +8,7 @@ from .api_key import APIKey
 from .credits_transaction import CreditsTransaction
 from .job import Job
 from .job_result import JobChunk, JobResult
-from .usage_log import UsageLog
+
 from .user_balance import UserBalance 
 from .stripe_price_config import StripePriceConfig
 from .payment_record import PaymentRecord
@@ -26,7 +26,7 @@ __all__ = [
     "User", 
     "APIKey",
     "CreditsTransaction",
-    "UsageLog",
+
     "UserBalance",
     "Job",
     "JobResult",
