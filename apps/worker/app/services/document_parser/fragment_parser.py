@@ -48,7 +48,7 @@ async def parse_fragment(
     fragment_content: str,
     filename: str = None,
     output_dir: str = None,
-    kb_dir: str = "默认目录",
+    kb_dir: str = "Default_Root",
     base_llm_paras: dict = None,
     **kwargs
 ):

@@ -644,7 +644,6 @@ def parse_headers_from_excel(
         raise TableParsingException(
             user_message="Failed to parse Excel file headers",
             reason="EXCEL_PRECISION_PARSE_FAILED",
-            file_type="xlsx",
             internal_message=str(e),
             original_exception=e
         )
@@ -975,11 +974,11 @@ def postprocess_tb(df, drop=False):
         
         # Drop columns that are all empty AND have no meaningful header
         # A column with a valid header should be preserved even if data is empty
-        before_cols = set(df.columns)
         cols_to_drop = []
-        for col in df.columns:
+        for col_idx, col in enumerate(df.columns):
             # Check if all data values are NaN
-            if df[col].isna().all():
+            # Use iloc to avoid ambiguity when MultiIndex has duplicate tuple keys
+            if df.iloc[:, col_idx].isna().all():
                 # Check if the column header is meaningful
                 # For MultiIndex: check if any level has a non-empty meaningful value
                 # For simple index: check if the header is not None/empty
@@ -997,14 +996,14 @@ def postprocess_tb(df, drop=False):
                 
                 # Only drop if header is not meaningful
                 if not has_meaningful_header:
-                    cols_to_drop.append(col)
+                    cols_to_drop.append(col_idx)
         
         if cols_to_drop:
-            df = df.drop(columns=cols_to_drop)
+            # Use positional indices to drop columns safely (avoids duplicate MultiIndex key issues)
+            cols_to_keep = [i for i in range(len(df.columns)) if i not in cols_to_drop]
+            df = df.iloc[:, cols_to_keep]
         
-        after_cols = set(df.columns)
-        dropped_columns = before_cols - after_cols
-        logger.debug(f"Dropped columns: {list(dropped_columns)}")
+        logger.debug(f"Dropped {len(cols_to_drop)} empty columns")
         
         # Preserve meaningful row index (header columns) as regular columns
         # Only drop=True if it's a simple RangeIndex (no semantic meaning)
@@ -1211,7 +1210,6 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
                 raise TableParsingException(
                     user_message="Failed to parse Excel table content",
                     reason="TABLE_PROCESSING_FAILED",
-                    file_type="xlsx", 
                     internal_message=str(e),
                     original_exception=e
                 )

@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-02-26 — Table Parser P0 评估 + MD 分隔线修复 + 关键词去重
+> **Last session**: 2026-02-27 — Agentic Profiler (doc_profiler + fast path pymupdf4llm + ppt_converted 检测) + 表格 summary fallback
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -12,6 +12,7 @@
 | 2026-02-23 | 6m | ~100 | ~4K | 修复 skill 自动触发失败问题，改造 check-skills workflow |
 | 2026-02-25 | ~1h 10m | ~3K | ~30K | iLoveAPI 集成、PPTX 解析 pipeline 重构为流式处理 + image-only PDF |
 | 2026-02-26 | ~1h 10m | ~5K | ~40K | Table Parser P0 评估（HTMLHeaderExpander 移植+回滚）、MD 分隔线修复、关键词去重 |
+| 2026-02-27 | ~2h | ~8K | ~60K | DOCX 表格内嵌图片提取 + summary prompt 优化 + Agentic Profiler (doc_profiler/fast path pymupdf4llm/ppt_converted) + 表格 summary fallback |
 
 ---
 
@@ -139,15 +140,25 @@ sequenceDiagram
 
 ### 🟡 TODO
 
-#### High Priority — Document Parser
+#### High Priority — Agentic Profiler
 
-- [ ] **表格内嵌图片解析** — 完善 DOCX/PDF/MD 表格中带图的处理
+- [/] **Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
+  - [x] `doc_profiler.py` — 通用文档 profiling 入口 + PDF scan_type / doc_category / ppt_converted 检测 (completed: 2026-02-27)
+  - [x] Fast Path — 单栏电子版 PDF 走 `pymupdf4llm`（替换 markitdown），跳过 MinerU (completed: 2026-02-27)
+  - [x] `parse_service.py` / `pdf_parser.py` 路由集成 (profiler 在 `checkerboard_inject_parse` 入口) (completed: 2026-02-27)
+  - [ ] profile metadata 写入解析结果
+  - [ ] 端到端验证 — 不同 PDF 类型 (扫描件/电子版/PPT转换) 路由准确性测试
+
+#### High Priority — Document Parser
+- [ ] **表格内嵌图片 Phase 2** — PDF 表格中带图的恢复 → 详见 [PDF_TABLE_IMAGE_PLAN.md](./PDF_TABLE_IMAGE_PLAN.md)
+  - 方案 D: PyMuPDF 坐标提取 — MinerU 解析后用 PyMuPDF 补回表格内图片（⚠️ 仅适用于电子版 PDF，扫描件无效）
+  - 方案 C: MinerU 交叉对比（备选）
 
 - [ ] **LLM 层级判断** — `layout_parser.py:552` 使用 LLM 基于窗口数据分配 heading level
-- [ ] **TOC 过滤** — `doc_parser.py:404` 当前临时移除 TOC 区域，需正式处理
-- [ ] **跨页表格** — `doc_parser.py:481` 处理横跨多页的表格合并
+- [ ] **DOCX TOC 利用** — `doc_parser.py:474` 当前临时移除 TOC 区域（`detect_sdt_toc` 检测正常，已验证可提取 191 条 TOC 条目），需将检测到的 TOC 数据传入层级分析（`eval_toc_levels`）辅助 heading 推断
 - [ ] **LaTeX 支持** — `doc_parser.py:489` 处理 LaTeX 等格式
 - [ ] **table_parser 已知问题** — `table_parser.py:863` 当前实现有问题 (见 docstring)
+- [ ] **Excel 子表切割过细** — `table_parser.py:_split_sheet_recursive` 按空行/空列递归切割时会产生大量碎片子表（如 1×1、6×1），需要更优雅的后处理策略：最小行列阈值过滤、碎片合并回主表、或识别"合计行/备注区"等语义区域（已在 SIAT 材料费 sheet 验证：283×23 主表 + 4 个碎片）
 - [ ] **智能分块** — `txt_parser.py:124` 当前粗略分割，需更智能策略
 - [ ] **表格 TOC** — `toc_parser.py:151` 提取表格内容但保持 id span 为 1
 - [ ] **OCR 分支** — `toc_parser.py:609` 实现 OCR → 直接生成 toc-tree
@@ -170,7 +181,10 @@ sequenceDiagram
 ### ✅ Done
 
 - [x] ~~PPTX 公式渲染~~ — iLoveAPI + image-only PDF 管线，解决 MinerU 公式识别为 `????` 的问题 (completed: 2026-02-25)
-- [x] ~~MD 分隔线过滤~~ — `extract_tables_by_forms('md')` 过滤 `---` 分隔行 (completed: 2026-02-26)
+- [x] ~~DOCX 表格内嵌图片提取~~ — iter_block_items 按 (row,col) 提取单元格图片，table2html 嵌入描述，handle_table 保存+LLM摘要 (completed: 2026-02-27)
+- [x] ~~Summary Prompt 优化~~ — 全局 summary 提示词增加 HTML 表格处理指令 + null 返回值校验 (completed: 2026-02-27)
+- [x] ~~表格 Summary Fallback~~ — 图片为主表格 LLM 返回 HTML 时用 table_idx 回退 + prompt 增加拒绝原样返回指令 (completed: 2026-02-27)
+- [x] ~~PDF Fast Path (pymupdf4llm)~~ — doc_profiler 识别单栏电子版 PDF → pymupdf4llm 提取，跳过 MinerU；含 ppt_converted 检测路由至 standard (completed: 2026-02-27)
 - [x] ~~关键词跨行列去重~~ — doc_parser + md_parser 首行首列合并时消除重复 (completed: 2026-02-26)
 
 ### 📋 Code-Level TODOs
@@ -178,7 +192,7 @@ sequenceDiagram
 | 文件 | 行号 | 注释 |
 |------|------|------|
 | `layout_parser.py` | 552 | use llm to assign level based on window data |
-| `doc_parser.py` | 404 | temporary remove toc area |
+| `doc_parser.py` | 474 | temporary remove toc area |
 | `doc_parser.py` | 481 | handle cross-page tables |
 | `doc_parser.py` | 489 | handle latex, etc. |
 | `table_parser.py` | 863 | Current implementation has issues |
@@ -202,6 +216,10 @@ sequenceDiagram
 | 2026-02-25 | feature | iLoveAPI PPTX→PDF 集成 + image-only PDF 渲染管线 (流式处理，bytes in→bytes out) | `pptx_parser.py`, `parse_service.py`, `ai.py`, `.env` |
 | 2026-02-26 | fix | MD 表格分隔线过滤 + 关键词跨行列去重 | `table_parser.py`, `doc_parser.py`, `md_parser.py` |
 | 2026-02-26 | feature | HTMLHeaderExpander 类移植到 html_parser.py（备用，未集成到解析流程） | `html_parser.py` |
+| 2026-02-27 | feature | DOCX 表格内嵌图片提取：iter_block_items 按单元格提取图片，table2html 嵌入描述，handle_table 分离 summary_table/summary_image | `doc_parser.py`, `html_parser.py` |
+| 2026-02-27 | fix | summary prompt 优化：HTML 表格用自然语言总结 + null 返回校验，避免 LLM 原样返回 HTML | `prompt_service.py`, `txt_parser.py` |
+| 2026-02-27 | feature | Agentic Profiler: doc_profiler.py 实现 PDF profiling (scan_type/column/ppt_converted/text_density)，pymupdf4llm fast path 替换 markitdown | `doc_profiler.py`, `parse_service.py`, `pdf_parser.py` |
+| 2026-02-27 | fix | 表格 summary fallback: 图片为主表格 LLM 返回无效内容时用 table_idx 回退 | `doc_parser.py`, `prompt_service.py` |
 
 ---
 
