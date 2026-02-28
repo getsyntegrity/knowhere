@@ -271,11 +271,9 @@ async def require_billing_limits(
         return
 
     redis_service = redis_pool_manager.get_redis_service()
-    try:
-        await redis_service._get_client()
-    except Exception as exc:
+    if not await redis_service.ping():
         raise UnavailableException(
-            internal_message=f"Redis error acquiring client: {exc}",
+            internal_message="Redis is not reachable for billing rate limit check",
             retry_after=_RETRY_AFTER_SECONDS,
         )
 
@@ -349,7 +347,7 @@ async def enforce_job_creation_capacity(
                     user_message=(
                         f"Too many concurrent requests "
                         f"({active_jobs}/{tier_limits.max_concurrent_jobs} active). "
-                        "Please retry after {retry_after} seconds."
+                        f"Please retry after {retry_after_seconds} seconds."
                     ),
                     internal_message=(
                         "Concurrency limit exceeded: "

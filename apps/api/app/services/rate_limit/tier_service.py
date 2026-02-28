@@ -2,9 +2,9 @@
 Tier service.
 Determines and refreshes a user's tier based on lifetime payment history.
 """
-import logging
 from typing import Optional
 
+from loguru import logger
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,8 +13,6 @@ from shared.models.database.tier_limit import TierLimit
 from shared.models.database.user_balance import UserBalance
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
-
-logger = logging.getLogger(__name__)
 
 _DEFAULT_TIER: str = "free"
 
