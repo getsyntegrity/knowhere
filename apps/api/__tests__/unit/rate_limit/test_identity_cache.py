@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 fakeredis = pytest.importorskip("fakeredis.aioredis")
@@ -7,43 +5,7 @@ fakeredis = pytest.importorskip("fakeredis.aioredis")
 from app.services.rate_limit.config import REDIS_KEY_PREFIX
 from app.services.rate_limit.identity_cache import IdentityCache
 
-
-class _FakeRedisService:
-    def __init__(self, client) -> None:
-        self._client = client
-
-    async def set(self, key, value, ttl=None, ex=None):
-        if isinstance(value, (dict, list)):
-            value = json.dumps(value)
-        expire = ex or ttl
-        return await self._client.set(key, value, ex=expire)
-
-    async def get(self, key):
-        value = await self._client.get(key)
-        if value is None:
-            return None
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            return value
-
-    async def delete(self, *keys):
-        return await self._client.delete(*keys)
-
-    async def sadd(self, key, *values):
-        return await self._client.sadd(key, *values)
-
-    async def smembers(self, key):
-        return await self._client.smembers(key)
-
-    async def srem(self, key, *values):
-        return await self._client.srem(key, *values)
-
-    async def expire(self, key, ttl):
-        return await self._client.expire(key, ttl)
-
-    async def ttl(self, key):
-        return await self._client.ttl(key)
+from .helpers import FakeRedisService
 
 
 def test_identity_cache_key_prefixes():
@@ -57,7 +19,7 @@ def test_identity_cache_key_prefixes():
 async def test_set_jwt_identity_and_get_cached_identity():
     cache = IdentityCache()
     redis = fakeredis.FakeRedis(decode_responses=True)
-    svc = _FakeRedisService(redis)
+    svc = FakeRedisService(redis)
 
     await cache.set_jwt_identity(svc, "user_a", "tier_2")
     key = cache._jwt_key("user_a")
@@ -70,7 +32,7 @@ async def test_set_jwt_identity_and_get_cached_identity():
 async def test_set_apikey_identity_caps_ttl_and_maintains_reverse_index():
     cache = IdentityCache()
     redis = fakeredis.FakeRedis(decode_responses=True)
-    svc = _FakeRedisService(redis)
+    svc = FakeRedisService(redis)
 
     await cache.set_apikey_identity(
         svc,
@@ -97,7 +59,7 @@ async def test_set_apikey_identity_caps_ttl_and_maintains_reverse_index():
 async def test_set_apikey_identity_does_not_shorten_reverse_index_ttl():
     cache = IdentityCache()
     redis = fakeredis.FakeRedis(decode_responses=True)
-    svc = _FakeRedisService(redis)
+    svc = FakeRedisService(redis)
 
     await cache.set_apikey_identity(
         svc,
@@ -126,7 +88,7 @@ async def test_set_apikey_identity_does_not_shorten_reverse_index_ttl():
 async def test_invalidate_user_clears_jwt_apikey_and_reverse_index():
     cache = IdentityCache()
     redis = fakeredis.FakeRedis(decode_responses=True)
-    svc = _FakeRedisService(redis)
+    svc = FakeRedisService(redis)
 
     await cache.set_jwt_identity(svc, "user_c", "free")
     await cache.set_apikey_identity(
@@ -148,7 +110,7 @@ async def test_invalidate_user_clears_jwt_apikey_and_reverse_index():
 async def test_invalidate_apikey_removes_single_key_and_reverse_member():
     cache = IdentityCache()
     redis = fakeredis.FakeRedis(decode_responses=True)
-    svc = _FakeRedisService(redis)
+    svc = FakeRedisService(redis)
 
     await cache.set_apikey_identity(
         svc, api_key_hash="k1", user_id="user_d", user_tier="free", ttl_seconds=300

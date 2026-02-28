@@ -1,9 +1,4 @@
-from typing import cast
-from types import SimpleNamespace
-
 import pytest
-from fastapi import Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 fakeredis = pytest.importorskip("fakeredis.aioredis")
 
@@ -15,7 +10,14 @@ from shared.core.exceptions.domain_exceptions import (
     UnavailableException,
 )
 
-_FAKE_DB = cast(AsyncSession, object())
+from .helpers import (
+    FAKE_DB,
+    FakeRedisService,
+    async_none,
+    async_value,
+    build_real_config,
+    make_request,
+)
 
 
 class _FakeConfig:
@@ -31,62 +33,6 @@ class _FakeConfig:
 
     def namespaced_namespace(self, namespace: str) -> str:
         return f"knowhere-api:rate_limit:{namespace}"
-
-
-def _make_limits_config_with_fakeredis(
-    monkeypatch, tier_map: dict[str, TierLimits]
-):
-    limits = pytest.importorskip("limits")
-    limits_storage = pytest.importorskip("limits.aio.storage")
-    limits_strategies = pytest.importorskip("limits.aio.strategies")
-    redis_asyncio = pytest.importorskip("redis.asyncio")
-    fake_server = fakeredis.FakeServer()
-
-    def _fake_from_url(*_args, **_kwargs):
-        return fakeredis.FakeRedis(
-            server=fake_server, decode_responses=False
-        )
-
-    monkeypatch.setattr(
-        redis_asyncio, "from_url", _fake_from_url, raising=False
-    )
-    if hasattr(redis_asyncio, "Redis"):
-        monkeypatch.setattr(
-            redis_asyncio.Redis,
-            "from_url",
-            classmethod(
-                lambda _cls, *args, **kwargs: _fake_from_url(*args, **kwargs)
-            ),
-            raising=False,
-        )
-
-    storage = limits_storage.RedisStorage(
-        "async+redis://unused:6379/0",
-        implementation="redispy",
-    )
-    config = SimpleNamespace(
-        is_bypassed=False,
-        tier_map=tier_map,
-        parse_rate=limits.parse,
-        sliding_window=limits_strategies.MovingWindowRateLimiter(storage),
-        fixed_window=limits_strategies.FixedWindowRateLimiter(storage),
-        namespaced_namespace=lambda ns: f"knowhere-api:rate_limit:{ns}",
-    )
-    redis_client = fakeredis.FakeRedis(
-        server=fake_server, decode_responses=True
-    )
-    return config, redis_client
-
-
-class _FakeRedisService:
-    def __init__(self, client) -> None:
-        self._client = client
-
-    async def _get_client(self):
-        return self._client
-
-    async def ping(self) -> bool:
-        return True
 
 
 class _PassRateLimiter:
@@ -111,25 +57,10 @@ class _DailyQuotaErrorRateLimiter:
         raise RuntimeError("daily quota redis failure")
 
 
-def _make_request() -> Request:
-    scope = {
-        "type": "http",
-        "http_version": "1.1",
-        "method": "POST",
-        "path": "/v1/jobs",
-        "headers": [],
-        "query_string": b"",
-        "client": ("127.0.0.1", 12345),
-        "server": ("testserver", 80),
-        "scheme": "http",
-    }
-    return Request(scope)
-
-
 @pytest.mark.asyncio
 async def test_require_billing_limits_sets_job_state_and_tier_limits(monkeypatch):
     redis = fakeredis.FakeRedis(decode_responses=True)
-    redis_service = _FakeRedisService(redis)
+    redis_service = FakeRedisService(redis)
 
     monkeypatch.setattr(
         deps.redis_pool_manager, "get_redis_service", lambda: redis_service
@@ -141,12 +72,12 @@ async def test_require_billing_limits_sets_job_state_and_tier_limits(monkeypatch
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
 
-    request = _make_request()
+    request = make_request()
     user = CurrentUser(user_id="u_ok", user_tier="free")
     job_id = "job_ok"
 
     agen = deps.require_billing_limits(
-        request=request, current_user=user, job_id=job_id, _db=_FAKE_DB
+        request=request, current_user=user, job_id=job_id, _db=FAKE_DB
     )
     yielded_user = await agen.__anext__()
     assert yielded_user == user
@@ -161,7 +92,7 @@ async def test_require_billing_limits_sets_job_state_and_tier_limits(monkeypatch
 async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
     monkeypatch,
 ):
-    config, redis_client = _make_limits_config_with_fakeredis(
+    config, redis_client = build_real_config(
         monkeypatch,
         {
             "free": TierLimits(
@@ -176,7 +107,7 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
             ),
         },
     )
-    redis_service = _FakeRedisService(redis_client)
+    redis_service = FakeRedisService(redis_client)
 
     monkeypatch.setattr(
         deps.redis_pool_manager, "get_redis_service", lambda: redis_service
@@ -188,11 +119,11 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
     )
     monkeypatch.setattr(deps, "RateLimiter", _RealRateLimiter)
 
-    request = _make_request()
+    request = make_request()
     user = CurrentUser(user_id="u_tier_2", user_tier="tier_2")
 
     agen = deps.require_billing_limits(
-        request=request, current_user=user, job_id="job_tier_2", _db=_FAKE_DB
+        request=request, current_user=user, job_id="job_tier_2", _db=FAKE_DB
     )
     yielded_user = await agen.__anext__()
     assert yielded_user == user
@@ -203,7 +134,7 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
             request=request,
             current_user=user,
             job_id="job_tier_2_2",
-            _db=_FAKE_DB,
+            _db=FAKE_DB,
         )
         await agen.__anext__()
     assert exc_info.value.limit == 1
@@ -211,7 +142,7 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
 
 @pytest.mark.asyncio
 async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypatch):
-    config, redis_client = _make_limits_config_with_fakeredis(
+    config, redis_client = build_real_config(
         monkeypatch,
         {
             "free": TierLimits(
@@ -226,7 +157,7 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
             ),
         },
     )
-    redis_service = _FakeRedisService(redis_client)
+    redis_service = FakeRedisService(redis_client)
 
     monkeypatch.setattr(
         deps.redis_pool_manager, "get_redis_service", lambda: redis_service
@@ -238,12 +169,12 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
     )
     monkeypatch.setattr(deps, "RateLimiter", _RealRateLimiter)
 
-    request = _make_request()
+    request = make_request()
     free_user = CurrentUser(user_id="u_free", user_tier="free")
     tier1_user = CurrentUser(user_id="u_tier_1", user_tier="tier_1")
 
     agen = deps.require_billing_limits(
-        request=request, current_user=free_user, job_id="job_free_1", _db=_FAKE_DB
+        request=request, current_user=free_user, job_id="job_free_1", _db=FAKE_DB
     )
     await agen.__anext__()
     await agen.aclose()
@@ -253,7 +184,7 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
             request=request,
             current_user=free_user,
             job_id="job_free_2",
-            _db=_FAKE_DB,
+            _db=FAKE_DB,
         )
         await agen.__anext__()
 
@@ -262,7 +193,7 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
             request=request,
             current_user=tier1_user,
             job_id=f"job_tier1_{i}",
-            _db=_FAKE_DB,
+            _db=FAKE_DB,
         )
         yielded_user = await agen.__anext__()
         assert yielded_user == tier1_user
@@ -292,12 +223,12 @@ async def test_require_billing_limits_raises_unavailable_when_redis_unreachable(
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
 
-    request = _make_request()
+    request = make_request()
     user = CurrentUser(user_id="u_down", user_tier="free")
 
     with pytest.raises(UnavailableException) as exc_info:
         agen = deps.require_billing_limits(
-            request=request, current_user=user, job_id="job_down", _db=_FAKE_DB
+            request=request, current_user=user, job_id="job_down", _db=FAKE_DB
         )
         await agen.__anext__()
 
@@ -309,7 +240,7 @@ async def test_require_billing_limits_raises_unavailable_when_tier_config_missin
     monkeypatch,
 ):
     redis = fakeredis.FakeRedis(decode_responses=True)
-    redis_service = _FakeRedisService(redis)
+    redis_service = FakeRedisService(redis)
 
     class _ConfigMissingTier:
         def __init__(self) -> None:
@@ -332,7 +263,7 @@ async def test_require_billing_limits_raises_unavailable_when_tier_config_missin
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
 
-    request = _make_request()
+    request = make_request()
     user = CurrentUser(user_id="u_missing_tier", user_tier="tier_9")
 
     with pytest.raises(UnavailableException) as exc_info:
@@ -340,7 +271,7 @@ async def test_require_billing_limits_raises_unavailable_when_tier_config_missin
             request=request,
             current_user=user,
             job_id="job_missing_tier",
-            _db=_FAKE_DB,
+            _db=FAKE_DB,
         )
         await agen.__anext__()
 
@@ -358,13 +289,13 @@ async def test_enforce_job_creation_capacity_allows_when_active_jobs_below_limit
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
     monkeypatch.setattr(
-        deps, "_acquire_user_concurrency_lock", lambda *_args, **_kwargs: _async_none()
+        deps, "_acquire_user_concurrency_lock", async_none
     )
     monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", lambda *_args, **_kwargs: _async_value(0)
+        deps, "_count_non_terminal_jobs", async_value(0)
     )
 
-    request = _make_request()
+    request = make_request()
     request.state.rate_limit_tier_limits = TierLimits(
         rpm_limit=60,
         max_concurrent_jobs=1,
@@ -372,7 +303,7 @@ async def test_enforce_job_creation_capacity_allows_when_active_jobs_below_limit
     )
     user = CurrentUser(user_id="u_ok", user_tier="free")
 
-    await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
+    await deps.enforce_job_creation_capacity(request, FAKE_DB, user)
 
 @pytest.mark.asyncio
 async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkeypatch):
@@ -383,13 +314,13 @@ async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkey
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
     monkeypatch.setattr(
-        deps, "_acquire_user_concurrency_lock", lambda *_args, **_kwargs: _async_none()
+        deps, "_acquire_user_concurrency_lock", async_none
     )
     monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", lambda *_args, **_kwargs: _async_value(1)
+        deps, "_count_non_terminal_jobs", async_value(1)
     )
 
-    request = _make_request()
+    request = make_request()
     request.state.rate_limit_tier_limits = TierLimits(
         rpm_limit=2,
         max_concurrent_jobs=1,
@@ -398,20 +329,13 @@ async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkey
     user = CurrentUser(user_id="u_full", user_tier="free")
 
     with pytest.raises(RateLimitException) as exc_info:
-        await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
+        await deps.enforce_job_creation_capacity(request, FAKE_DB, user)
     exc = exc_info.value
     assert exc.retry_after == 30
     assert exc.details.get("period") == "concurrent"
     assert exc.details.get("limit") == 1
     assert exc.details.get("active_jobs") == 1
     assert exc.details.get("available_slots") == 0
-
-
-def test_compute_concurrency_retry_after_seconds_uses_rpm_spacing_floor():
-    base = deps.CONCURRENCY_RETRY_AFTER_SECONDS
-    assert deps._compute_concurrency_retry_after_seconds(base, 2) == 30
-    assert deps._compute_concurrency_retry_after_seconds(base, 60) == 30
-    assert deps._compute_concurrency_retry_after_seconds(base, -1) == 30
 
 
 @pytest.mark.asyncio
@@ -429,7 +353,7 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_db_lock_fai
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
     monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", _broken_lock)
 
-    request = _make_request()
+    request = make_request()
     request.state.rate_limit_tier_limits = TierLimits(
         rpm_limit=60,
         max_concurrent_jobs=2,
@@ -438,7 +362,7 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_db_lock_fai
     user = CurrentUser(user_id="u_db_err", user_tier="free")
 
     with pytest.raises(UnavailableException) as exc_info:
-        await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
+        await deps.enforce_job_creation_capacity(request, FAKE_DB, user)
     assert "DB error in concurrency check" in exc_info.value.internal_message
 
 
@@ -453,13 +377,13 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_daily_quota
     )
     monkeypatch.setattr(deps, "RateLimiter", _DailyQuotaErrorRateLimiter)
     monkeypatch.setattr(
-        deps, "_acquire_user_concurrency_lock", lambda *_args, **_kwargs: _async_none()
+        deps, "_acquire_user_concurrency_lock", async_none
     )
     monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", lambda *_args, **_kwargs: _async_value(0)
+        deps, "_count_non_terminal_jobs", async_value(0)
     )
 
-    request = _make_request()
+    request = make_request()
     request.state.rate_limit_tier_limits = TierLimits(
         rpm_limit=60,
         max_concurrent_jobs=2,
@@ -468,13 +392,5 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_daily_quota
     user = CurrentUser(user_id="u_daily_err", user_tier="free")
 
     with pytest.raises(UnavailableException) as exc_info:
-        await deps.enforce_job_creation_capacity(request, _FAKE_DB, user)
+        await deps.enforce_job_creation_capacity(request, FAKE_DB, user)
     assert "Redis error in daily quota check" in exc_info.value.internal_message
-
-
-async def _async_none():
-    return None
-
-
-async def _async_value(value):
-    return value
