@@ -25,7 +25,6 @@ from app.core.image_cli import ImageCli
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from app.services.rate_limit.rule_loader import load_rules
-from app.services.rate_limit.pubsub_listener import RateLimitPubSubListener
 
 setup_logging()
 
@@ -69,32 +68,20 @@ async def lifespan(app: FastAPI):
 
     redis_url = redis_pool_manager.config.get_connection_url()
     RateLimitConfig.get_instance(redis_url)
-    redis_service = redis_pool_manager.get_redis_service()
     async with AsyncSessionFactory() as session:
-        await load_rules(session, redis_service, publish_updates=True)
+        await load_rules(session)
     logger.info("rate limiter rules loaded")
-
-    _pubsub_listener = RateLimitPubSubListener(redis_service)
-    await _pubsub_listener.start()
-    app.state.pubsub_listener = _pubsub_listener
 
     async def _rate_limit_rule_sync_loop():
         sync_interval = int(
-            os.getenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "300")
+            os.getenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "60")
         )
         while True:
             try:
                 await asyncio.sleep(sync_interval)
                 async with AsyncSessionFactory() as session:
-                    changed = await load_rules(
-                        session,
-                        redis_service,
-                        publish_updates=True,
-                    )
-                logger.debug(
-                    "rate limit rules periodic DB sync finished",
-                    changed=changed,
-                )
+                    await load_rules(session)
+                logger.debug("rate limit rules periodic DB sync finished")
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -115,9 +102,7 @@ async def lifespan(app: FastAPI):
     logger.info("knowledge library API service started!")
     yield
 
-    # Stop rate limiter Pub/Sub listener
-    if hasattr(app.state, "pubsub_listener"):
-        await app.state.pubsub_listener.stop()
+    # Stop rate limiter sync task
     if hasattr(app.state, "rate_limit_rule_sync_task"):
         app.state.rate_limit_rule_sync_task.cancel()
         try:
@@ -150,8 +135,8 @@ def create_app() -> FastAPI:
     setup_cors(app)
     app.add_middleware(LoggingMiddleware)
     
-    # 添加Moesif API监控中间件
-    app.add_middleware(MoesifMiddleware)
+    # Moesif API监控中间件 — disabled (broken SDK client, adds latency + log noise)
+    # app.add_middleware(MoesifMiddleware)
 
     # 添加API Key认证中间件
     # app.add_middleware(api_key_auth_middleware)

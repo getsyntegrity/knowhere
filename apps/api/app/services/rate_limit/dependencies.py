@@ -192,19 +192,27 @@ async def with_current_user(
     # -- Layer 0: system RPM --
     try:
         config = RateLimitConfig.get_instance()
+        scope_path: str = request.scope.get("path", request.url.path)
+        root_path: str = request.scope.get("root_path", "")
+        route_path: str = (
+            scope_path[len(root_path):]
+            if root_path and scope_path.startswith(root_path)
+            else scope_path
+        )
         rpm, matched_pattern = find_system_rpm(
-            request.method, request.url.path, config.system_rules
+            request.method, route_path, config.system_rules
         )
         limiter = RateLimiter(config)
         await limiter.check_system_rpm(user_id, rpm, matched_pattern)
     except RateLimitException:
         raise
-    except Exception:
+    except Exception as exc:
         # Fail-open: log and let the request through.
         logger.warning(
             "rate_limit: Redis error during system RPM check, "
-            "failing open for user_id={}",
+            "failing open for user_id={}, error={}",
             user_id,
+            exc,
         )
 
     return current_user

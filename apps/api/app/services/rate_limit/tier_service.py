@@ -26,31 +26,31 @@ class TierService:
     async def refresh_tier(user_id: str, session: AsyncSession) -> str:
         """Called on payment success.
 
-        1. Sum amount_cents from payment_records WHERE status='succeeded'.
-        2. Query tier_limits ordered by min_lifetime_amount_cents DESC.
+        1. Sum credits_amount (micro-dollars) from payment_records WHERE status='succeeded'.
+        2. Query tier_limits ordered by min_lifetime_amount_micro DESC.
         3. Pick the first tier where total >= threshold.
         4. Update user_balances.user_tier.
         5. Return the new tier name.
         """
-        # Step 1: sum lifetime successful payments
+        # Step 1: sum lifetime successful payments in micro-dollars
         stmt = (
-            select(func.coalesce(func.sum(PaymentRecord.amount_cents), 0))
+            select(func.coalesce(func.sum(PaymentRecord.credits_amount), 0))
             .where(PaymentRecord.user_id == user_id)
             .where(PaymentRecord.status == "succeeded")
         )
         result = await session.execute(stmt)
-        total_amount_cents: int = int(result.scalar_one())
+        total_amount_micro: int = int(result.scalar_one() or 0)
 
         # Step 2 + 3: query tiers from DB, find highest qualifying
         tier_stmt = select(TierLimit).order_by(
-            TierLimit.min_lifetime_amount_cents.desc()
+            TierLimit.min_lifetime_amount_micro.desc()
         )
         tier_result = await session.execute(tier_stmt)
         tiers = tier_result.scalars().all()
 
         new_tier = _DEFAULT_TIER
         for tier in tiers:
-            if total_amount_cents >= tier.min_lifetime_amount_cents:
+            if total_amount_micro >= tier.min_lifetime_amount_micro:
                 new_tier = tier.tier_name
                 break
 
@@ -73,9 +73,9 @@ class TierService:
             await session.rollback()
 
         logger.info(
-            "Tier refreshed: user_id=%s total_cents=%d new_tier=%s",
+            "Tier refreshed: user_id=%s total_micro=%d new_tier=%s",
             user_id,
-            total_amount_cents,
+            total_amount_micro,
             new_tier,
         )
         return new_tier

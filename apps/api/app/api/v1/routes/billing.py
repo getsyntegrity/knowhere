@@ -57,7 +57,7 @@ async def buy_credits(
         payment_intent = await stripe_service.create_payment_intent(
             user_id=current_user.user_id,
             amount=amount_cents,
-            credits_amount=MicroDollar.from_dollars(request.credits_amount),
+            credits_amount=MicroDollar.from_dollars(request.credits_amount).amount,
             currency='cny'
         )
         
@@ -390,7 +390,11 @@ async def stripe_webhook(
     try:
         payload = await request.body()
         sig_header = request.headers.get('stripe-signature')
-        
+        if not sig_header:
+            raise StripeServiceException(
+                internal_message="Missing stripe-signature header"
+            )
+
         result = await stripe_service.handle_webhook(db, payload, sig_header)
         
         return result

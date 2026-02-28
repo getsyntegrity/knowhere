@@ -3,7 +3,7 @@ Tier Limit data model
 """
 from __future__ import annotations
 
-from sqlalchemy import Integer, String
+from sqlalchemy import BigInteger, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
@@ -14,7 +14,7 @@ class TierLimit(Base):
     __tablename__ = "tier_limits"
 
     tier_name: Mapped[str] = mapped_column(String(20), primary_key=True)
-    min_lifetime_amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    min_lifetime_amount_micro: Mapped[int] = mapped_column(BigInteger, nullable=False)
     max_concurrent_jobs: Mapped[int] = mapped_column(Integer, nullable=False)  # -1 = unlimited
     rpm_limit: Mapped[int] = mapped_column(Integer, nullable=False)  # -1 = unlimited
     daily_quota: Mapped[int] = mapped_column(Integer, nullable=False)  # -1 = unlimited

@@ -15,18 +15,6 @@ class _SessionContext:
         return False
 
 
-class _FakeListener:
-    def __init__(self) -> None:
-        self.started = False
-        self.stopped = False
-
-    async def start(self) -> None:
-        self.started = True
-
-    async def stop(self) -> None:
-        self.stopped = True
-
-
 class _FakeMessagingService:
     def __init__(self) -> None:
         self.start_calls = 0
@@ -59,12 +47,6 @@ def _patch_lifespan_dependencies(monkeypatch, load_rules_impl):
         "config",
         SimpleNamespace(get_connection_url=lambda: "redis://unused:6379/0"),
     )
-    fake_redis_service = object()
-    monkeypatch.setattr(
-        app_main.redis_pool_manager,
-        "get_redis_service",
-        lambda: fake_redis_service,
-    )
     monkeypatch.setattr(
         rate_limit_config_module.RateLimitConfig,
         "get_instance",
@@ -74,9 +56,6 @@ def _patch_lifespan_dependencies(monkeypatch, load_rules_impl):
     monkeypatch.setattr(app_main.httpx, "AsyncClient", lambda **_kwargs: object())
     monkeypatch.setattr(app_main, "safe_dispose_engine", _noop_async)
 
-    listener = _FakeListener()
-    monkeypatch.setattr(app_main, "RateLimitPubSubListener", lambda _redis: listener)
-
     messaging = _FakeMessagingService()
     fake_messaging_module = SimpleNamespace(messaging_service=messaging)
     monkeypatch.setitem(
@@ -85,36 +64,26 @@ def _patch_lifespan_dependencies(monkeypatch, load_rules_impl):
         fake_messaging_module,
     )
 
-    return listener, messaging, fake_redis_service
+    return messaging
 
 
 @pytest.mark.asyncio
 async def test_lifespan_initializes_and_tears_down_rate_limit_components(monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "3600")
-    load_calls: list[tuple[object, object, bool]] = []
+    load_calls: list[object] = []
 
-    async def _fake_load_rules(db, redis_service, publish_updates=True):
-        load_calls.append((db, redis_service, publish_updates))
-        return False
+    async def _fake_load_rules(db):
+        load_calls.append(db)
 
-    listener, messaging, fake_redis_service = _patch_lifespan_dependencies(
-        monkeypatch,
-        _fake_load_rules,
-    )
+    messaging = _patch_lifespan_dependencies(monkeypatch, _fake_load_rules)
 
     test_app = FastAPI()
     async with app_main.lifespan(test_app):
-        assert listener.started is True
-        assert hasattr(test_app.state, "pubsub_listener")
         assert hasattr(test_app.state, "rate_limit_rule_sync_task")
-        assert test_app.state.pubsub_listener is listener
         assert test_app.state.rate_limit_rule_sync_task.done() is False
         assert len(load_calls) == 1
-        assert load_calls[0][1] is fake_redis_service
-        assert load_calls[0][2] is True
         assert messaging.start_calls == 1
 
-    assert listener.stopped is True
     assert test_app.state.rate_limit_rule_sync_task.done() is True
     assert messaging.stop_calls == 1
 
@@ -123,15 +92,13 @@ async def test_lifespan_initializes_and_tears_down_rate_limit_components(monkeyp
 async def test_lifespan_fails_fast_when_initial_rule_load_fails(monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "3600")
 
-    async def _boom_load_rules(_db, _redis_service, publish_updates=True):
+    async def _boom_load_rules(_db):
         raise RuntimeError("initial load failed")
 
-    listener, messaging, _ = _patch_lifespan_dependencies(monkeypatch, _boom_load_rules)
+    messaging = _patch_lifespan_dependencies(monkeypatch, _boom_load_rules)
 
     with pytest.raises(RuntimeError, match="initial load failed"):
         async with app_main.lifespan(FastAPI()):
             pass
 
-    # Fail-fast means startup aborts before listener/messaging startup.
-    assert listener.started is False
     assert messaging.start_calls == 0

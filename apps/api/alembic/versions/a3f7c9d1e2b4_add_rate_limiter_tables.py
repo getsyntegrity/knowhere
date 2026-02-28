@@ -30,7 +30,7 @@ def upgrade() -> None:
     op.create_table(
         'tier_limits',
         sa.Column('tier_name', sa.String(20), primary_key=True),
-        sa.Column('min_lifetime_amount_cents', sa.Integer(), nullable=False),
+        sa.Column('min_lifetime_amount_micro', sa.BigInteger(), nullable=False),
         sa.Column('max_concurrent_jobs', sa.Integer(), nullable=False),
         sa.Column('rpm_limit', sa.Integer(), nullable=False),
         sa.Column('daily_quota', sa.Integer(), nullable=False),
@@ -51,14 +51,14 @@ def upgrade() -> None:
     # 4. Seed tier_limits data
     op.execute(
         """
-        INSERT INTO tier_limits (tier_name, min_lifetime_amount_cents, max_concurrent_jobs, rpm_limit, daily_quota, display_name)
+        INSERT INTO tier_limits (tier_name, min_lifetime_amount_micro, max_concurrent_jobs, rpm_limit, daily_quota, display_name)
         VALUES
-            ('free',   0,      2,  2,   20, 'Free'),
-            ('tier_1', 1000,   5,  15,  -1, 'Tier 1'),
-            ('tier_2', 5000,   10, 20,  -1, 'Tier 2'),
-            ('tier_3', 10000,  20, 50,  -1, 'Tier 3'),
-            ('tier_4', 50000,  50, 100, -1, 'Tier 4'),
-            ('tier_5', 200000, -1, -1,  -1, 'Tier 5')
+            ('free',   0,            2,  2,   20, 'Free'),
+            ('tier_1', 10000000,     5,  15,  -1, 'Tier 1'),
+            ('tier_2', 50000000,     10, 20,  -1, 'Tier 2'),
+            ('tier_3', 100000000,    20, 50,  -1, 'Tier 3'),
+            ('tier_4', 500000000,    50, 100, -1, 'Tier 4'),
+            ('tier_5', 2000000000,   -1, -1,  -1, 'Tier 5')
         """
     )
 
@@ -67,13 +67,7 @@ def upgrade() -> None:
         """
         INSERT INTO system_limits (method, api_pattern, priority, rpm, description)
         VALUES
-            ('POST', '/v1/jobs',                100,  30,   'Job creation - hard ceiling'),
             ('GET',  '/v1/jobs/*',              200,  200,  'Job queries - prevent polling'),
-            ('POST', '/v1/billing/buy-credits*', 300, 10,   'Payment endpoints'),
-            ('GET',  '/v1/billing/*',           400,  30,   'Billing queries'),
-            ('*',    '/v1/auth/*',              500,  20,   'API key management'),
-            ('*',    '/v1/webhooks/*',          600,  20,   'Webhook management'),
-            ('*',    '/v1/kb/*',                700,  30,   'Knowledge base'),
             ('*',    '*',                       9999, 1000, 'Default for all unmatched endpoints')
         """
     )

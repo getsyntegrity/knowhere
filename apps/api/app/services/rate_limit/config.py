@@ -59,7 +59,7 @@ class RateLimitConfig:
         if not async_redis_url.startswith("async+"):
             async_redis_url = f"async+{redis_url}"
 
-        self._storage: RedisStorage = RedisStorage(async_redis_url)
+        self._storage: RedisStorage = RedisStorage(async_redis_url, implementation="redispy")
         self._sliding_window = MovingWindowRateLimiter(self._storage)
         self._fixed_window = FixedWindowRateLimiter(self._storage)
 
