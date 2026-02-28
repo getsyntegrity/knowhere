@@ -29,11 +29,6 @@ async def _fetch_tier_map(db: AsyncSession) -> dict[str, TierLimits]:
             daily_quota=row.daily_quota,
         )
 
-    logger.info(
-        "Fetched tier limits from DB",
-        tier_count=len(tier_map),
-        tiers=list(tier_map.keys()),
-    )
     return tier_map
 
 
@@ -56,10 +51,6 @@ async def _fetch_system_rules(
             )
         )
 
-    logger.info(
-        "Fetched system limits from DB",
-        rule_count=len(system_rules),
-    )
     return system_rules
 
 
@@ -75,9 +66,10 @@ async def load_rules(db: AsyncSession) -> None:
         system_rules = await _fetch_system_rules(db)
 
         config = RateLimitConfig.get_instance()
-        config.update_rules(tier_map, system_rules)
+        has_changes = config.update_rules(tier_map, system_rules)
 
-        logger.info("Rate limit rules loaded successfully")
+        if has_changes:
+            logger.info("Rate limit rules loaded successfully")
     except Exception as exc:
         logger.error(
             "Failed to load rate limit rules",

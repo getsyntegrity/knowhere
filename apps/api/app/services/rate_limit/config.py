@@ -18,7 +18,7 @@ from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
 # ---------------------------------------------------------------------------
 
 DEFAULT_SYSTEM_RPM: int = 1000
-CONCURRENCY_RETRY_AFTER_SECONDS: int = 5
+CONCURRENCY_RETRY_AFTER_SECONDS: int = 30
 REDIS_KEY_PREFIX: str = "knowhere-api:"
 
 _RATE_LIMIT_BYPASSED_ENV: str = "RATE_LIMIT_BYPASSED"
@@ -139,20 +139,33 @@ class RateLimitConfig:
         self,
         tier_map: dict[str, TierLimits],
         system_rules: list[SystemRpmRule],
-    ) -> None:
+    ) -> bool:
         """
         Atomically swap both maps.
 
         CPython's GIL guarantees that a single reference assignment is
         atomic, so readers never see a half-updated structure.
+
+        Returns:
+            True if rules were changed, False if no changes detected.
         """
         sorted_rules = sorted(system_rules, key=lambda r: r.priority)
-        self._tier_map = tier_map
-        self._system_rules = sorted_rules
-        logger.info(
-            f"Rate limit rules updated: "
-            f"{len(tier_map)} tiers, {len(sorted_rules)} system rules"
+
+        # Check if there are actual changes
+        has_changes = (
+            self._tier_map != tier_map
+            or self._system_rules != sorted_rules
         )
+
+        if has_changes:
+            self._tier_map = tier_map
+            self._system_rules = sorted_rules
+            logger.info(
+                f"Rate limit rules updated: "
+                f"{len(tier_map)} tiers, {len(sorted_rules)} system rules"
+            )
+
+        return has_changes
 
     def parse_rate(self, rate_string: str):
         """Thin wrapper around limits.parse()."""

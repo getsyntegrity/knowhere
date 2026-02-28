@@ -16,6 +16,7 @@ enforced just before insert in the create-job route.
 
 import os
 import hashlib
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -337,15 +338,36 @@ async def enforce_job_creation_capacity(
                 db, current_user.user_id
             )
             if active_jobs >= tier_limits.max_concurrent_jobs:
-                raise RateLimitException(
-                    retry_after=CONCURRENCY_RETRY_AFTER_SECONDS,
+                retry_after_seconds = _compute_concurrency_retry_after_seconds(
+                    base_retry_after_seconds=CONCURRENCY_RETRY_AFTER_SECONDS,
+                    rpm_limit=tier_limits.rpm_limit,
+                )
+                exc = RateLimitException(
+                    retry_after=retry_after_seconds,
                     limit=tier_limits.max_concurrent_jobs,
                     period="concurrent",
                     user_message=(
-                        "Too many concurrent requests. "
+                        f"Too many concurrent requests "
+                        f"({active_jobs}/{tier_limits.max_concurrent_jobs} active). "
                         "Please retry after {retry_after} seconds."
                     ),
+                    internal_message=(
+                        "Concurrency limit exceeded: "
+                        f"user_id={current_user.user_id}, "
+                        f"active_jobs={active_jobs}, "
+                        f"limit={tier_limits.max_concurrent_jobs}, "
+                        f"retry_after={retry_after_seconds}s"
+                    ),
                 )
+                exc.details.update(
+                    {
+                        "active_jobs": active_jobs,
+                        "available_slots": max(
+                            0, tier_limits.max_concurrent_jobs - active_jobs
+                        ),
+                    }
+                )
+                raise exc
         except RateLimitException:
             raise
         except Exception as exc:
@@ -388,6 +410,24 @@ async def _acquire_user_concurrency_lock(
     )
     if result.scalar_one_or_none() is None:
         raise RuntimeError(f"User row not found for user_id={user_id}")
+
+
+def _compute_concurrency_retry_after_seconds(
+    base_retry_after_seconds: int,
+    rpm_limit: int,
+) -> int:
+    """
+    Compute Retry-After hint for concurrency rejections.
+
+    Concurrency has no deterministic reset timestamp, so we provide a
+    conservative client hint:
+    - floor: configured base retry (currently 30s)
+    - if billing RPM is finite, also respect one request spacing
+      (ceil(60 / rpm_limit)) to reduce immediate repeated 429s
+    """
+    if rpm_limit <= 0:
+        return base_retry_after_seconds
+    return max(base_retry_after_seconds, int(math.ceil(60 / rpm_limit)))
 
 
 async def _count_non_terminal_jobs(
