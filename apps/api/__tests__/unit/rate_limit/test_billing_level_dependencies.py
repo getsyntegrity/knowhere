@@ -85,6 +85,9 @@ class _FakeRedisService:
     async def _get_client(self):
         return self._client
 
+    async def ping(self) -> bool:
+        return True
+
 
 class _PassRateLimiter:
     def __init__(self, _config) -> None:
@@ -274,6 +277,9 @@ async def test_require_billing_limits_raises_unavailable_when_redis_unreachable(
         async def _get_client(self):
             raise RuntimeError("redis down")
 
+        async def ping(self) -> bool:
+            return False
+
     monkeypatch.setattr(
         deps.redis_pool_manager,
         "get_redis_service",
@@ -295,7 +301,7 @@ async def test_require_billing_limits_raises_unavailable_when_redis_unreachable(
         )
         await agen.__anext__()
 
-    assert "Redis error acquiring client" in exc_info.value.internal_message
+    assert "Redis is not reachable" in exc_info.value.internal_message
 
 
 @pytest.mark.asyncio

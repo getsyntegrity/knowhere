@@ -56,6 +56,9 @@ class _FakeRedisService:
     async def _get_client(self):
         return self._client
 
+    async def ping(self) -> bool:
+        return True
+
 
 def _make_request() -> Request:
     scope = {
@@ -326,6 +329,9 @@ async def test_full_chain_l0_fails_open_l1_fails_close(monkeypatch):
         async def _get_client(self):
             raise RuntimeError("redis down")
 
+        async def ping(self) -> bool:
+            return False
+
     async def _cache_error(_redis, _cache_key):
         raise RuntimeError("redis down")
 
@@ -362,7 +368,7 @@ async def test_full_chain_l0_fails_open_l1_fails_close(monkeypatch):
         )
         await agen.__anext__()
 
-    assert "Redis error" in exc_info.value.internal_message
+    assert "Redis is not reachable" in exc_info.value.internal_message
 
 
 # ---------------------------------------------------------------------------
