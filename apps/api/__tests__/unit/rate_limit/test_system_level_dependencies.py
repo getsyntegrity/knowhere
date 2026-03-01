@@ -13,6 +13,7 @@ from .helpers import FakeRedisService, make_request
 
 class _SystemConfig:
     def __init__(self) -> None:
+        self.is_bypassed = False
         self.system_rules = [
             SystemRpmRule(
                 method="POST",

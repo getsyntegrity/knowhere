@@ -113,7 +113,7 @@ async def get_sql_path(current_user: CurrentUser = Depends(with_current_user)):
                 success = await create_directory(db, create_request)
                 if not success:
                     from loguru import logger
-                    logger.error(f"创建默认目录失败: user_id={current_user.user_id}")
+                    logger.error(f"Failed to create default directory: user_id={current_user.user_id}")
                     raise KnowledgeBaseOperationException(
                         internal_message="Failed to create default directory"
                     )

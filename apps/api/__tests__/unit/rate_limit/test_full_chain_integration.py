@@ -293,4 +293,4 @@ async def test_full_chain_l0_fails_open_l1_fails_close(monkeypatch):
         )
         await agen.__anext__()
 
-    assert "Redis is not reachable" in exc_info.value.internal_message
+    assert "Redis error in billing RPM check" in exc_info.value.internal_message

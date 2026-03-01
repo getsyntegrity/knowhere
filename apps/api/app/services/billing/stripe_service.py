@@ -330,7 +330,7 @@ class StripeService:
                     session=db,
                     user_id=user_id,
                     amount=credits_amount,
-                    reason=f"购买Credits包: {product_description}",
+                    reason=f"Purchase credits pack: {product_description}",
                     stripe_payment_id=session.get('payment_intent')
                 )
                 
@@ -497,7 +497,7 @@ class StripeService:
 
         try:
             # Subscription management not yet implemented
-            logger.warning(f"未找到本地订阅记录: stripe_subscription_id={stripe_subscription_id}")
+            logger.warning(f"Local subscription record not found: stripe_subscription_id={stripe_subscription_id}")
 
             return {'status': 'success', 'subscription_id': stripe_subscription_id}
         except KnowhereException:

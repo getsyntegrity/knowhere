@@ -44,7 +44,7 @@ class JobStateMachine:
                 db, job_id, to_state, transition_reason, operator_id, operator_type, metadata
             )
             
-            # 状态转换成功后，设置超时
+            # After successful state transition, set timeout
             if result:
                 await self.state_timeout.set_task_timeout(job_id, to_state)
             

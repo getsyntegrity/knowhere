@@ -7,7 +7,7 @@ from jwt import PyJWKClient
 
 from app.services.auth.api_key_service import APIKeyService
 from app.services.rate_limit.identity_cache import identity_cache
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 from loguru import logger
 from shared.core.config import redis_pool_manager, settings
 from shared.core.database import get_db
@@ -103,24 +103,29 @@ def decode_jwt_token(token: str) -> str:
 
 
 async def get_current_user_id(
+    request: Request,
     authorization: str | None = Header(default=None, description="Bearer <token> OR internal signature auth"),
     db: AsyncSession = Depends(get_db),
 ) -> str:
-    """
+    """Authenticate the caller and return user_id.
+
+    When the identity cache is hit the resolved ``user_tier`` is stashed on
+    ``request.state.cached_user_tier`` so that downstream dependencies
+    (``with_current_user``) can skip a second cache/DB lookup.
     """
     if not authorization:
         raise AuthException(
             user_message="Authentication required. Provide Authorization header."
         )
-    
+
     # Parse Authorization header
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise AuthException(user_message="Invalid Authorization header format")
-    
+
     # Mode 1: API Key verification (for external clients)
     if token.startswith("sk_"):
-        # Check identity cache first (design §2.3) — skip DB on cache hit
+        # Check identity cache first — skip DB on cache hit
         api_key_hash = hashlib.sha256(token.encode()).hexdigest()
         try:
             cached = await identity_cache.get_cached_identity(
@@ -130,6 +135,9 @@ async def get_current_user_id(
             if cached is not None:
                 cached_user_id = cached.get("user_id")
                 if cached_user_id:
+                    # Stash tier so with_current_user can reuse it
+                    request.state.cached_user_tier = cached.get("user_tier")
+                    request.state.cached_identity_hit = True
                     return cached_user_id
         except Exception:
             pass  # Fall through to DB validation
@@ -141,6 +149,6 @@ async def get_current_user_id(
             return user_id
         else:
             raise AuthException(user_message="Invalid API Key")
-    
+
     # Mode 2: JWT verification (for Dashboard/Internal)
     return decode_jwt_token(token)

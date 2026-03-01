@@ -13,7 +13,6 @@ to the route handler. Concurrency (Layer 2) and daily quota (Layer 3) are
 enforced just before insert in the create-job route.
 """
 
-import os
 import hashlib
 import math
 from datetime import datetime, timezone
@@ -42,10 +41,7 @@ from shared.core.exceptions.domain_exceptions import (
 from shared.core.state_machine.states import JobStatus
 from shared.models.database.api_key import APIKey
 from shared.models.database.job import Job
-from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
-
-_RATE_LIMIT_BYPASSED: bool = os.getenv("RATE_LIMIT_BYPASSED", "").lower() == "true"
 
 _DEFAULT_TIER: str = "free"
 _ACTIVE_JOB_STATES: tuple[str, ...] = (
@@ -140,52 +136,59 @@ async def with_current_user(
     """
     redis_service = redis_pool_manager.get_redis_service()
 
-    # -- Resolve user_tier (cache -> DB fallback) --
+    # -- Resolve user_tier (reuse stashed value -> cache -> DB fallback) --
     user_tier: str = _DEFAULT_TIER
-    token = _extract_bearer_token(request.headers.get("authorization"))
-    is_api_key_auth = bool(token and token.startswith("sk_"))
-    api_key_hash = hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
-    cache_key: str = (
-        identity_cache._apikey_key(api_key_hash)
-        if is_api_key_auth and api_key_hash
-        else identity_cache._jwt_key(user_id)
-    )
-    try:
-        cached: dict | None = await identity_cache.get_cached_identity(
-            redis_service, cache_key
+    cached_tier: str | None = getattr(request.state, "cached_user_tier", None)
+    is_identity_hit: bool = getattr(request.state, "cached_identity_hit", False)
+
+    if is_identity_hit and cached_tier is not None:
+        # Already resolved in get_current_user_id — skip second lookup
+        user_tier = cached_tier
+    else:
+        token = _extract_bearer_token(request.headers.get("authorization"))
+        is_api_key_auth = bool(token and token.startswith("sk_"))
+        api_key_hash = hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
+        cache_key: str = (
+            identity_cache._apikey_key(api_key_hash)
+            if is_api_key_auth and api_key_hash
+            else identity_cache._jwt_key(user_id)
         )
-        if cached is not None:
-            user_tier = cached.get("user_tier", _DEFAULT_TIER)
-        else:
-            user_tier = await _resolve_user_tier_from_db(user_id)
-            if is_api_key_auth and api_key_hash:
-                ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
-                await identity_cache.set_apikey_identity(
-                    redis_service,
-                    api_key_hash,
-                    user_id,
-                    user_tier,
-                    ttl_seconds=ttl_seconds,
-                )
+        try:
+            cached: dict | None = await identity_cache.get_cached_identity(
+                redis_service, cache_key
+            )
+            if cached is not None:
+                user_tier = cached.get("user_tier", _DEFAULT_TIER)
             else:
-                await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
-    except Exception:
-        logger.warning(
-            "rate_limit: Redis error during identity resolution, "
-            "falling back to DB for user_id={}",
-            user_id,
-        )
-        user_tier = await _resolve_user_tier_from_db(user_id)
+                user_tier = await _resolve_user_tier_from_db(user_id)
+                if is_api_key_auth and api_key_hash:
+                    ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
+                    await identity_cache.set_apikey_identity(
+                        redis_service,
+                        api_key_hash,
+                        user_id,
+                        user_tier,
+                        ttl_seconds=ttl_seconds,
+                    )
+                else:
+                    await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
+        except Exception:
+            logger.warning(
+                "rate_limit: Redis error during identity resolution, "
+                "falling back to DB for user_id={}",
+                user_id,
+            )
+            user_tier = await _resolve_user_tier_from_db(user_id)
 
     current_user = CurrentUser(user_id=user_id, user_tier=user_tier)
 
     # -- Bypass switch --
-    if _RATE_LIMIT_BYPASSED:
+    config = RateLimitConfig.get_instance()
+    if config.is_bypassed:
         return current_user
 
     # -- Layer 0: system RPM --
     try:
-        config = RateLimitConfig.get_instance()
         scope_path: str = request.scope.get("path", request.url.path)
         root_path: str = request.scope.get("root_path", "")
         route_path: str = (
@@ -257,16 +260,9 @@ async def require_billing_limits(
             retry_after=_RETRY_AFTER_SECONDS,
         )
 
-    if _RATE_LIMIT_BYPASSED:
+    if config.is_bypassed:
         yield current_user
         return
-
-    redis_service = redis_pool_manager.get_redis_service()
-    if not await redis_service.ping():
-        raise UnavailableException(
-            internal_message="Redis is not reachable for billing rate limit check",
-            retry_after=_RETRY_AFTER_SECONDS,
-        )
 
     # -- Layer 1: billing RPM --
     limiter = RateLimiter(config)
@@ -295,10 +291,10 @@ async def enforce_job_creation_capacity(
     current_user: CurrentUser,
 ) -> None:
     """Enforce Layers 2-3 immediately before job insert."""
-    if _RATE_LIMIT_BYPASSED:
+    config = RateLimitConfig.get_instance()
+    if config.is_bypassed:
         return
 
-    config = RateLimitConfig.get_instance()
     tier_limits = getattr(request.state, "rate_limit_tier_limits", None)
     if not isinstance(tier_limits, TierLimits):
         tier_limits = config.tier_map.get(current_user.user_tier)
@@ -392,12 +388,18 @@ async def _acquire_user_concurrency_lock(
     db: AsyncSession,
     user_id: str,
 ) -> None:
-    """Acquire a per-user row lock to serialize concurrent job creation."""
+    """Acquire a per-user row lock to serialize concurrent job creation.
+
+    Locks the UserBalance row instead of User to avoid contention with
+    unrelated operations (profile updates, etc.) that may also lock User.
+    """
     result = await db.execute(
-        select(User.id).where(User.id == user_id).with_for_update()
+        select(UserBalance.user_id)
+        .where(UserBalance.user_id == user_id)
+        .with_for_update()
     )
     if result.scalar_one_or_none() is None:
-        raise RuntimeError(f"User row not found for user_id={user_id}")
+        raise RuntimeError(f"UserBalance row not found for user_id={user_id}")
 
 
 def _compute_concurrency_retry_after_seconds(

@@ -199,24 +199,29 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
 async def test_require_billing_limits_raises_unavailable_when_redis_unreachable(
     monkeypatch,
 ):
-    class _BrokenRedisService:
-        async def _get_client(self):
+    """When the rate limiter cannot reach Redis, billing RPM (L1) must fail-close with 503."""
+
+    class _BrokenRateLimiter:
+        def __init__(self, _config) -> None:
+            pass
+
+        async def check_billing_rpm(self, _user_id: str, _rpm: int) -> None:
             raise RuntimeError("redis down")
 
-        async def ping(self) -> bool:
-            return False
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    redis_service = FakeRedisService(redis)
 
     monkeypatch.setattr(
         deps.redis_pool_manager,
         "get_redis_service",
-        lambda: _BrokenRedisService(),
+        lambda: redis_service,
     )
     monkeypatch.setattr(
         deps.RateLimitConfig,
         "get_instance",
         classmethod(lambda _cls: _FakeConfig(max_concurrent_jobs=2)),
     )
-    monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
+    monkeypatch.setattr(deps, "RateLimiter", _BrokenRateLimiter)
 
     request = make_request()
     user = CurrentUser(user_id="u_down", user_tier="free")
@@ -227,7 +232,7 @@ async def test_require_billing_limits_raises_unavailable_when_redis_unreachable(
         )
         await agen.__anext__()
 
-    assert "Redis is not reachable" in exc_info.value.internal_message
+    assert "Redis error in billing RPM check" in exc_info.value.internal_message
 
 
 @pytest.mark.asyncio

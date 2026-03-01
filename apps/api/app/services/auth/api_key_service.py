@@ -192,7 +192,7 @@ class APIKeyService:
                 name=f"api_key_last_used:{api_key_id}",
             )
         except Exception as e:
-            logger.warning(f"调度API Key最后使用时间更新失败(忽略): {e}")
+            logger.warning(f"Failed to schedule API key last-used update (ignored): {e}")
 
     async def _update_last_used_best_effort(self, api_key_id: str) -> None:
         """Best-effort async update; failures are logged but never propagated."""
@@ -200,7 +200,7 @@ class APIKeyService:
             async with get_db_context() as db:
                 await self.repository.update_last_used(db, api_key_id)
         except Exception as e:
-            logger.warning(f"更新API Key最后使用时间失败(忽略): {e}")
+            logger.warning(f"Failed to update API key last-used time (ignored): {e}")
     
     async def get_api_key(self, session: AsyncSession, user_id: str, api_key_id: str) -> Optional[APIKey]:
         """获取单个API Key"""

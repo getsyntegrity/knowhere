@@ -122,7 +122,7 @@ def check_job_permission(job, user_id: str) -> None:
 
     Args:
         job: 任务对象
-        user_id: 当前用户ID
+        user_id: Current user ID
 
     Raises:
         HTTPException: 权限不足时抛出异常
@@ -366,7 +366,7 @@ async def create_job(
                 "webhook_enabled": bool(payload.webhook and payload.webhook.url),
                 "job_type": job_type,
                 "source_type": "file",
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             }
             await job_info_service.save_job_info(job_id, job_info)
 
@@ -448,7 +448,7 @@ async def create_job(
                     "webhook_enabled": bool(payload.webhook and payload.webhook.url),
                     "job_type": job_type,
                     "source_type": "url",
-                    "created_at": datetime.utcnow().isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat()
                 }
                 await job_info_service.save_job_info(job_id, job_info)
 

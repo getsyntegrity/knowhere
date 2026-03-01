@@ -59,6 +59,7 @@ def upgrade() -> None:
             ('tier_3', 100000000,    20, 50,  -1, 'Tier 3'),
             ('tier_4', 500000000,    50, 100, -1, 'Tier 4'),
             ('tier_5', 2000000000,   -1, -1,  -1, 'Tier 5')
+        ON CONFLICT (tier_name) DO NOTHING
         """
     )
 
@@ -69,6 +70,7 @@ def upgrade() -> None:
         VALUES
             ('GET',  '/v1/jobs/*',              200,  200,  'Job queries - prevent polling'),
             ('*',    '*',                       9999, 1000, 'Default for all unmatched endpoints')
+        ON CONFLICT (method, api_pattern) DO NOTHING
         """
     )
 
