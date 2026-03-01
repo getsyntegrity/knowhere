@@ -29,14 +29,10 @@ async def test_validate_api_key_schedules_last_used_update(monkeypatch):
     )
 
     monkeypatch.setattr(
-        service, "_get_cached_user_id", AsyncMock(return_value=None)
-    )
-    monkeypatch.setattr(
         service.repository,
         "get_by_key_hash",
         AsyncMock(return_value=record),
     )
-    monkeypatch.setattr(service, "_cache_api_key", AsyncMock())
 
     scheduled: list[str] = []
     monkeypatch.setattr(

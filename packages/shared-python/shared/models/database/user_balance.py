@@ -30,8 +30,5 @@ class UserBalance(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    # Relationships
-    user: Mapped[User] = relationship("User", lazy="select")
-
     def __repr__(self) -> str:
         return f"<UserBalance(user_id='{self.user_id}', tier='{self.user_tier}')>"

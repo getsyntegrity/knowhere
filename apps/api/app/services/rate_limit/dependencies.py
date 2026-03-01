@@ -3,7 +3,6 @@ FastAPI dependencies for the rate-limit layer.
 
 Dependency chain (outermost -> innermost):
     require_billing_limits  ->  with_current_user  ->  get_current_user_id
-                            ->  generate_job_id
                             ->  get_db
 
 ``with_current_user`` resolves identity (user_id + user_tier), caches it in
@@ -17,7 +16,6 @@ enforced just before insert in the create-job route.
 import os
 import hashlib
 import math
-import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
@@ -119,11 +117,6 @@ async def _resolve_apikey_cache_ttl_seconds(api_key_hash: str) -> int:
             return max(1, min(max_ttl_seconds, remaining))
     except Exception:
         return max_ttl_seconds
-
-
-def generate_job_id() -> str:
-    """Create a short, unique job identifier."""
-    return f"job_{uuid.uuid4().hex[:12]}"
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +223,6 @@ _RETRY_AFTER_SECONDS: int = 15
 async def require_billing_limits(
     request: Request,
     current_user: CurrentUser = Depends(with_current_user),
-    job_id: str = Depends(generate_job_id),
     _db: AsyncSession = Depends(get_db),
 ) -> AsyncGenerator[CurrentUser, None]:
     """Enforce billing RPM (Layer 1) around the route handler.
@@ -266,7 +258,6 @@ async def require_billing_limits(
         )
 
     if _RATE_LIMIT_BYPASSED:
-        request.state.job_id = job_id
         yield current_user
         return
 
@@ -295,7 +286,6 @@ async def require_billing_limits(
 
     # -- Hand control to the route handler --
     request.state.rate_limit_tier_limits = tier_limits
-    request.state.job_id = job_id
     yield current_user
 
 

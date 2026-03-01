@@ -75,25 +75,15 @@ class APIKeyService:
         return api_key
     
     async def validate_api_key(self, session: AsyncSession, api_key: str) -> Optional[str]:
-        """验证API Key，返回user_id"""
-        # 1. 从缓存获取（如果实现了缓存）
-        user_id = await self._get_cached_user_id(api_key)
-        if user_id:
-            return user_id
-        
-        # 2. 从数据库获取
+        """Validate API key against DB, return user_id or None."""
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
-        
+
         if not api_key_record or not api_key_record.is_valid():
             return None
 
-        # 3. 更新最后使用时间（best-effort async，不阻塞请求路径）
         self._schedule_last_used_update(str(api_key_record.id))
 
-        # 4. 缓存结果
-        await self._cache_api_key(api_key, str(api_key_record.user_id))
-        
         return str(api_key_record.user_id)
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
@@ -194,10 +184,6 @@ class APIKeyService:
         enabled_modules = api_key_record.enabled_modules or []
         return "all" in enabled_modules or module in enabled_modules
     
-    async def _cache_api_key(self, api_key: str, user_id: str):
-        """缓存API Key到Redis"""
-        # TODO: 实现Redis缓存
-
     def _schedule_last_used_update(self, api_key_id: str) -> None:
         """Schedule a best-effort background update for api_keys.last_used_at."""
         try:
@@ -215,15 +201,6 @@ class APIKeyService:
                 await self.repository.update_last_used(db, api_key_id)
         except Exception as e:
             logger.warning(f"更新API Key最后使用时间失败(忽略): {e}")
-    
-    async def _get_cached_user_id(self, api_key: str) -> Optional[str]:
-        """从缓存获取用户ID"""
-        # TODO: 实现Redis缓存
-        return None
-    
-    async def _remove_cached_api_key(self, api_key_id: str):
-        """从缓存中移除API Key"""
-        # TODO: 实现Redis缓存
     
     async def get_api_key(self, session: AsyncSession, user_id: str, api_key_id: str) -> Optional[APIKey]:
         """获取单个API Key"""

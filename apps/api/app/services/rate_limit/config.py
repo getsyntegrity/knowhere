@@ -43,7 +43,7 @@ class RateLimitConfig:
     def __init__(
         self, redis_url: str, key_prefix: str = REDIS_KEY_PREFIX
     ) -> None:
-        from limits import parse as parse_rate  # noqa: F811
+        from limits import parse as parse_rate
         from limits.aio.storage import RedisStorage
         from limits.aio.strategies import (
             FixedWindowRateLimiter,

@@ -54,7 +54,6 @@ async def test_create_job_reraises_capacity_errors(monkeypatch, error):
             payload=payload,
             http_request=_make_http_request(),
             current_user=current_user,
-            job_id="job_test_001",
             db=object(),
         )
 

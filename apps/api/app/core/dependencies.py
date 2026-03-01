@@ -1,3 +1,4 @@
+import hashlib
 from datetime import timedelta
 from typing import Any
 
@@ -5,9 +6,10 @@ import jwt
 from jwt import PyJWKClient
 
 from app.services.auth.api_key_service import APIKeyService
+from app.services.rate_limit.identity_cache import identity_cache
 from fastapi import Depends, Header
 from loguru import logger
-from shared.core.config import settings
+from shared.core.config import redis_pool_manager, settings
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
@@ -118,6 +120,21 @@ async def get_current_user_id(
     
     # Mode 1: API Key verification (for external clients)
     if token.startswith("sk_"):
+        # Check identity cache first (design §2.3) — skip DB on cache hit
+        api_key_hash = hashlib.sha256(token.encode()).hexdigest()
+        try:
+            cached = await identity_cache.get_cached_identity(
+                redis_pool_manager.get_redis_service(),
+                identity_cache._apikey_key(api_key_hash),
+            )
+            if cached is not None:
+                cached_user_id = cached.get("user_id")
+                if cached_user_id:
+                    return cached_user_id
+        except Exception:
+            pass  # Fall through to DB validation
+
+        # Cache miss — validate via DB
         api_key_service = APIKeyService()
         user_id = await api_key_service.validate_api_key(db, token)
         if user_id:

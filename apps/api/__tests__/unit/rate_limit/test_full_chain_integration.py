@@ -103,12 +103,10 @@ async def test_full_chain_allows_first_request(monkeypatch):
     agen = deps.require_billing_limits(
         request=request,
         current_user=current_user,
-        job_id="job_e2e_001",
         _db=FAKE_DB,
     )
     yielded = await agen.__anext__()
     assert yielded == current_user
-    assert request.state.job_id == "job_e2e_001"
     assert request.state.rate_limit_tier_limits == _FREE_LIMITS
     await agen.aclose()
 
@@ -132,7 +130,6 @@ async def test_full_chain_l1_rejects_after_rpm_exceeded(monkeypatch):
     agen = deps.require_billing_limits(
         request=request,
         current_user=current_user,
-        job_id="job_pass",
         _db=FAKE_DB,
     )
     await agen.__anext__()
@@ -143,7 +140,6 @@ async def test_full_chain_l1_rejects_after_rpm_exceeded(monkeypatch):
         agen = deps.require_billing_limits(
             request=request,
             current_user=current_user,
-            job_id="job_blocked",
             _db=FAKE_DB,
         )
         await agen.__anext__()
@@ -169,7 +165,6 @@ async def test_full_chain_l2_rejects_when_concurrency_full(monkeypatch):
     agen = deps.require_billing_limits(
         request=request,
         current_user=current_user,
-        job_id="job_l2",
         _db=FAKE_DB,
     )
     await agen.__anext__()
@@ -204,7 +199,6 @@ async def test_full_chain_l3_rejects_when_daily_quota_exhausted(monkeypatch):
         agen = deps.require_billing_limits(
             request=request,
             current_user=current_user,
-            job_id=f"job_l3_{i}",
             _db=FAKE_DB,
         )
         await agen.__anext__()
@@ -215,7 +209,6 @@ async def test_full_chain_l3_rejects_when_daily_quota_exhausted(monkeypatch):
     agen = deps.require_billing_limits(
         request=request,
         current_user=current_user,
-        job_id="job_l3_blocked",
         _db=FAKE_DB,
     )
     await agen.__anext__()
@@ -248,7 +241,6 @@ async def test_full_chain_paid_tier_skips_daily_quota(monkeypatch):
         agen = deps.require_billing_limits(
             request=request,
             current_user=current_user,
-            job_id=f"job_paid_{i}",
             _db=FAKE_DB,
         )
         await agen.__anext__()
@@ -297,7 +289,6 @@ async def test_full_chain_l0_fails_open_l1_fails_close(monkeypatch):
         agen = deps.require_billing_limits(
             request=request,
             current_user=current_user,
-            job_id="job_fail",
             _db=FAKE_DB,
         )
         await agen.__anext__()

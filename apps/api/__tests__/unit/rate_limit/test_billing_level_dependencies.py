@@ -74,14 +74,12 @@ async def test_require_billing_limits_sets_job_state_and_tier_limits(monkeypatch
 
     request = make_request()
     user = CurrentUser(user_id="u_ok", user_tier="free")
-    job_id = "job_ok"
 
     agen = deps.require_billing_limits(
-        request=request, current_user=user, job_id=job_id, _db=FAKE_DB
+        request=request, current_user=user, _db=FAKE_DB
     )
     yielded_user = await agen.__anext__()
     assert yielded_user == user
-    assert request.state.job_id == job_id
     assert request.state.rate_limit_tier_limits == TierLimits(
         rpm_limit=60, max_concurrent_jobs=2, daily_quota=10
     )
@@ -123,7 +121,7 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
     user = CurrentUser(user_id="u_tier_2", user_tier="tier_2")
 
     agen = deps.require_billing_limits(
-        request=request, current_user=user, job_id="job_tier_2", _db=FAKE_DB
+        request=request, current_user=user, _db=FAKE_DB
     )
     yielded_user = await agen.__anext__()
     assert yielded_user == user
@@ -133,7 +131,6 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
         agen = deps.require_billing_limits(
             request=request,
             current_user=user,
-            job_id="job_tier_2_2",
             _db=FAKE_DB,
         )
         await agen.__anext__()
@@ -174,7 +171,7 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
     tier1_user = CurrentUser(user_id="u_tier_1", user_tier="tier_1")
 
     agen = deps.require_billing_limits(
-        request=request, current_user=free_user, job_id="job_free_1", _db=FAKE_DB
+        request=request, current_user=free_user, _db=FAKE_DB
     )
     await agen.__anext__()
     await agen.aclose()
@@ -183,7 +180,6 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
         agen = deps.require_billing_limits(
             request=request,
             current_user=free_user,
-            job_id="job_free_2",
             _db=FAKE_DB,
         )
         await agen.__anext__()
@@ -192,7 +188,6 @@ async def test_require_billing_limits_applies_different_tier_rpm_limits(monkeypa
         agen = deps.require_billing_limits(
             request=request,
             current_user=tier1_user,
-            job_id=f"job_tier1_{i}",
             _db=FAKE_DB,
         )
         yielded_user = await agen.__anext__()
@@ -228,7 +223,7 @@ async def test_require_billing_limits_raises_unavailable_when_redis_unreachable(
 
     with pytest.raises(UnavailableException) as exc_info:
         agen = deps.require_billing_limits(
-            request=request, current_user=user, job_id="job_down", _db=FAKE_DB
+            request=request, current_user=user, _db=FAKE_DB
         )
         await agen.__anext__()
 
@@ -270,7 +265,6 @@ async def test_require_billing_limits_raises_unavailable_when_tier_config_missin
         agen = deps.require_billing_limits(
             request=request,
             current_user=user,
-            job_id="job_missing_tier",
             _db=FAKE_DB,
         )
         await agen.__anext__()

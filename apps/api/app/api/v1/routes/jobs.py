@@ -16,7 +16,6 @@ from shared.core.config import settings
 from shared.core.database import get_db
 from app.services.rate_limit.dependencies import (
     with_current_user,
-    generate_job_id,
     require_billing_limits,
     enforce_job_creation_capacity,
     CurrentUser,
@@ -242,13 +241,13 @@ async def create_job(
     payload: JobCreate,
     http_request: Request,
     current_user: CurrentUser = Depends(require_billing_limits),
-    job_id: str = Depends(generate_job_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
     创建解析任务 - 符合PRD第5.1.3节规范
     """
     try:
+        job_id = f"job_{uuid.uuid4().hex[:12]}"
         # 验证参数
         if payload.source_type == "file" and not payload.file_name:
             raise ValidationException(
