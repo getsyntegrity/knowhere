@@ -11,19 +11,18 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# 安装uv
+RUN python -m pip install --no-cache-dir uv
+
 # 复制共享包代码（用于可编辑安装）
 COPY packages/shared-python /app/packages/shared-python
 
-# 复制API服务依赖
-COPY apps/api/requirements.txt /app/requirements.txt
+# 复制API项目依赖定义
+COPY apps/api/pyproject.toml /app/apps/api/pyproject.toml
 
-# 创建虚拟环境并安装依赖
-# 先安装共享包，再安装其他依赖（排除requirements.txt中的共享包行）
-RUN python -m venv /app/venv && \
-    /app/venv/bin/pip install --upgrade pip && \
-    /app/venv/bin/pip install --no-cache-dir -e /app/packages/shared-python && \
-    grep -v "^-e.*shared-python" /app/requirements.txt > /app/requirements-filtered.txt && \
-    /app/venv/bin/pip install --no-cache-dir -r /app/requirements-filtered.txt
+# 使用uv同步依赖到固定虚拟环境路径
+RUN cd /app/apps/api && \
+    UV_PROJECT_ENVIRONMENT=/app/venv uv sync --no-dev
 
 # 运行阶段
 # 使用官方 Python 镜像
@@ -46,7 +45,7 @@ COPY packages/shared-python /app/packages/shared-python
 COPY apps/api/custom_openapi.py /app/
 COPY apps/api/main.py /app/
 COPY apps/api/alembic.ini /app/
-COPY apps/api/requirements.txt /app/
+COPY apps/api/pyproject.toml /app/
 COPY apps/api/app /app/app
 COPY apps/api/alembic /app/alembic
 COPY apps/api/scripts /app/scripts
@@ -106,4 +105,3 @@ EXPOSE 5005
 
 # 使用启动脚本
 ENTRYPOINT ["/entrypoint.sh"]
-

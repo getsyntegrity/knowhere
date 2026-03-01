@@ -23,7 +23,7 @@ class RedisKeyType(Enum):
 class RedisKeyBuilder:
     """Redis键值构建器"""
     
-    def __init__(self, prefix: str = "aismart_bid:v1"):
+    def __init__(self, prefix: str = "knowhere-api"):
         self.prefix = prefix
     
     def build_key(self, key_type: RedisKeyType, *parts: str, **kwargs) -> str:

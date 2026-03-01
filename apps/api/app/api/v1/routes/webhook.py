@@ -13,7 +13,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db
-from app.core.dependencies import get_current_user_id
+from app.services.rate_limit.dependencies import with_current_user, CurrentUser
 from app.repositories.job_repository import JobRepository
 from app.repositories.webhook_repository import WebhookRepository
 from shared.services.webhook import get_webhook_dispatcher
@@ -36,7 +36,7 @@ async def get_webhook_logs(
     job_id: Optional[str] = Query(None, description="Filter by Job ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -49,7 +49,7 @@ async def get_webhook_logs(
         repo = WebhookRepository()
         offset = (page - 1) * page_size
         logs, total = await repo.get_webhook_logs(
-            db=db, user_id=user_id, job_id=job_id, limit=page_size, offset=offset
+            db=db, user_id=current_user.user_id, job_id=job_id, limit=page_size, offset=offset
         )
         
         return WebhookLogList(
@@ -84,7 +84,7 @@ async def get_webhook_logs(
 @router.post("/trigger", response_model=WebhookTriggerResponse, summary="Manually Trigger Webhook")
 async def trigger_webhook(
     request: WebhookTriggerRequest,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -106,7 +106,7 @@ async def trigger_webhook(
             )
         
         # Verify ownership
-        if str(job.user_id) != user_id:
+        if str(job.user_id) != current_user.user_id:
              raise PermissionDeniedException(
                 user_message="You don't have permission to trigger webhook for this job",
                 resource="Job"

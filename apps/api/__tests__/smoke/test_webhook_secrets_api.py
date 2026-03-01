@@ -2,15 +2,17 @@
 Smoke tests for Webhook Secrets API.
 """
 import pytest
+import pytest_asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 
 from shared.models.database.webhook_secret import WebhookSecret, WebhookSecretStatus
 
 
 from main import app
-from app.core.dependencies import get_current_user_id
+from app.services.rate_limit.dependencies import with_current_user
+from app.services.rate_limit.data_structures import CurrentUser
 from shared.core.database import get_db
 from httpx import AsyncClient, ASGITransport
 
@@ -18,20 +20,20 @@ from httpx import AsyncClient, ASGITransport
 TEST_USER_ID = "test_user_123"
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def authenticated_client(mock_db):
     """
     Authenticated client using dependency override (no local user architecture).
     """
-    # Override auth dependency to return test user ID
-    async def mock_get_current_user_id():
-        return TEST_USER_ID
-    
+    # Override auth dependency to return test CurrentUser
+    async def mock_with_current_user():
+        return CurrentUser(user_id=TEST_USER_ID, user_tier="free")
+
     # Override database dependency
     async def mock_get_db():
         yield mock_db
-    
-    app.dependency_overrides[get_current_user_id] = mock_get_current_user_id
+
+    app.dependency_overrides[with_current_user] = mock_with_current_user
     app.dependency_overrides[get_db] = mock_get_db
     
     transport = ASGITransport(app=app)
@@ -51,7 +53,7 @@ def mock_secret():
     secret.endpoint = "https://example.com/webhook"
     secret.secret_encrypted = "encrypted_value"
     secret.status = WebhookSecretStatus.ACTIVE
-    secret.created_at = datetime.utcnow()
+    secret.created_at = datetime.now(timezone.utc)
     secret._raw_secret = "whsec_test123"  # Mock decrypted value
     return secret
 

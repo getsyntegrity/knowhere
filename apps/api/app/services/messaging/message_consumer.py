@@ -5,6 +5,7 @@
 import asyncio
 import json
 from typing import Any, Dict, Optional
+from shared.core.exceptions.domain_exceptions import KnowhereException
 
 import aio_pika
 from aio_pika import IncomingMessage
@@ -89,7 +90,7 @@ class MessageConsumer:
                 'job_result': handle_job_result,
                 'job_failure': handle_job_failure,
             }
-            
+
             for message_type, handler_func in message_handlers.items():
                 queue_name = get_queue_name(message_type)
                 routing_key = get_routing_key(message_type)

@@ -62,6 +62,7 @@ from shared.core.exceptions import (
     ValidationException,
     UnknownException,
 )
+from shared.core.exceptions.domain_exceptions import RateLimitException
 from shared.core.response import ErrorCode, ErrorCodeMapper
 
 
@@ -128,6 +129,20 @@ async def knowhere_exception_handler(
     headers = {}
     if hasattr(exc, "retry_after") and exc.retry_after:
         headers["Retry-After"] = str(exc.retry_after)
+
+    # Add rate limit headers when the exception is a RateLimitException
+    if isinstance(exc, RateLimitException):
+        details = exc.details or {}
+        if "limit" in details:
+            headers["X-RateLimit-Limit"] = str(details["limit"])
+        if "remaining" in details:
+            headers["X-RateLimit-Remaining"] = str(details["remaining"])
+        if "reset" in details:
+            headers["X-RateLimit-Reset"] = str(details["reset"])
+        if "retry_after" in details:
+            headers["Retry-After"] = str(details["retry_after"])
+        if "period" in details:
+            headers["X-RateLimit-Period"] = str(details["period"])
 
     # SECURITY: to_client() returns user_message, NEVER internal_message
     return JSONResponse(

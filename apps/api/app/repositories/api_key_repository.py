@@ -1,7 +1,7 @@
 """
 API Key 数据访问层
 """
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from datetime import datetime
 from shared.models.database.api_key import APIKey
@@ -30,7 +30,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         )
         return result.scalar_one_or_none()
     
-    async def get_by_user_id(self, session: AsyncSession, user_id: str) -> List[APIKey]:
+    async def get_by_user_id(self, session: AsyncSession, user_id: str) -> Sequence[APIKey]:
         """获取用户的所有API Key"""
         result = await session.execute(
             select(APIKey)
@@ -39,7 +39,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         )
         return result.scalars().all()
     
-    async def get_unexpired_by_user_id(self, session: AsyncSession, user_id: str) -> List[APIKey]:
+    async def get_unexpired_by_user_id(self, session: AsyncSession, user_id: str) -> Sequence[APIKey]:
         """获取用户的所有未过期API Key（包含禁用的）"""
         now = datetime.utcnow()
         result = await session.execute(
@@ -55,7 +55,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         )
         return result.scalars().all()
     
-    async def get_active_by_user_id(self, session: AsyncSession, user_id: str) -> List[APIKey]:
+    async def get_active_by_user_id(self, session: AsyncSession, user_id: str) -> Sequence[APIKey]:
         """获取用户的所有活跃API Key"""
         result = await session.execute(
             select(APIKey)
@@ -73,7 +73,6 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
             .where(APIKey.id == api_key_id)
             .values(last_used_at=datetime.utcnow())
         )
-        await session.commit()
         return result.rowcount > 0
     
     async def deactivate(self, session: AsyncSession, api_key_id: str) -> bool:
