@@ -454,7 +454,7 @@ async def _parse_async(job_id: str, user_id: str):
             internal_message=f"USERS_DATA_PATH must be absolute path, current value: {parent_path}"
         )
 
-    output_dir = os.path.join(parent_path, f"kb_{job_user_id}")
+    output_dir = os.path.join(parent_path, f"kb_{job_user_id}", job_id)
 
     # Ensure output directory exists
     try:
