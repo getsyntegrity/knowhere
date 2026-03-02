@@ -24,6 +24,7 @@ from app.core.middleware import setup_cors, LoggingMiddleware
 from app.core.image_cli import ImageCli
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
+from app.services.rate_limit.rule_loader import load_rules
 
 setup_logging()
 
@@ -59,7 +60,38 @@ async def lifespan(app: FastAPI):
     logger.info("Redis connection pool created.")
 
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-    
+
+    # Initialize rate limiter rules from DB and start Pub/Sub listener.
+    # Fail fast on init errors so we don't serve with partially enforced limits.
+    from app.services.rate_limit.config import RateLimitConfig
+    from shared.core.database import AsyncSessionFactory
+
+    redis_url = redis_pool_manager.config.get_connection_url()
+    RateLimitConfig.get_instance(redis_url)
+    async with AsyncSessionFactory() as session:
+        await load_rules(session)
+    logger.info("rate limiter rules loaded")
+
+    async def _rate_limit_rule_sync_loop():
+        sync_interval = int(
+            os.getenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "60")
+        )
+        while True:
+            try:
+                await asyncio.sleep(sync_interval)
+                async with AsyncSessionFactory() as session:
+                    await load_rules(session)
+                logger.debug("rate limit rules periodic DB sync finished")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"rate limit rules periodic DB sync failed: {e}")
+
+    app.state.rate_limit_rule_sync_task = asyncio.create_task(
+        _rate_limit_rule_sync_loop(),
+        name="rate_limit_rule_sync",
+    )
+
     try:
         from app.services.messaging_service import messaging_service
         await messaging_service.start()
@@ -69,7 +101,15 @@ async def lifespan(app: FastAPI):
     
     logger.info("knowledge library API service started!")
     yield
-    
+
+    # Stop rate limiter sync task
+    if hasattr(app.state, "rate_limit_rule_sync_task"):
+        app.state.rate_limit_rule_sync_task.cancel()
+        try:
+            await app.state.rate_limit_rule_sync_task
+        except asyncio.CancelledError:
+            pass
+
     try:
         from app.services.messaging_service import messaging_service
         await messaging_service.stop()
@@ -95,8 +135,8 @@ def create_app() -> FastAPI:
     setup_cors(app)
     app.add_middleware(LoggingMiddleware)
     
-    # 添加Moesif API监控中间件
-    app.add_middleware(MoesifMiddleware)
+    # Moesif API监控中间件 — disabled (broken SDK client, adds latency + log noise)
+    # app.add_middleware(MoesifMiddleware)
 
     # 添加API Key认证中间件
     # app.add_middleware(api_key_auth_middleware)

@@ -4,7 +4,7 @@ Consolidated Webhook Service
 Single responsibility: Create WebhookEvents and publish to message queue.
 HTTP delivery is handled by shared.services.webhook.dispatcher.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -46,7 +46,7 @@ class WebhookService:
             "event": "job.completed",
             "job_id": job_id,
             "status": "completed",
-            "completed_at": datetime.utcnow().isoformat()
+            "completed_at": datetime.now(timezone.utc).isoformat()
             # NOTE: result_url and result added by dispatcher at delivery
         }
         
@@ -91,7 +91,7 @@ class WebhookService:
             "event": "job.failed",
             "job_id": job_id,
             "status": "failed",
-            "failed_at": datetime.utcnow().isoformat(),
+            "failed_at": datetime.now(timezone.utc).isoformat(),
             "error": build_standard_error_response(
                 code=error_code,
                 message=error_message,

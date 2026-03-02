@@ -1,7 +1,7 @@
 """
 Job仓储层
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from datetime import datetime
 
 from shared.models.database.job import Job
@@ -87,7 +87,7 @@ class JobRepository:
         offset: int = 0,
         created_after: Optional[datetime] = None,
         created_before: Optional[datetime] = None
-    ) -> List[Job]:
+    ) -> Sequence[Job]:
         """获取用户的Jobs"""
         try:
             stmt = (
@@ -222,7 +222,7 @@ class JobRepository:
         self, 
         db: AsyncSession, 
         job_id: str
-    ) -> List[JobStateHistory]:
+    ) -> Sequence[JobStateHistory]:
         """获取Job状态历史"""
         try:
             result = await db.execute(
@@ -240,7 +240,7 @@ class JobRepository:
         db: AsyncSession, 
         status: str, 
         limit: int = 100
-    ) -> List[Job]:
+    ) -> Sequence[Job]:
         """根据状态获取Jobs"""
         try:
             result = await db.execute(

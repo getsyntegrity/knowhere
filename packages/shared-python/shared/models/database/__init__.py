@@ -13,17 +13,24 @@ from .user_balance import UserBalance
 from .stripe_price_config import StripePriceConfig
 from .payment_record import PaymentRecord
 
+# Import models in dependency order
+# 1. First import base models (no foreign key dependencies)
 from .user import User
 
 # 3. Job-related log models
 from .job_state_audit_log import JobStateAuditLog
 from .job_state_history import JobStateHistory
 from .webhook_log import WebhookLog
-from .webhook import WebhookEvent, WebhookEventStatus
-from .webhook_secret import WebhookSecret, WebhookSecretStatus
+
+# 4. Rate limit configuration models
+from .tier_limit import TierLimit
+from .system_limit import SystemLimit
+
+# 5. Finally import other models
+# from .oauth_provider import OAuthProvider  # Commented out temporarily to avoid circular imports
 
 __all__ = [
-    "User", 
+    "User",
     "APIKey",
     "CreditsTransaction",
 
@@ -36,8 +43,7 @@ __all__ = [
     "JobStateAuditLog",
     "JobStateHistory",
     "WebhookLog",
-    "WebhookEvent",
-    "WebhookEventStatus",
-    "WebhookSecret",
-    "WebhookSecretStatus"
+    "TierLimit",
+    "SystemLimit",
+    # "OAuthProvider"
 ]

@@ -1,7 +1,7 @@
 """
 Stripe价格配置数据访问层
 """
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from shared.models.database.stripe_price_config import StripePriceConfig
 from app.repositories.base_repository import BaseRepository
@@ -34,7 +34,7 @@ class StripePriceConfigRepository(BaseRepository[StripePriceConfig, dict, dict])
         )
         return result.scalar_one_or_none()
     
-    async def get_all_active(self, session: AsyncSession) -> List[StripePriceConfig]:
+    async def get_all_active(self, session: AsyncSession) -> Sequence[StripePriceConfig]:
         """获取所有启用的价格配置"""
         result = await session.execute(
             select(StripePriceConfig)
@@ -43,7 +43,7 @@ class StripePriceConfigRepository(BaseRepository[StripePriceConfig, dict, dict])
         )
         return result.scalars().all()
     
-    async def get_credits_packages(self, session: AsyncSession) -> List[StripePriceConfig]:
+    async def get_credits_packages(self, session: AsyncSession) -> Sequence[StripePriceConfig]:
         """获取所有Credits包配置"""
         result = await session.execute(
             select(StripePriceConfig)

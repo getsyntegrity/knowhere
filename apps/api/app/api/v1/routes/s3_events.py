@@ -96,7 +96,7 @@ def verify_oss_signature(request_body: bytes, headers: Dict[str, str]) -> bool:
         return False
 
 
-def extract_job_id_from_s3_key(s3_key: str) -> str:
+def extract_job_id_from_s3_key(s3_key: str) -> str | None:
     """
     从S3键中提取job_id
     
@@ -128,8 +128,9 @@ async def handle_s3_events_get(
     """
     logger.info(f"======== S3事件GET请求 =========")
     logger.info(f"Headers: {dict(request.headers)}")
-    logger.info(f"Client IP: {request.client.host}")
-    
+    if request.client:
+        logger.info(f"Client IP: {request.client.host}")
+
     # 检查是否是SNS订阅确认请求
     if x_amz_sns_message_type == "SubscriptionConfirmation":
         logger.info("收到SNS订阅确认请求")
@@ -150,7 +151,8 @@ async def handle_s3_events(
     """
     logger.info(f"======== S3事件请求 =========")
     logger.info(f"Headers: {dict(request.headers)}")
-    logger.info(f"Client IP: {request.client.host}")
+    if request.client:
+        logger.info(f"Client IP: {request.client.host}")
     try:
         # 获取请求体
         body = await request.body()

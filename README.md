@@ -22,7 +22,7 @@ knowhere/
 ### 环境要求
 
 - Node.js 18+ 和 pnpm
-- Python 3.9+ 和 pip
+- Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)
 - Docker 和 Docker Compose
 - Git
 
@@ -32,12 +32,12 @@ knowhere/
 # 安装根目录依赖
 pnpm install
 
-# 安装 Python 依赖
+# 安装 Python 依赖（uv）
 cd apps/api
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 venv\Scripts\activate  # Windows
-pip install -r requirements.txt
+uv sync
+
+cd ../worker
+uv sync
 ```
 
 ### 开发环境启动
@@ -165,9 +165,10 @@ cd knowhere
 # 安装依赖
 pnpm install
 cd apps/api
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+uv sync
+
+cd ../worker
+uv sync
 ```
 
 #### 2. 环境配置
@@ -195,8 +196,7 @@ vim .env
 ```bash
 # 创建数据库表
 cd apps/api
-source venv/bin/activate
-python -c "from app.core.database import engine; from app.models import Base; Base.metadata.create_all(bind=engine)"
+uv run python -c "from app.core.database import engine; from app.models import Base; Base.metadata.create_all(bind=engine)"
 ```
 
 #### 4. 启动服务
@@ -204,11 +204,11 @@ python -c "from app.core.database import engine; from app.models import Base; Ba
 ```bash
 # 启动 API 服务
 cd apps/api
-source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8000
+uv run uvicorn main:app --host 0.0.0.0 --port 8000
 
 # 启动异步 Worker
-python worker.py
+cd ../worker
+uv run python worker.py
 
 # 启动前端（生产构建）
 cd apps/web
@@ -341,12 +341,10 @@ docker restart knowhere_mysql
 
 **4. Python 环境问题**
 ```bash
-# 重新创建虚拟环境
+# 重新同步 Python 环境
 cd apps/api
-rm -rf venv
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+rm -rf .venv
+uv sync
 ```
 
 **5. 权限问题**

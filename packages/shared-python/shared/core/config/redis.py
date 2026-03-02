@@ -36,7 +36,7 @@ class RedisConfig(BaseModel):
     REDIS_RETRY_DELAY: float = Field(default=1.0, description="重试延迟时间")
     
     # 键值配置
-    REDIS_KEY_PREFIX: str = Field(default="aismart_bid:v1", description="键前缀")
+    REDIS_KEY_PREFIX: str = Field(default="knowhere-api", description="键前缀")
     REDIS_DEFAULT_TTL: int = Field(default=86400, description="默认TTL（秒）")
     
     # 健康检查配置

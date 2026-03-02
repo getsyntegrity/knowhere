@@ -250,8 +250,16 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
             for img_path, img_summary in imgs:
                 img_suffix = os.path.splitext(img_path)[-1]
                 update_img_path = os.path.join(img_dir, f"{img_name}{img_suffix}")
-                os.rename(os.path.join(output_dir, img_path), update_img_path) # update image path, not using uuid
-                
+
+                # Check if source image file exists before renaming
+                source_path = os.path.join(output_dir, img_path)
+                if not os.path.exists(source_path):
+                    logger.warning(f"Image file not found, skipping rename: {source_path}")
+                    img_count += 1
+                    continue
+
+                os.rename(source_path, update_img_path)
+
                 # Image index (always present)
                 image_index = f"image-{img_count}"
                 

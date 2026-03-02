@@ -3,7 +3,10 @@ API Key 管理 API
 """
 
 from shared.core.database import get_db
-from app.core.dependencies import get_current_user_id
+from app.services.rate_limit.dependencies import (
+    with_current_user,
+    CurrentUser,
+)
 from shared.models.schemas.api_key import (APIKeyListResponse, APIKeyResponse,
                                         CreateAPIKeyRequest,
                                         CreateAPIKeyResponse,
@@ -24,7 +27,7 @@ router = APIRouter(tags=["API Key Management"])
 @router.post("/create", summary="创建API Key")
 async def create_api_key(
     request: CreateAPIKeyRequest,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """创建API Key"""
@@ -33,7 +36,7 @@ async def create_api_key(
     try:
         api_key = await api_key_service.create_api_key(
             session=db,
-            user_id=user_id,
+            user_id=current_user.user_id,
             name=request.name,
             enabled_modules=request.enabled_modules,
             expires_at=request.expires_at
@@ -58,14 +61,14 @@ async def create_api_key(
 
 @router.get("/list", summary="获取API Key列表")
 async def list_api_keys(
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """获取API Key列表"""
     api_key_service = APIKeyService()
     
     try:
-        api_keys_data = await api_key_service.list_user_api_keys(db, user_id)
+        api_keys_data = await api_key_service.list_user_api_keys(db, current_user.user_id)
         
         api_keys = [
             APIKeyResponse(
@@ -95,7 +98,7 @@ async def list_api_keys(
 @router.post("/regenerate", summary="重新生成API Key")
 async def regenerate_api_key(
     request: RegenerateAPIKeyRequest,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """重新生成API Key"""
@@ -105,7 +108,7 @@ async def regenerate_api_key(
         new_api_key = await api_key_service.regenerate_api_key(
             session=db,
             api_key_id=request.api_key_id,
-            user_id=user_id
+            user_id=current_user.user_id
         )
         
         return {
@@ -124,7 +127,7 @@ async def regenerate_api_key(
 @router.post("/revoke", summary="撤销API Key")
 async def revoke_api_key(
     request: RevokeAPIKeyRequest,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """撤销API Key"""
@@ -134,7 +137,7 @@ async def revoke_api_key(
         success = await api_key_service.revoke_api_key(
             session=db,
             api_key_id=request.api_key_id,
-            user_id=user_id
+            user_id=current_user.user_id
         )
         
         if success:
@@ -157,14 +160,14 @@ async def revoke_api_key(
 @router.get("/{api_key_id}", summary="获取API Key详情")
 async def get_api_key(
     api_key_id: str,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """获取单个API Key详情"""
     api_key_service = APIKeyService()
     
     try:
-        api_key = await api_key_service.get_api_key(db, user_id, api_key_id)
+        api_key = await api_key_service.get_api_key(db, current_user.user_id, api_key_id)
         if not api_key:
             raise NotFoundException(
                 resource="APIKey",
@@ -193,14 +196,14 @@ async def get_api_key(
 @router.put("/{api_key_id}/toggle", summary="启用/禁用API Key")
 async def toggle_api_key(
     api_key_id: str,
-    user_id: str = Depends(get_current_user_id),
+    current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """启用/禁用API Key"""
     api_key_service = APIKeyService()
     
     try:
-        success = await api_key_service.toggle_api_key(db, user_id, api_key_id)
+        success = await api_key_service.toggle_api_key(db, current_user.user_id, api_key_id)
         if success:
             return {"message": "API Key状态更新成功"}
         else:
