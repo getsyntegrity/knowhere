@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-02-27 — Agentic Profiler (doc_profiler + fast path pymupdf4llm + ppt_converted 检测) + 表格 summary fallback
+> **Last session**: 2026-03-02 — Excel 子表碎片合并 (min_cells=4) + 隐藏 Sheet 参数化 + `_src_row` 行号保留 + `postprocess_tb` bug fixes
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -13,6 +13,7 @@
 | 2026-02-25 | ~1h 10m | ~3K | ~30K | iLoveAPI 集成、PPTX 解析 pipeline 重构为流式处理 + image-only PDF |
 | 2026-02-26 | ~1h 10m | ~5K | ~40K | Table Parser P0 评估（HTMLHeaderExpander 移植+回滚）、MD 分隔线修复、关键词去重 |
 | 2026-02-27 | ~2h | ~8K | ~60K | DOCX 表格内嵌图片提取 + summary prompt 优化 + Agentic Profiler (doc_profiler/fast path pymupdf4llm/ppt_converted) + 表格 summary fallback |
+| 2026-03-02 | ~1h 20m | ~5K | ~40K | Excel 子表碎片合并 + 隐藏 Sheet 参数化 + _src_row 行号保留 + postprocess_tb index collision fix |
 
 ---
 
@@ -150,15 +151,17 @@ sequenceDiagram
   - [ ] 端到端验证 — 不同 PDF 类型 (扫描件/电子版/PPT转换) 路由准确性测试
 
 #### High Priority — Document Parser
+- [ ] **Excel 子表公式依赖合并 (Phase 2)** — 通过解析公式引用（SUM/AVERAGE 等）构建 cell 依赖图，将汇总行/计算区域自动归属到其数据来源所在的子表
+
 - [ ] **表格内嵌图片 Phase 2** — PDF 表格中带图的恢复 → 详见 [PDF_TABLE_IMAGE_PLAN.md](./PDF_TABLE_IMAGE_PLAN.md)
   - 方案 D: PyMuPDF 坐标提取 — MinerU 解析后用 PyMuPDF 补回表格内图片（⚠️ 仅适用于电子版 PDF，扫描件无效）
   - 方案 C: MinerU 交叉对比（备选）
 
-- [ ] **LLM 层级判断** — `layout_parser.py:552` 使用 LLM 基于窗口数据分配 heading level
 - [ ] **DOCX TOC 利用** — `doc_parser.py:474` 当前临时移除 TOC 区域（`detect_sdt_toc` 检测正常，已验证可提取 191 条 TOC 条目），需将检测到的 TOC 数据传入层级分析（`eval_toc_levels`）辅助 heading 推断
+
+- [ ] **LLM 层级判断** — `layout_parser.py:552` 使用 LLM 基于窗口数据分配 heading level
 - [ ] **LaTeX 支持** — `doc_parser.py:489` 处理 LaTeX 等格式
 - [ ] **table_parser 已知问题** — `table_parser.py:863` 当前实现有问题 (见 docstring)
-- [ ] **Excel 子表切割过细** — `table_parser.py:_split_sheet_recursive` 按空行/空列递归切割时会产生大量碎片子表（如 1×1、6×1），需要更优雅的后处理策略：最小行列阈值过滤、碎片合并回主表、或识别"合计行/备注区"等语义区域（已在 SIAT 材料费 sheet 验证：283×23 主表 + 4 个碎片）
 - [ ] **智能分块** — `txt_parser.py:124` 当前粗略分割，需更智能策略
 - [ ] **表格 TOC** — `toc_parser.py:151` 提取表格内容但保持 id span 为 1
 - [ ] **OCR 分支** — `toc_parser.py:609` 实现 OCR → 直接生成 toc-tree
@@ -186,6 +189,7 @@ sequenceDiagram
 - [x] ~~表格 Summary Fallback~~ — 图片为主表格 LLM 返回 HTML 时用 table_idx 回退 + prompt 增加拒绝原样返回指令 (completed: 2026-02-27)
 - [x] ~~PDF Fast Path (pymupdf4llm)~~ — doc_profiler 识别单栏电子版 PDF → pymupdf4llm 提取，跳过 MinerU；含 ppt_converted 检测路由至 standard (completed: 2026-02-27)
 - [x] ~~关键词跨行列去重~~ — doc_parser + md_parser 首行首列合并时消除重复 (completed: 2026-02-26)
+- [x] ~~Excel 子表碎片合并 Phase 1~~ — `_merge_small_subtables(min_cells=4)` 吸收碎片 + `include_hidden_sheets` 参数 + `_src_row` 原始行号列 + `postprocess_tb` index 撞名修复 (completed: 2026-03-02)
 
 ### 📋 Code-Level TODOs
 
@@ -220,6 +224,8 @@ sequenceDiagram
 | 2026-02-27 | fix | summary prompt 优化：HTML 表格用自然语言总结 + null 返回校验，避免 LLM 原样返回 HTML | `prompt_service.py`, `txt_parser.py` |
 | 2026-02-27 | feature | Agentic Profiler: doc_profiler.py 实现 PDF profiling (scan_type/column/ppt_converted/text_density)，pymupdf4llm fast path 替换 markitdown | `doc_profiler.py`, `parse_service.py`, `pdf_parser.py` |
 | 2026-02-27 | fix | 表格 summary fallback: 图片为主表格 LLM 返回无效内容时用 table_idx 回退 | `doc_parser.py`, `prompt_service.py` |
+| 2026-03-02 | feature | Excel 子表碎片合并: `_merge_small_subtables` + `_count_non_empty_cells` + `include_hidden_sheets` 参数 + `_src_row` 行号列 | `table_parser.py` |
+| 2026-03-02 | fix | `postprocess_tb` bug fixes: dropna RangeIndex→Int64Index 导致假 index 列 + `reset_index` 列名撞名崩溃 | `table_parser.py` |
 
 ---
 
