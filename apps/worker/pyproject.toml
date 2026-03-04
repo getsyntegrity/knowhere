@@ -21,7 +21,7 @@ dependencies = [
     "pillow==11.2.1",
     "cryptography==45.0.5",
     "tqdm==4.67.1",
-    "logfire[celery,fastapi,httpx,redis,sqlalchemy]>=4.25.0",
+    "logfire[celery,fastapi,httpx,sqlalchemy]>=4.25.0",
 ]
 
 [dependency-groups]

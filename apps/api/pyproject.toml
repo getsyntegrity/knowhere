@@ -21,7 +21,7 @@ dependencies = [
     "loguru==0.7.3",
     "moesifapi==1.5.5",
     "limits>=5.8,<6",
-    "logfire[celery,fastapi,httpx,redis,sqlalchemy]>=4.25.0",
+    "logfire[celery,fastapi,httpx,sqlalchemy]>=4.25.0",
 ]
 
 [dependency-groups]
