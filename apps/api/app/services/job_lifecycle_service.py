@@ -139,7 +139,6 @@ class JobLifecycleService:
         error_details: Optional[Dict[str, Any]],
         should_refund: bool = False,
         refund_amount: float = 0,
-        request_id: Optional[str] = None,
     ) -> bool:
         """
         Finalize a failed job:
@@ -196,7 +195,7 @@ class JobLifecycleService:
                     error_code=error_code,
                     error_details=error_details,
                     webhook_url=job.webhook_url,
-                    request_id=request_id,
+                    request_id=job_id,
                 )
 
             # 4. ATOMIC COMMIT

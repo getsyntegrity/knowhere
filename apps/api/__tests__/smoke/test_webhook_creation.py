@@ -73,7 +73,6 @@ async def test_fr01_event_trigger_sends_celery_task(fake_db, fake_celery, webhoo
 async def test_failure_event_uses_propagated_request_id(fake_db, webhook_service):
     """Worker-propagated request_id should be preserved in failure webhook payload."""
     job_id = str(uuid4())
-    request_id = str(uuid4())
 
     event = await webhook_service.create_job_failure_event(
         db=fake_db,
@@ -81,11 +80,10 @@ async def test_failure_event_uses_propagated_request_id(fake_db, webhook_service
         error_message="worker failed",
         error_code="WORKER_ERROR",
         webhook_url="https://example.com/webhook",
-        request_id=request_id,
     )
 
     assert event.payload["event"] == "job.failed"
-    assert event.payload["error"]["request_id"] == request_id
+    assert event.payload["error"]["request_id"] == job_id
 
 
 @pytest.mark.asyncio

@@ -6,11 +6,6 @@ from typing import Optional
 from shared.core.celery_router import task_router
 # 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
-from shared.core.logging import (
-    LOG_CONTEXT_KEY,
-    ContextPropagatingTask,
-    get_log_context,
-)
 from loguru import logger
 
 
@@ -57,13 +52,9 @@ class KBOrchestrator:
             
             # 获取队列名称
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
-            context_payload = ContextPropagatingTask.sanitize_log_context(
-                get_log_context()
-            )
             task_kwargs = {
                 "user_id": user_id,
                 "job_type": "kb_management",
-                LOG_CONTEXT_KEY: context_payload,
             }
             
             # 启动单任务（文件已通过S3直传）
@@ -106,11 +97,9 @@ class KBOrchestrator:
         """
         if not queue_name:
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
-        context_payload = ContextPropagatingTask.sanitize_log_context(get_log_context())
         task_kwargs = {
             "user_id": user_id,
             "job_type": "kb_management",
-            LOG_CONTEXT_KEY: context_payload,
         }
         
         from celery import signature

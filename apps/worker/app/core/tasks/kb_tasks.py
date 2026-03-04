@@ -20,7 +20,7 @@ from shared.services.storage.file_upload_service import FileUploadService
 from shared.core.config import settings
 from shared.services.messaging import get_message_publisher
 from shared.core.async_utils import run_async_task
-from shared.core.logging import ContextPropagatingTask, log_context, get_log_context, LogEvent
+from shared.core.logging import log_context, LogEvent
 
 # Exception handling
 from shared.core.exceptions.domain_exceptions import (
@@ -53,16 +53,14 @@ from shared.services.billing import CreditsService
 celery_app = get_celery_app()
 
 
-class KBBaseTask(ContextPropagatingTask):
+class KBBaseTask(Task):
     """Knowledge Base base task class - provides centralized exception handling"""
 
     def on_success(self, retval, task_id, args, kwargs):
         """Task success callback"""
-        context = get_log_context()
         logger.bind(
             event=LogEvent.WORKER_TASK_COMPLETE.value,
             task_id=task_id,
-            **context
         ).info("KB task completed successfully")
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
@@ -74,26 +72,14 @@ class KBBaseTask(ContextPropagatingTask):
         # Extract job_id from args or kwargs
         job_id = self._extract_job_id(args, kwargs)
 
-        # Get context (includes request_id if propagated from API)
-        context = get_log_context()
-        request_id = context.get("request_id")
-
-        # Check for missing request_id and emit diagnostic event
-        if request_id is None:
-            logger.bind(
-                event=LogEvent.CORRELATION_REQUEST_ID_MISSING.value,
-                task_id=task_id,
-                request_id=None,
-            ).warning("request_id missing in worker context")
-
         # Normalize to KnowhereException
         knowhere_exc = exc if isinstance(exc, KnowhereException) else UnknownException(original_exception=exc)
 
         # Use exc.logging() for canonical exception logging
-        knowhere_exc.logging(task_id=task_id)
+        knowhere_exc.logging(job_id=job_id)
 
         # Get error info from to_client (reuse the same format)
-        client_response = knowhere_exc.to_client(request_id or "unknown")
+        client_response = knowhere_exc.to_client(job_id or "Null")
         error_info = client_response["error"]  # Extract just the error field
 
         # Publish failure message
@@ -114,7 +100,7 @@ class KBBaseTask(ContextPropagatingTask):
                         metadata={
                             "refund_credits": True,
                             "details": error_info.get("details"),
-                            "request_id": request_id,  # Pass request_id back to API (may be null)
+                            "task_id": task_id,
                         }
                     )
                 )
@@ -137,13 +123,11 @@ class KBBaseTask(ContextPropagatingTask):
         """Task retry callback - publishes retry status to API service"""
         job_id = self._extract_job_id(args, kwargs)
 
-        context = get_log_context()
         logger.bind(
             event=LogEvent.WORKER_TASK_RETRY.value,
             task_id=task_id,
             job_id=job_id,
             retry_count=self.request.retries,
-            **context
         ).warning(f"KB task retrying: {exc}")
 
         if job_id:

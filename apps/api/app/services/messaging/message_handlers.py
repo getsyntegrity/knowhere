@@ -343,9 +343,6 @@ async def _handle_failure_async(message: JobFailureMessage):
             error_details = None
             if message.metadata and message.metadata.get("details"):
                 error_details = message.metadata.get("details")
-            request_id = None
-            if message.metadata and message.metadata.get("request_id"):
-                request_id = message.metadata.get("request_id")
 
             # Check for refund request
             should_refund = False
@@ -361,7 +358,6 @@ async def _handle_failure_async(message: JobFailureMessage):
                 error_code=error_code,
                 error_details=error_details,
                 should_refund=should_refund,
-                request_id=request_id,
             )
             
             if success:

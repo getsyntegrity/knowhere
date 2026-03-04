@@ -12,10 +12,7 @@ from loguru import logger
 from shared.core.celery_app import get_celery_app
 from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 from shared.core.logging import (
-    LOG_CONTEXT_KEY,
-    ContextPropagatingTask,
     log_context,
-    get_log_context,
     LogEvent,
 )
 
@@ -53,30 +50,26 @@ WAIT_DURATIONS_SECONDS = [
 DEAD_QUEUE = 'webhook_dead'
 
 
-class WebhookDispatchTask(ContextPropagatingTask):
+class WebhookDispatchTask(Task):
     """Base task class for webhook dispatch with proper error handling."""
 
     def on_success(self, retval, task_id, args, kwargs):
         """Log successful webhook dispatch."""
         event_id = args[0] if args else kwargs.get("event_id", "unknown")
-        context = get_log_context()
         logger.bind(
             event=LogEvent.WORKER_TASK_COMPLETE.value,
             task_id=task_id,
             event_id=event_id,
-            **context
         ).info("Webhook dispatch task completed")
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Log failed webhook dispatch."""
         event_id = args[0] if args else kwargs.get("event_id", "unknown")
-        context = get_log_context()
 
         logger.bind(
             event=LogEvent.WORKER_TASK_FAILURE.value,
             task_id=task_id,
             event_id=event_id,
-            **context
         ).error(f"Webhook dispatch task failed permanently: {exc}")
 
         # Update status in DB (last resort status update)
@@ -134,13 +127,11 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
                 # Use retry to reschedule with countdown.
                 # We pass max_retries=None to avoid Celery's internal retry limit interfering with our business logic limit.
                 try:
-                    context_payload = ContextPropagatingTask.sanitize_log_context(get_log_context())
                     self.retry(
                         countdown=jitter_seconds,
                         args=[event_id, attempt],
                         kwargs={
                             "jitter_applied": True,
-                            LOG_CONTEXT_KEY: context_payload,
                         },
                         max_retries=None
                     )
@@ -191,8 +182,6 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
     to hold the task in the current worker/queue until recovery.
     """
     next_attempt = current_attempt + 1
-    
-    context_payload = ContextPropagatingTask.sanitize_log_context(get_log_context())
 
     if next_attempt > MAX_ATTEMPTS:
         # All retries exhausted - send to dead letter queue
@@ -207,7 +196,6 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
             
             dispatch_webhook_task.apply_async(
                 args=[event_id, next_attempt],
-                kwargs={LOG_CONTEXT_KEY: context_payload},
                 queue=DEAD_QUEUE,
             )
         except Exception as exc:
@@ -229,7 +217,6 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
     try:
         dispatch_webhook_task.apply_async(
             args=[event_id, next_attempt],
-            kwargs={LOG_CONTEXT_KEY: context_payload},
             queue=wait_queue,
         )
     except Exception as exc:

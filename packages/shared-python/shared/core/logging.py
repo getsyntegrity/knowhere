@@ -5,10 +5,8 @@ from contextvars import ContextVar
 from enum import Enum
 from typing import Any, Dict
 
-from celery import Task
 from loguru import logger
 
-LOG_CONTEXT_KEY = "_log_context"
 _log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
 
 class LogEvent(Enum):
@@ -63,85 +61,6 @@ def get_log_context() -> Dict[str, Any]:
     """Get current merged log context."""
     return _log_context.get().copy()
 
-
-def set_log_context(context: Dict[str, Any]) -> None:
-    """Set current context directly (used by task boundary restore)."""
-    _log_context.set(context)
-
-
-class ContextPropagatingTask(Task):
-    """
-    Custom Celery task base class that applies explicit log context across
-    Celery serialization boundary.
-
-    Usage:
-        @celery_app.task(base=ContextPropagatingTask, bind=True)
-        def process_job_task(self, job_id: str):
-            with logger.contextualize(task_id=self.request.id, job_id=job_id):
-                logger.info("Task started")
-
-    This ensures request_id flows from API → Worker → Webhook.
-    """
-
-    @staticmethod
-    def sanitize_log_context(context: Dict[str, Any] | None) -> Dict[str, Any]:
-        """Keep only non-null fields for task log context payload."""
-        if not context:
-            return {}
-        return {k: v for k, v in context.items() if v is not None}
-
-    def get_current_log_context(self) -> Dict[str, Any]:
-        """Get context restored for the current task execution."""
-        return get_log_context()
-
-    def get_context_from_kwargs(self, kwargs: Dict[str, Any] | None) -> Dict[str, Any]:
-        """Extract context payload from task kwargs if present."""
-        if not kwargs:
-            return {}
-        context = kwargs.get(LOG_CONTEXT_KEY)
-        if not isinstance(context, dict):
-            return {}
-        return self.sanitize_log_context(context)
-
-    def apply_async(
-        self,
-        args=None,
-        kwargs=None,
-        task_id=None,
-        producer=None,
-        link=None,
-        link_error=None,
-        shadow=None,
-        **options
-    ):
-        """Capture global context unless explicit context payload is provided."""
-        kwargs = kwargs or {}
-        explicit = kwargs.get(LOG_CONTEXT_KEY)
-        if explicit is None:
-            kwargs[LOG_CONTEXT_KEY] = self.sanitize_log_context(get_log_context())
-        else:
-            kwargs[LOG_CONTEXT_KEY] = self.sanitize_log_context(explicit)
-        return super().apply_async(
-            args=args,
-            kwargs=kwargs,
-            task_id=task_id,
-            producer=producer,
-            link=link,
-            link_error=link_error,
-            shadow=shadow,
-            **options
-        )
-
-    def __call__(self, *args, **kwargs):
-        """Restore explicit context payload and apply Loguru contextualize()."""
-        context = self.get_context_from_kwargs(kwargs)
-        kwargs.pop(LOG_CONTEXT_KEY, None)
-        token = _log_context.set(context)
-        try:
-            with logger.contextualize(**context):
-                return super().__call__(*args, **kwargs)
-        finally:
-            _log_context.reset(token)
 
 
 def setup_logging(
