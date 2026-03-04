@@ -262,7 +262,7 @@ async def _handle_result_async(message: JobResultMessage):
                 db,
                 message,
                 chunks,
-                inline_payload
+                inline_payload,
             )
             
             return result
@@ -343,6 +343,9 @@ async def _handle_failure_async(message: JobFailureMessage):
             error_details = None
             if message.metadata and message.metadata.get("details"):
                 error_details = message.metadata.get("details")
+            request_id = None
+            if message.metadata and message.metadata.get("request_id"):
+                request_id = message.metadata.get("request_id")
 
             # Check for refund request
             should_refund = False
@@ -357,7 +360,8 @@ async def _handle_failure_async(message: JobFailureMessage):
                 error_message=message.error_message,
                 error_code=error_code,
                 error_details=error_details,
-                should_refund=should_refund
+                should_refund=should_refund,
+                request_id=request_id,
             )
             
             if success:
@@ -386,5 +390,3 @@ async def _handle_failure_async(message: JobFailureMessage):
 
 
 # Helper functions moved to JobLifecycleService
-
-

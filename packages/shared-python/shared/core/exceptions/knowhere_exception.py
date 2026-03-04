@@ -198,17 +198,32 @@ class KnowhereException(Exception):
     def to_log(self) -> Dict[str, Any]:
         """
         Machine-readable dict for structured logging (Datadog, Splunk, CloudWatch).
-        
+
         Use with logger.bind(): logger.bind(**exc.to_log()).error("...")
-        
+
         This enables log aggregators to index fields for queries like:
             code:INVALID_ARGUMENT AND http_status:400
+
+        Returns stable error fields for exception logs:
+            - error_code: Canonical error code
+            - http_status: HTTP status code
+            - error_category: "client" (4xx) or "system" (5xx)
+            - exception_class: Exception class name
+            - internal_message: Technical details for debugging
+            - user_message: Safe message for client
+            - details: Additional structured data
+            - original_exception: Wrapped exception info
         """
+        # Determine error category based on HTTP status
+        error_category = "system" if self.http_status_code >= 500 else "client"
+
         log_data: Dict[str, Any] = {
             "error_code": self.code.value,
             "http_status": self.http_status_code,
-            "user_message": self.user_message,
+            "error_category": error_category,
+            "exception_class": self.__class__.__name__,
             "internal_message": self.internal_message,
+            "user_message": self.user_message,
         }
         if self.details:
             log_data["details"] = self.details
@@ -218,6 +233,56 @@ class KnowhereException(Exception):
                 "message": str(self.original_exception),
             }
         return log_data
+
+    def logging(self, **extra_context):
+        """
+        Canonical logging method - context automatic.
+
+        This method automatically:
+        - Reads current log context (request_id, task_id, job_id, etc.)
+        - Merges exception fields from to_log()
+        - Logs at appropriate level (ERROR for 5xx, WARNING for 4xx)
+        - Includes stacktrace for 5xx errors
+        - Ensures user_message is present in exception logs
+
+        Usage:
+            try:
+                # ... operation that fails ...
+            except Exception as e:
+                exc = ValidationException(
+                    user_message="Invalid input",
+                    internal_message="Field validation failed"
+                )
+                exc.logging()  # Context automatic - includes request_id, etc.
+                raise exc
+
+        Args:
+            **extra_context: Additional context fields to include in log
+        """
+        from loguru import logger
+        from shared.core.logging import get_log_context, LogEvent
+
+        # Get current context (request_id, task_id, job_id, etc.)
+        context = get_log_context()
+
+        # Build log data with stable error fields
+        log_data = {
+            **self.to_log(),
+            **context,
+            **extra_context,
+        }
+
+        # Log at appropriate level with appropriate event
+        if self.http_status_code >= 500:
+            # 5xx: ERROR level with stacktrace
+            logger.bind(event=LogEvent.EXCEPTION_SYSTEM.value, **log_data).opt(
+                exception=self
+            ).error(self.internal_message)
+        else:
+            # 4xx: WARNING level without stacktrace
+            logger.bind(event=LogEvent.EXCEPTION_CLIENT.value, **log_data).warning(
+                self.internal_message
+            )
 
     def __reduce__(self):
         """

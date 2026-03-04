@@ -28,7 +28,6 @@ from docx.text.paragraph import Paragraph
 from loguru import logger
 from lxml import etree
 from openai import OpenAI
-from tqdm import tqdm
 from shared.core.exceptions.domain_exceptions import DocxParsingException
 from shared.core.exceptions.knowhere_exception import KnowhereException
 
@@ -505,7 +504,8 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
     table_count = 0
     image_count = 0
 
-    for block_tuple in tqdm(block_tuples, total=len(block_tuples), desc="Parsing docx file..."):
+    logger.debug("Parsing docx file... total_blocks={}", len(block_tuples))
+    for block_tuple in block_tuples:
         ele_num, block, label, meta = block_tuple
         last_heading_before_block = current_heading
 
@@ -626,4 +626,3 @@ async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     doc_df = process_dup_paths_df(doc_df)
     return doc_df
-

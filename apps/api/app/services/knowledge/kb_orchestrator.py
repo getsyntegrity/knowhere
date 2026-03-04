@@ -6,6 +6,11 @@ from typing import Optional
 from shared.core.celery_router import task_router
 # 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
+from shared.core.logging import (
+    LOG_CONTEXT_KEY,
+    ContextPropagatingTask,
+    get_log_context,
+)
 from loguru import logger
 
 
@@ -22,7 +27,7 @@ class KBOrchestrator:
         source_type: str,
         file_path: Optional[str] = None,
         file_url: Optional[str] = None,
-        user_id: str = None
+        user_id: str = None,
     ) -> str:
         """
         启动知识库管理工作流
@@ -52,6 +57,14 @@ class KBOrchestrator:
             
             # 获取队列名称
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
+            context_payload = ContextPropagatingTask.sanitize_log_context(
+                get_log_context()
+            )
+            task_kwargs = {
+                "user_id": user_id,
+                "job_type": "kb_management",
+                LOG_CONTEXT_KEY: context_payload,
+            }
             
             # 启动单任务（文件已通过S3直传）
             # 任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息
@@ -60,7 +73,7 @@ class KBOrchestrator:
             task_signature = signature(
                 'app.core.tasks.kb_tasks.parse_task',
                 args=[job_id],
-                kwargs={'user_id': user_id, 'job_type': 'kb_management'}
+                kwargs=task_kwargs,
             ).set(queue=queue_name)
             
             # 启动任务
@@ -93,6 +106,12 @@ class KBOrchestrator:
         """
         if not queue_name:
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
+        context_payload = ContextPropagatingTask.sanitize_log_context(get_log_context())
+        task_kwargs = {
+            "user_id": user_id,
+            "job_type": "kb_management",
+            LOG_CONTEXT_KEY: context_payload,
+        }
         
         from celery import signature
 
@@ -101,7 +120,7 @@ class KBOrchestrator:
         return signature(
             'app.core.tasks.kb_tasks.parse_task',
             args=[job_id],
-            kwargs={'user_id': user_id, 'job_type': 'kb_management'}
+            kwargs=task_kwargs,
         ).set(queue=queue_name)
     
     def get_workflow_status(self, workflow_id: str) -> dict:

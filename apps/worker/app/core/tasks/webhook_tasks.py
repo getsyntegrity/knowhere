@@ -5,13 +5,13 @@ Provides Celery tasks for async webhook dispatch with DLX-based exponential back
 Uses RabbitMQ Dead Letter Exchanges for non-blocking retries.
 """
 import asyncio
-from typing import Optional
 
 from celery import Task
 from loguru import logger
 
 from shared.core.celery_app import get_celery_app
 from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
+from shared.core.logging import ContextPropagatingTask, log_context, get_log_context, LogEvent
 
 # Top-level imports (concern #3)
 from shared.services.webhook import get_webhook_dispatcher
@@ -47,21 +47,42 @@ WAIT_DURATIONS_SECONDS = [
 DEAD_QUEUE = 'webhook_dead'
 
 
-class WebhookDispatchTask(Task):
+class WebhookDispatchTask(ContextPropagatingTask):
     """Base task class for webhook dispatch with proper error handling."""
-    
+
     def on_success(self, retval, task_id, args, kwargs):
         """Log successful webhook dispatch."""
         event_id = args[0] if args else kwargs.get("event_id", "unknown")
-        logger.info(f"Webhook dispatch task completed: task_id={task_id}, event_id={event_id}")
-    
+        context = get_log_context()
+        logger.bind(
+            event=LogEvent.WORKER_TASK_COMPLETE.value,
+            task_id=task_id,
+            event_id=event_id,
+            **context
+        ).info("Webhook dispatch task completed")
+
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Log failed webhook dispatch."""
         event_id = args[0] if args else kwargs.get("event_id", "unknown")
-        logger.error(
-            f"Webhook dispatch task failed permanently: task_id={task_id}, "
-            f"event_id={event_id}, error={exc}"
-        )
+        context = get_log_context()
+        request_id = context.get("request_id")
+
+        # Check for missing request_id
+        if request_id is None:
+            logger.bind(
+                event=LogEvent.CORRELATION_REQUEST_ID_MISSING.value,
+                task_id=task_id,
+                event_id=event_id,
+                request_id=None,
+            ).warning("request_id missing in worker context")
+
+        logger.bind(
+            event=LogEvent.WORKER_TASK_FAILURE.value,
+            task_id=task_id,
+            event_id=event_id,
+            **context
+        ).error(f"Webhook dispatch task failed permanently: {exc}")
+
         # Update status in DB (last resort status update)
         if event_id != "unknown":
             try:
@@ -81,73 +102,78 @@ class WebhookDispatchTask(Task):
 def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied: bool = False) -> bool:
     """
     Dispatch a webhook event via Celery with DLX-based retry.
-    
+
     Args:
         event_id: The WebhookEvent ID to dispatch
         attempt: Current attempt number (1-indexed, default=1)
         jitter_applied: Whether jitter has already been applied for this attempt
-        
+
     Returns:
         True if successfully dispatched or terminal
     """
-    logger.info(
-        f"Webhook dispatch task started: event_id={event_id}, "
-        f"attempt={attempt}/{MAX_ATTEMPTS}, jitter_applied={jitter_applied}"
-    )
-    
-    # Non-Blocking Jitter Implementation:
-    # If this is a retry (attempt > 1) and jitter hasn't been applied yet:
-    # 1. Calculate random jitter delay (e.g., 5s)
-    # 2. Reschedule THIS task with countdown=jitter
-    # 3. Mark jitter_applied=True in the rescheduled task
-    # 4. Return immediately (freeing the worker process)
-    if attempt > 1 and not jitter_applied:
-        import random
-        
-        # Attempt 2 (1m wait): 0-6s jitter
-        # Attempt 3+ (10m+ wait): 0-30s jitter
-        max_jitter = 30 if attempt > 2 else 6
+    with log_context(task_id=self.request.id, event_id=event_id):
+        logger.bind(
+            event=LogEvent.WORKER_TASK_START.value,
+            attempt=attempt,
+            max_attempts=MAX_ATTEMPTS,
+            jitter_applied=jitter_applied
+        ).info("Webhook dispatch task started")
 
-        jitter_seconds = random.uniform(0, max_jitter)
-        if jitter_seconds > 0.1:
-            logger.info(f"Scheduling non-blocking jitter: {jitter_seconds:.2f}s (attempt {attempt})")
-            # Use retry to reschedule with countdown. 
-            # We pass max_retries=None to avoid Celery's internal retry limit interfering with our business logic limit.
-            try:
-                self.retry(
-                    countdown=jitter_seconds,
-                    args=[event_id, attempt],
-                    kwargs={"jitter_applied": True},
-                    max_retries=None
+        # Non-Blocking Jitter Implementation:
+        # If this is a retry (attempt > 1) and jitter hasn't been applied yet:
+        # 1. Calculate random jitter delay (e.g., 5s)
+        # 2. Reschedule THIS task with countdown=jitter
+        # 3. Mark jitter_applied=True in the rescheduled task
+        # 4. Return immediately (freeing the worker process)
+        if attempt > 1 and not jitter_applied:
+            import random
+
+            # Attempt 2 (1m wait): 0-6s jitter
+            # Attempt 3+ (10m+ wait): 0-30s jitter
+            max_jitter = 30 if attempt > 2 else 6
+
+            jitter_seconds = random.uniform(0, max_jitter)
+            if jitter_seconds > 0.1:
+                logger.info(f"Scheduling non-blocking jitter: {jitter_seconds:.2f}s (attempt {attempt})")
+                # Use retry to reschedule with countdown.
+                # We pass max_retries=None to avoid Celery's internal retry limit interfering with our business logic limit.
+                try:
+                    self.retry(
+                        countdown=jitter_seconds,
+                        args=[event_id, attempt],
+                        kwargs={"jitter_applied": True},
+                        max_retries=None
+                    )
+                except Exception:
+                    # self.retry raises Retry exception to stop execution, which is expected behavior
+                    raise
+                return False
+
+        try:
+            # Jitter is handled above (non-blocking), so we just dispatch directly here
+            # Use run_async_task to reuse event loop and connections
+            result = run_async_task(_dispatch_async(event_id))
+
+            logger.bind(event=LogEvent.WORKER_TASK_COMPLETE.value).info("Webhook dispatched successfully")
+            return result
+
+        except WebhookDeliveryException as exc:
+            # Check if error is retryable (set by dispatcher)
+            if not exc.retryable:
+                # Permanent failure - do not retry
+                logger.warning(
+                    f"Webhook permanent failure (not retrying): event_id={event_id}, "
+                    f"status={exc.response_status_code}"
                 )
-            except Exception:
-                # self.retry raises Retry exception to stop execution, which is expected behavior
-                raise
-            return False
-            
-    try:
-        # Jitter is handled above (non-blocking), so we just dispatch directly here
-        # Use run_async_task to reuse event loop and connections
-        result = run_async_task(_dispatch_async(event_id))
-        return result
-        
-    except WebhookDeliveryException as exc:
-        # Check if error is retryable (set by dispatcher)
-        if not exc.retryable:
-            # Permanent failure - do not retry
-            logger.warning(
-                f"Webhook permanent failure (not retrying): event_id={event_id}, "
-                f"status={exc.response_status_code}"
-            )
-            return False
-        
-        # Retryable failure - schedule retry via DLX
-        _schedule_retry(self, event_id, attempt)
-        return False  # Task completes, retry is a new message
-        
-    except Exception as exc:
-        # Unexpected error
-        raise exc
+                return False
+
+            # Retryable failure - schedule retry via DLX
+            _schedule_retry(self, event_id, attempt)
+            return False  # Task completes, retry is a new message
+
+        except Exception as exc:
+            # Unexpected error
+            raise exc
 
 async def _dispatch_async(event_id: str) -> bool:
     """
@@ -182,9 +208,9 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
                 queue=DEAD_QUEUE,
             )
         except Exception as exc:
-             logger.error(f"Failed to send to Dead Letter Queue: {exc}")
-             # If we can't even send to dead queue, we retry locally to avoid data loss
-             task_instance.retry(exc=exc, countdown=60, max_retries=None)
+            logger.error(f"Failed to send to Dead Letter Queue: {exc}")
+            # If we can't even send to dead queue, we retry locally to avoid data loss
+            task_instance.retry(exc=exc, countdown=60, max_retries=None)
         return
     
     # Get appropriate wait queue (0-indexed)

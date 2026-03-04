@@ -1,7 +1,8 @@
 """Shared test helpers for rate_limit unit tests."""
 
 import json
-from typing import cast
+from collections.abc import AsyncGenerator, Awaitable
+from typing import TypeVar, cast
 
 import pytest
 from fastapi import Request
@@ -14,6 +15,7 @@ from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
 # Sentinel AsyncSession — never actually used at runtime because DB calls
 # are monkeypatched, but satisfies the type checker.
 FAKE_DB: AsyncSession = cast(AsyncSession, object())
+_T = TypeVar("_T")
 
 DEFAULT_SYSTEM_RULES: list[SystemRpmRule] = [
     SystemRpmRule(method="POST", api_pattern="/v1/jobs", priority=100, rpm=30),
@@ -149,3 +151,14 @@ def async_value(value):
     async def _inner(*_args, **_kwargs):
         return value
     return _inner
+
+
+async def resolve_dep(result: Awaitable[_T] | AsyncGenerator[_T, None]) -> _T:
+    """Resolve a dependency call that may be coroutine or async-generator."""
+    if hasattr(result, "__anext__"):
+        agen = result
+        try:
+            return await agen.__anext__()
+        finally:
+            await agen.aclose()
+    return await result

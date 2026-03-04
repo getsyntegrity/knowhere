@@ -14,6 +14,11 @@ from urllib.parse import urlparse
 from shared.core.constants.system import SystemConstants
 from shared.core.config import settings
 from shared.core.database import get_db
+from shared.core.logging import (
+    LOG_CONTEXT_KEY,
+    ContextPropagatingTask,
+    get_log_context,
+)
 from app.services.rate_limit.dependencies import (
     with_current_user,
     require_billing_limits,
@@ -456,9 +461,15 @@ async def create_job(
                 from shared.core.celery_app import get_celery_app
                 celery_app = get_celery_app()
                 upload_url_file_task = celery_app.signature('app.core.tasks.kb_tasks.upload_url_file_task')
+                context_payload = ContextPropagatingTask.sanitize_log_context(
+                    get_log_context()
+                )
                 upload_url_file_task.apply_async(
                     args=[job_id, payload.source_url, current_user.user_id],
-                    kwargs={'job_type': job_type}
+                    kwargs={
+                        "job_type": job_type,
+                        LOG_CONTEXT_KEY: context_payload,
+                    }
                 )
 
                 # 构建响应

@@ -69,7 +69,8 @@ class WebhookService:
         error_type: Optional[str] = None,
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None,
-        webhook_url: str = None
+        webhook_url: str = None,
+        request_id: Optional[str] = None,
     ) -> WebhookEvent:
         """
         Create webhook event for job failure.
@@ -95,7 +96,7 @@ class WebhookService:
             "error": build_standard_error_response(
                 code=error_code,
                 message=error_message,
-                request_id=job_id,
+                request_id=request_id or job_id,
                 details=error_details
             )
         }

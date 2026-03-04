@@ -218,18 +218,28 @@ class ConflictException(KnowhereException):
     def __init__(
         self,
         user_message: str,
-        reason: SubCode,
+        reason: str = "ALREADY_EXISTS",
         resource: Optional[str] = None,
         resource_id: Optional[str] = None,
         internal_message: Optional[str] = None,
     ):
-        details: Dict[str, Any] = {"reason": reason.value}
+        normalized_reason = reason.upper()
+        if normalized_reason not in {"ALREADY_EXISTS", "ABORTED"}:
+            normalized_reason = "ABORTED"
+
+        details: Dict[str, Any] = {"reason": normalized_reason}
         if resource:
             details["resource"] = resource
         if resource_id:
             details["id"] = resource_id
+
+        error_code = (
+            ErrorCode.ALREADY_EXISTS
+            if normalized_reason == "ALREADY_EXISTS"
+            else ErrorCode.ABORTED
+        )
         super().__init__(
-            code=ErrorCode.ALREADY_EXISTS if reason == SubCode.USER_NOT_FOUND else ErrorCode.ABORTED,
+            code=error_code,
             internal_message=internal_message or user_message,
             user_message=user_message,
             details=details,
@@ -489,6 +499,7 @@ class PDFParsingException(KnowhereException):
     def __init__(
         self,
         user_message: str,
+        reason: str = "PARSING_FAILED",
         internal_message: Optional[str] = None,
         original_exception: Optional[Exception] = None,
     ):
@@ -496,6 +507,7 @@ class PDFParsingException(KnowhereException):
             code=ErrorCode.INVALID_ARGUMENT,
             internal_message=internal_message or user_message,
             user_message=user_message,
+            details={"file_type": "pdf", "reason": reason},
             original_exception=original_exception,
         )
 
