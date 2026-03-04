@@ -61,13 +61,6 @@ TOPIC_ARN=$(aws --endpoint-url=http://localhost:4566 sns create-topic \
 
 echo "SNS主题ARN: $TOPIC_ARN"
 
-# 订阅SNS主题到webhook
-echo "🔗 订阅SNS到webhook..."
-aws --endpoint-url=http://localhost:4566 sns subscribe \
-  --topic-arn "$TOPIC_ARN" \
-  --protocol http \
-  --notification-endpoint http://localhost:5005/v1/internal/s3-events
-
 # 配置S3事件通知
 echo "⚡ 配置S3事件通知..."
 aws --endpoint-url=http://localhost:4566 s3api put-bucket-notification-configuration \
@@ -101,6 +94,24 @@ echo "✅ 验证配置..."
 aws --endpoint-url=http://localhost:4566 s3 ls
 aws --endpoint-url=http://localhost:4566 sns list-topics
 aws --endpoint-url=http://localhost:4566 s3api get-bucket-notification-configuration --bucket knowhere-uploads
+
+# 订阅SNS主题到webhook
+# NOTE: HTTP subscriptions require the endpoint to be reachable for confirmation.
+# The API server (port 5005) must be running, so we wait indefinitely for it.
+echo "🔗 等待API服务启动以订阅SNS到webhook..."
+while true; do
+  if curl -sf http://localhost:5005/health > /dev/null 2>&1; then
+    echo "✅ API服务已就绪"
+    break
+  fi
+  sleep 2
+done
+
+aws --endpoint-url=http://localhost:4566 sns subscribe \
+  --topic-arn "$TOPIC_ARN" \
+  --protocol http \
+  --notification-endpoint http://localhost:5005/v1/internal/s3-events
+echo "✅ SNS订阅完成"
 
 echo "🎉 LocalStack AWS资源初始化完成！"
 echo ""
