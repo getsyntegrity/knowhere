@@ -91,6 +91,7 @@ async def test_with_current_user_enforces_system_rpm(monkeypatch):
     user = await resolve_dep(deps.with_current_user(request=request, user_id="u_sys_ok"))
 
     assert user == CurrentUser(user_id="u_sys_ok", user_tier="tier_1")
+    assert request.state.user_id == "u_sys_ok"
     assert _PassSystemRateLimiter.calls == [("u_sys_ok", 30, "/v1/jobs")]
 
 
