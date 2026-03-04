@@ -219,6 +219,7 @@ def setup_logging(
                 service_name=service_name,
                 token=settings.LOGFIRE_TOKEN,
                 console=False,
+                distributed_tracing=True,
             )
 
             # Logfire sink: keep structured fields from bind()/contextualize().

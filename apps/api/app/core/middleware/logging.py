@@ -27,8 +27,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
         # Set log context for this request
         with log_context(
-            request_id=request_id,
-            http_method=request.method,
+            request_id=request_id
         ):
             # Process request
             response = await call_next(request)

@@ -59,14 +59,10 @@ class KBBaseTask(ContextPropagatingTask):
     def on_success(self, retval, task_id, args, kwargs):
         """Task success callback"""
         context = get_log_context()
-        user_id = context.get("user_id") or self._extract_user_id(args, kwargs)
-        bind_data = {**context}
-        if user_id:
-            bind_data["user_id"] = user_id
         logger.bind(
             event=LogEvent.WORKER_TASK_COMPLETE.value,
             task_id=task_id,
-            **bind_data
+            **context
         ).info("KB task completed successfully")
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
@@ -77,7 +73,6 @@ class KBBaseTask(ContextPropagatingTask):
         """
         # Extract job_id from args or kwargs
         job_id = self._extract_job_id(args, kwargs)
-        user_id = self._extract_user_id(args, kwargs)
 
         # Get context (includes request_id if propagated from API)
         context = get_log_context()
@@ -88,7 +83,6 @@ class KBBaseTask(ContextPropagatingTask):
             logger.bind(
                 event=LogEvent.CORRELATION_REQUEST_ID_MISSING.value,
                 task_id=task_id,
-                job_id=job_id,
                 request_id=None,
             ).warning("request_id missing in worker context")
 
@@ -96,7 +90,7 @@ class KBBaseTask(ContextPropagatingTask):
         knowhere_exc = exc if isinstance(exc, KnowhereException) else UnknownException(original_exception=exc)
 
         # Use exc.logging() for canonical exception logging
-        knowhere_exc.logging(task_id=task_id, job_id=job_id, user_id=user_id)
+        knowhere_exc.logging(task_id=task_id)
 
         # Get error info from to_client (reuse the same format)
         client_response = knowhere_exc.to_client(request_id or "unknown")
@@ -139,38 +133,17 @@ class KBBaseTask(ContextPropagatingTask):
             return kwargs['job_id']
         return None
 
-    def _extract_user_id(self, args, kwargs) -> Optional[str]:
-        """Extract user_id from kwargs/args for KB task signatures."""
-        kwargs = kwargs or {}
-        user_id = kwargs.get("user_id")
-        if isinstance(user_id, str) and user_id:
-            return user_id
-
-        # upload_url_file_task(job_id, source_url, user_id, ...)
-        if args and len(args) > 2 and isinstance(args[2], str) and args[2]:
-            return args[2]
-
-        # parse_task(job_id, user_id, ...)
-        if args and len(args) > 1 and isinstance(args[1], str) and args[1] and "://" not in args[1]:
-            return args[1]
-
-        return None
-
     def on_retry(self, exc, task_id, args, kwargs, einfo):
         """Task retry callback - publishes retry status to API service"""
         job_id = self._extract_job_id(args, kwargs)
-        user_id = self._extract_user_id(args, kwargs)
 
         context = get_log_context()
-        bind_data = {**context}
-        if user_id:
-            bind_data["user_id"] = user_id
         logger.bind(
             event=LogEvent.WORKER_TASK_RETRY.value,
             task_id=task_id,
             job_id=job_id,
             retry_count=self.request.retries,
-            **bind_data
+            **context
         ).warning(f"KB task retrying: {exc}")
 
         if job_id:
@@ -204,16 +177,12 @@ class KBBaseTask(ContextPropagatingTask):
 )
 def upload_url_file_task(self, job_id: str, source_url: str, user_id: str = None, job_type: str = None):
     """Download file from URL and upload to S3"""
-    task_context = {"task_id": self.request.id, "job_id": job_id}
-    if user_id:
-        task_context["user_id"] = user_id
-
-    with log_context(**task_context):
+    with log_context(task_id=self.request.id):
         logger.bind(event=LogEvent.WORKER_TASK_START.value).info("Task started: upload_url_file_task")
 
         if not job_id:
             raise WorkerHandlingException(
-                message="An unexpected system error occurred",
+                user_message="An unexpected system error occurred",
                 internal_message="Worker task 'upload_url_file_task' called without job_id"
             )
 
@@ -352,7 +321,7 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
     file_info = await upload_service.verify_s3_file_exists(s3_key)
     if not file_info.get("exists"):
         raise StorageServiceException(
-            message="We failed to verify your file upload",
+            user_message="We failed to verify your file upload",
             internal_message=f"S3 file verification failed for {s3_key}"
         )
     
@@ -382,16 +351,12 @@ async def _upload_url_file_async(job_id: str, source_url: str, user_id: str, job
 )
 def parse_task(self, job_id: str, user_id: str = None, job_type: str = "kb_management"):
     """Parse and vectorize task (file already uploaded to S3)"""
-    task_context = {"task_id": self.request.id, "job_id": job_id}
-    if user_id:
-        task_context["user_id"] = user_id
-
-    with log_context(**task_context):
+    with log_context(task_id=self.request.id):
         logger.bind(event=LogEvent.WORKER_TASK_START.value).info("Task started: parse_task")
 
         if not job_id:
             raise WorkerHandlingException(
-                message="An unexpected system error occurred",
+                user_message="An unexpected system error occurred",
                 internal_message="Worker task 'parse_task' called without job_id"
             )
 
@@ -488,13 +453,13 @@ async def _parse_async(job_id: str, user_id: str):
     parent_path = settings.USERS_DATA_PATH
     if not parent_path:
         raise SystemSettingMissingException(
-            message="System configuration error",
+            user_message="System configuration error",
             internal_message="USERS_DATA_PATH not configured"
         )
 
     if not os.path.isabs(parent_path):
         raise SystemSettingInvalidException(
-            message="System configuration error",
+            user_message="System configuration error",
             internal_message=f"USERS_DATA_PATH must be absolute path, current value: {parent_path}"
         )
 
@@ -506,8 +471,7 @@ async def _parse_async(job_id: str, user_id: str):
         logger.info(f"Output directory ready: {output_dir}")
     except (OSError, PermissionError) as e:
         raise FileSystemException(
-            message="System error preparing storage",
-            path=output_dir,
+            user_message="System error preparing storage",
             operation="create_directory",
             internal_message=f"Failed to create directory: {output_dir}",
             original_exception=e
@@ -681,7 +645,7 @@ async def _parse_async(job_id: str, user_id: str):
     if add_contents_df is None:
         logger.error(f"File parsing failed, no content returned: job_id={job_id}, filename={filename}")
         raise WorkerHandlingException(
-            message="We could not extract content from your file",
+            user_message="We could not extract content from your file",
             internal_message="File parsing failed, no content returned from parser"
         )
 

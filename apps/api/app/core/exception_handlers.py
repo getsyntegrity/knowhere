@@ -83,8 +83,6 @@ def _get_request_id(request: Request) -> str:
     logger.bind(
         event=LogEvent.CORRELATION_REQUEST_ID_MISSING.value,
         request_id=generated_request_id,
-        http_method=request.method,
-        http_path=request.url.path,
     ).info("Request ID generated (missing upstream ID)")
     return generated_request_id
 
