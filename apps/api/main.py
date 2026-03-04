@@ -70,9 +70,7 @@ async def lifespan(app: FastAPI):
         await load_rules(session)
 
     async def _rate_limit_rule_sync_loop():
-        sync_interval = int(
-            os.getenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "60")
-        )
+        sync_interval = 60
         while True:
             try:
                 await asyncio.sleep(sync_interval)
