@@ -22,6 +22,9 @@ dependencies = [
     "cryptography==45.0.5",
     "tqdm==4.67.1",
     "logfire[celery,fastapi,httpx,sqlalchemy]>=4.25.0",
+    "fitz>=0.0.1.dev2",
+    "frontend>=0.0.3",
+    "tools>=1.0.23",
 ]
 
 [dependency-groups]
