@@ -21,7 +21,7 @@ class PaymentRecord(Base):
     __tablename__ = "payment_records"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
     checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
     # User Association
     user_id: Mapped[str] = mapped_column(Text, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -58,4 +58,3 @@ class PaymentRecord(Base):
     def is_succeeded(self) -> bool:
         """Check if processed successfully"""
         return self.status == 'succeeded'
-
