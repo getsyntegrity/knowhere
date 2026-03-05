@@ -68,10 +68,7 @@ class APIKeyService:
         )
         
         await self.repository.create(session, api_key_record)
-        
-        # 5. 缓存到Redis（可选）
-        await self._cache_api_key(api_key, user_id)
-        
+
         return api_key
     
     async def validate_api_key(self, session: AsyncSession, api_key: str) -> Optional[str]:
@@ -162,8 +159,6 @@ class APIKeyService:
         await session.commit()
         
         # 4. 更新缓存
-        await self._cache_api_key(new_api_key, user_id)
-        await self._remove_cached_api_key(api_key_id)
         await identity_cache.invalidate_apikey(
             redis_pool_manager.get_redis_service(),
             user_id,
