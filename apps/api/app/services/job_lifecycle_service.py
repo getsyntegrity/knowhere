@@ -195,7 +195,6 @@ class JobLifecycleService:
                     error_code=error_code,
                     error_details=error_details,
                     webhook_url=job.webhook_url,
-                    request_id=job_id,
                 )
 
             # 4. ATOMIC COMMIT
