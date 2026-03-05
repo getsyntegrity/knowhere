@@ -458,7 +458,9 @@ async def create_job(
                 upload_url_file_task = celery_app.signature('app.core.tasks.kb_tasks.upload_url_file_task')
                 upload_url_file_task.apply_async(
                     args=[job_id, payload.source_url, current_user.user_id],
-                    kwargs={'job_type': job_type}
+                    kwargs={
+                        "job_type": job_type,
+                    }
                 )
 
                 # 构建响应

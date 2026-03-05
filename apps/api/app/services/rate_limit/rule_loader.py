@@ -66,10 +66,7 @@ async def load_rules(db: AsyncSession) -> None:
         system_rules = await _fetch_system_rules(db)
 
         config = RateLimitConfig.get_instance()
-        has_changes = config.update_rules(tier_map, system_rules)
-
-        if has_changes:
-            logger.info("Rate limit rules loaded successfully")
+        config.update_rules(tier_map, system_rules)
     except Exception as exc:
         logger.error(
             "Failed to load rate limit rules",

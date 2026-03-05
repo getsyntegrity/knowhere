@@ -21,7 +21,6 @@ from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
 from loguru import logger
-from tqdm import tqdm
 
 
 def find_surround_context(md_lines, lid):
@@ -193,7 +192,8 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
     )
 
     time_stamp = get_str_time()
-    for i, line in tqdm(enumerate(lines_with_heading), total=len(lines_with_heading), desc="Parsing md data..."):
+    logger.debug("Parsing md data... total_lines={}", len(lines_with_heading))
+    for i, line in enumerate(lines_with_heading):
         if '<!--' in line and '-->' in line:
             if 'page' in line or 'Slide number' in line: 
                 current_pg_num += 1

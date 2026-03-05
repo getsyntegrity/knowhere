@@ -138,6 +138,7 @@ async def get_current_user_id(
                     # Stash tier so with_current_user can reuse it
                     request.state.cached_user_tier = cached.get("user_tier")
                     request.state.cached_identity_hit = True
+                    request.state.user_id = cached_user_id
                     return cached_user_id
         except Exception:
             pass  # Fall through to DB validation
@@ -146,9 +147,12 @@ async def get_current_user_id(
         api_key_service = APIKeyService()
         user_id = await api_key_service.validate_api_key(db, token)
         if user_id:
+            request.state.user_id = user_id
             return user_id
         else:
             raise AuthException(user_message="Invalid API Key")
 
     # Mode 2: JWT verification (for Dashboard/Internal)
-    return decode_jwt_token(token)
+    user_id = decode_jwt_token(token)
+    request.state.user_id = user_id
+    return user_id

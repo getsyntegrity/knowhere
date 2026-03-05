@@ -2,7 +2,6 @@ import os
 import re
 import unicodedata
 import pandas as pd
-from tqdm import tqdm
 from collections import Counter, defaultdict
 from app.services.common.kb_utils import count_cn_en, truncate_text
 from app.services.document_parser.table_parser import df2md
@@ -831,7 +830,8 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
             return None
 
     raw_candidates = []
-    for ele_id, para, text in tqdm(titles_material, total=len(titles_material), desc=f"Filtering docx heading candidates..."):
+    logger.debug("Filtering docx heading candidates... total_items={}", len(titles_material))
+    for ele_id, para, text in titles_material:
         str_lvl = ""
         est_lvl = None
         style_lvl = find_docstyle(para)
@@ -1060,7 +1060,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
             logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
 
             lvl_mapping = handle_unseen_codes(raw_preds, level_dfs, lvl_mapping, output_dir)
-            for l, level_df in tqdm(enumerate(level_dfs), total=len(level_dfs), desc=f"mapping and post-processing..."):
+            for l, level_df in enumerate(level_dfs):
                 level_df = execute_level_mapping(level_df, lvl_mapping)
                 full_preds.append(level_df)
         else:

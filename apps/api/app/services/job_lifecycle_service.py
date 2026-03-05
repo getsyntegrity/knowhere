@@ -36,7 +36,7 @@ class JobLifecycleService:
         db: AsyncSession,
         message: JobResultMessage,
         chunks: List[Dict[str, Any]],
-        inline_payload: Dict[str, Any]
+        inline_payload: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
         Finalize a successful job:
@@ -138,7 +138,7 @@ class JobLifecycleService:
         error_code: str,
         error_details: Optional[Dict[str, Any]],
         should_refund: bool = False,
-        refund_amount: float = 0
+        refund_amount: float = 0,
     ) -> bool:
         """
         Finalize a failed job:
@@ -194,7 +194,8 @@ class JobLifecycleService:
                     error_type="JobFailure",
                     error_code=error_code,
                     error_details=error_details,
-                    webhook_url=job.webhook_url
+                    webhook_url=job.webhook_url,
+                    request_id=job_id,
                 )
 
             # 4. ATOMIC COMMIT
