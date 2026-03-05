@@ -2,8 +2,7 @@
 知识库相关控制器 - 仅保留必要的API
 """
 
-from app.core.dependencies import get_current_user, get_redis_service
-from shared.models.database.user import User
+from app.services.rate_limit.dependencies import with_current_user, CurrentUser
 from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDto,
                                       FileDirectoryListDto,
                                       FileDirectoryUpdateDto)
@@ -20,12 +19,12 @@ router = APIRouter(tags=["知识库"])
 
 # 目录管理API
 @router.post('/create_directory', status_code=status.HTTP_201_CREATED, summary="增加SQL路径",description="用户注入知识路径")
-async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: User = Depends(get_current_user)):
+async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: CurrentUser = Depends(with_current_user)):
     """
     模拟知识库知识片段增加的时候，增加目录树
     """
     try:
-        request_data.user_id = current_user.id
+        request_data.user_id = current_user.user_id
         from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await create_directory(db, request_data):
@@ -43,12 +42,12 @@ async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: User 
         )
 
 @router.post('/delete_directory', status_code=status.HTTP_201_CREATED, summary="删除SQL路径",description="用户删除知识路径")
-async def delete_sql_path(request_data: FileDirectoryDto, current_user: User = Depends(get_current_user)):
+async def delete_sql_path(request_data: FileDirectoryDto, current_user: CurrentUser = Depends(with_current_user)):
     """
     模拟知识库知识片段增加的时候，增加目录树
     """
     try:
-        request_data.user_id = current_user.id
+        request_data.user_id = current_user.user_id
         from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await delete_directory(db, request_data.id):
@@ -66,12 +65,12 @@ async def delete_sql_path(request_data: FileDirectoryDto, current_user: User = D
         )
 
 @router.post('/update_directory', status_code=status.HTTP_201_CREATED, summary="更新SQL路径",description="用户更新知识路径")
-async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: User = Depends(get_current_user)):
+async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: CurrentUser = Depends(with_current_user)):
     """
     模拟知识库知识片段增加的时候，增加目录树
     """
     try:
-        request_data.user_id = current_user.id
+        request_data.user_id = current_user.user_id
         from shared.core.database import get_db_context
         async with get_db_context() as db:
             if await update_directory(db, request_data):
@@ -89,7 +88,7 @@ async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: Us
         )
 
 @router.post('/get_directory', status_code=status.HTTP_201_CREATED, summary="获取用户知识库路径",description="用户获取知识路径")
-async def get_sql_path(current_user: User = Depends(get_current_user)):
+async def get_sql_path(current_user: CurrentUser = Depends(with_current_user)):
     """
     获取用户知识库目录树，如果用户没有目录则自动创建默认目录
     """
@@ -101,26 +100,26 @@ async def get_sql_path(current_user: User = Depends(get_current_user)):
         
         async with get_db_context() as db:
             # 获取用户的所有目录
-            user_directories = await get_directories_by_user(db, str(current_user.id))
-            
+            user_directories = await get_directories_by_user(db, current_user.user_id)
+
             # 如果用户没有目录，创建默认目录
             if not user_directories:
                 create_request = FileDirectoryCreateDto(
                     title="默认目录",
                     parent_id=None,
-                    user_id=str(current_user.id)
+                    user_id=current_user.user_id
                 )
-                
+
                 success = await create_directory(db, create_request)
                 if not success:
                     from loguru import logger
-                    logger.error(f"创建默认目录失败: user_id={current_user.id}")
+                    logger.error(f"Failed to create default directory: user_id={current_user.user_id}")
                     raise KnowledgeBaseOperationException(
                         internal_message="Failed to create default directory"
                     )
-            
+
             # 获取目录树结构
-            directories = await get_directories(db, current_user.id)
+            directories = await get_directories(db, current_user.user_id)
             return directories
     except KnowledgeBaseOperationException:
         raise
@@ -132,7 +131,7 @@ async def get_sql_path(current_user: User = Depends(get_current_user)):
         )
 
 @router.post('/list_directory', status_code=status.HTTP_201_CREATED, summary="知识详情",description="根据用户路径获取知识点")
-async def list_directory(request_data: FileDirectoryListDto, current_user: User = Depends(get_current_user)):
+async def list_directory(request_data: FileDirectoryListDto, current_user: CurrentUser = Depends(with_current_user)):
     """
     模拟知识库知识片段增加的时候，增加目录树
     """
@@ -152,7 +151,7 @@ async def list_directory(request_data: FileDirectoryListDto, current_user: User 
 
 # 添加知识库路径API
 @router.post('/add_kb', status_code=status.HTTP_201_CREATED, summary="添加知识库路径", description="添加知识库路径")
-async def add_kb_path(request_data: dict, current_user: User = Depends(get_current_user)):
+async def add_kb_path(request_data: dict, current_user: CurrentUser = Depends(with_current_user)):
     """
     添加知识库路径
     """
@@ -165,7 +164,7 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
         create_request = FileDirectoryCreateDto(
             title=request_data.get('path', ''),
             parent_id=None,  # 默认为根目录
-            user_id=current_user.id
+            user_id=current_user.user_id
         )
         
         async with get_db_context() as db:
@@ -204,7 +203,7 @@ async def add_kb_path(request_data: dict, current_user: User = Depends(get_curre
 @router.delete('/contents/{content_id}', status_code=status.HTTP_200_OK, summary="删除知识库内容或目录", description="根据ID自动判断删除内容或目录")
 async def delete_knowledge_content(
     content_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: CurrentUser = Depends(with_current_user)
 ):
     """
     删除知识库内容或目录

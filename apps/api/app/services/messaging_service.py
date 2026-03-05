@@ -21,7 +21,7 @@ class MessagingService:
     async def start(self):
         """启动消息消费者（异步）"""
         if self._running:
-            logger.warning("消息消费者已在运行")
+            logger.warning("Message consumer is already running")
             return
         
         try:
@@ -30,15 +30,15 @@ class MessagingService:
             
             # 在事件循环中启动消费者任务
             self.consumer_task = asyncio.create_task(self.consumer.start_consuming())
-            logger.info("消息消费者已在事件循环中启动")
+            logger.debug("Message consumer task scheduled on event loop")
             
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"启动消息消费者失败: {e}")
+            logger.error(f"Failed to start message consumer: {e}")
             self._running = False
             raise WorkerHandlingException(
-                internal_message=f"启动消息消费者失败: {str(e)}",
+                internal_message=f"Failed to start message consumer: {str(e)}",
                 original_exception=e
             )
     
@@ -47,25 +47,25 @@ class MessagingService:
         if not self._running:
             return
         
-        logger.info("正在停止消息消费者...")
+        logger.debug("Stopping message consumer service")
         self._running = False
         
         if self.consumer:
             try:
                 await self.consumer.stop_consuming()
             except Exception as e:
-                logger.error(f"停止消息消费者时出错: {e}")
+                logger.error(f"Error while stopping message consumer: {e}")
         
         if self.consumer_task and not self.consumer_task.done():
             try:
                 self.consumer_task.cancel()
                 await self.consumer_task
             except asyncio.CancelledError:
-                logger.debug("消费者任务已取消")
+                logger.debug("Message consumer task cancelled")
             except Exception as e:
-                logger.error(f"取消消费者任务时出错: {e}")
+                logger.error(f"Error while cancelling message consumer task: {e}")
         
-        logger.info("消息消费者已停止")
+        logger.debug("Message consumer service stopped")
 
 
 # 创建全局消息服务实例

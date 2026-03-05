@@ -53,8 +53,16 @@ def s3_upload_file(file: UploadFile , prefix: str ):
         )
 
 def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, filename: str = "parsed.zip", headers: Optional[dict] = None,
-        timeout: int = None, chunk_size: int = None, keep_exts: tuple[str, ...] = (".md", ".json"), clean_empty_dirs: bool = True):
+        timeout: int = None, chunk_size: int = None, keep_exts: tuple[str, ...] = (".md", ".json"), 
+        exclude_patterns: tuple[str, ...] = (), clean_empty_dirs: bool = True):
+    """
+    Download and extract a zip file, keeping only specific file types.
+    
+    Args:
+        exclude_patterns: Tuple of filename patterns to exclude (e.g., ("content_list", "middle.json"))
+    """
     from shared.core.constants import APIConstants, ProcessingConstants
+    import fnmatch
 
     # 使用默认值
     if timeout is None:
@@ -77,14 +85,24 @@ def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, file
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(dest_dir)
 
-    # 2) 删除非 keep_exts 文件
+    # 2) 删除非 keep_exts 文件，以及匹配 exclude_patterns 的文件
     kept_files = []
     for p in dest_dir.rglob("*"):
         if p.is_file():
-            if p.suffix.lower() in keep_exts:
+            # Check if file should be excluded by pattern
+            should_exclude = False
+            for pattern in exclude_patterns:
+                if pattern in p.name or fnmatch.fnmatch(p.name, pattern):
+                    should_exclude = True
+                    break
+            
+            if should_exclude:
+                p.unlink()
+            elif p.suffix.lower() in keep_exts:
                 kept_files.append(p)
             else:
                 p.unlink()
+    
     # 4) 删除空目录（可选）
     if clean_empty_dirs:
         for d in sorted([p for p in dest_dir.rglob("*") if p.is_dir()],

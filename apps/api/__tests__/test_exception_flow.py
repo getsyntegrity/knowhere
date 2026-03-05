@@ -180,7 +180,7 @@ class TestNotFoundExceptions:
     """Tests for not-found-related exceptions."""
 
     @pytest.mark.asyncio
-    async def test_nonexistent_job(self, authenticated_client: AsyncClient, mock_user):
+    async def test_nonexistent_job(self, authenticated_client: AsyncClient):
         """
         Test: Get a job that doesn't exist
         Expected: 404 NOT_FOUND

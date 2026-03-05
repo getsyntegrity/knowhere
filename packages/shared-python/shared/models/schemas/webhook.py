@@ -1,66 +1,55 @@
 """
-Webhook相关Schema
+Webhook Schemas
+
+- WebhookLogResponse: Delivery attempt history
+- WebhookLogList: Paginated log list
+- WebhookTriggerRequest: Manual trigger request
+- WebhookTriggerResponse: Manual trigger response
 """
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl
-
-
-class WebhookConfigCreate(BaseModel):
-    """创建Webhook配置请求"""
-    webhook_url: HttpUrl = Field(..., description="Webhook URL")
-    events: List[str] = Field(default=["job.completed", "job.failed"], description="监听的事件类型")
-    enabled: bool = Field(default=True, description="是否启用")
-
-
-class WebhookConfigResponse(BaseModel):
-    """Webhook配置响应"""
-    id: str = Field(..., description="配置ID")
-    webhook_url: str = Field(..., description="Webhook URL")
-    events: List[str] = Field(..., description="监听的事件类型")
-    enabled: bool = Field(..., description="是否启用")
-    created_at: datetime = Field(..., description="创建时间")
-    updated_at: datetime = Field(..., description="更新时间")
+from pydantic import BaseModel, Field
 
 
 class WebhookLogResponse(BaseModel):
-    """Webhook日志响应"""
-    id: str = Field(..., description="日志ID")
-    job_id: str = Field(..., description="任务ID")
+    """Webhook delivery attempt log entry."""
+    
+    id: str = Field(..., description="Log ID")
+    job_id: str = Field(..., description="Job ID")
     webhook_url: str = Field(..., description="Webhook URL")
-    attempt_number: int = Field(..., description="尝试次数")
-    response_status_code: Optional[int] = Field(None, description="响应状态码")
-    response_body: Optional[str] = Field(None, description="响应体")
-    error_message: Optional[str] = Field(None, description="错误信息")
-    created_at: datetime = Field(..., description="创建时间")
+    attempt_number: int = Field(..., description="Attempt number (1-6)")
+    request_payload: dict = Field(..., description="Request payload sent to webhook")
+    signature: Optional[str] = Field(None, description="HMAC signature")
+    idempotency_key: Optional[str] = Field(None, description="Idempotency key")
+    response_status_code: Optional[int] = Field(None, description="HTTP response status code")
+    response_body: Optional[str] = Field(None, description="Response body (truncated)")
+    error_message: Optional[str] = Field(None, description="Error message if request failed")
+    duration_ms: int = Field(0, description="Request duration in milliseconds")
+    created_at: datetime = Field(..., description="Timestamp when attempt was made")
 
 
 class WebhookLogList(BaseModel):
-    """Webhook日志列表"""
-    logs: List[WebhookLogResponse] = Field(..., description="日志列表")
-    total: int = Field(..., description="总数量")
-    page: int = Field(..., description="当前页码")
-    page_size: int = Field(..., description="每页数量")
+    """Paginated list of webhook delivery logs."""
+    
+    logs: List[WebhookLogResponse] = Field(..., description="List of log entries")
+    total: int = Field(..., description="Total count in this page")
+    page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Page size")
 
 
-class WebhookStatsResponse(BaseModel):
-    """Webhook统计响应"""
-    total_attempts: int = Field(..., description="总尝试次数")
-    successful_attempts: int = Field(..., description="成功次数")
-    failed_attempts: int = Field(..., description="失败次数")
-    success_rate: float = Field(..., description="成功率")
+class WebhookTriggerRequest(BaseModel):
+    """Request to manually trigger a webhook."""
+    
+    job_id: str = Field(..., description="Job ID to trigger webhook for")
 
 
-class WebhookTestRequest(BaseModel):
-    """Webhook测试请求"""
-    webhook_url: HttpUrl = Field(..., description="测试的Webhook URL")
-
-
-class WebhookTestResponse(BaseModel):
-    """Webhook测试响应"""
-    success: bool = Field(..., description="是否成功")
-    status_code: Optional[int] = Field(None, description="响应状态码")
-    response_body: Optional[str] = Field(None, description="响应体")
-    error_message: Optional[str] = Field(None, description="错误信息")
-    test_time: datetime = Field(..., description="测试时间")
+class WebhookTriggerResponse(BaseModel):
+    """Response from manual webhook trigger."""
+    
+    success: bool = Field(..., description="Whether the webhook was delivered successfully")
+    status_code: Optional[int] = Field(None, description="HTTP status code from target server")
+    response_body: Optional[str] = Field(None, description="Response body from target server")
+    duration_ms: int = Field(..., description="Request duration in milliseconds")
+    delivery_id: Optional[str] = Field(None, description="Delivery log ID for reference")
+    error_message: Optional[str] = Field(None, description="Error message if request failed")

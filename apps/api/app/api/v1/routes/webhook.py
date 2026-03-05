@@ -1,210 +1,195 @@
 """
-Webhook配置管理API路由
+Webhook API Routes
+
+- GET /logs: Get webhook delivery history
+- POST /trigger: Manually trigger webhook for a job
 """
+from datetime import datetime
+import time
 from typing import Optional
 
-from app.core.dependencies import get_current_user, get_db
-from shared.models.database.user import User
-from shared.models.schemas.webhook import (WebhookConfigCreate,
-                                        WebhookConfigResponse, WebhookLogList,
-                                        WebhookLogResponse,
-                                        WebhookStatsResponse,
-                                        WebhookTestRequest,
-                                        WebhookTestResponse)
-from app.repositories.webhook_repository import WebhookRepository
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query, Request
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.core.exceptions.domain_exceptions import WebhookServiceException
 
-# WebhookService已迁移到API服务
-
-router = APIRouter(tags=["Webhook管理"])
-
-
-@router.post("/config", response_model=WebhookConfigResponse, summary="创建Webhook配置")
-async def create_webhook_config(
-    request: WebhookConfigCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """创建Webhook配置"""
-    try:
-        # TODO: 实现Webhook配置存储
-        # 这里应该存储到数据库，目前返回模拟数据
-        import uuid
-        
-        config = {
-            "id": str(uuid.uuid4()),
-            "webhook_url": str(request.webhook_url),
-            "events": request.events,
-            "enabled": request.enabled,
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z"
-        }
-        
-        response = WebhookConfigResponse(**config)
-        return response
-        
-    except Exception as e:
-        raise WebhookServiceException(
-            internal_message=f"创建Webhook配置失败: {str(e)}"
-        )
+from shared.core.database import get_db
+from app.services.rate_limit.dependencies import with_current_user, CurrentUser
+from app.repositories.job_repository import JobRepository
+from app.repositories.webhook_repository import WebhookRepository
+from shared.services.webhook import get_webhook_dispatcher
+from shared.core.exceptions.knowhere_exception import KnowhereException
+from shared.core.exceptions.domain_exceptions import WebhookServiceException, PermissionDeniedException
+from shared.models.schemas.webhook import (
+    WebhookLogList,
+    WebhookLogResponse,
+    WebhookTriggerRequest,
+    WebhookTriggerResponse,
+)
+from shared.services.storage.file_upload_service import FileUploadService
 
 
-@router.get("/config", response_model=WebhookConfigResponse, summary="获取Webhook配置")
-async def get_webhook_config(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """获取Webhook配置"""
-    try:
-        # TODO: 从数据库获取用户Webhook配置
-        # 目前返回模拟数据
-        import uuid
-        
-        config = {
-            "id": str(uuid.uuid4()),
-            "webhook_url": "https://example.com/webhook",
-            "events": ["job.completed", "job.failed"],
-            "enabled": True,
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z"
-        }
-        
-        response = WebhookConfigResponse(**config)
-        return response
-        
-    except Exception as e:
-        raise WebhookServiceException(
-            internal_message=f"获取Webhook配置失败: {str(e)}"
-        )
+router = APIRouter(tags=["Webhook"])
 
 
-@router.get("/logs", response_model=WebhookLogList, summary="获取Webhook日志")
+@router.get("/logs", response_model=WebhookLogList, summary="Get Webhook Delivery Logs")
 async def get_webhook_logs(
-    job_id: Optional[str] = Query(None, description="任务ID过滤"),
-    page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    job_id: Optional[str] = Query(None, description="Filter by Job ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    current_user: CurrentUser = Depends(with_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取Webhook日志"""
+    """
+    Get webhook delivery history logs.
+    
+    Returns a paginated list of webhook delivery attempts, optionally filtered by job_id.
+    Each log entry includes the delivery status, duration, and response details.
+    """
     try:
-        webhook_repo = WebhookRepository()
+        repo = WebhookRepository()
+        offset = (page - 1) * page_size
+        logs, total = await repo.get_webhook_logs(
+            db=db, user_id=current_user.user_id, job_id=job_id, limit=page_size, offset=offset
+        )
         
-        # 获取日志
-        if job_id:
-            logs = await webhook_repo.get_webhook_logs(
-                db=db,
-                job_id=job_id,
-                limit=page_size,
-                offset=(page - 1) * page_size
-            )
-        else:
-            # 获取用户相关的所有日志
-            logs = await webhook_repo.get_webhook_logs(
-                db=db,
-                job_id=None,
-                limit=page_size,
-                offset=(page - 1) * page_size
-            )
-        
-        # 构建响应
-        log_responses = []
-        for log in logs:
-            log_responses.append(WebhookLogResponse(
-                id=log.id,
-                job_id=log.job_id,
-                webhook_url=log.webhook_url,
-                attempt_number=log.attempt_number,
-                response_status_code=log.response_status_code,
-                response_body=log.response_body,
-                error_message=log.error_message,
-                created_at=log.created_at
-            ))
-        
-        response = WebhookLogList(
-            logs=log_responses,
-            total=len(log_responses),
+        return WebhookLogList(
+            total=total,
             page=page,
-            page_size=page_size
+            page_size=page_size,
+            logs=[
+                WebhookLogResponse(
+                    id=log.id,
+                    job_id=log.job_id,
+                    webhook_url=log.webhook_url,
+                    attempt_number=log.attempt_number,
+                    request_payload=log.request_payload,
+                    signature=log.signature,
+                    idempotency_key=log.idempotency_key,
+                    response_status_code=log.response_status_code,
+                    response_body=log.response_body,
+                    error_message=log.error_message,
+                    duration_ms=log.duration_ms,
+                    created_at=log.created_at,
+                )
+                for log in logs
+            ],
         )
-        
-        return response
-        
     except Exception as e:
+        logger.error(f"Failed to get webhook logs: {e}")
         raise WebhookServiceException(
-            internal_message=f"获取Webhook日志失败: {str(e)}"
+            internal_message=f"Failed to retrieve webhook logs: {str(e)}"
         )
 
 
-@router.get("/stats", response_model=WebhookStatsResponse, summary="获取Webhook统计")
-async def get_webhook_stats(
-    job_id: Optional[str] = Query(None, description="任务ID过滤"),
-    webhook_url: Optional[str] = Query(None, description="Webhook URL过滤"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+@router.post("/trigger", response_model=WebhookTriggerResponse, summary="Manually Trigger Webhook")
+async def trigger_webhook(
+    request: WebhookTriggerRequest,
+    current_user: CurrentUser = Depends(with_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取Webhook统计信息"""
+    """
+    Manually trigger a webhook for a completed or failed job.
+    
+    This sends a webhook notification synchronously and returns the delivery result.
+    Use this for testing or retrying failed webhook deliveries.
+    """
     try:
-        webhook_repo = WebhookRepository()
+        job_repo = JobRepository()
         
-        stats = await webhook_repo.get_webhook_stats(
+        # 1. Fetch Job
+        job = await job_repo.get_job_by_id(db, request.job_id)
+        if not job:
+            from shared.core.exceptions.domain_exceptions import NotFoundException
+            raise NotFoundException(
+                resource="Job",
+                resource_id=request.job_id
+            )
+        
+        # Verify ownership
+        if str(job.user_id) != current_user.user_id:
+             raise PermissionDeniedException(
+                user_message="You don't have permission to trigger webhook for this job",
+                resource="Job"
+            )
+        
+        # 2. Validation - client errors (400)
+        if not job.is_terminal_state():
+            from shared.core.exceptions.domain_exceptions import ValidationException
+            raise ValidationException(
+                user_message=f"Job must be in terminal state to trigger webhook. Current status: {job.status}",
+                violations=[{"field": "job_id", "description": f"Job status is '{job.status}', expected 'done' or 'failed'"}]
+            )
+        
+        if not job.webhook_url:
+            from shared.core.exceptions.webhook_exceptions import WebhookConfigException
+            raise WebhookConfigException(
+                internal_message=f"Job {request.job_id} does not have webhook_url configured",
+                user_message="Job does not have a webhook URL configured. Configure webhook_url when creating the job.",
+                details={"field": "webhook_url", "reason": "not_configured"}
+            )
+        
+        # 3. Fetch existing WebhookEvent (Transactional Outbox)
+        from sqlalchemy import select
+        from shared.models.database.webhook import WebhookEvent
+        
+        result = await db.execute(select(WebhookEvent).where(WebhookEvent.job_id == request.job_id))
+        event = result.scalars().first()
+        
+        if not event:
+             from shared.core.exceptions.domain_exceptions import NotFoundException
+             raise NotFoundException(
+                resource="WebhookEvent",
+                resource_id=request.job_id,
+                user_message="No webhook event found for this job. Ensure the job has completed and webhooks are configured."
+            )
+        
+        # Use dispatcher to send synchronously
+        dispatcher = get_webhook_dispatcher()
+        # Pass db session and is_manual=True to handle logging internally
+        success, status_code, duration_ms, error_message = await dispatcher._send_webhook(
             db=db,
-            job_id=job_id,
-            webhook_url=webhook_url
+            event=event,
+            is_manual=True
         )
         
-        response = WebhookStatsResponse(**stats)
-        return response
+        # 5. Return response
+        return WebhookTriggerResponse(
+            success=success,
+            status_code=status_code,
+            response_body=None,  # Dispatcher doesn't return response body
+            duration_ms=duration_ms,
+            delivery_id=None,  # Manual trigger doesn't create delivery log
+            error_message=error_message,
+        )
         
+    except KnowhereException:
+        # Re-raise all known exceptions (NotFoundException, ValidationException, etc.)
+        raise
     except Exception as e:
         raise WebhookServiceException(
-            internal_message=f"获取Webhook统计失败: {str(e)}"
+            internal_message=f"Failed to trigger webhook: {str(e)}"
         )
 
 
-@router.post("/test", response_model=WebhookTestResponse, summary="测试Webhook")
-async def test_webhook(
-    request: WebhookTestRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """测试Webhook连接"""
-    try:
-        from datetime import datetime
-
-        from app.services.webhook.webhook_service import WebhookService
-        
-        webhook_service = WebhookService()
-        
-        # 构建测试payload
-        test_payload = {
-            "event": "webhook.test",
-            "message": "This is a test webhook from Knowhere",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "user_id": str(current_user.id)
-        }
-        
-        # 发送测试Webhook
-        result = await webhook_service.send_webhook(
-            job_id="test",
-            webhook_url=str(request.webhook_url),
-            payload=test_payload,
-            attempt_number=1
-        )
-        
-        response = WebhookTestResponse(
-            success=result.get("success", False),
-            status_code=result.get("status_code"),
-            response_body=result.get("response_body"),
-            error_message=result.get("error"),
-            test_time=datetime.utcnow()
-        )
-        
-        return response
-        
-    except Exception as e:
-        raise WebhookServiceException(
-            internal_message=f"测试Webhook失败: {str(e)}"
-        )
+# @router.post("/test-callback", summary="Test Webhook Callback Endpoint")
+# async def test_webhook_callback(
+#     request: Request,
+#     payload: dict = Body(...),
+# ):
+#     """
+#     Test endpoint to receive webhook callbacks.
+    
+#     Use this endpoint to verify webhook delivery. It logs receiving data
+#     to the server console and returns the received payload.
+#     """
+#     # Log the event
+#     logger.info("🔔 [Test Callback] Webhook Received!")
+#     logger.info(f"Headers: {dict(request.headers)}")
+#     logger.info(f"Payload: {payload}")
+    
+#     return {
+#         "status": "received",
+#         "timestamp": datetime.utcnow().isoformat(),
+#         "payload": payload,
+#         "received_headers": {k: v for k, v in request.headers.items() if k.lower().startswith("x-") or k.lower() == "user-agent"},
+#     }

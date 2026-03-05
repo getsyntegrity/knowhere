@@ -51,9 +51,11 @@ packages/shared-types/generated/
 apps/api/users/
 apps/api/tests/
 apps/worker/debug_*.py
+apps/worker/test_*.py
 apps/worker/debug_users/
 apps/worker/app/tmp_data/
 apps/worker/app/tmp_res/
+apps/worker/app/tmp_files/
 s3-notification.json
 users/
 test_*.csv
@@ -113,6 +115,12 @@ deploy/aliyun/deploy-config.sh
 .terraform.lock.hcl
 LICENSE.txt
 .terraform
+
+# Codex 生成的文件
+.venv_unstructured/
+PROJECT.md
+TABLE_PARSER_OPTIMIZATION.md
+TODO.md
 
 doc-deploy/
 deploy/aliyun/ack/*.md

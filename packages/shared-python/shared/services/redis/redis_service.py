@@ -18,6 +18,7 @@ from shared.utils.redis_retry import RedisHealthChecker, RedisRetry
 
 class RedisService:
     """Redis服务抽象层"""
+    _KEY_PREFIX: str = "knowhere-api"
     
     def __init__(self, config_manager: Optional[RedisConfigManager] = None):
         if config_manager is None:
@@ -57,7 +58,7 @@ class RedisService:
     
     def _build_key(self, key: str) -> str:
         """构建完整的键名"""
-        prefix = self.config_manager.config.REDIS_KEY_PREFIX
+        prefix = self._KEY_PREFIX
         return f"{prefix}:{key}" if not key.startswith(prefix) else key
     
     # ==================== 基础操作 ====================
@@ -170,6 +171,25 @@ class RedisService:
             raise RedisOperationError(
                 internal_message=f"EXPIRE operation failed: {str(e)}",
                 operation="EXPIRE",
+                original_exception=e
+            )
+
+    async def ttl(self, key: str) -> int:
+        """获取键的剩余TTL（秒）"""
+        try:
+            client = await self._get_client()
+            full_key = self._build_key(key)
+
+            async def _operation():
+                return await client.ttl(full_key)
+
+            result = await self._execute_with_retry(_operation)
+            return int(result)
+        except Exception as e:
+            logger.error(f"Redis TTL operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"TTL operation failed: {str(e)}",
+                operation="TTL",
                 original_exception=e
             )
     

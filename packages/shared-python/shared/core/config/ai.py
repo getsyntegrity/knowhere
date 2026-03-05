@@ -43,6 +43,10 @@ class AIConfig(BaseModel):
     PATH_IMAGE_PATTERN: str = Field(default="", description="路径图像模式（兼容性字段）")
     SPLIT_CHAR: str = Field(default="/", description="路径分隔符")
     LIBER_OFFICE: str = Field(default="", description="LibreOffice（兼容性字段）")
+    ILOVEAPI_PUBLIC_KEY: str = Field(default="", description="iLoveAPI 公钥 (PPTX转PDF)")
+    ILOVEAPI_SECRET_KEY: str = Field(default="", description="iLoveAPI 密钥 (PPTX转PDF)")
+    ILOVEAPI_BASE_URL: str = Field(default="https://api.ilovepdf.com/v1", description="iLoveAPI 基础URL")
+    ILOVEAPI_TIMEOUT: int = Field(default=120, description="iLoveAPI 请求超时(秒)")
     PROD_URL: str = Field(default="", description="生产URL（兼容性字段）")
     
     # 业务配置字段（兼容性）

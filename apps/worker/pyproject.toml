@@ -1,0 +1,38 @@
+[project]
+name = "knowhere-worker-app"
+version = "0.1.0"
+description = "Knowhere Worker service"
+requires-python = ">=3.11"
+dependencies = [
+    "knowhere-shared",
+    "numpy==2.2.6",
+    "pandas==2.3.1",
+    "jieba==0.42.1",
+    "python-docx==1.2.0",
+    "python-pptx==1.0.2",
+    "pypdf==6.6.0",
+    "beautifulsoup4==4.13.4",
+    "lxml==5.4.0",
+    "markitdown==0.1.2",
+    "openpyxl==3.1.2",
+    "pptx2md==2.0.6",
+    "openai==1.93.3",
+    "oss2>=2.18.0",
+    "pillow==11.2.1",
+    "cryptography==45.0.5",
+    "tqdm==4.67.1",
+    "logfire[celery,fastapi,httpx,sqlalchemy]>=4.25.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.24.0",
+    "pytest-mock==3.14.0",
+]
+
+[tool.uv.sources]
+knowhere-shared = { path = "../../packages/shared-python", editable = true }
+
+[tool.uv]
+package = false

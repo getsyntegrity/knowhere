@@ -46,7 +46,7 @@ class JobResultRepository:
             existing.inline_payload = inline_payload
             existing.result_s3_key = result_s3_key
             existing.result_size = result_size
-            await db.commit()
+            await db.flush()
             await db.refresh(existing)
             logger.info(f"更新JobResult成功: job_id={job_id}, mode={delivery_mode}")
             return existing
@@ -60,7 +60,7 @@ class JobResultRepository:
             result_size=result_size
         )
         db.add(job_result)
-        await db.commit()
+        await db.flush()
         await db.refresh(job_result)
         logger.info(f"创建JobResult成功: job_id={job_id}, mode={delivery_mode}")
         return job_result
@@ -89,7 +89,7 @@ class JobResultRepository:
                 ))
             db.add_all(chunk_models)
 
-        await db.commit()
+        await db.flush()
 
     async def delete_by_job_id(self, db: AsyncSession, job_id: str) -> None:
         """删除某个Job的结果及Chunk"""
@@ -97,4 +97,4 @@ class JobResultRepository:
         if not result:
             return
         await db.delete(result)
-        await db.commit()
+        await db.flush()

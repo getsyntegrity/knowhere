@@ -1,52 +1,80 @@
 import asyncio
-import sys
+import datetime
 import os
+import sys
+from typing import cast
+from uuid import uuid4
 
-# Add parent directory to path to allow importing app modules
-current_dir = os.path.dirname(os.path.abspath(__file__))
-api_root = os.path.dirname(current_dir)
-sys.path.append(api_root)
 
-# Also add shared-python to path (assuming standard repo structure)
-# github.com/ontosAI/knowhere-api/apps/api/scripts -> .../knowhere-api
-repo_root = os.path.dirname(os.path.dirname(api_root))
-shared_python_path = os.path.join(repo_root, "packages", "shared-python")
-sys.path.append(shared_python_path)
+def _bootstrap_python_path() -> None:
+    """Allow running the script directly without preconfigured PYTHONPATH."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))  # apps/api/scripts
+    api_root = os.path.dirname(current_dir)  # apps/api
+    repo_root = os.path.dirname(os.path.dirname(api_root))  # repo root
+    shared_python_path = os.path.join(repo_root, "packages", "shared-python")
 
-from shared.core.database import get_db_context
-from app.services.billing.credits_service import CreditsService
-from app.repositories.user_repository import UserRepository
+    for path in (api_root, shared_python_path):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
+
+_bootstrap_python_path()
+
+from sqlalchemy import select
+from sqlalchemy import or_
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from shared.core.billing import MicroDollar
+from shared.core.database import get_db_context
+from shared.models.database.payment_record import PaymentRecord
+from shared.models.database.user import User
+from shared.models.database.webhook import WebhookEvent  # noqa: F401
+from shared.services.billing import CreditsService
 
-async def main():
-    if len(sys.argv) < 3:
-        print("Usage: python scripts/add_credits.py <email> <amount>")
+
+async def main() -> int:
+    if len(sys.argv) != 3:
+        print("Usage: python scripts/add_credits.py <email_or_user_id> <amount>")
         print("Example: python scripts/add_credits.py user@example.com 100")
-        return
+        print("Example: python scripts/add_credits.py usr_abc123 100")
+        return 1
 
-    email = sys.argv[1]
-    amount = int(sys.argv[2])
-    
-    print(f"Connecting to database to add {amount} credits to {email}...")
+    user_identifier = sys.argv[1].strip()
+    try:
+        amount = int(sys.argv[2])
+    except ValueError:
+        print(f"Error: amount must be an integer, got '{sys.argv[2]}'.")
+        return 1
 
-    async with get_db_context() as db:
-        user_repo = UserRepository()
-        user = await user_repo.get_by_email(db, email)
-        
-        if not user:
-            print(f"Error: User with email '{email}' not found.")
-            return
+    if amount <= 0:
+        print("Error: amount must be greater than 0.")
+        return 1
 
+    print(f"Connecting to database to add {amount} credits to {user_identifier}...")
+
+    async with get_db_context() as db_session:
+        db = cast(AsyncSession, db_session)
+        result = await db.execute(
+            select(User)
+            .where(or_(User.email == user_identifier, User.id == user_identifier))
+            .order_by(User.id.asc())
+        )
+        users = result.scalars().all()
+
+        if not users:
+            print(f"Error: user '{user_identifier}' not found (checked by email or user_id).")
+            return 1
+        if len(users) > 1:
+            print(
+                f"Warning: found {len(users)} users matching '{user_identifier}', "
+                f"using first user id={users[0].id}."
+            )
+
+        user = users[0]
         service = CreditsService()
-        # Convert display credits (e.g., 100) to MicroDollar
-        micro_amount = MicroDollar.from_dollars(amount)
-        
-        # Create a fake payment record to prevent check_balance from capping the credits
-        # check_balance limits balance to the sum of recent payments in PaymentRecord
-        from shared.models.database.payment_record import PaymentRecord
-        from uuid import uuid4
-        import datetime
-        
+        micro_amount = MicroDollar.from_dollars(amount).amount
+
+        # Record a succeeded manual payment so expiration checks include this grant.
         fake_payment_id = f"manual_grant_{uuid4()}"
         fake_payment = PaymentRecord(
             user_id=str(user.id),
@@ -54,33 +82,31 @@ async def main():
             amount_cents=0,
             currency="USD",
             status="succeeded",
-            credits_amount=micro_amount.amount, # Store int in DB
+            credits_amount=micro_amount,
             payment_type="manual_grant",
-            created_at=datetime.datetime.utcnow(),
-            extra_metadata={"reason": "Manual dev top-up via script"}
+            processed_at=datetime.datetime.utcnow(),
+            extra_metadata={"reason": "Manual dev top-up via script"},
         )
         db.add(fake_payment)
         await db.flush()
-        
-        success = await service.add_credits(
+
+        new_balance_micro = await service.add_credits(
             session=db,
             user_id=str(user.id),
-            amount=micro_amount.amount,
+            amount=micro_amount,
             reason="Manual dev top-up via script",
             transaction_type="manual_grant",
-            stripe_payment_id=fake_payment_id
+            stripe_payment_id=fake_payment_id,
         )
-        
-        if success:
-            await db.commit()
-            print(f"Successfully added {amount} credits (value: {micro_amount}) to user {user.id}")
-            
-            # Fetch new balance to confirm
-            new_balance = await service.get_balance(db, str(user.id))
-            balance_display = MicroDollar(new_balance).to_credit()
-            print(f"New Balance: {balance_display}")
-        else:
-            print("Failed to add credits.")
+
+        print(
+            f"Successfully added {amount} credits "
+            f"(micro={micro_amount}) to user {user.id}"
+        )
+        print(f"New Balance: {MicroDollar(new_balance_micro).to_credit()}")
+
+    return 0
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

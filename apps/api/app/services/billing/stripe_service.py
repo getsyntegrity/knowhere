@@ -7,26 +7,27 @@ from typing import Any, Dict, Optional
 
 import stripe
 from shared.core.config import settings
+from shared.core.config import redis_pool_manager
 from shared.core.logging import logger
 from sqlalchemy import select, func, String, cast
-from app.repositories.credits_repository import CreditsRepository
-from app.repositories.subscription_repository import SubscriptionRepository
+from shared.repositories.credits_repository import CreditsRepository
 from app.repositories.payment_record_repository import PaymentRecordRepository
-from app.repositories.user_repository import UserRepository
 from app.services.billing.price_config_service import PriceConfigService
-from app.services.billing.credits_service import CreditsService
-from shared.models.database.subscription import Subscription
+from shared.services.billing import CreditsService
 from shared.models.database.payment_record import PaymentRecord
-from shared.models.database.user import User
+from shared.models.database.user_balance import UserBalance
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from shared.core.exceptions.domain_exceptions import (
-    SystemSettingMissingException, 
-    ValidationException, 
+    SystemSettingMissingException,
+    ValidationException,
     NotFoundException,
     StripeServiceException,
-    AuthException
+    AuthException,
+    KnowhereException,
 )
+from app.services.rate_limit.identity_cache import identity_cache
+from app.services.rate_limit.tier_service import TierService
 
 class StripeService:
     """Stripe支付服务"""
@@ -34,14 +35,11 @@ class StripeService:
     def __init__(self):
         if not settings.STRIPE_SECRET_KEY:
             raise SystemSettingMissingException(
-                setting_name="STRIPE_SECRET_KEY",
-                internal_message="Stripe API key not configured"
+                internal_message="Stripe API key not configured (STRIPE_SECRET_KEY)"
             )
         stripe.api_key = settings.STRIPE_SECRET_KEY
-        self.subscription_repo = SubscriptionRepository()
         self.credits_repo = CreditsRepository()
         self.payment_record_repo = PaymentRecordRepository()
-        self.user_repo = UserRepository()
         self.price_config_service = PriceConfigService()
         self.credits_service = CreditsService()
     
@@ -83,7 +81,8 @@ class StripeService:
         price_id: str,
         success_url: str,
         cancel_url: str,
-        quantity: int
+        quantity: int,
+        email: Optional[str] = None
     ) -> str:
         """创建Credits包支付会话"""
         try:
@@ -95,37 +94,48 @@ class StripeService:
                     violations=[{"field": "price_id", "description": f"Price ID {price_id} is not a credits package"}]
                 )
 
-            user = await self.user_repo.get(db, user_id)
-            if not user:
-                raise NotFoundException(
-                    resource="User",
-                    resource_id=user_id,
-                    internal_message="User not found for credits checkout"
-                )
+            # Ensure user is initialized (UserBalance exists)
+            await self.credits_service.ensure_user_initialized(db, user_id)
             
-            customer_id = user.stripe_customer_id
+            user_balance = await self.credits_repo.get_user_balance(db, user_id)
+            if not user_balance:
+                 # Should not happen after ensure_user_initialized
+                 raise ValidationException(
+                     user_message="Failed to initialize user balance",
+                     violations=[{"field": "user_id", "description": f"Failed to initialize user balance for {user_id}"}]
+                 )
+
+            customer_id = user_balance.stripe_customer_id
+            
             if not customer_id:
                 # 尝试通过邮箱查找现有 Customer
-                if user.email:
-                    existing_customers = stripe.Customer.list(email=user.email, limit=1)
+                if email:
+                    existing_customers = stripe.Customer.list(email=email, limit=1)
                     if existing_customers.data:
                         customer_id = existing_customers.data[0].id
                 
                 if not customer_id:
                     # 创建新的 Customer
+                    if not email:
+                         # For new customers, we prefer having an email.
+                         # If no email provided, we can't create a good customer record.
+                         # But technically Stripe allows it.
+                         # Better: Require email for new billing profiles.
+                         raise ValidationException(
+                             user_message="Email required for first-time payment",
+                             violations=[{"field": "email", "description": "Email is required to create a billing profile"}]
+                         )
+
                     customer_params = {
-                        'email': user.email,
+                        'email': email,
                         'metadata': {'user_id': str(user_id)}
                     }
-                    if user.username:
-                        customer_params['name'] = user.username
+                    # Username is not available without User model, omit it.
                     
                     customer = stripe.Customer.create(**customer_params)
                     customer_id = customer.id
                 
-                # 更新用户的 stripe_customer_id
-                user.stripe_customer_id = customer_id
-                await db.commit()
+                user_balance.stripe_customer_id = customer_id
 
             # 统一的 metadata（必须是字符串，确保 charge/refund 时可取到 user_id）
             metadata = {
@@ -164,9 +174,12 @@ class StripeService:
             }
 
             session = stripe.checkout.Session.create(**session_params)
+
+            await db.commit()
+
             return str(session.url or "")
         except stripe.StripeError as e:
-            logger.error(f"创建Credits包支付会话失败: {e}")
+            logger.error(f"Stripe credits checkout session failed: {e}")
             raise StripeServiceException(
                 internal_message=f"Stripe credits checkout session failed: {e}"
             )
@@ -216,7 +229,7 @@ class StripeService:
             logger.error(f"Invalid signature: {e}")
             raise AuthException(
                 user_message="Invalid webhook signature",
-                reason="WEBHOOK_SIGNATURE_INVALID"
+                internal_message=f"Webhook signature verification failed: {e}"
             )
     
     async def _process_webhook_event(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
@@ -275,65 +288,7 @@ class StripeService:
         await db.flush()  # 获取ID但不提交
         
         try:
-            if mode == 'subscription':
-                # 订阅类型
-                plan_id = metadata.get('plan_id')
-                stripe_subscription_id = session.get('subscription')
-                
-                if not plan_id or not stripe_subscription_id:
-                    logger.error(f"订阅信息不完整: plan_id={plan_id}, subscription_id={stripe_subscription_id}")
-                    return {'status': 'error', 'message': 'Incomplete subscription info'}
-                
-                # 从价格配置获取商品描述等信息
-                try:
-                    price_id = await self.price_config_service.get_plan_price_id(db, plan_id)
-                    price_config = await self.price_config_service.get_price_config(db, price_id)
-                    # 更新支付记录的extra_metadata，添加商品信息
-                    payment_record.extra_metadata = {
-                        **payment_metadata,
-                        'product_description': f"{plan_id.upper()} 订阅套餐",
-                        'plan_id': plan_id,
-                        'price_id': price_id,
-                        'product_metadata': price_config.extra_metadata or {}  # 从价格配置获取商品描述等信息
-                    }
-                except Exception as e:
-                    logger.warning(f"获取价格配置信息失败: {e}，使用默认值")
-                    payment_record.extra_metadata = {
-                        **payment_metadata,
-                        'product_description': f"{plan_id.upper()} 订阅套餐",
-                        'plan_id': plan_id
-                    }
-                
-                # 创建订阅记录
-                subscription = Subscription(
-                    user_id=user_id,
-                    plan_type=plan_id,
-                    stripe_subscription_id=stripe_subscription_id,
-                    status='active',
-                    start_date=datetime.utcnow(),
-                    subscription_metadata={'session_id': session_id}
-                )
-                db.add(subscription)
-                await db.flush()  # 获取ID但不提交
-                
-                # 更新支付记录
-                payment_record.status = 'succeeded'
-                payment_record.plan_id = plan_id
-                payment_record.stripe_subscription_id = stripe_subscription_id
-                payment_record.processed_at = datetime.utcnow()
-                await db.commit()
-                await db.refresh(payment_record)
-                
-                logger.info(f"订阅创建成功: user_id={user_id}, plan_id={plan_id}, subscription_id={stripe_subscription_id}")
-                return {
-                    'status': 'success',
-                    'event_type': 'checkout.session.completed',
-                    'user_id': user_id,
-                    'plan_id': plan_id,
-                    'payment_type': 'subscription'
-                }
-            
-            elif mode == 'payment' and payment_type == 'credits_package':
+            if mode == 'payment' and payment_type == 'credits_package':
                 # Credits包类型
                 price_id = metadata.get('price_id')
                 
@@ -372,10 +327,10 @@ class StripeService:
                 
                 # 增加Credits
                 await self.credits_service.add_credits(
-                    db,
-                    user_id,
-                    credits_amount,
-                    f"购买Credits包: {product_description}",
+                    session=db,
+                    user_id=user_id,
+                    amount=credits_amount,
+                    reason=f"Purchase credits pack: {product_description}",
                     stripe_payment_id=session.get('payment_intent')
                 )
                 
@@ -383,9 +338,16 @@ class StripeService:
                 payment_record.status = 'succeeded'
                 payment_record.credits_amount = credits_amount
                 payment_record.processed_at = datetime.utcnow()
+
+                await TierService.refresh_tier(user_id, db)
                 await db.commit()
                 await db.refresh(payment_record)
-                
+
+                await identity_cache.invalidate_user(
+                    redis_pool_manager.get_redis_service(),
+                    user_id,
+                )
+
                 logger.info(f"Credits包购买成功: user_id={user_id}, credits={credits_amount}, price_id={price_id}")
                 return {
                     'status': 'success',
@@ -477,10 +439,10 @@ class StripeService:
             
             # 增加Credits
             await self.credits_service.add_credits(
-                db,
-                user_id,
-                credits_amount,
-                f"buy credits - {credits_amount} Credits",
+                session=db,
+                user_id=user_id,
+                amount=credits_amount,
+                reason=f"buy credits - {credits_amount} Credits",
                 stripe_payment_id=payment_intent_id
             )
             
@@ -488,9 +450,16 @@ class StripeService:
             payment_record.status = 'succeeded'
             payment_record.credits_amount = credits_amount
             payment_record.processed_at = datetime.utcnow()
+
+            await TierService.refresh_tier(user_id, db)
             await db.commit()
             await db.refresh(payment_record)
-            
+
+            await identity_cache.invalidate_user(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+            )
+
             logger.info(f"buy credits success: user_id={user_id}, credits={credits_amount}, payment_intent_id={payment_intent_id}")
             return {
                 'status': 'success',
@@ -518,42 +487,18 @@ class StripeService:
         if not subscription_id:
             logger.warning("Invoice缺少subscription ID")
             return {'status': 'ignored', 'message': 'Missing subscription_id'}
-        
-        try:
-            # 根据Stripe订阅ID查找本地订阅记录
-            subscription = await self.subscription_repo.get_by_stripe_subscription_id(db, subscription_id)
-            if subscription:
-                # 更新订阅状态为active
-                await self.subscription_repo.update_status(db, subscription.id, 'active')
-                logger.info(f"订阅续费成功: subscription_id={subscription_id}")
-            else:
-                logger.warning(f"未找到本地订阅记录: stripe_subscription_id={subscription_id}")
-            
-            return {'status': 'success', 'subscription_id': subscription_id}
-        except KnowhereException:
-            raise
-        except Exception as e:
-            logger.error(f"处理invoice.payment_succeeded失败: {e}", exc_info=True)
-            raise StripeServiceException(
-                internal_message=f"处理invoice.payment_succeeded失败: {str(e)}",
-                original_exception=e
-            )
-    
+
+        return {'status': 'ignored', 'message': 'Subscription renewal not implemented'}
+
     async def _handle_subscription_deleted(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
         """处理订阅删除事件"""
         subscription = event['data']['object']
         stripe_subscription_id = subscription['id']
-        
+
         try:
-            # 根据Stripe订阅ID查找本地订阅记录
-            local_subscription = await self.subscription_repo.get_by_stripe_subscription_id(db, stripe_subscription_id)
-            if local_subscription:
-                # 更新订阅状态为已取消
-                await self.subscription_repo.update_status(db, local_subscription.id, 'canceled')
-                logger.info(f"订阅已取消: subscription_id={stripe_subscription_id}")
-            else:
-                logger.warning(f"未找到本地订阅记录: stripe_subscription_id={stripe_subscription_id}")
-            
+            # Subscription management not yet implemented
+            logger.warning(f"Local subscription record not found: stripe_subscription_id={stripe_subscription_id}")
+
             return {'status': 'success', 'subscription_id': stripe_subscription_id}
         except KnowhereException:
             raise
@@ -644,7 +589,7 @@ class StripeService:
                     credits_refunded = -int(
                         price_cfg.credits_amount
                         * abs(refund_amount_cents)
-                        / abs(price_cfg.amount_cents) // credits_amount * quantity
+                        / abs(price_cfg.amount_cents) # credits_amount * quantity
                     )
             except Exception as e:
                 logger.warning(f"退款计算Credits失败，price_id={price_id}: {e}")
@@ -660,12 +605,13 @@ class StripeService:
 
         # 同步扣减用户余额（credits_refunded 为负数表示扣除）
         if credits_refunded is not None and credits_refunded < 0:
-            from sqlalchemy import update
-            from shared.models.database.user import User
-            await db.execute(
-                update(User)
-                .where(User.id == user_id)
-                .values(credits_balance=User.credits_balance + credits_refunded)
+            await self.credits_service.add_credits(
+                session=db,
+                user_id=user_id,
+                amount=credits_refunded,
+                reason="Refund adjustment",
+                transaction_type="refund",
+                transaction_metadata={"refund_id": refund_id, "charge_id": charge_id}
             )
 
         refund_metadata = {
@@ -708,25 +654,3 @@ class StripeService:
             "payment_intent_id": payment_intent_id,
             "refund_id": refund_id,
         }
-    
-    async def get_subscription(self, stripe_subscription_id: str) -> Dict[str, Any]:
-        """获取订阅信息"""
-        try:
-            subscription = stripe.Subscription.retrieve(stripe_subscription_id)
-            return subscription
-        except stripe.StripeError as e:
-            logger.error(f"获取订阅信息失败: {e}")
-            raise StripeServiceException(
-                internal_message=f"Failed to get Stripe subscription: {e}"
-            )
-    
-    async def cancel_subscription(self, stripe_subscription_id: str) -> Dict[str, Any]:
-        """取消订阅"""
-        try:
-            subscription = stripe.Subscription.delete(stripe_subscription_id)  # type: ignore[arg-type]
-            return subscription
-        except stripe.StripeError as e:
-            logger.error(f"取消订阅失败: {e}")
-            raise StripeServiceException(
-                internal_message=f"Failed to cancel Stripe subscription: {e}"
-            )

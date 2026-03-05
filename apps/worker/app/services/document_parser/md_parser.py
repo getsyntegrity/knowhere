@@ -14,13 +14,13 @@ from app.services.document_parser.layout_parser import (md_heading_match,
 from app.services.document_parser.table_parser import (extract_tables_by_forms,
                                                        extract_tb_keywords,
                                                        identify_tables)
+from app.services.document_parser.html_parser import first_cols_rows_html, merge_html_tables
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
 from app.services.document_parser.txt_parser import extract_summary_keywords
 from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
 from loguru import logger
-from tqdm import tqdm
 
 
 def find_surround_context(md_lines, lid):
@@ -69,7 +69,7 @@ def heading_md_relocate(md_lines, heading_preds):
     return md_lines  # note the length=original md_lines but contents/level are updated
 
 
-async def eval_md_headings(md_lines, source_type, toc_hierarchies=None, smart_parse=False, model_name=None, output_dir=None):
+async def eval_md_headings(md_lines, source_type, toc_hierarchies=None, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None):
     """Evaluate markdown headings with optional TOC hierarchies context"""
     heading_preds = await pred_titles(
         md_lines, source_type, 
@@ -77,7 +77,8 @@ async def eval_md_headings(md_lines, source_type, toc_hierarchies=None, smart_pa
         enable_regx=True, 
         smart_parse=smart_parse,
         model_name=model_name,
-        output_dir=output_dir
+        output_dir=output_dir,
+        layout_json_path=layout_json_path
     )
 
     if len(heading_preds) == 0:
@@ -137,6 +138,9 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
 
     md_lines = [l.strip() for l in md_lines if l.strip() != ""]
     
+    # Preprocess: merge multi-line HTML tables into single lines
+    md_lines = merge_html_tables(md_lines)
+    
     # Detect TOC using async LLM-based detection (sxjg logic)
     model_name = base_llm_paras.get("model_name", "deepseek-chat") if base_llm_paras else "deepseek-chat"
     toc_hierarchies, md_lines = await detect_tocs_in_texts(md_lines, model_name=model_name)
@@ -166,9 +170,15 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
     content = ''
     # Use relative_root as initial path (not absolute output_dir)
     path = relative_root if relative_root else ""
-    table_count = 0
-    img_count = 0
+    table_count = 1
+    img_count = 1
     path_counter = {}  # Track path occurrences for deduplication
+
+    # Find layout.json path
+    layout_json_path = os.path.join(output_dir, 'layout.json')
+    if not os.path.exists(layout_json_path):
+        layout_json_path = None
+        logger.debug("layout.json not found, META features will not be added")
 
     # estimate hierarchies with toc_hierarchies context
     lines_with_heading = await eval_md_headings(
@@ -177,11 +187,13 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
         toc_hierarchies=toc_hierarchies,
         smart_parse=base_llm_paras["smart_title_parse"], 
         model_name=model_name,
-        output_dir=output_dir
+        output_dir=output_dir,
+        layout_json_path=layout_json_path
     )
 
     time_stamp = get_str_time()
-    for i, line in tqdm(enumerate(lines_with_heading), total=len(lines_with_heading), desc="Parsing md data..."):
+    logger.debug("Parsing md data... total_lines={}", len(lines_with_heading))
+    for i, line in enumerate(lines_with_heading):
         if '<!--' in line and '-->' in line:
             if 'page' in line or 'Slide number' in line: 
                 current_pg_num += 1
@@ -189,6 +201,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
 
         last_context = find_surround_context(lines_with_heading, i) # record the previous and next line which is not table/image
         current_heading, current_heading_level = md_heading_match(line, as_is=False)
+        
         if not current_heading_level==-1: # indicate a new path should be evaluated or added
             if not content.strip()=='': # record contents of the last path and reset content
                 df_list, content = await update_df_list(df_list, content, path, base_llm_paras, time_stamp)
@@ -229,69 +242,125 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
 
         else: # no path change, remain in the same hierarchy
             # a. handle lines containing images
-            img_name = path_handle(last_context[:10], mode="clean_single")
-            img_name = f"image-{str(img_count)}-{img_name}"
-            imgs = await detect_summary_img_md(line, img_name, output_dir, mode=base_llm_paras['summary_image'])
+            img_name_context = path_handle(last_context[:10], mode="clean_single")
+            img_name = f"image-{str(img_count)}-{img_name_context}"
+            # Pass semantic context (not img_name) to avoid "image-" prefix duplication
+            imgs = await detect_summary_img_md(line, last_context, output_dir, mode=base_llm_paras['summary_image'])
 
             for img_path, img_summary in imgs:
                 img_suffix = os.path.splitext(img_path)[-1]
                 update_img_path = os.path.join(img_dir, f"{img_name}{img_suffix}")
-                os.rename(os.path.join(output_dir, img_path), update_img_path) # update image path, not using uuid
 
-                img_id = 'IMAGE_' + gen_str_codes((img_summary + img_path.split(os.sep)[-1])) + '_IMAGE'
-                img_kid = gen_str_codes(img_id + str(uuid.uuid4()))
-                img_content = ('\n' + img_id + '\n' + img_summary + '\n')
-                content = content + ('\n' + img_id + '\n' + img_summary + '\n')
+                # Check if source image file exists before renaming
+                source_path = os.path.join(output_dir, img_path)
+                if not os.path.exists(source_path):
+                    logger.warning(f"Image file not found, skipping rename: {source_path}")
+                    img_count += 1
+                    continue
 
-                # Use relative path for images: "images/xxx.png"
+                os.rename(source_path, update_img_path)
+
+                # Image index (always present)
+                image_index = f"image-{img_count}"
+                
+                # Fallback: LLM summary -> last_context -> None
+                if img_summary:
+                    effective_summary = img_summary
+                elif last_context:
+                    effective_summary = last_context
+                else:
+                    effective_summary = None
+                
+                temp_uid = gen_str_codes((effective_summary or image_index) + img_path.split(os.sep)[-1] + str(img_count))
+                img_id = 'IMAGE_' + temp_uid + '_IMAGE'
+                
+                # Build img_summary_field for df_list: image-n + optional summary
+                if effective_summary:
+                    img_summary_field = f"{image_index}\n{effective_summary}"
+                else:
+                    img_summary_field = image_index
+                
+                # Build image_ref for content: image-n + optional summary + image_id
+                if effective_summary:
+                    img_content = f"\n{image_index}\n{effective_summary}\n{img_id}\n"
+                else:
+                    img_content = f"\n{image_index}\n{img_id}\n"
+                
+                content = content + img_content
+
                 relative_img_path = f"images/{img_name}{img_suffix}"
-                df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary, img_kid, "", "", time_stamp])
+                df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary_field, temp_uid, "", "", time_stamp])
                 img_count += 1
 
             # b. handle lines containing tables
             tb_bool, form, _ = identify_tables(line)
             if tb_bool:
-                table_lines.append(line)
-                if i+1 >= len(lines_with_heading):
-                    tb_bool_next = False
-                else:
-                    tb_bool_next, _, _ = identify_tables(lines_with_heading[i+1].strip()) #TODO can be used for cross-page table optimization
-
-                if not tb_bool_next or i==len(lines_with_heading)-1: # if it is html, the next line is not table_line
-                    if form=='md':
+                if form == 'html':
+                    # each line is a complete table - process immediately
+                    tb_str = line
+                elif form == 'md':
+                    # For MD tables, accumulate lines until table ends
+                    table_lines.append(line)
+                    if i+1 >= len(lines_with_heading):
+                        tb_bool_next = False
+                    else:
+                        tb_bool_next, _, _ = identify_tables(lines_with_heading[i+1].strip())
+                    
+                    if not tb_bool_next or i==len(lines_with_heading)-1:
                         cleaned_table_lines, error_lines = clean_md_table_lines(table_lines, start_line_num=i)
                         tb_str = '\n'.join(cleaned_table_lines)
                         error_line_numbers.extend(error_lines)
                         tb_str = extract_tables_by_forms(tb_str, form='md')
-                    
-                    elif form=='html':
-                        tb_str = line
-
-                    tb_name = extract_tb_keywords(tb_str)
-                    if base_llm_paras['summary_table']:
-                        tb_summary = await extract_summary_keywords(tb_str, type_="summary")
-                        tb_name = (tb_summary + " " + last_context)[:30]
                     else:
-                        tb_summary = (last_context + " " + tb_name.strip()).strip()
-                        tb_name = tb_name[:20]
+                        continue  # Keep accumulating MD table lines
+                else:
+                    continue  # Unknown form, skip
 
-                    tb_name = path_handle(f"table-{str(table_count)}-{tb_name}", mode="clean_single")
-                    table_id = 'TABLE_' + gen_str_codes(tb_str) + '_TABLE'
-                    table_kid = gen_str_codes(table_id + str(uuid.uuid4()))
-                    tb_content = ('\n' + table_id + '\n' + tb_summary + '\n')
-                    content = content + ('\n' + table_id + '\n' + tb_summary + '\n')
-                    tb_path = os.path.join(tb_dir, f"{tb_name}.html")
+                # Extract first row and first column for summary (consistent with docx)
+                first_row_text, first_col_text = first_cols_rows_html(tb_str)
+                
+                # Combine first row and first column as keywords for table retrieval (with dedup)
+                row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
+                col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
+                # Cross-dedup: remove col keywords already present in row keywords
+                row_set = set(row_kw.split(';')) if row_kw else set()
+                col_parts = [k for k in col_kw.split(';') if k and k not in row_set]
+                tb_keywords = ';'.join(filter(None, [row_kw] + col_parts))
+                
+                # Table index (always present)
+                table_index = f"table-{table_count}"
+                
+                # LLM summary (optional, only when summary_table is enabled and succeeds)
+                llm_summary = None
+                if base_llm_paras['summary_table']:
+                    llm_summary = await extract_summary_keywords(tb_str, type_="summary")
+                
+                # Build tb_summary for df_list: table-n + optional LLM summary
+                if llm_summary:
+                    tb_summary = f"{table_index}\n{llm_summary}"
+                else:
+                    tb_summary = table_index
+                
+                raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
+                tb_name = path_handle(f"table-{str(table_count)} {raw_tb_name}", mode="clean_single")
+                temp_uid = gen_str_codes((tb_str + str(table_count)))
+                table_id = 'TABLE_' + temp_uid + '_TABLE'
 
-                    soup = BeautifulSoup(tb_str, 'html.parser')
-                    tb_html_str = soup.prettify()
-                    with open(tb_path, 'w', encoding='utf-8') as f:
-                        f.write(tb_html_str)
+                # Build table_ref for content: table-n + optional LLM summary + table_id
+                if llm_summary:
+                    content = content + f'\n{table_index}\n{llm_summary}\n{table_id}\n'
+                else:
+                    content = content + f'\n{table_index}\n{table_id}\n'
+                tb_path = os.path.join(tb_dir, f"{tb_name}.html")
+                # Add border to HTML tables for consistent display
+                tb_str_with_border = tb_str.replace('<table>', "<table border='1'>").replace('<table ', "<table border='1' ")
+                with open(tb_path, 'w', encoding='utf-8') as f:
+                    f.write(tb_str_with_border)
 
-                    # Use relative path for tables: "tables/xxx.html"
-                    relative_tb_path = f"tables/{tb_name}.html"
-                    df_list.append([tb_content, relative_tb_path, table_id, len(tb_content), "", tb_summary, table_kid, "", "", time_stamp])
-                    table_lines = [] # Reset table_lines after storing the DataFrame
-                    table_count += 1
+                relative_tb_path = f"tables/{tb_name}.html"
+                df_list.append([tb_str, relative_tb_path, table_id, len(tb_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp])
+                table_lines = [] # Reset table_lines after storing the DataFrame
+                table_count += 1
 
             # c. handle plain texts
             if len(imgs)==0 and not tb_bool:

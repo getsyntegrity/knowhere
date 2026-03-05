@@ -5,26 +5,31 @@ import os
 
 from loguru import logger
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BaseConfig(BaseSettings):
     """基础配置类"""
-    
+
     # 环境配置
-    ENVIRONMENT: str = Field(default="development", description="运行环境")
+    ENVIRONMENT: str = Field(default="production", description="运行环境")
     DEBUG: bool = Field(default=False, description="调试模式")
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
-    
+
     # 应用基础配置
     APP_TITLE: str = Field(default="Konwhere AI知识库管理系统", description="应用标题")
     APP_VERSION: str = Field(default_factory=lambda: os.getenv("APP_VERSION", "1.0.0"), description="应用版本（从环境变量APP_VERSION读取，如v1.0.0）")
     APP_DESCRIPTION: str = Field(default="基于AI的知识库管理和智能问答系统", description="应用描述")
-    
+
+    # Logging configuration
+    LOGFIRE_TOKEN: str = Field(default="", description="Logfire API token for distributed tracing")
+
     # 安全配置
     SECRET_KEY: str = Field(..., description="JWT密钥")
     ALGORITHM: str = Field(default="HS256", description="JWT算法")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=10080, description="访问令牌过期时间（分钟）")
+    WEBHOOK_MASTER_KEY: str = Field(default="", description="Webhook encryption master key")
+    INTERNAL_DASHBOARD_ENDPOINT: str = Field(default="http://localhost:3000", description="Internal Dashboard endpoint")
     
     # 路径配置
     TMP_PATH: str = Field(..., description="临时文件路径")
@@ -64,8 +69,9 @@ class BaseConfig(BaseSettings):
         logger.info("文件路径验证成功")
         return True
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"  # 忽略额外的环境变量
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"  # 忽略额外的环境变量
+    )

@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 import aiohttp
 from shared.core.database import get_db_context
+from shared.core.logging import LogEvent
 from shared.core.state_machine.states import JobStatus
 from shared.models.schemas.oss_event import OSSEvent
 from shared.models.schemas.s3_event import S3Event
@@ -96,7 +97,7 @@ def verify_oss_signature(request_body: bytes, headers: Dict[str, str]) -> bool:
         return False
 
 
-def extract_job_id_from_s3_key(s3_key: str) -> str:
+def extract_job_id_from_s3_key(s3_key: str) -> str | None:
     """
     从S3键中提取job_id
     
@@ -128,8 +129,9 @@ async def handle_s3_events_get(
     """
     logger.info(f"======== S3事件GET请求 =========")
     logger.info(f"Headers: {dict(request.headers)}")
-    logger.info(f"Client IP: {request.client.host}")
-    
+    if request.client:
+        logger.info(f"Client IP: {request.client.host}")
+
     # 检查是否是SNS订阅确认请求
     if x_amz_sns_message_type == "SubscriptionConfirmation":
         logger.info("收到SNS订阅确认请求")
@@ -148,9 +150,9 @@ async def handle_s3_events(
     """
     处理S3事件通知POST请求 - 支持AWS SNS、MinIO和OSS
     """
-    logger.info(f"======== S3事件请求 =========")
-    logger.info(f"Headers: {dict(request.headers)}")
-    logger.info(f"Client IP: {request.client.host}")
+    logger.bind(event = LogEvent.S3_WEBHOOK_EVENT).info(f"S3 event Headers: {dict(request.headers)}")
+    if request.client:
+        logger.info(f"Client IP: {request.client.host}")
     try:
         # 获取请求体
         body = await request.body()
@@ -224,6 +226,14 @@ async def handle_sns_event(body: bytes):
             try:
                 s3_event_data = json.loads(sns_message['Message'])
                 logger.info(f"S3事件数据: {s3_event_data}")
+                
+                # Skip S3 test events — AWS/LocalStack sends these when
+                # bucket notification configuration is first applied.
+                # They lack the standard Records[] structure.
+                if isinstance(s3_event_data, dict) and s3_event_data.get('Event') == 's3:TestEvent':
+                    logger.info("Skip S3 test event")
+                    return {"message": "S3 test event confirmed and skipped"}
+                
                 s3_event = S3Event(**s3_event_data)
                 
                 # 处理上传事件

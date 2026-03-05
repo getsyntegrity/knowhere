@@ -1,17 +1,20 @@
 """
 API Key 管理服务
 """
+import asyncio
 import hashlib
 import uuid
 from datetime import datetime
 from typing import List, Optional
 
 from shared.models.database.api_key import APIKey
-from shared.models.database.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import ValidationException, NotFoundException, KnowhereException, APIKeyOperationException
+from shared.core.database import get_db_context
+from shared.core.config import redis_pool_manager
+from app.services.rate_limit.identity_cache import identity_cache
 
 class APIKeyService:
     """API Key管理服务"""
@@ -71,27 +74,17 @@ class APIKeyService:
         
         return api_key
     
-    async def validate_api_key(self, session: AsyncSession, api_key: str) -> Optional[User]:
-        """验证API Key"""
-        # 1. 从缓存获取（如果实现了缓存）
-        user_id = await self._get_cached_user_id(api_key)
-        if user_id:
-            return await self._get_user_by_id(session, user_id)
-        
-        # 2. 从数据库获取
+    async def validate_api_key(self, session: AsyncSession, api_key: str) -> Optional[str]:
+        """Validate API key against DB, return user_id or None."""
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
-        
+
         if not api_key_record or not api_key_record.is_valid():
             return None
-        
-        # 3. 更新最后使用时间
-        await self.repository.update_last_used(session, api_key_record.id)
-        
-        # 4. 缓存结果
-        await self._cache_api_key(api_key, str(api_key_record.user_id))
-        
-        return await self._get_user_by_id(session, str(api_key_record.user_id))
+
+        self._schedule_last_used_update(str(api_key_record.id))
+
+        return str(api_key_record.user_id)
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
         """撤销API Key（直接删除）"""
@@ -118,6 +111,11 @@ class APIKeyService:
             logger.info("事务已提交")
             # 4. 清理缓存
             await self._remove_cached_api_key(api_key_id)
+            await identity_cache.invalidate_apikey(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+                api_key.key_hash,
+            )
         
         return success
     
@@ -155,6 +153,7 @@ class APIKeyService:
         
         # 3. 更新数据库
         from sqlalchemy import update
+        from shared.models.database.api_key import APIKey
         await session.execute(
             update(APIKey)
             .where(APIKey.id == api_key_id)
@@ -165,6 +164,11 @@ class APIKeyService:
         # 4. 更新缓存
         await self._cache_api_key(new_api_key, user_id)
         await self._remove_cached_api_key(api_key_id)
+        await identity_cache.invalidate_apikey(
+            redis_pool_manager.get_redis_service(),
+            user_id,
+            api_key.key_hash,
+        )
         
         return new_api_key
     
@@ -180,26 +184,23 @@ class APIKeyService:
         enabled_modules = api_key_record.enabled_modules or []
         return "all" in enabled_modules or module in enabled_modules
     
-    async def _get_user_by_id(self, session: AsyncSession, user_id: str) -> Optional[User]:
-        """根据ID获取用户"""
-        from sqlalchemy import select
-        result = await session.execute(
-            select(User).where(User.id == user_id)
-        )
-        return result.scalar_one_or_none()
-    
-    async def _cache_api_key(self, api_key: str, user_id: str):
-        """缓存API Key到Redis"""
-        # TODO: 实现Redis缓存
-    
-    async def _get_cached_user_id(self, api_key: str) -> Optional[str]:
-        """从缓存获取用户ID"""
-        # TODO: 实现Redis缓存
-        return None
-    
-    async def _remove_cached_api_key(self, api_key_id: str):
-        """从缓存中移除API Key"""
-        # TODO: 实现Redis缓存
+    def _schedule_last_used_update(self, api_key_id: str) -> None:
+        """Schedule a best-effort background update for api_keys.last_used_at."""
+        try:
+            asyncio.create_task(
+                self._update_last_used_best_effort(api_key_id),
+                name=f"api_key_last_used:{api_key_id}",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to schedule API key last-used update (ignored): {e}")
+
+    async def _update_last_used_best_effort(self, api_key_id: str) -> None:
+        """Best-effort async update; failures are logged but never propagated."""
+        try:
+            async with get_db_context() as db:
+                await self.repository.update_last_used(db, api_key_id)
+        except Exception as e:
+            logger.warning(f"Failed to update API key last-used time (ignored): {e}")
     
     async def get_api_key(self, session: AsyncSession, user_id: str, api_key_id: str) -> Optional[APIKey]:
         """获取单个API Key"""
@@ -227,6 +228,13 @@ class APIKeyService:
             api_key.is_active = not api_key.is_active
             await session.commit()
             await session.refresh(api_key)
+
+            if not api_key.is_active:
+                await identity_cache.invalidate_apikey(
+                    redis_pool_manager.get_redis_service(),
+                    user_id,
+                    api_key.key_hash,
+                )
             
             logger.info(f"API Key状态切换成功: {api_key_id}, 新状态: {api_key.is_active}")
             return True

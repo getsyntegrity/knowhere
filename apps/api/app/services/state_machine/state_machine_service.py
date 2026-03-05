@@ -32,78 +32,85 @@ class StateMachineService:
         transition_reason: str = "normal_transition",
         operator_id: Optional[str] = None,
         operator_type: str = "system",
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        auto_commit: bool = True
     ) -> bool:
         """
         执行状态转换
         
         Args:
-            db: 数据库会话
+            db: Database session
             job_id: Job ID
-            to_state: 目标状态
-            transition_reason: 转换原因
-            operator_id: 操作者ID
-            operator_type: 操作者类型
-            metadata: 转换时的额外信息
-            
+            to_state: Target state
+            transition_reason: Reason for transition
+            operator_id: Operator ID
+            operator_type: Operator type
+            metadata: Extra info at transition time
+            auto_commit: Whether to auto-commit the transaction
+
         Returns:
-            bool: 转换是否成功
+            bool: Whether the transition succeeded
         """
-        # 使用乐观锁重试机制
+        # Optimistic-lock retry mechanism
         max_retries = 3
-        
+
         for attempt in range(max_retries):
             try:
-                # 1. 获取当前Job（使用乐观锁）
+                # 1. Get current job (with optimistic lock)
                 job = await self._get_job_with_version(db, job_id)
                 if not job:
-                    logger.error(f"Job {job_id} 不存在")
+                    logger.error(f"Job {job_id} does not exist")
                     return False
-                
-                # 2. 记录状态历史
+
+                # 2. Record state history
                 await self._record_state_audit_log(
-                    db, job_id, job.status, to_state, 
+                    db, job_id, job.status, to_state,
                     transition_reason, operator_id, operator_type, metadata
                 )
-                
-                # 3. 更新Job状态（使用乐观锁）
+
+                # 3. Update job state (with optimistic lock)
                 old_state = job.status
                 old_version = job.version
                 success = await self._update_job_state(
                     db, job_id, to_state, old_version, metadata
                 )
-                
+
                 if success:
-                    # 5. 更新Redis缓存
+                    # 5. Update Redis cache
                     await self._update_redis_cache(job_id, to_state, metadata)
-                    
-                    # 6. 设置状态超时
+
+                    # 6. Set state timeout
                     await self._set_state_timeout(job_id, to_state)
-                    
-                    # 7. 提交数据库事务
-                    await db.commit()
-                    
-                    logger.info(f"Job {job_id} 状态转换成功: {old_state} -> {to_state}")
+
+                    # 7. Commit DB transaction (only when auto_commit=True)
+                    if auto_commit:
+                        await db.commit()
+                        logger.info(f"Job {job_id} state transition succeeded: {old_state} -> {to_state}")
+                    else:
+                        # Flush to ensure subsequent operations see the change
+                        await db.flush()
+                        logger.info(f"Job {job_id} state transition staged (awaiting external commit): {old_state} -> {to_state}")
+
                     return True
                 else:
-                    # 乐观锁冲突，重试
+                    # Optimistic lock conflict, retry
                     if attempt < max_retries - 1:
-                        logger.warning(f"Job {job_id} 状态更新冲突，重试 {attempt + 1}/{max_retries}")
-                        await asyncio.sleep(0.1 * (2 ** attempt))  # 指数退避
+                        logger.warning(f"Job {job_id} state update conflict, retry {attempt + 1}/{max_retries}")
+                        await asyncio.sleep(0.1 * (2 ** attempt))  # Exponential backoff
                         continue
                     else:
-                        logger.error(f"Job {job_id} 状态更新失败，重试次数已用完")
+                        logger.error(f"Job {job_id} state update failed, retries exhausted")
                         return False
-                
+
             except Exception as e:
-                logger.error(f"Job {job_id} 状态转换失败: {e}")
+                logger.error(f"Job {job_id} state transition failed: {e}")
                 try:
-                    # 安全地回滚事务，避免在不同事件循环中操作连接
+                    # Safely rollback to avoid operating on a closed connection
                     if db.is_active:
                         await db.rollback()
                 except Exception as rollback_error:
-                    # 如果回滚失败（可能是连接已关闭或在不同事件循环中），只记录日志
-                    logger.warning(f"Job {job_id} 回滚事务失败: {rollback_error}")
+                    # If rollback fails (connection closed or different event loop), just log
+                    logger.warning(f"Job {job_id} rollback failed: {rollback_error}")
                 return False
         
         return False
@@ -138,7 +145,8 @@ class StateMachineService:
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None,
         operator_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        auto_commit: bool = True
     ) -> bool:
         """Mark Job as failed state"""
         try:
@@ -154,7 +162,8 @@ class StateMachineService:
             return await self.transition(
                 db, job_id, JobStatus.FAILED.value, 
                 "mark_failed", operator_id, "system",
-                transition_metadata
+                transition_metadata,
+                auto_commit=auto_commit
             )
             
         except Exception as e:
@@ -166,13 +175,15 @@ class StateMachineService:
         db: AsyncSession, 
         job_id: str, 
         result_metadata: Optional[Dict[str, Any]] = None,
-        operator_id: Optional[str] = None
+        operator_id: Optional[str] = None,
+        auto_commit: bool = True
     ) -> bool:
         """标记Job为完成状态"""
         try:
             return await self.transition(
                 db, job_id, JobStatus.DONE.value, 
-                "mark_completed", operator_id, "system", result_metadata
+                "mark_completed", operator_id, "system", result_metadata, 
+                auto_commit=auto_commit
             )
         except Exception as e:
             logger.error(f"标记Job {job_id} 完成状态时出错: {e}")
@@ -225,13 +236,13 @@ class StateMachineService:
                 # 更新Redis缓存
                 await self._update_redis_cache(job_id, current_state, retry_metadata)
                 
-                # 重新设置超时
+                # Reset timeout
                 await self._set_state_timeout(job_id, current_state)
-                
-                # 提交数据库事务
+
+                # Commit DB transaction
                 await db.commit()
-                
-                logger.info(f"Job {job_id} 重试处理成功，保持状态: {current_state}")
+
+                logger.info(f"Job {job_id} retry handled successfully, keeping state: {current_state}")
                 return True
             
         except Exception as e:

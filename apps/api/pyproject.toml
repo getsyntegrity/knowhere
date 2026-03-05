@@ -1,0 +1,40 @@
+[project]
+name = "knowhere-api-app"
+version = "0.1.0"
+description = "Knowhere API service"
+requires-python = ">=3.11"
+dependencies = [
+    "knowhere-shared",
+    "fastapi==0.115.14",
+    "uvicorn==0.34.3",
+    "starlette==0.46.2",
+    "sqlalchemy==2.0.42",
+    "alembic==1.13.1",
+    "redis==5.3.1",
+    "celery==5.4.0",
+    "aio-pika==9.3.0",
+    "stripe==13.0.1",
+    "pydantic==2.11.7",
+    "PyJWT==2.10.1",
+    "httpx==0.28.1",
+    "aiohttp==3.12.15",
+    "loguru==0.7.3",
+    "moesifapi==1.5.5",
+    "limits>=5.8,<6",
+    "logfire[celery,fastapi,httpx,sqlalchemy]>=4.25.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.24.0",
+    "pytest-mock==3.14.0",
+    "fakeredis[lua]>=2.31.0",
+    "pyright>=1.1.396",
+]
+
+[tool.uv.sources]
+knowhere-shared = { path = "../../packages/shared-python", editable = true }
+
+[tool.uv]
+package = false
