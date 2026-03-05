@@ -112,7 +112,7 @@ def setup_logging(
     # Set base context BEFORE any log emission so every line has base fields
     logger.configure(extra={
         "schema_version": "1.0",
-        "environment": settings.ENVIRONMENT,
+        "environment": settings.APP_ENV,
         "event": LogEvent.APP_LOG.value,
     })
 
@@ -137,6 +137,7 @@ def setup_logging(
             logfire.configure(
                 service_name=service_name,
                 token=settings.LOGFIRE_TOKEN,
+                environment=settings.APP_ENV,
                 console=False,
                 distributed_tracing=True,
             )
