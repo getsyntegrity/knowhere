@@ -267,16 +267,39 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
     )
 
 
-async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, mode="api", relative_root=None):
-    if mode == "api":
-        await upload_and_parse(pdf_path, filename, output_dir)
-    else:
-        raise WorkerHandlingException(
-            internal_message=f"Unknown PDF parser mode: {mode}"
+async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, relative_root=None):
+    route = profile.route if profile else "standard"
+    
+    if route == "fast":
+        # Fast path: use pymupdf4llm for local PDF conversion (no MinerU API call)
+        # Handles text, tables, and images — outputs GitHub-compatible markdown
+        logger.info(f"⚡ Fast path: extracting with pymupdf4llm for {filename}")
+        import pymupdf4llm
+        
+        os.makedirs(output_dir, exist_ok=True)
+        image_dir = os.path.join(output_dir, "images")
+        os.makedirs(image_dir, exist_ok=True)
+        
+        md_text = pymupdf4llm.to_markdown(
+            pdf_path,
+            write_images=True,
+            image_path=image_dir,
+            image_format="png",
         )
+        
+        # Write full.md for downstream compatibility
+        full_md_path = os.path.join(output_dir, "full.md")
+        with open(full_md_path, "w", encoding="utf-8") as f:
+            f.write(md_text)
+        
+        img_count = len([f for f in os.listdir(image_dir) if f.endswith(".png")])
+        logger.info(f"⚡ Fast path: wrote {len(md_text)} chars to full.md, {img_count} images extracted")
+    else:
+        # Standard path: MinerU VLM API
+        await upload_and_parse(pdf_path, filename, output_dir)
 
-    logger.info("✅ PDF parsing step 1 complete: Unzipped and stored as md")
+    logger.info("✅ PDF parsing step 1 complete: text extracted")
 
-    base_llm_paras.update({"doc_name":filename})
+    base_llm_paras.update({"doc_name": filename})
     parsed_df = await parse_md(output_dir, source_type='md', file_path=os.path.join(output_dir, 'full.md'), base_llm_paras=base_llm_paras, relative_root=relative_root)
     return parsed_df

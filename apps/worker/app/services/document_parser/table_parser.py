@@ -367,6 +367,15 @@ def _parse_subtable(
     
     df = pd.DataFrame(data, columns=columns, index=row_index)
     
+    # Append original Excel row numbers as the last column for cross-referencing
+    excel_row_numbers = list(range(data_row_start, r_end + 1))
+    if isinstance(df.columns, pd.MultiIndex):
+        n_levels = df.columns.nlevels
+        src_row_key = tuple(['_src_row'] + [''] * (n_levels - 1))
+        df[src_row_key] = excel_row_numbers
+    else:
+        df['_src_row'] = excel_row_numbers
+    
     return {
         'df': df,
         'header_rows': header_rows if not fallback_col_header else [],
@@ -541,10 +550,107 @@ def _split_sheet_recursive(
         return [((eff_r_start, eff_r_end), (eff_c_start, eff_c_end))]
 
 
+# ============================================================================
+# Post-split Merge: Absorb small fragments into nearest neighbor
+# ============================================================================
+
+def _count_non_empty_cells(ws, row_range: Tuple[int, int], col_range: Tuple[int, int]) -> int:
+    """Count non-empty cells in a region."""
+    count = 0
+    for r in range(row_range[0], row_range[1] + 1):
+        for c in range(col_range[0], col_range[1] + 1):
+            if ws.cell(r, c).value is not None:
+                count += 1
+    return count
+
+
+def _merge_small_subtables(
+    ws,
+    subtables: List[Tuple[Tuple[int, int], Tuple[int, int]]],
+    min_cells: int = 4
+) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    """Merge subtables that have too few non-empty cells into their nearest neighbor.
+
+    This is a post-processing step after _split_sheet_recursive to prevent
+    over-fragmentation. Fragments with fewer than min_cells non-empty cells
+    are iteratively absorbed into the nearest neighbor subtable (by bounding-box
+    distance), expanding the neighbor's bounding box to encompass both regions.
+
+    Args:
+        ws: openpyxl worksheet
+        subtables: list of (row_range, col_range) tuples from _split_sheet_recursive
+        min_cells: minimum non-empty cells for a subtable to be kept standalone
+
+    Returns:
+        Merged list of (row_range, col_range) tuples
+    """
+    if len(subtables) <= 1:
+        return subtables
+
+    # Build working list with cell counts
+    items = []
+    for (rr, cr) in subtables:
+        count = _count_non_empty_cells(ws, rr, cr)
+        items.append({'rr': rr, 'cr': cr, 'cells': count})
+
+    # Iteratively merge the smallest sub-threshold fragment
+    changed = True
+    while changed and len(items) > 1:
+        changed = False
+
+        # Find the smallest fragment below threshold
+        min_idx = None
+        for i, item in enumerate(items):
+            if item['cells'] < min_cells:
+                if min_idx is None or item['cells'] < items[min_idx]['cells']:
+                    min_idx = i
+
+        if min_idx is None:
+            break  # All subtables are above threshold
+
+        # Find nearest neighbor by bounding-box gap distance
+        src = items[min_idx]
+        best_j = None
+        best_dist = float('inf')
+        for j, tgt in enumerate(items):
+            if j == min_idx:
+                continue
+            row_gap = max(0, tgt['rr'][0] - src['rr'][1] - 1, src['rr'][0] - tgt['rr'][1] - 1)
+            col_gap = max(0, tgt['cr'][0] - src['cr'][1] - 1, src['cr'][0] - tgt['cr'][1] - 1)
+            dist = row_gap + col_gap
+            if dist < best_dist or (dist == best_dist and tgt['cells'] > items[best_j]['cells']):
+                best_dist = dist
+                best_j = j
+
+        if best_j is None:
+            break  # Should not happen when len(items) > 1
+
+        # Merge: expand neighbor's bounding box to encompass both
+        tgt = items[best_j]
+        merged_rr = (min(src['rr'][0], tgt['rr'][0]), max(src['rr'][1], tgt['rr'][1]))
+        merged_cr = (min(src['cr'][0], tgt['cr'][0]), max(src['cr'][1], tgt['cr'][1]))
+        items[best_j] = {
+            'rr': merged_rr,
+            'cr': merged_cr,
+            'cells': src['cells'] + tgt['cells'],
+        }
+
+        logger.debug(
+            f"Merged small fragment (rows={src['rr']}, cols={src['cr']}, "
+            f"cells={src['cells']}) into neighbor (rows={tgt['rr']}, cols={tgt['cr']})"
+        )
+
+        del items[min_idx]
+        changed = True
+
+    return [(item['rr'], item['cr']) for item in items]
+
+
 def parse_headers_from_excel(
     file_source: Union[str, io.BytesIO],
     sheet_name: Optional[str] = None,
-    split_subtables: bool = True
+    split_subtables: bool = True,
+    include_hidden_sheets: bool = False
 ) -> Dict[str, pd.DataFrame]:
     """
     Parse Excel file using openpyxl to accurately detect headers via merged cell metadata.
@@ -557,6 +663,7 @@ def parse_headers_from_excel(
         file_source: Path to Excel file or BytesIO stream
         sheet_name: Specific sheet to parse (None = all sheets)
         split_subtables: If True, split sheets into subtables based on empty row/column separators (default: True)
+        include_hidden_sheets: If True, parse hidden/very-hidden sheets. Default False (skip them).
     
     Returns:
         Dictionary mapping sheet/subtable names to DataFrames with correctly set headers
@@ -581,6 +688,11 @@ def parse_headers_from_excel(
             
             ws = wb[sn]
             
+            # Skip hidden sheets unless explicitly included
+            if not include_hidden_sheets and ws.sheet_state != 'visible':
+                logger.info(f"Sheet '{sn}' is hidden (state={ws.sheet_state}), skipping")
+                continue
+            
             # Skip empty sheets
             if ws.max_row is None or ws.max_row == 0:
                 logger.debug(f"Sheet '{sn}' is empty, skipping")
@@ -595,7 +707,15 @@ def parse_headers_from_excel(
                 subtable_regions = _split_sheet_recursive(
                     ws, (1, ws.max_row), (1, ws.max_column or 1), merged_ranges
                 )
-                logger.debug(f"Sheet '{sn}': split into {len(subtable_regions)} subtables")
+                # Merge back small fragments to prevent over-fragmentation
+                before_count = len(subtable_regions)
+                subtable_regions = _merge_small_subtables(ws, subtable_regions)
+                if len(subtable_regions) != before_count:
+                    logger.info(
+                        f"Sheet '{sn}': merged {before_count} subtables → {len(subtable_regions)} "
+                        f"(absorbed {before_count - len(subtable_regions)} small fragments)"
+                    )
+                logger.debug(f"Sheet '{sn}': {len(subtable_regions)} subtables after merge")
                 
                 for idx, (row_range, col_range) in enumerate(subtable_regions):
                     result = _parse_subtable(ws, row_range, col_range, merged_ranges)
@@ -644,7 +764,6 @@ def parse_headers_from_excel(
         raise TableParsingException(
             user_message="Failed to parse Excel file headers",
             reason="EXCEL_PRECISION_PARSE_FAILED",
-            file_type="xlsx",
             internal_message=str(e),
             original_exception=e
         )
@@ -970,16 +1089,33 @@ def multiindex_to_tree(multiindex):
 
 def postprocess_tb(df, drop=False):
     if drop:
-        # Drop rows that are all empty
-        df = df.dropna(how='all')
+        # Track if index was originally a simple RangeIndex (no semantic meaning)
+        # dropna(how='all') can turn RangeIndex into Int64Index by introducing gaps,
+        # which would incorrectly trigger the "preserve row index" logic below.
+        was_range_index = isinstance(df.index, pd.RangeIndex)
+        
+        # Drop rows where all data columns are empty (exclude _src_row from the check)
+        # _src_row is always non-null, so including it would prevent any row from being dropped.
+        src_row_cols = [c for c in df.columns
+                        if (isinstance(c, tuple) and c[0] == '_src_row') or c == '_src_row']
+        if src_row_cols:
+            data_cols = [c for c in df.columns if c not in src_row_cols]
+            mask = df[data_cols].isna().all(axis=1)
+            df = df[~mask]
+        else:
+            df = df.dropna(how='all')
+        
+        # If index was originally RangeIndex, re-number it to avoid gaps
+        if was_range_index:
+            df = df.reset_index(drop=True)
         
         # Drop columns that are all empty AND have no meaningful header
         # A column with a valid header should be preserved even if data is empty
-        before_cols = set(df.columns)
         cols_to_drop = []
-        for col in df.columns:
+        for col_idx, col in enumerate(df.columns):
             # Check if all data values are NaN
-            if df[col].isna().all():
+            # Use iloc to avoid ambiguity when MultiIndex has duplicate tuple keys
+            if df.iloc[:, col_idx].isna().all():
                 # Check if the column header is meaningful
                 # For MultiIndex: check if any level has a non-empty meaningful value
                 # For simple index: check if the header is not None/empty
@@ -997,14 +1133,14 @@ def postprocess_tb(df, drop=False):
                 
                 # Only drop if header is not meaningful
                 if not has_meaningful_header:
-                    cols_to_drop.append(col)
+                    cols_to_drop.append(col_idx)
         
         if cols_to_drop:
-            df = df.drop(columns=cols_to_drop)
+            # Use positional indices to drop columns safely (avoids duplicate MultiIndex key issues)
+            cols_to_keep = [i for i in range(len(df.columns)) if i not in cols_to_drop]
+            df = df.iloc[:, cols_to_keep]
         
-        after_cols = set(df.columns)
-        dropped_columns = before_cols - after_cols
-        logger.debug(f"Dropped columns: {list(dropped_columns)}")
+        logger.debug(f"Dropped {len(cols_to_drop)} empty columns")
         
         # Preserve meaningful row index (header columns) as regular columns
         # Only drop=True if it's a simple RangeIndex (no semantic meaning)
@@ -1012,6 +1148,17 @@ def postprocess_tb(df, drop=False):
             # Remember if columns were MultiIndex before reset
             was_multiindex = isinstance(df.columns, pd.MultiIndex)
             n_levels = df.columns.nlevels if was_multiindex else 1
+            
+            # Avoid name collision: if the index name already exists as a column,
+            # clear it before reset_index to prevent "cannot insert X, already exists"
+            existing_col_names = {str(c) for c in df.columns}
+            if isinstance(df.index, pd.MultiIndex):
+                new_names = [None if n is not None and str(n) in existing_col_names else n
+                             for n in df.index.names]
+                df.index.names = new_names
+            elif hasattr(df.index, 'name') and df.index.name is not None:
+                if str(df.index.name) in existing_col_names:
+                    df.index.name = None
             
             df = df.reset_index()  # Converts index to columns
             
@@ -1105,7 +1252,7 @@ def format_tb_scope(df, num):
     return scope_str
 
 
-async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, window_h=10, relative_root=None, use_precision_mode=True):
+async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, window_h=10, relative_root=None, use_precision_mode=True, include_hidden_sheets=False):
     """
     Parse Excel file and extract table content.
     
@@ -1120,6 +1267,7 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
         use_precision_mode: If True, use openpyxl merged cell metadata for accurate
                            header detection. If False, use LLM/heuristic mode.
                            Default is True for better accuracy.
+        include_hidden_sheets: If True, parse hidden/very-hidden sheets. Default False.
     
     Returns:
         DataFrame with parsed table information
@@ -1140,7 +1288,7 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
         # PRECISION MODE: Use openpyxl metadata for accurate header detection
         logger.info("Using precision mode for Excel header detection")
         try:
-            sheets_dict = parse_headers_from_excel(table_stream)
+            sheets_dict = parse_headers_from_excel(table_stream, include_hidden_sheets=include_hidden_sheets)
             precision_mode_active = True
         except Exception as e:
             logger.warning(f"Precision mode failed, falling back to legacy mode: {e}")
@@ -1211,7 +1359,6 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
                 raise TableParsingException(
                     user_message="Failed to parse Excel table content",
                     reason="TABLE_PROCESSING_FAILED",
-                    file_type="xlsx", 
                     internal_message=str(e),
                     original_exception=e
                 )

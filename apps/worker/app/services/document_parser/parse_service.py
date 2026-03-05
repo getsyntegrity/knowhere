@@ -14,6 +14,7 @@ from shared.core.exceptions.domain_exceptions import (
 from shared.core.exceptions.knowhere_exception import KnowhereException
 
 # document_parser imports
+from app.services.document_parser.doc_profiler import profile_document
 
 def cleanup_unreferenced_images(output_dir: str) -> int:
     """
@@ -118,6 +119,11 @@ async def checkerboard_inject_parse(
     file_path_lower = file_full_path.lower()
     parsed_df = None
     
+    # ── Agentic Profiler: classify document before routing ──
+    profile = profile_document(file_full_path, filename)
+    logger.info(f"📋 DocProfile: {profile.summary()}")
+    logger.debug(f"📋 Reasoning: {profile.reasoning}")
+    
     if ".fragment" in file_path_lower:
         logger.debug("file type is fragment")
         from app.services.document_parser.fragment_parser import parse_fragment
@@ -144,7 +150,7 @@ async def checkerboard_inject_parse(
         from app.services.document_parser.pdf_parser import parse_pdfs
 
         if filename and file_full_path:
-            parsed_df = await parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, mode="api", relative_root=relative_root)
+            parsed_df = await parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root)
 
     elif '.docx' in file_path_lower:
         logger.debug(f"file type is docx")
