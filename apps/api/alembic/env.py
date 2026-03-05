@@ -9,7 +9,18 @@ from alembic import context
 # 导入我们的数据库配置和模型
 from shared.core.config import settings
 from shared.core.database import Base
-from shared.models.database import api_key, credits_transaction, knowledge_base, stripe_price_config, payment_record, user_balance, webhook_secret, user
+from shared.models.database import (
+    api_key,
+    credits_transaction,
+    knowledge_base,
+    payment_record,
+    stripe_price_config,
+    user,
+    user_balance,
+    webhook,
+    webhook_log,
+    webhook_secret,
+)
 
 # 创建同步数据库URL（将asyncpg替换为psycopg2）
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
@@ -29,6 +40,13 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 target_metadata = Base.metadata
+
+
+def include_object(object, name, type_, reflected, compare_to):
+    """Exclude externally managed tables from Alembic autogenerate output."""
+    if type_ == "table" and name == "user":
+        return False
+    return True
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -53,6 +71,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         # 使用配置的SSL参数
@@ -81,7 +100,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
         )
 
         with context.begin_transaction():

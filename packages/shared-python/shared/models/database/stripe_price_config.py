@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint, BigInteger
+from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint, BigInteger, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
@@ -31,6 +31,14 @@ class StripePriceConfig(Base):
     
     __table_args__ = (
         UniqueConstraint('price_id', name='uq_stripe_price_config_price_id'),
+        CheckConstraint(
+            "(product_type = 'credits_package' AND credits_amount > 0) OR (product_type = 'subscription')",
+            name='chk_credits_package_has_amount',
+        ),
+        CheckConstraint(
+            'amount_cents >= 0',
+            name='chk_amount_cents_non_negative',
+        ),
     )
     
     def __repr__(self):
@@ -43,4 +51,3 @@ class StripePriceConfig(Base):
     def is_credits_package(self) -> bool:
         """检查是否为Credits包类型"""
         return self.product_type == 'credits_package'
-
