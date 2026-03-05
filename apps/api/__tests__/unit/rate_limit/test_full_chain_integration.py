@@ -30,6 +30,7 @@ from .helpers import (
     async_value,
     build_real_config,
     make_request,
+    resolve_dep,
 )
 
 
@@ -96,7 +97,7 @@ async def test_full_chain_allows_first_request(monkeypatch):
 
     # L0 + identity
     request = make_request()
-    current_user = await deps.with_current_user(request=request, user_id="u_e2e")
+    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_e2e"))
     assert current_user == CurrentUser(user_id="u_e2e", user_tier="free")
 
     # L1
@@ -124,7 +125,7 @@ async def test_full_chain_l1_rejects_after_rpm_exceeded(monkeypatch):
     _wire_common(monkeypatch, config, redis_client, user_tier="free")
 
     request = make_request()
-    current_user = await deps.with_current_user(request=request, user_id="u_l1_rpm")
+    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_l1_rpm"))
 
     # First request passes L1
     agen = deps.require_billing_limits(
@@ -160,7 +161,7 @@ async def test_full_chain_l2_rejects_when_concurrency_full(monkeypatch):
     )
 
     request = make_request()
-    current_user = await deps.with_current_user(request=request, user_id="u_l2")
+    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_l2"))
 
     agen = deps.require_billing_limits(
         request=request,
@@ -192,7 +193,7 @@ async def test_full_chain_l3_rejects_when_daily_quota_exhausted(monkeypatch):
     )
 
     request = make_request()
-    current_user = await deps.with_current_user(request=request, user_id="u_l3")
+    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_l3"))
 
     # Burn quota with 2 requests
     for i in range(2):
@@ -233,7 +234,7 @@ async def test_full_chain_paid_tier_skips_daily_quota(monkeypatch):
     )
 
     request = make_request()
-    current_user = await deps.with_current_user(request=request, user_id="u_paid")
+    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_paid"))
     assert current_user.user_tier == "tier_1"
 
     # Run through more requests than free daily_quota (10) — L3 should never block
@@ -281,7 +282,7 @@ async def test_full_chain_l0_fails_open_l1_fails_close(monkeypatch):
 
     # L0 fail-open: should still return current_user
     request = make_request()
-    current_user = await deps.with_current_user(request=request, user_id="u_failover")
+    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_failover"))
     assert current_user == CurrentUser(user_id="u_failover", user_tier="free")
 
     # L1 fail-close: Redis client acquisition fails → 503

@@ -63,12 +63,28 @@ from shared.core.exceptions import (
     UnknownException,
 )
 from shared.core.exceptions.domain_exceptions import RateLimitException
+from shared.core.logging import LogEvent
 from shared.core.response import ErrorCode, ErrorCodeMapper
 
 
 def _get_request_id(request: Request) -> str:
-    """Extract or generate a request ID for tracing."""
-    return request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    """Extract request ID from state/header or generate one for tracing."""
+    state_request_id = getattr(request.state, "request_id", None)
+    if isinstance(state_request_id, str) and state_request_id:
+        return state_request_id
+
+    header_request_id = request.headers.get("X-Request-ID")
+    if header_request_id:
+        request.state.request_id = header_request_id
+        return header_request_id
+
+    generated_request_id = str(uuid.uuid4())
+    request.state.request_id = generated_request_id
+    logger.bind(
+        event=LogEvent.CORRELATION_REQUEST_ID_MISSING.value,
+        request_id=generated_request_id,
+    ).info("Request ID generated (missing upstream ID)")
+    return generated_request_id
 
 
 async def knowhere_exception_handler(
@@ -78,19 +94,20 @@ async def knowhere_exception_handler(
     This handler enforces the separation between:
     - `internal_message`: Logged for debugging (NEVER in response)
     - `user_message`: Returned to client (via to_client)
-    
+
     The response ONLY contains `user_message` via exc.to_client().
-    The logs contain full exception details via repr(exc).
-    
+    The logs contain full exception details via exc.logging().
+
     ==========================================================================
-    
+
     This is the ONLY place that builds the actual response.
     All other handlers convert their exceptions and delegate here.
-    
+
     Logging:
+        - Uses exc.logging() which automatically includes context (request_id, etc.)
         - 5xx: ERROR level with internal_message and stack trace
         - 4xx: WARNING level with user_message
-    
+
     The `original_exception` field is used to:
         1. Log the underlying cause for debugging (e.g., Redis timeout)
         2. Include stack trace in logs without exposing to client
@@ -98,35 +115,11 @@ async def knowhere_exception_handler(
     """
     request_id = _get_request_id(request)
 
-    # Log based on severity
-    log_data = exc.to_log()
-    if exc.http_status_code >= 500:
-        # For 5xx, log full exception details for debugging
-        logger.bind(**log_data).error(
-            f"[{request_id}] System Error: {exc.code.value} - {exc.internal_message}"
-        )
-        
-        # Log KnowhereException traceback
-        if exc.__traceback__:
-            exc_tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-            logger.error(f"[{request_id}] KnowhereException traceback:\n{exc_tb}")
-        
-        # Log original exception traceback if wrapped
-        if exc.original_exception and exc.original_exception.__traceback__:
-            orig_tb = "".join(traceback.format_exception(
-                type(exc.original_exception),
-                exc.original_exception,
-                exc.original_exception.__traceback__
-            ))
-            logger.error(f"[{request_id}] Original exception traceback:\n{orig_tb}")
-    else:
-        # For 4xx, log the exception (includes internal_message and details)
-        logger.bind(**log_data).warning(
-            f"[{request_id}] Client Error: {exc.code.value} - {exc.internal_message}"
-        )
+    # Use canonical logging method and force request_id presence in logs
+    exc.logging(request_id=request_id)
 
-    # Build response with optional Retry-After header
-    headers = {}
+    # Always include request ID header for client-side correlation
+    headers = {"X-Request-ID": request_id}
     if hasattr(exc, "retry_after") and exc.retry_after:
         headers["Retry-After"] = str(exc.retry_after)
 
@@ -148,7 +141,7 @@ async def knowhere_exception_handler(
     return JSONResponse(
         status_code=exc.http_status_code,
         content=exc.to_client(request_id),
-        headers=headers if headers else None,
+        headers=headers,
     )
 
 

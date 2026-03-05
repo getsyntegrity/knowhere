@@ -10,17 +10,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class BaseConfig(BaseSettings):
     """基础配置类"""
-    
+
     # 环境配置
     ENVIRONMENT: str = Field(default="production", description="运行环境")
     DEBUG: bool = Field(default=False, description="调试模式")
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
-    
+
     # 应用基础配置
     APP_TITLE: str = Field(default="Konwhere AI知识库管理系统", description="应用标题")
     APP_VERSION: str = Field(default_factory=lambda: os.getenv("APP_VERSION", "1.0.0"), description="应用版本（从环境变量APP_VERSION读取，如v1.0.0）")
     APP_DESCRIPTION: str = Field(default="基于AI的知识库管理和智能问答系统", description="应用描述")
-    
+
+    # Logging configuration
+    LOGFIRE_TOKEN: str = Field(default="", description="Logfire API token for distributed tracing")
+
     # 安全配置
     SECRET_KEY: str = Field(..., description="JWT密钥")
     ALGORITHM: str = Field(default="HS256", description="JWT算法")

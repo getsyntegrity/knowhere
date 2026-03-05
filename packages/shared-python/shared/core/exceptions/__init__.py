@@ -12,6 +12,7 @@ from shared.core.exceptions.domain_exceptions import (
     UnavailableException,
     TimeoutException,
     UnknownException,
+    FileSystemException,
 )
 from shared.core.exceptions.retryable_exceptions import RETRYABLE_EXCEPTIONS
 from shared.core.exceptions.webhook_exceptions import (
@@ -35,6 +36,7 @@ __all__ = [
     "UnavailableException",
     "TimeoutException",
     "UnknownException",
+    "FileSystemException",
     # Webhook Exceptions
     "WebhookException",
     "WebhookConfigException",

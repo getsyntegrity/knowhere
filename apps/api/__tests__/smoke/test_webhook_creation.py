@@ -69,6 +69,40 @@ async def test_fr01_event_trigger_sends_celery_task(fake_db, fake_celery, webhoo
     assert task["args"][0] == event_id
 
 
+@pytest.mark.asyncio
+async def test_failure_event_uses_propagated_request_id(fake_db, webhook_service):
+    """Worker-propagated request_id should be preserved in failure webhook payload."""
+    job_id = str(uuid4())
+
+    event = await webhook_service.create_job_failure_event(
+        db=fake_db,
+        job_id=job_id,
+        error_message="worker failed",
+        error_code="WORKER_ERROR",
+        webhook_url="https://example.com/webhook",
+    )
+
+    assert event.payload["event"] == "job.failed"
+    assert event.payload["error"]["request_id"] == job_id
+
+
+@pytest.mark.asyncio
+async def test_failure_event_falls_back_to_job_id_when_request_id_missing(fake_db, webhook_service):
+    """Failure webhook payload should still include request_id via job_id fallback."""
+    job_id = str(uuid4())
+
+    event = await webhook_service.create_job_failure_event(
+        db=fake_db,
+        job_id=job_id,
+        error_message="worker failed",
+        error_code="WORKER_ERROR",
+        webhook_url="https://example.com/webhook",
+    )
+
+    assert event.payload["event"] == "job.failed"
+    assert event.payload["error"]["request_id"] == job_id
+
+
 # =============================================================================
 # FR-02: Dynamic Configuration
 # =============================================================================

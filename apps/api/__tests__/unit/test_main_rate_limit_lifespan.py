@@ -69,7 +69,6 @@ def _patch_lifespan_dependencies(monkeypatch, load_rules_impl):
 
 @pytest.mark.asyncio
 async def test_lifespan_initializes_and_tears_down_rate_limit_components(monkeypatch):
-    monkeypatch.setenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "3600")
     load_calls: list[object] = []
 
     async def _fake_load_rules(db):
@@ -90,8 +89,6 @@ async def test_lifespan_initializes_and_tears_down_rate_limit_components(monkeyp
 
 @pytest.mark.asyncio
 async def test_lifespan_fails_fast_when_initial_rule_load_fails(monkeypatch):
-    monkeypatch.setenv("RATE_LIMIT_RULE_SYNC_INTERVAL_SECONDS", "3600")
-
     async def _boom_load_rules(_db):
         raise RuntimeError("initial load failed")
 

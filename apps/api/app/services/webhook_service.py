@@ -69,7 +69,7 @@ class WebhookService:
         error_type: Optional[str] = None,
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None,
-        webhook_url: str = None
+        webhook_url: str = None,
     ) -> WebhookEvent:
         """
         Create webhook event for job failure.

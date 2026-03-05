@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 import aiohttp
 from shared.core.database import get_db_context
+from shared.core.logging import LogEvent
 from shared.core.state_machine.states import JobStatus
 from shared.models.schemas.oss_event import OSSEvent
 from shared.models.schemas.s3_event import S3Event
@@ -149,8 +150,7 @@ async def handle_s3_events(
     """
     处理S3事件通知POST请求 - 支持AWS SNS、MinIO和OSS
     """
-    logger.info(f"======== S3事件请求 =========")
-    logger.info(f"Headers: {dict(request.headers)}")
+    logger.bind(event = LogEvent.S3_WEBHOOK_EVENT).info(f"S3 event Headers: {dict(request.headers)}")
     if request.client:
         logger.info(f"Client IP: {request.client.host}")
     try:
