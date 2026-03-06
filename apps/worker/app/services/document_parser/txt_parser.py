@@ -2,10 +2,10 @@ import re
 import uuid
 import pandas as pd
 from shared.core.config import settings
-from shared.services.ai import ai_query_service
+from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
-from shared.utils.CommonHelper import load_file_bytes
+from shared.utils.CommonHelperSync import load_file_bytes
 from bs4 import BeautifulSoup
 from loguru import logger
 
@@ -17,9 +17,9 @@ def clean_texts_by_form(text, form='html'):
     # try other formats
     return text
 
-async def parse_texts(file_path: str, baseurl: str = "") -> list:
+def parse_texts(file_path: str, baseurl: str = "") -> list:
     """Parse text file and return lines list."""
-    txt_bytes = await load_file_bytes(file_path, file_url=baseurl)
+    txt_bytes = load_file_bytes(file_path, file_url=baseurl)
     text = txt_bytes.decode("utf-8")
     txt_lines = []
     for line in text.splitlines():
@@ -56,7 +56,7 @@ def divide_long_contents(texts, max_threshold=None, min_threshold=None):
         sublists.pop()
     return sublists, len(sublists)
 
-async def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_num=None):
+def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_num=None):
     from shared.core.constants import ProcessingConstants
     if summary_len is None:
         summary_len = ProcessingConstants.SUMMARY_LEN
@@ -77,11 +77,11 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
         
         import os
         if os.getenv("LOCAL_DEBUG", "0") != "1":
-            from shared.services.redis import RedisServiceFactory
-            redis_service = RedisServiceFactory.get_service()
-            await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
+            from shared.services.redis.redis_sync_service import SyncRedisServiceFactory
+            redis_service = SyncRedisServiceFactory.get_service()
+            redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
 
-        resp = await ai_query_service.query_ai(
+        resp = ai_query_service.query_ai(
             messages=messages,
             user_id=ctx_task_id,
             conversation_id=ctx_task_id,
@@ -109,7 +109,7 @@ async def extract_summary_keywords(texts, type_="summary", summary_len=None, key
         print(f"❌ failed to extract summary or keywords {e}")
         return ""
 
-async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key='content', summary_len=None):
+def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key='content', summary_len=None):
     from shared.core.constants import ProcessingConstants
     if summary_len is None:
         summary_len = ProcessingConstants.POSTPROCESS_SUMMARY_LEN
@@ -160,8 +160,8 @@ async def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', conte
         summary = ""
 
         if len(contents4summary)>summary_len and llm_paras["summary_txt"] and (not llm_paras['doc_type'] in "templates"):
-            summary = await extract_summary_keywords(contents4summary, type_="summary")
-            keywords = await extract_summary_keywords(contents4summary, type_="keywords")
+            summary = extract_summary_keywords(contents4summary, type_="summary")
+            keywords = extract_summary_keywords(contents4summary, type_="keywords")
 
         df_with_labels.loc[len(df_with_labels)] = {'path': row['path'],
                                                    'content_lst': row['content_lst'],

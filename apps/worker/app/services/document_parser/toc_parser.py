@@ -19,7 +19,7 @@ from app.services.common.kb_utils import normalize_md, truncate_text
 from app.services.document_parser.table_parser import df2md
 from app.services.document_parser.html_parser import df2html
 from app.services.document_parser.layout_parser import hiearchy_llm, judge_by_conditions, remove_by_conditions
-from shared.services.ai import ai_query_service
+from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 
@@ -265,7 +265,7 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
     return candidates, invalid_ids_by_area, area_ranges
 
 
-async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None, use_reindex: bool = False, total_lines: int = 0) -> tuple:
+def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None, use_reindex: bool = False, total_lines: int = 0) -> tuple:
     """
     Use LLM to determine the start and end indices of the TOC content
     
@@ -311,9 +311,9 @@ async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = N
     ]
     
     try:
-        answer = await ai_query_service.query_ai(
+        answer = ai_query_service.query_ai(
             messages=messages,
-            user="toc_detector",
+            user_id="toc_detector",
             model=model_name,
             stream=False,
             max_tokens=max_tokens,
@@ -341,7 +341,7 @@ async def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = N
         return None
 
 
-async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -> list:
+def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -> list:
     """
     Use LLM to detect TOC, support multiple TOC areas
     
@@ -380,7 +380,7 @@ async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 
         
         md_table = df2md(df, index=False)
         print(md_table)
-        llm_result = await llm_judge_toc_range(md_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
+        llm_result = llm_judge_toc_range(md_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
         
         if llm_result is not None:
             reindex_start, reindex_end = llm_result
@@ -405,7 +405,7 @@ async def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 
     return toc_ranges
 
 
-async def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None) -> list:
+def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None) -> list:
     """
     Parse TOC hierarchy using LLM
     
@@ -418,7 +418,7 @@ async def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None
         List of dicts with id, heading, level
     """
     try:
-        toc_hierarchy = await hiearchy_llm(toc_df, model_name=model_name, max_depth=max_depth, task="eval-toc-headings")
+        toc_hierarchy = hiearchy_llm(toc_df, model_name=model_name, max_depth=max_depth, task="eval-toc-headings")
         id_to_level = {item["id"]: item["level"] for item in toc_hierarchy}
 
         toc_with_level = []
@@ -510,7 +510,7 @@ def gen_reason_code_toc(text: str) -> str:
     return reason_str
 
 
-async def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6) -> tuple:
+def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6) -> tuple:
     """
     Analyze TOC hierarchy and generate nested JSON
     
@@ -546,7 +546,7 @@ async def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: in
         return "", {}
     
     # Evaluate TOC hierarchy with LLM
-    llm_result = await parse_toc_hierarchy(toc_df, max_depth, model_name)
+    llm_result = parse_toc_hierarchy(toc_df, max_depth, model_name)
     
     # Build id -> level mapping from LLM result
     id_to_level = {item["id"]: item["level"] for item in llm_result}
@@ -578,7 +578,7 @@ async def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: in
     return toc_with_level, toc_tree
 
 
-async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "normal", limit_: int = 150):
+def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "normal", limit_: int = 150):
     """
     Detect and analyze TOC in texts
     
@@ -604,7 +604,7 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
     logger.info("-" * 60)
     
     if branch == "normal":
-        toc_area = await detect_tocs_llm(md_lines, model_name, limit_)
+        toc_area = detect_tocs_llm(md_lines, model_name, limit_)
     elif branch == "plus-ocr":
         # TODO implement OCR branch, if implement, direct yield toc-tree
         return None, md_lines
@@ -625,7 +625,7 @@ async def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: s
     for idx, (toc_start, toc_end, toc_lines, area_end) in enumerate(toc_area):
         logger.info(f"Analyzing TOC area #{idx+1}: TOC range [{toc_start}, {toc_end}], scan range ends at {area_end}")
         
-        toc_with_level, toc_tree = await eval_toc_levels(toc_lines, model_name, max_depth=6)
+        toc_with_level, toc_tree = eval_toc_levels(toc_lines, model_name, max_depth=6)
         toc_hierarchies.append({
             "toc_range": (toc_start, toc_end),
             "scan_range": (toc_start, area_end),
