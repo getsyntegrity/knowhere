@@ -24,6 +24,12 @@ from loguru import logger
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 
 
+# Module-level singletons — these services are stateless, no need to
+# re-instantiate per message (avoids ~6 object allocations per message).
+_state_machine = JobStateMachine()
+_lifecycle_service = JobLifecycleService()
+
+
 async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     处理Job状态更新消息（供MessageConsumer直接调用）
@@ -77,7 +83,7 @@ async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, An
 
 async def _handle_status_update_async(message: JobStatusUpdateMessage):
     """异步处理状态更新"""
-    state_machine = JobStateMachine()
+    state_machine = _state_machine
     
     try:
         async with get_db_context() as db:
@@ -239,7 +245,7 @@ async def handle_job_result(message_data: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _handle_result_async(message: JobResultMessage):
     """异步处理结果数据"""
-    state_machine = JobStateMachine()
+    state_machine = _state_machine
     
     try:
         async with get_db_context() as db:
@@ -253,7 +259,7 @@ async def _handle_result_async(message: JobResultMessage):
                 chunks = []
             
             # 2. Use JobLifecycleService for Atomic Transaction (Unit of Work)
-            lifecycle_service = JobLifecycleService()
+            lifecycle_service = _lifecycle_service
             inline_payload = {
                 "checksum": message.checksum,
             }
@@ -330,7 +336,7 @@ async def handle_job_failure(message_data: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _handle_failure_async(message: JobFailureMessage):
     """Async handle failure message"""
-    state_machine = JobStateMachine()
+    state_machine = _state_machine
     
     try:
         from typing import cast
@@ -350,7 +356,7 @@ async def _handle_failure_async(message: JobFailureMessage):
                  should_refund = True
             
             # Use JobLifecycleService for Atomic Transaction (Unit of Work)
-            lifecycle_service = JobLifecycleService()
+            lifecycle_service = _lifecycle_service
             success = await lifecycle_service.finalize_job_failure(
                 db=db,
                 job_id=message.job_id,
