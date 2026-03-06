@@ -25,6 +25,7 @@ MAX_ATTEMPTS = 6
 celery_app = get_celery_app()
 
 # Wait queue mapping for DLX-based retry
+# Index corresponds to attempt number (0-indexed)
 WAIT_QUEUES = [
     'webhook_wait_1m',
     'webhook_wait_10m',
@@ -95,14 +96,24 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
             jitter_applied=jitter_applied,
         ).info("Webhook dispatch task started")
 
-        # Non-Blocking Jitter Implementation
+        # Non-Blocking Jitter Implementation:
+        # If this is a retry (attempt > 1) and jitter hasn't been applied yet:
+        # 1. Calculate random jitter delay
+        # 2. Reschedule THIS task with countdown=jitter
+        # 3. Mark jitter_applied=True in the rescheduled task
+        # 4. Return immediately (freeing the worker)
         if attempt > 1 and not jitter_applied:
             import random
 
+            # Attempt 2 (1m wait): 0-6s jitter
+            # Attempt 3+ (10m+ wait): 0-30s jitter
             max_jitter = 30 if attempt > 2 else 6
             jitter_seconds = random.uniform(0, max_jitter)
             if jitter_seconds > 0.1:
                 logger.info(f"Scheduling non-blocking jitter: {jitter_seconds:.2f}s (attempt {attempt})")
+                # Use retry to reschedule with countdown.
+                # max_retries=None avoids Celery's internal retry limit
+                # interfering with our business logic limit.
                 try:
                     self.retry(
                         countdown=jitter_seconds,
@@ -111,6 +122,8 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
                         max_retries=None,
                     )
                 except Exception:
+                    # self.retry raises Retry exception to stop execution,
+                    # which is expected behavior
                     raise
                 return False
 
@@ -122,15 +135,18 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
             return result
 
         except WebhookDeliveryException as exc:
+            # Check if error is retryable (set by dispatcher)
             if not exc.retryable:
+                # Permanent failure - do not retry
                 logger.warning(
                     f"Webhook permanent failure (not retrying): event_id={event_id}, "
                     f"status={exc.response_status_code}"
                 )
                 return False
 
+            # Retryable failure - schedule retry via DLX
             _schedule_retry(self, event_id, attempt)
-            return False
+            return False  # Task completes, retry is a new message
 
         except Exception as exc:
             raise exc
@@ -138,15 +154,20 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
 def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) -> None:
     """
     Schedule retry by publishing to the appropriate DLX wait queue.
+
+    If DLX publishing fails (broker issue), falls back to Celery's native
+    self.retry() to hold the task in the current worker/queue until recovery.
     """
     next_attempt = current_attempt + 1
 
     if next_attempt > MAX_ATTEMPTS:
+        # All retries exhausted - send to dead letter queue
         logger.error(
             f"Webhook exhausted all retries: event_id={event_id}, "
             f"attempts={current_attempt}"
         )
         try:
+            # Mark as permanently failed in DB, then archive to dead queue
             dispatcher = get_sync_webhook_dispatcher()
             dispatcher.mark_event_failed(event_id)
 
@@ -159,6 +180,8 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
             task_instance.retry(exc=exc, countdown=60, max_retries=None)
         return
 
+    # Map attempt number to wait queue.
+    # Clamp to last queue if attempt exceeds queue count.
     queue_index = min(current_attempt - 1, len(WAIT_QUEUES) - 1)
     wait_queue = WAIT_QUEUES[queue_index]
 
@@ -187,6 +210,9 @@ def recover_orphaned_webhooks() -> dict:
 
     Finds webhook events that were persisted to the database but never
     published to the message queue and republishes them.
+
+    This handles the edge case where the DB commit succeeds but the
+    subsequent Celery apply_async call fails (e.g., broker down).
     """
     from datetime import datetime, timedelta
     from sqlalchemy import select as sa_select
