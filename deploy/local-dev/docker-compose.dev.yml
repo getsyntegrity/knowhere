@@ -61,11 +61,14 @@ services:
       timeout: 10s
       retries: 5
 
-  # LocalStack AWS服务模拟 - 使用宿主机网络模式
+  # LocalStack AWS服务模拟
   localstack:
     image: localstack/localstack:3.8
     container_name: knowhere_localstack
-    network_mode: host  # 使用宿主机网络
+    ports:
+      - "4566:4566"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       # LocalStack基础配置
       SERVICES: s3,sns,sqs,lambda,iam,sts
@@ -75,7 +78,7 @@ services:
       # S3配置
       S3_SKIP_SIGNATURE_VALIDATION: 1
       S3_SKIP_SSL_VERIFICATION: 1
-      # 网络配置
+      # 网络配置 - use localhost so presigned URLs work from WSL2
       HOSTNAME_EXTERNAL: localhost
       # 端口配置
       EDGE_PORT: 4566
@@ -87,6 +90,8 @@ services:
       - localstack_data:/var/lib/localstack
       - /var/run/docker.sock:/var/run/docker.sock
       - ./localstack/init:/etc/localstack/init/ready.d
+    networks:
+      - knowhere_network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 30s
