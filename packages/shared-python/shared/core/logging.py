@@ -163,9 +163,14 @@ def setup_logging(
                 logfire.instrument_celery()  # Consumer side
                 logfire.instrument_httpx()  # Instrument HTTP client calls in worker
 
-                # Instrument database
-                from shared.core.database import engine
-                logfire.instrument_sqlalchemy(engine=engine)
+                # Instrument sync database engine (worker uses psycopg2 via gevent)
+                try:
+                    from shared.core.database_sync import sync_engine
+                    logfire.instrument_sqlalchemy(engine=sync_engine)
+                except ImportError:
+                    logger.bind(event=LogEvent.LOGGING_CONFIGURED.value).warning(
+                        "Sync database engine not available for Logfire instrumentation"
+                    )
 
                 # Redis instrumentation disabled to reduce production noise/cost.
 
