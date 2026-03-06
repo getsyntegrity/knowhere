@@ -69,9 +69,9 @@ def heading_md_relocate(md_lines, heading_preds):
     return md_lines  # note the length=original md_lines but contents/level are updated
 
 
-async def eval_md_headings(md_lines, source_type, toc_hierarchies=None, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None):
+def eval_md_headings(md_lines, source_type, toc_hierarchies=None, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None):
     """Evaluate markdown headings with optional TOC hierarchies context"""
-    heading_preds = await pred_titles(
+    heading_preds = pred_titles(
         md_lines, source_type, 
         toc_hierarchies=toc_hierarchies,
         enable_regx=True, 
@@ -109,14 +109,14 @@ def clean_md_table_lines(table_lines, start_line_num):
                 cleaned_lines.append(cleaned_line)
     return cleaned_lines, error_lines
 
-async def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, summary_len=1500):
+def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, summary_len=1500):
     match_type = find_matches_parsing(bottom_content, path)
     know_id = gen_str_codes(bottom_content + str(uuid.uuid4()))
     bottom_tokens = tokenize2stw_remove([bottom_content], llm_paras['stopwords'])
 
     if len(bottom_content)>summary_len and llm_paras['summary_txt']:
-        summary = await extract_summary_keywords(bottom_content, type_="summary")
-        keywords = await extract_summary_keywords(bottom_content, type_="keywords")
+        summary = extract_summary_keywords(bottom_content, type_="summary")
+        keywords = extract_summary_keywords(bottom_content, type_="keywords")
     else:
         keywords = ''
         summary = ''
@@ -125,11 +125,11 @@ async def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, s
     content = ''
     return df_list, content
 
-async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_paras=None, relative_root=None):
+def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_paras=None, relative_root=None):
     if md_lines is None and file_path is not None:
-        from shared.utils.CommonHelper import load_file_bytes, is_remote
+        from shared.utils.CommonHelperSync import load_file_bytes, is_remote
         if is_remote(file_path):
-            file_bytes = await load_file_bytes(file_path)
+            file_bytes = load_file_bytes(file_path)
             md_content = file_bytes.decode('utf-8')
             md_lines = md_content.splitlines()
         else:
@@ -143,7 +143,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
     
     # Detect TOC using async LLM-based detection (sxjg logic)
     model_name = base_llm_paras.get("model_name", "deepseek-chat") if base_llm_paras else "deepseek-chat"
-    toc_hierarchies, md_lines = await detect_tocs_in_texts(md_lines, model_name=model_name)
+    toc_hierarchies, md_lines = detect_tocs_in_texts(md_lines, model_name=model_name)
 
     # Save toc_hierarchies.json to output_dir (will be included in final zip package)
     if toc_hierarchies:
@@ -181,7 +181,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
         logger.debug("layout.json not found, META features will not be added")
 
     # estimate hierarchies with toc_hierarchies context
-    lines_with_heading = await eval_md_headings(
+    lines_with_heading = eval_md_headings(
         md_lines, 
         source_type, 
         toc_hierarchies=toc_hierarchies,
@@ -204,7 +204,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
         
         if not current_heading_level==-1: # indicate a new path should be evaluated or added
             if not content.strip()=='': # record contents of the last path and reset content
-                df_list, content = await update_df_list(df_list, content, path, base_llm_paras, time_stamp)
+                df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp)
 
             # update path based on path name and level
             if base_level is None:
@@ -245,7 +245,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
             img_name_context = path_handle(last_context[:10], mode="clean_single")
             img_name = f"image-{str(img_count)}-{img_name_context}"
             # Pass semantic context (not img_name) to avoid "image-" prefix duplication
-            imgs = await detect_summary_img_md(line, last_context, output_dir, mode=base_llm_paras['summary_image'])
+            imgs = detect_summary_img_md(line, last_context, output_dir, mode=base_llm_paras['summary_image'])
 
             for img_path, img_summary in imgs:
                 img_suffix = os.path.splitext(img_path)[-1]
@@ -333,7 +333,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
                 # LLM summary (optional, only when summary_table is enabled and succeeds)
                 llm_summary = None
                 if base_llm_paras['summary_table']:
-                    llm_summary = await extract_summary_keywords(tb_str, type_="summary")
+                    llm_summary = extract_summary_keywords(tb_str, type_="summary")
                 
                 # Build tb_summary for df_list: table-n + optional LLM summary
                 if llm_summary:
@@ -367,7 +367,7 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
                 content = content + '\n' + line.strip() + '\n'
     
     if not content.strip()=='': # handle the remaining contents, append them to the last section
-        df_list, content = await update_df_list(df_list, content, path, base_llm_paras, time_stamp)
+        df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp)
 
     all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
     doc_df = pd.DataFrame(df_list, columns=all_df_cols)

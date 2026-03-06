@@ -12,7 +12,7 @@ from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (gen_str_codes, get_str_time,
                                           process_dup_paths_df)
-from shared.utils.CommonHelper import is_remote, load_file_bytes
+from shared.utils.CommonHelperSync import is_remote, load_file_bytes
 from shared.utils.file_utils import path_handle
 from loguru import logger
 from openai import OpenAI
@@ -73,7 +73,7 @@ def process_img_path4read(paths_, kb_dir, cut):
             urls.append(path_)
     return urls
 
-async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
+def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
     from shared.core.constants import ProcessingConstants
     if max_tokens is None:
         max_tokens = ProcessingConstants.IMG_MAX_TOKENS
@@ -140,7 +140,7 @@ async def ask_image(client, kb_dir, paths_, title_text="", task="summary-images"
     else:
         return None
 
-async def detect_summary_img_md(line, last_context, kb_dir, mode=False):
+def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     client = OpenAI(
         api_key=settings.ALI_API_KEY,
         base_url=settings.ALI_URL
@@ -150,7 +150,7 @@ async def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     for i, ip in enumerate(img_paths):
         if mode:
             try:
-                image_summary = await ask_image(client, kb_dir, paths_=[ip])
+                image_summary = ask_image(client, kb_dir, paths_=[ip])
             except:
                 image_summary = last_context + str(i)
         else:
@@ -159,7 +159,7 @@ async def detect_summary_img_md(line, last_context, kb_dir, mode=False):
             imgs.append((ip, image_summary))
     return imgs
 
-async def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm_paras=None, auto_rename=True, relative_root=None):
+def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm_paras=None, auto_rename=True, relative_root=None):
     split_char = settings.SPLIT_CHAR or "/"
     df_list = []
     time_stamp = get_str_time()
@@ -168,7 +168,7 @@ async def parse_image(image_path, filename=None, output_dir=None, baseurl="", ba
     try:
         # Save image to local directory temporarily, use filename by default
         img_path = os.path.join(output_dir, filename)
-        img_bytes = await load_file_bytes(image_path, file_url=baseurl)
+        img_bytes = load_file_bytes(image_path, file_url=baseurl)
         img_obj = Image.open(io.BytesIO(img_bytes))
         img_obj.save(img_path)
 
@@ -183,21 +183,21 @@ async def parse_image(image_path, filename=None, output_dir=None, baseurl="", ba
         from shared.core.constants import ProcessingConstants
         img_max_tokens = ProcessingConstants.IMG_MAX_TOKENS
         img_context = f"{filename}\n{base_llm_paras['frag_desc']}"
-        type_resp = await ask_image(client, output_dir, paths_=[filename], title_text=img_context, task="judge-image-type", size_cut=False)
+        type_resp = ask_image(client, output_dir, paths_=[filename], title_text=img_context, task="judge-image-type", size_cut=False)
         if type_resp is not None:
             if type_resp["answer"]=="text":
                 img_task = "ocr-image"
                 img_max_tokens = ProcessingConstants.IMG_OCR_MAX_TOKENS
 
         if base_llm_paras['summary_image']: # Leave room for context to help understand the image
-            image_content = await ask_image(client, output_dir, paths_=[filename], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
+            image_content = ask_image(client, output_dir, paths_=[filename], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
             if image_content is None:
                 image_content = filename
         else:
             image_content = filename
 
         if type_resp["answer"]=="text" and base_llm_paras['summary_image']:
-            image_summary = await ask_image(client, output_dir, paths_=[filename], title_text=filename)
+            image_summary = ask_image(client, output_dir, paths_=[filename], title_text=filename)
             if image_summary is None:
                 image_summary = image_content
         else:
