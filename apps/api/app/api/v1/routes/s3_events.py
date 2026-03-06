@@ -14,7 +14,7 @@ from shared.models.schemas.oss_event import OSSEvent
 from shared.models.schemas.s3_event import S3Event
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
-from shared.services.storage.file_upload_service import FileUploadService
+from app.services.state_machine import JobStateMachine
 from fastapi import APIRouter, Header, Request
 from loguru import logger
 
@@ -429,60 +429,56 @@ def _convert_s3_format_to_oss(event_data: Dict[str, Any]) -> OSSEvent:
 async def process_upload_events(s3_event: S3Event):
     """
     处理文件上传事件
-    
+
     Args:
         s3_event: S3事件对象
     """
     try:
         # 获取上传事件
         upload_events = s3_event.get_upload_events()
-        
+
+        # Instantiate services once outside the loop
+        job_repo = JobRepository()
+
         for event in upload_events:
             # 从S3事件记录中获取对象键
             s3_key = event.object_key or event.s3.get('object', {}).get('key')
             if not s3_key:
                 continue
-            
+
             # 提取job_id
             job_id = extract_job_id_from_s3_key(s3_key)
             if not job_id:
                 logger.warning(f"无法从S3键提取job_id: {s3_key}")
                 continue
-            
+
             logger.info(f"处理S3上传事件: {s3_key} -> job_id: {job_id}")
-            
+
             # 查找对应的job
             async with get_db_context() as db:
-                job_repo = JobRepository()
                 job = await job_repo.get_job_by_id(db, job_id)
-                
+
                 if not job:
                     logger.warning(f"未找到对应的job: {job_id}")
                     continue
-                
+
                 # 检查job状态
                 if job.status != "waiting-file":
                     logger.info(f"Job {job_id} 状态不是waiting-file: {job.status}")
                     continue
-                
-                # 验证S3文件存在
-                upload_service = FileUploadService()
-                file_info = await upload_service.verify_s3_file_exists(s3_key)
-                
-                if not file_info.get("exists"):
-                    logger.warning(f"S3文件不存在: {s3_key}")
-                    continue
-                
+
+                # Skip S3 file verification — we are processing the upload
+                # notification itself, so the file is guaranteed to exist.
+
                 # 更新job状态
-                from app.services.state_machine import JobStateMachine
                 state_machine = JobStateMachine()
-                
+
                 # 文件上传完成后，转换到pending状态
                 await state_machine.transition(
                     db, job_id, JobStatus.PENDING.value,
                     "s3_upload_completed", None, "system"
                 )
-                
+
                 # 触发任务处理
                 if job.job_type == "kb_management":
                     orchestrator = KBOrchestrator()
@@ -496,9 +492,9 @@ async def process_upload_events(s3_event: S3Event):
                     )
                 else:
                     logger.warning(f"不支持的任务类型: {job.job_type}, job_id: {job_id}")
-                
+
                 logger.info(f"Job {job_id} 已触发处理流程")
-        
+
     except Exception as e:
         logger.error(f"处理上传事件失败: {e}")
         raise
