@@ -1,0 +1,308 @@
+"""
+Sync Redis services for Celery worker (gevent pool).
+Under gevent, sync socket operations yield cooperatively via monkey patching.
+API service continues using async RedisService.
+"""
+import json
+import os
+from typing import Any, Dict, List, Optional
+
+from redis import Redis as SyncRedisClient
+from loguru import logger
+
+from shared.core.config.redis import RedisConfigManager
+from shared.utils.redis_key_builder import redis_key_builder
+
+
+class SyncRedisService:
+    """Sync Redis service for gevent worker."""
+    _KEY_PREFIX: str = "knowhere-api"
+
+    def __init__(self, config_manager: Optional[RedisConfigManager] = None):
+        if config_manager is None:
+            from shared.core.config import settings
+            config_manager = RedisConfigManager(settings)
+        self.config_manager = config_manager
+        self._client: Optional[SyncRedisClient] = None
+
+    def _get_client(self) -> SyncRedisClient:
+        if self._client is None:
+            url = self.config_manager.get_connection_url()
+            params = self.config_manager.get_connection_params()
+            # Allow override for worker-specific pool sizing
+            sync_max = os.getenv("REDIS_SYNC_MAX_CONNECTIONS")
+            if sync_max:
+                params["max_connections"] = int(sync_max)
+            self._client = SyncRedisClient.from_url(url, **params)
+            logger.info(f"Sync Redis client initialized (max_connections={params.get('max_connections')})")
+        return self._client
+
+    def _build_key(self, key: str) -> str:
+        prefix = self._KEY_PREFIX
+        return f"{prefix}:{key}" if not key.startswith(prefix) else key
+
+    def set(self, key: str, value: Any, ttl: Optional[int] = None, ex: Optional[int] = None) -> bool:
+        try:
+            client = self._get_client()
+            full_key = self._build_key(key)
+            if isinstance(value, (dict, list)):
+                from shared.utils.json_utils import make_json_safe
+                safe_value = make_json_safe(value)
+                value = json.dumps(safe_value, ensure_ascii=False)
+            expire_time = ex or ttl or self.config_manager.config.REDIS_DEFAULT_TTL
+            return bool(client.set(full_key, value, ex=expire_time))
+        except Exception as e:
+            logger.error(f"Redis SET failed: key={key}, error={e}")
+            raise
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            client = self._get_client()
+            full_key = self._build_key(key)
+            result: Optional[str] = client.get(full_key)  # type: ignore[assignment]
+            if result is None:
+                return default
+            try:
+                return json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                return result
+        except Exception as e:
+            logger.error(f"Redis GET failed: key={key}, error={e}")
+            raise
+
+    def delete(self, *keys: str) -> int:
+        try:
+            client = self._get_client()
+            full_keys = [self._build_key(key) for key in keys]
+            return int(client.delete(*full_keys))  # type: ignore[arg-type]
+        except Exception as e:
+            logger.error(f"Redis DELETE failed: keys={keys}, error={e}")
+            raise
+
+    def exists(self, key: str) -> bool:
+        client = self._get_client()
+        full_key = self._build_key(key)
+        return bool(client.exists(full_key))
+
+    def hset(self, key: str, field: Optional[str] = None, value: Any = None, mapping: Optional[Dict[str, Any]] = None) -> int:
+        try:
+            client = self._get_client()
+            full_key = self._build_key(key)
+            if mapping is not None:
+                serialized_mapping = {}
+                for k, v in mapping.items():
+                    if isinstance(v, (dict, list)):
+                        serialized_mapping[k] = json.dumps(v, ensure_ascii=False)
+                    else:
+                        serialized_mapping[k] = str(v)
+                return int(client.hset(full_key, mapping=serialized_mapping))  # type: ignore[arg-type]
+            else:
+                serialized_value = value
+                if isinstance(value, (dict, list)):
+                    serialized_value = json.dumps(value, ensure_ascii=False)
+                return int(client.hset(full_key, field, serialized_value))  # type: ignore[arg-type]
+        except Exception as e:
+            logger.error(f"Redis HSET failed: key={key}, error={e}")
+            raise
+
+    def hget(self, key: str, field: str, default: Any = None) -> Any:
+        try:
+            client = self._get_client()
+            full_key = self._build_key(key)
+            result: Optional[str] = client.hget(full_key, field)  # type: ignore[assignment]
+            if result is None:
+                return default
+            try:
+                return json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                return result
+        except Exception as e:
+            logger.error(f"Redis HGET failed: key={key}, field={field}, error={e}")
+            raise
+
+    def hgetall(self, key: str) -> Dict[str, Any]:
+        try:
+            client = self._get_client()
+            full_key = self._build_key(key)
+            result: Dict[str, str] = client.hgetall(full_key)  # type: ignore[assignment]
+            parsed_result = {}
+            for field, value in result.items():
+                try:
+                    parsed_result[field] = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    parsed_result[field] = value
+            return parsed_result
+        except Exception as e:
+            logger.error(f"Redis HGETALL failed: key={key}, error={e}")
+            raise
+
+    def ping(self) -> bool:
+        try:
+            client = self._get_client()
+            return bool(client.ping())
+        except Exception:
+            return False
+
+    def close(self):
+        if self._client:
+            self._client.close()
+            self._client = None
+            logger.info("Sync Redis client closed")
+
+
+class SyncRedisServiceFactory:
+    """Factory for sync Redis service instances."""
+    _instance: Optional[SyncRedisService] = None
+
+    @classmethod
+    def get_service(cls, config_manager: Optional[RedisConfigManager] = None) -> SyncRedisService:
+        if cls._instance is None:
+            if config_manager is None:
+                from shared.core.config import settings
+                config_manager = RedisConfigManager(settings)
+            cls._instance = SyncRedisService(config_manager)
+        return cls._instance
+
+    @classmethod
+    def reset(cls):
+        if cls._instance:
+            cls._instance.close()
+        cls._instance = None
+
+
+class SyncJobInfoRedisService:
+    """Sync Job info Redis service."""
+    JOB_INFO_TTL = 7200
+
+    def __init__(self, redis_service: SyncRedisService):
+        self.redis = redis_service
+
+    def save_job_info(self, job_id: str, job_info: Dict[str, Any]) -> bool:
+        try:
+            key = redis_key_builder.task_info(job_id)
+            self.redis.set(key, job_info, ttl=self.JOB_INFO_TTL)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save job info: {e}")
+            return False
+
+    def get_job_info(self, job_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            key = redis_key_builder.task_info(job_id)
+            return self.redis.get(key)
+        except Exception as e:
+            logger.error(f"Failed to get job info: {e}")
+            return None
+
+    def update_job_info(self, job_id: str, updates: Dict[str, Any]) -> bool:
+        try:
+            job_info = self.get_job_info(job_id)
+            if job_info:
+                job_info.update(updates)
+                return self.save_job_info(job_id, job_info)
+            return False
+        except Exception as e:
+            logger.error(f"Failed to update job info: {e}")
+            return False
+
+    def delete_job_info(self, job_id: str) -> bool:
+        try:
+            key = redis_key_builder.task_info(job_id)
+            self.redis.delete(key)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete job info: {e}")
+            return False
+
+
+class SyncJobMetadataService:
+    """Sync Job metadata Redis service."""
+    METADATA_TTL = 7200
+
+    def __init__(self, redis_service: SyncRedisService):
+        self.redis = redis_service
+
+    def save_metadata(self, job_id: str, metadata: Dict[str, Any]) -> bool:
+        try:
+            key = redis_key_builder.task_metadata(job_id)
+            self.redis.set(key, metadata, ttl=self.METADATA_TTL)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save metadata: {e}")
+            return False
+
+    def get_metadata(self, job_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            key = redis_key_builder.task_metadata(job_id)
+            return self.redis.get(key)
+        except Exception as e:
+            logger.error(f"Failed to get metadata: {e}")
+            return None
+
+    def update_metadata(self, job_id: str, updates: Dict[str, Any]) -> bool:
+        try:
+            metadata = self.get_metadata(job_id)
+            if metadata:
+                metadata.update(updates)
+                return self.save_metadata(job_id, metadata)
+            return False
+        except Exception as e:
+            logger.error(f"Failed to update metadata: {e}")
+            return False
+
+    def delete_metadata(self, job_id: str) -> bool:
+        try:
+            key = redis_key_builder.task_metadata(job_id)
+            self.redis.delete(key)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete metadata: {e}")
+            return False
+
+
+class SyncChunksRedisService:
+    """Sync Chunks Redis service."""
+
+    def __init__(self, redis_service: SyncRedisService):
+        self.redis = redis_service
+
+    def _dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
+        """Delegate to the existing async version's logic."""
+        from shared.services.redis.chunks_redis_service import ChunksRedisService
+        # Reuse the static conversion logic
+        dummy = ChunksRedisService.__new__(ChunksRedisService)
+        return dummy._dataframe_to_chunks(df)
+
+    def save_dataframe_as_chunks(self, job_id: str, df) -> bool:
+        try:
+            chunks = self._dataframe_to_chunks(df)
+            return self.save_chunks(job_id, chunks)
+        except Exception as e:
+            logger.error(f"Failed to save dataframe as chunks: {e}")
+            return False
+
+    def save_chunks(self, job_id: str, chunks: List[Dict[str, Any]]) -> bool:
+        try:
+            chunks_key = f"job_chunks:{job_id}"
+            self.redis.set(chunks_key, chunks, ttl=3600)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save chunks: {e}")
+            return False
+
+    def get_chunks(self, job_id: str) -> Optional[List[Dict[str, Any]]]:
+        try:
+            chunks_key = f"job_chunks:{job_id}"
+            return self.redis.get(chunks_key)
+        except Exception as e:
+            logger.error(f"Failed to get chunks: {e}")
+            return None
+
+    def delete_chunks(self, job_id: str) -> bool:
+        try:
+            chunks_key = f"job_chunks:{job_id}"
+            self.redis.delete(chunks_key)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete chunks: {e}")
+            return False
