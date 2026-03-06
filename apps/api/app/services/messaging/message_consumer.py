@@ -194,13 +194,15 @@ class MessageConsumer:
         2. 停止时立即响应，不会阻塞
         """
         logger.debug(f"Start consuming queue: {queue.name}, type: {message_type}")
+        message_task: asyncio.Task | None = None
+        stop_task: asyncio.Task | None = None
         try:
             async with queue.iterator() as queue_iter:
                 logger.debug(f"Queue iterator created and waiting for messages: {queue.name}")
                 
                 # 创建消息接收任务
-                message_task = None
-                
+                stop_task = asyncio.create_task(self._stop_event.wait())
+
                 while self._running:
                     try:
                         # 如果消息任务已完成或不存在，创建新的消息接收任务
@@ -221,22 +223,14 @@ class MessageConsumer:
                         
                         # 同时等待消息和停止事件
                         # 使用 asyncio.wait 可以同时等待多个协程，哪个先完成就处理哪个
-                        done, pending = await asyncio.wait(
+                        done, _ = await asyncio.wait(
                             [
                                 message_task,
-                                asyncio.create_task(self._stop_event.wait())
+                                stop_task,
                             ],
                             return_when=asyncio.FIRST_COMPLETED
                         )
-                        
-                        # 取消未完成的任务
-                        for task in pending:
-                            task.cancel()
-                            try:
-                                await task
-                            except asyncio.CancelledError:
-                                pass
-                        
+
                         # 检查是否收到停止信号
                         if self._stop_event.is_set() or not self._running:
                             logger.debug(f"Consumer stopping, exiting message loop: {message_type}")
@@ -254,6 +248,12 @@ class MessageConsumer:
                                     pass
                                 except Exception as e:
                                     logger.warning(f"Error while reading pending message: {e}")
+                            else:
+                                message_task.cancel()
+                                try:
+                                    await message_task
+                                except asyncio.CancelledError:
+                                    pass
                             break
                         
                         # 处理收到的消息
@@ -311,6 +311,20 @@ class MessageConsumer:
                 internal_message=f"Failed to consume queue: {str(e)}",
                 original_exception=e
             )
+        finally:
+            if message_task and not message_task.done():
+                message_task.cancel()
+                try:
+                    await message_task
+                except asyncio.CancelledError:
+                    pass
+
+            if stop_task and not stop_task.done():
+                stop_task.cancel()
+                try:
+                    await stop_task
+                except asyncio.CancelledError:
+                    pass
     
     async def _process_message(
         self,
