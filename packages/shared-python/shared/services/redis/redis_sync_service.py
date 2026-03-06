@@ -4,10 +4,10 @@ Under gevent, sync socket operations yield cooperatively via monkey patching.
 API service continues using async RedisService.
 """
 import json
-import os
 from typing import Any, Dict, List, Optional
 
 from redis import Redis as SyncRedisClient
+from redis.connection import BlockingConnectionPool
 from loguru import logger
 
 from shared.core.config.redis import RedisConfigManager
@@ -29,12 +29,26 @@ class SyncRedisService:
         if self._client is None:
             url = self.config_manager.get_connection_url()
             params = self.config_manager.get_connection_params()
-            # Allow override for worker-specific pool sizing
-            sync_max = os.getenv("REDIS_SYNC_MAX_CONNECTIONS")
-            if sync_max:
-                params["max_connections"] = int(sync_max)
-            self._client = SyncRedisClient.from_url(url, **params)
-            logger.info(f"Sync Redis client initialized (max_connections={params.get('max_connections')})")
+            config = self.config_manager.config
+            max_conn = config.REDIS_SYNC_MAX_CONNECTIONS
+            pool_timeout = config.REDIS_SYNC_POOL_TIMEOUT
+            # Remove keys that BlockingConnectionPool gets from the URL or we set explicitly
+            params.pop("host", None)
+            params.pop("port", None)
+            params.pop("db", None)
+            params.pop("password", None)
+            params.pop("max_connections", None)
+            pool = BlockingConnectionPool.from_url(
+                url,
+                max_connections=max_conn,
+                timeout=pool_timeout,
+                **params,
+            )
+            self._client = SyncRedisClient(connection_pool=pool)
+            logger.info(
+                f"Sync Redis client initialized "
+                f"(pool=BlockingConnectionPool, max_connections={max_conn}, timeout={pool_timeout}s)"
+            )
         return self._client
 
     def _build_key(self, key: str) -> str:

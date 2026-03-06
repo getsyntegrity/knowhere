@@ -3,7 +3,6 @@ Sync database engine for Celery worker (gevent pool).
 Uses psycopg2 + psycogreen for cooperative DB access under gevent.
 API service continues using the async engine in database.py.
 """
-import os
 from contextlib import contextmanager
 from typing import Generator
 
@@ -18,22 +17,19 @@ _sync_url = settings.DATABASE_URL.replace(
     "postgresql+asyncpg", "postgresql+psycopg2"
 )
 
-# Pool sizes configurable via env vars for different environments
-_pool_size = int(os.getenv("DB_SYNC_POOL_SIZE", "5"))
-_max_overflow = int(os.getenv("DB_SYNC_MAX_OVERFLOW", "5"))
-
 sync_engine = create_engine(
     _sync_url,
-    pool_size=_pool_size,
-    max_overflow=_max_overflow,
-    pool_recycle=1800,
-    pool_timeout=30,
+    pool_size=settings.DB_SYNC_POOL_SIZE,
+    max_overflow=settings.DB_SYNC_MAX_OVERFLOW,
+    pool_recycle=settings.DB_POOL_RECYCLE,
+    pool_timeout=settings.DB_POOL_TIMEOUT,
     pool_pre_ping=True,
     connect_args=settings.get_ssl_connect_args(),
 )
 
 logger.info(
-    f"Sync database engine created (pool_size={_pool_size}, max_overflow={_max_overflow})"
+    f"Sync database engine created "
+    f"(pool_size={settings.DB_SYNC_POOL_SIZE}, max_overflow={settings.DB_SYNC_MAX_OVERFLOW})"
 )
 
 SyncSessionFactory = sessionmaker(
