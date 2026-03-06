@@ -199,19 +199,6 @@ async def handle_sns_event(body: bytes):
             logger.info("收到SNS订阅确认请求")
             subscribe_url = sns_message.get('SubscribeURL')
             if subscribe_url:
-                # LocalStack uses localhost.localstack.cloud which may not be
-                # reachable (e.g. Docker Desktop on WSL2). Fall back to the
-                # S3_ENDPOINT_URL when available so the confirmation reaches
-                # the actual LocalStack instance.
-                s3_endpoint = os.getenv('S3_ENDPOINT_URL', '')
-                if s3_endpoint:
-                    from urllib.parse import urlparse
-                    parsed = urlparse(s3_endpoint)
-                    subscribe_url = subscribe_url.replace(
-                        'localhost.localstack.cloud:4566',
-                        parsed.netloc,
-                    )
-                    logger.info(f"Rewritten SNS确认URL: {subscribe_url}")
                 logger.info(f"SNS订阅确认URL: {subscribe_url}")
                 # 访问确认URL来确认订阅
                 try:
