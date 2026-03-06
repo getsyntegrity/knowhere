@@ -119,10 +119,14 @@ def setup_logging(
     # Console handler - respects LOG_LEVEL
     log_level = settings.LOG_LEVEL
 
+    # enqueue=True uses a background thread for log writes, which deadlocks
+    # with gevent's cooperative scheduling on stdout. Disable for worker.
+    use_enqueue = service_name != "knowhere-worker"
+
     logger.add(
         sys.stdout,
         level=log_level,
-        enqueue=True,
+        enqueue=use_enqueue,
         format=(
             "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | "
             "{extra[event]} | {message}"
