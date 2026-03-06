@@ -2,7 +2,6 @@
 Celery任务定义
 迁移自ARQ任务，支持优先级和队列路由
 """
-import asyncio
 import time
 
 from celery import Task
@@ -13,10 +12,14 @@ from shared.core.celery_router import (
     CeleryTaskRouter,
     TaskContext,
 )
-from shared.core.state_machine.states import JobStatus  # 仅用于状态常量
-from shared.services.messaging import get_message_publisher
-from shared.services.messaging.message_publisher import run_async_publish
-from shared.services.redis import RedisServiceFactory, TaskRedisService
+from shared.services.messaging.sync_publisher import (
+    close_sync_message_publisher,
+)
+from shared.services.ai.ai_query_service_sync import sync_ai_query_service
+from shared.services.redis.redis_sync_service import (
+    SyncRedisServiceFactory,
+    SyncTaskRedisService,
+)
 
 # 获取Celery应用
 celery_app = get_celery_app()
@@ -39,6 +42,13 @@ class BaseTask(Task):
         """任务重试回调"""
         logger.warning(f"任务 {task_id} 重试: {exc}")
 
+    def after_return(self, status, retval, task_id, args, kwargs, einfo):
+        """Release greenlet-local sync publisher after task lifecycle."""
+        try:
+            close_sync_message_publisher()
+        except Exception:
+            pass
+
 @celery_app.task(bind=True, base=BaseTask, name='shared.core.tasks.celery_tasks.process_ai_query')
 def process_ai_query(self, prompt: str, user_id: str, temperature: float = 0.1, 
                     conversation_id: str = None, **kwargs):
@@ -59,107 +69,59 @@ def process_ai_query(self, prompt: str, user_id: str, temperature: float = 0.1,
         
         # 更新任务状态
         self.update_state(state='PROGRESS', meta={'status': '正在连接AI大模型...'})
-        
-        # 异步执行AI查询
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            result = loop.run_until_complete(_process_ai_query_async(
-                prompt, user_id, temperature, conversation_id, context
-            ))
-            logger.info(f"✅ [Celery Worker] AI查询任务完成: status={result.get('status')}")
-            return result
-        finally:
-            loop.close()
+
+        result = _process_ai_query_sync(prompt, user_id, temperature, conversation_id, context, **kwargs)
+        logger.info(f"✅ [Celery Worker] AI查询任务完成: status={result.get('status')}")
+        return result
             
     except Exception as e:
         logger.error(f"❌ [Celery Worker] AI查询任务失败: {e}")
         raise self.retry(exc=e, countdown=60, max_retries=3)
 
-async def _process_ai_query_async(prompt: str, user_id: str, temperature: float,
-                                 conversation_id: str, context: TaskContext):
-    """异步AI查询处理"""
-    # 获取Redis服务
-    redis_service = RedisServiceFactory.get_service()
-    task_service = TaskRedisService(redis_service)
-    message_publisher = get_message_publisher()
-    
-    # 设置任务状态
-    await task_service.set_task_status(context.user_id, "正在连接AI大模型...")
-    
-    # 使用统一的AI查询服务
-    from shared.services.ai import ai_query_service
-    
-    # 设置对话ID
+def _process_ai_query_sync(
+    prompt: str,
+    user_id: str,
+    temperature: float,
+    conversation_id: str,
+    context: TaskContext,
+    **kwargs,
+):
+    """同步AI查询处理（gevent worker path）"""
+    redis_service = SyncRedisServiceFactory.get_service()
+    task_service = SyncTaskRedisService(redis_service)
+
+    task_service.set_task_status(context.user_id, "正在连接AI大模型...")
     if not conversation_id:
         conversation_id = f"ai_query_{user_id}_{int(time.time())}"
-    
-    # 执行AI查询
+
     try:
-        logger.debug(f'[Celery Worker Async] 提示词长度: {len(str(prompt))} 字符')
-        logger.debug(f'[Celery Worker Async] 温度参数: {temperature}')
-        
-        # 通过消息通知状态更新（如果需要状态机管理，由API服务处理）
-        # 注意：这里使用 user_id 作为 job_id，因为这是AI查询任务
-        await message_publisher.publish_status_update(
-            job_id=context.user_id,
-            status=JobStatus.RUNNING.value,
-            trigger="ai_query_start",
-            operator_type="system"
-        )
-        
-        logger.info("[Celery Worker Async] 🤖 开始调用AI服务...")
-        import time as time_module
-        start_time = time_module.time()
-        
-        # 构建消息格式
+        logger.debug(f"[Celery Worker Sync] 提示词长度: {len(str(prompt))} 字符")
+        logger.debug(f"[Celery Worker Sync] 温度参数: {temperature}")
+
         if isinstance(prompt, str):
             messages = [{"role": "user", "content": prompt}]
         else:
             messages = prompt
-        
-        result = await ai_query_service.query_ai(
+
+        result = sync_ai_query_service.query_ai(
             messages=messages,
             user_id=user_id,
             conversation_id=conversation_id,
             temperature=temperature,
+            **kwargs,
         )
-        logger.debug(f'process_ai_query_async result: {result}')
-        
-        # 保存结果
-        await task_service.save_task_result(context.user_id, {
-            'result': result,
-            'conversation_id': conversation_id,
-            'timestamp': time.time()
-        })
-        
-        await task_service.set_task_status(context.user_id, "complete")
-        
-        # 通知任务完成
-        await message_publisher.publish_status_update(
-            job_id=context.user_id,
-            status=JobStatus.DONE.value,
-            trigger="ai_query_complete",
-            operator_type="system",
+        task_service.save_task_result(
+            context.user_id,
+            {
+                "result": result,
+                "conversation_id": conversation_id,
+                "timestamp": time.time(),
+            },
         )
-        
-        return {'status': 'success', 'result': result}
-        
+        task_service.set_task_status(context.user_id, "complete")
+
+        return {"status": "success", "result": result}
     except Exception as e:
-        logger.error(f"❌ [Celery Worker Async] 异步处理失败: {e}")
-        await task_service.mark_task_failed(context.user_id, str(e))
-        
-        # 通知任务失败
-        await message_publisher.publish_status_update(
-            job_id=context.user_id,
-            status=JobStatus.FAILED.value,
-            trigger="ai_query_failed",
-            operator_type="system",
-            metadata={"error": str(e)},
-        )
+        logger.error(f"❌ [Celery Worker Sync] 处理失败: {e}")
+        task_service.mark_task_failed(context.user_id, str(e))
         raise
-
-
-
-

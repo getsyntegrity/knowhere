@@ -6,6 +6,7 @@ API service continues using async MessagePublisher with aio-pika.
 """
 import json
 import sys
+import threading
 from typing import Any, Dict, List, Optional
 
 from kombu import Connection, Exchange, Producer, Queue
@@ -23,6 +24,13 @@ from shared.models.schemas.messages import (
     JobStatusUpdateMessage,
 )
 from shared.services.messaging.monitoring import message_monitoring
+
+try:
+    from gevent.local import local as greenlet_local
+except Exception:  # pragma: no cover
+    greenlet_local = threading.local
+
+_publisher_local = greenlet_local()
 
 
 class SyncMessagePublisher:
@@ -152,12 +160,28 @@ class SyncMessagePublisher:
             self._producer = None
 
 
-_sync_message_publisher: Optional[SyncMessagePublisher] = None
-
-
 def get_sync_message_publisher() -> SyncMessagePublisher:
-    """Get sync message publisher instance (singleton)."""
-    global _sync_message_publisher
-    if _sync_message_publisher is None:
-        _sync_message_publisher = SyncMessagePublisher()
-    return _sync_message_publisher
+    """
+    Get sync message publisher instance.
+
+    Reuses one publisher per greenlet to avoid cross-greenlet socket sharing
+    while preventing excessive connection churn.
+    """
+    publisher = getattr(_publisher_local, "publisher", None)
+    if publisher is None:
+        publisher = SyncMessagePublisher()
+        _publisher_local.publisher = publisher
+    return publisher
+
+
+def close_sync_message_publisher() -> None:
+    """
+    Close and clear current greenlet's cached sync publisher.
+    """
+    publisher = getattr(_publisher_local, "publisher", None)
+    if publisher is None:
+        return
+    try:
+        publisher.close()
+    finally:
+        _publisher_local.publisher = None
