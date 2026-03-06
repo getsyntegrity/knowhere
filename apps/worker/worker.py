@@ -52,7 +52,8 @@ if __name__ == "__main__":
 
     # Start worker with gevent pool
     # Queue whitelist: exclude wait queues to preserve DLX retry delays
-    concurrency = os.getenv("WORKER_CONCURRENCY", "50")
+    from shared.core.config import settings
+    concurrency = settings.WORKER_CONCURRENCY
 
     celery_app.worker_main([
         "worker",
