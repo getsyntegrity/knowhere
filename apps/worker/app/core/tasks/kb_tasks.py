@@ -476,28 +476,23 @@ def _parse(job_id: str, user_id: str | None):
     })
 
     # Call parsing service
-    # checkerboard_inject_parse is async but internally uses sync I/O (requests, OpenAI).
-    # Under gevent, asyncio.run() cooperates with greenlet scheduling.
-    import asyncio
     from app.services.document_parser.parse_service import checkerboard_inject_parse
 
     doc_type = JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto")
     logger.info(f"Start parse: job_id={job_id}, filename={filename}, type={doc_type}")
 
     try:
-        add_dir, add_contents_df = asyncio.run(
-            checkerboard_inject_parse(
-                file_full_path=local_temp_path,
-                filename=filename,
-                output_dir=output_dir,
-                kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
-                doc_type=doc_type,
-                smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
-                summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
-                summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
-                summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),
-                add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
-            )
+        add_dir, add_contents_df = checkerboard_inject_parse(
+            file_full_path=local_temp_path,
+            filename=filename,
+            output_dir=output_dir,
+            kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
+            doc_type=doc_type,
+            smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
+            summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
+            summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),
+            add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
         )
     finally:
         if local_temp_path and os.path.exists(local_temp_path):

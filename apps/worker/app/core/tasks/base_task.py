@@ -11,7 +11,10 @@ from shared.core.state_machine.states import JobStatus
 from shared.core.logging import LogEvent
 from shared.core.exceptions.domain_exceptions import UnknownException
 from shared.core.exceptions.knowhere_exception import KnowhereException
-from shared.services.messaging.sync_publisher import get_sync_message_publisher
+from shared.services.messaging.sync_publisher import (
+    get_sync_message_publisher,
+    close_sync_message_publisher,
+)
 
 
 class KBBaseTask(Task):
@@ -23,6 +26,13 @@ class KBBaseTask(Task):
             event=LogEvent.WORKER_TASK_COMPLETE.value,
             task_id=task_id,
         ).info("KB task completed successfully")
+
+    def after_return(self, status, retval, task_id, args, kwargs, einfo):
+        """Always release greenlet-local messaging connection after task lifecycle."""
+        try:
+            close_sync_message_publisher()
+        except Exception as e:
+            logger.warning(f"Failed to close sync message publisher in after_return: {e}")
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Task failure callback - Centralized exception handling."""

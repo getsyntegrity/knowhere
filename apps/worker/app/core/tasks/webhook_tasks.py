@@ -1,14 +1,11 @@
 """
 Webhook Celery Tasks
 
-Provides Celery tasks for async webhook dispatch with DLX-based exponential backoff.
+Provides Celery tasks for webhook dispatch with DLX-based exponential backoff.
 Uses RabbitMQ Dead Letter Exchanges for non-blocking retries.
 
 Sync implementation for gevent worker pool.
-The WebhookDispatcher is deeply async (aiohttp, async DB) so we use asyncio.run()
-as a bridge. Under gevent, asyncio cooperates with greenlet scheduling.
 """
-import asyncio
 
 from celery import Task
 from loguru import logger
@@ -20,7 +17,7 @@ from shared.core.logging import (
     LogEvent,
 )
 
-from shared.services.webhook import get_webhook_dispatcher
+from app.services.webhook.sync_dispatcher import get_sync_webhook_dispatcher
 
 # Retry configuration
 MAX_ATTEMPTS = 6
@@ -65,8 +62,8 @@ class WebhookDispatchTask(Task):
         # Update status in DB (last resort status update)
         if event_id != "unknown":
             try:
-                dispatcher = get_webhook_dispatcher()
-                asyncio.run(dispatcher.mark_event_failed(event_id))
+                dispatcher = get_sync_webhook_dispatcher()
+                dispatcher.mark_event_failed(event_id)
             except Exception as e:
                 logger.error(f"Failed to update webhook status in on_failure: {e}")
 
@@ -118,9 +115,8 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
                 return False
 
         try:
-            # Dispatch webhook using async dispatcher via asyncio.run()
-            # Under gevent, asyncio cooperates with greenlet scheduling
-            result = asyncio.run(_dispatch_async(event_id))
+            dispatcher = get_sync_webhook_dispatcher()
+            result = dispatcher.dispatch(event_id)
 
             logger.bind(event=LogEvent.WORKER_TASK_COMPLETE.value).info("Webhook dispatched successfully")
             return result
@@ -139,13 +135,6 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1, jitter_applied:
         except Exception as exc:
             raise exc
 
-
-async def _dispatch_async(event_id: str) -> bool:
-    """Async wrapper for dispatcher.dispatch()."""
-    dispatcher = get_webhook_dispatcher()
-    return await dispatcher.dispatch(event_id)
-
-
 def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) -> None:
     """
     Schedule retry by publishing to the appropriate DLX wait queue.
@@ -158,8 +147,8 @@ def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) ->
             f"attempts={current_attempt}"
         )
         try:
-            dispatcher = get_webhook_dispatcher()
-            asyncio.run(dispatcher.mark_event_failed(event_id))
+            dispatcher = get_sync_webhook_dispatcher()
+            dispatcher.mark_event_failed(event_id)
 
             dispatch_webhook_task.apply_async(
                 args=[event_id, next_attempt],
