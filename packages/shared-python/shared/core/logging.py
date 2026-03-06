@@ -164,7 +164,9 @@ def setup_logging(
                 # Redis instrumentation disabled to reduce production noise/cost.
 
             elif service_name == "knowhere-worker":
-                logfire.instrument_celery()  # Consumer side
+                # NOTE: logfire.instrument_celery() is intentionally skipped for the worker.
+                # CeleryInstrumentor uses contextvars which raises ValueError under gevent
+                # ("token was created in a different Context") when greenlets switch during task execution.
                 logfire.instrument_httpx()  # Instrument HTTP client calls in worker
 
                 # Instrument sync database engine (worker uses psycopg2 via gevent)
