@@ -79,47 +79,58 @@ class SyncMessagePublisher:
         return queue_names.get(message_type, messaging_config.QUEUE_STATUS_UPDATES)
 
     def _publish(self, message: BaseMessage, routing_key: str, queue_name: str, priority: Optional[int] = None) -> bool:
-        try:
-            self._ensure_connection()
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                self._ensure_connection()
+                assert self._connection is not None
+                assert self._producer is not None
 
-            if priority is None:
-                priority = messaging_config.get_message_priority(message.message_type)
+                if priority is None:
+                    priority = messaging_config.get_message_priority(message.message_type)
 
-            # Declare queue and bind to exchange
-            queue = Queue(
-                queue_name,
-                exchange=self._exchange,
-                routing_key=routing_key,
-                durable=True,
-                queue_arguments={"x-max-priority": messaging_config.QUEUE_MAX_PRIORITY},
-            )
-            queue.maybe_bind(self._connection)
-            queue.declare()
+                queue = Queue(
+                    queue_name,
+                    exchange=self._exchange,
+                    routing_key=routing_key,
+                    durable=True,
+                    queue_arguments={"x-max-priority": messaging_config.QUEUE_MAX_PRIORITY},
+                )
+                queue.maybe_bind(self._connection)
+                queue.declare()
 
-            message_dict = message.model_dump(mode="json")
-            message_body = json.dumps(message_dict, ensure_ascii=False)
+                message_dict = message.model_dump(mode="json")
+                message_body = json.dumps(message_dict, ensure_ascii=False)
 
-            self._producer.publish(
-                message_body,
-                routing_key=routing_key,
-                delivery_mode=2,
-                priority=priority,
-                content_type="application/json",
-                content_encoding="utf-8",
-            )
+                self._producer.publish(
+                    message_body,
+                    routing_key=routing_key,
+                    delivery_mode=2,
+                    priority=priority,
+                    content_type="application/json",
+                    content_encoding="utf-8",
+                )
 
-            message_monitoring.record_message_published(message.message_type, message.job_id, True)
-            logger.debug(f"Message published: {message.message_type}, job_id={message.job_id}")
-            return True
+                message_monitoring.record_message_published(message.message_type, message.job_id, True)
+                logger.debug(f"Message published: {message.message_type}, job_id={message.job_id}")
+                return True
 
-        except Exception as e:
-            logger.error(f"Message publish failed: {message.message_type}, job_id={message.job_id}, error={e}")
-            message_monitoring.record_message_published(message.message_type, message.job_id, False)
-            # Reset connection on failure
-            logger.warning("Sync message publisher connection reset due to publish failure")
-            self._connection = None
-            self._producer = None
-            return False
+            except Exception as e:
+                # Reset connection so next attempt reconnects
+                self._connection = None
+                self._producer = None
+
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Message publish failed (attempt {attempt + 1}/{max_retries}), "
+                        f"reconnecting: {message.message_type}, job_id={message.job_id}, error={e}"
+                    )
+                    continue
+
+                logger.error(f"Message publish failed after {max_retries} attempts: {message.message_type}, job_id={message.job_id}, error={e}")
+                message_monitoring.record_message_published(message.message_type, message.job_id, False)
+                return False
+        return False
 
     def publish_status_update(self, job_id: str, status: str, trigger: str, previous_status: Optional[str] = None, operator_id: Optional[str] = None, operator_type: str = "system", metadata: Optional[Dict[str, Any]] = None) -> bool:
         message = JobStatusUpdateMessage(
