@@ -7,8 +7,6 @@ from typing import Any, Dict
 
 from shared.core.database import get_db_context
 from shared.models.database.knowledge_base import KBPydantic
-from shared.models.database.job import Job  # Added for locking
-from sqlalchemy import select  # Added for locking
 from shared.models.schemas.messages import (JobFailureMessage,
                                          JobProgressUpdateMessage,
                                          JobResultMessage,
@@ -87,6 +85,16 @@ async def _handle_status_update_async(message: JobStatusUpdateMessage):
     
     try:
         async with get_db_context() as db:
+            # Only ignore the known poison-message id from parser internals.
+            if message.job_id == "layout_parser":
+                logger.warning("Ignore status update for internal parser context id: layout_parser")
+                return {
+                    "status": "success",
+                    "job_id": message.job_id,
+                    "ignored": True,
+                    "reason": "layout_parser_internal_id",
+                }
+
             # 执行状态转换
             success = await state_machine.transition(
                 db=db,
