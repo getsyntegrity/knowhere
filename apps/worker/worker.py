@@ -25,29 +25,23 @@ import app.core.tasks.webhook_tasks
 
 
 @worker_init.connect
-def init_worker_logging(**kwargs):
-    """Initialize structured logging and Logfire when worker process starts."""
+def init_worker(**kwargs):
+    """Initialize structured logging and sync Redis when worker process starts."""
     setup_logging(service_name="knowhere-worker")
 
-
-def init_sync_redis():
-    """Initialize sync Redis connection pool and verify connectivity."""
-    from shared.services.redis.redis_sync_service import SyncRedisServiceFactory
-    service = SyncRedisServiceFactory.get_service()
-    if service.ping():
-        logger.info("Worker sync Redis connection verified")
-    else:
-        logger.warning("Worker sync Redis ping failed, will retry on first use")
+    # Verify Redis connectivity (lazy init on first use if this fails)
+    try:
+        from shared.services.redis.redis_sync_service import SyncRedisServiceFactory
+        service = SyncRedisServiceFactory.get_service()
+        if service.ping():
+            logger.info("Worker sync Redis connection verified")
+        else:
+            logger.warning("Worker sync Redis ping failed, will retry on first use")
+    except Exception as e:
+        logger.warning(f"Worker sync Redis init deferred: {e}")
 
 
 if __name__ == "__main__":
-    # Initialize sync Redis connection pool
-    try:
-        init_sync_redis()
-    except Exception as e:
-        logger.error(f"Worker startup failed: {e}")
-        sys.exit(1)
-
     # Generate unique node name
     hostname = socket.gethostname()
     pid = os.getpid()
