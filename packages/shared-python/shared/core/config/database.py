@@ -20,11 +20,18 @@ class DatabaseConfig(BaseModel):
     DB_SSL_KEY: Optional[str] = Field(default=None, description="SSL私钥文件路径")
     DB_SSL_ROOT_CERT: Optional[str] = Field(default=None, description="SSL根证书文件路径")
     
-    # 数据库连接池配置
+    # 数据库连接池配置 (async, for API)
     DB_POOL_SIZE: int = Field(default=20, description="连接池大小")
     DB_MAX_OVERFLOW: int = Field(default=30, description="最大溢出连接数")
     DB_POOL_RECYCLE: int = Field(default=1800, description="连接回收时间（秒）")
     DB_POOL_TIMEOUT: int = Field(default=30, description="连接超时时间（秒）")
+
+    # Worker sync database pool config (psycopg2, for gevent worker)
+    DB_SYNC_POOL_SIZE: int = Field(default=5, description="Worker sync pool size")
+    DB_SYNC_MAX_OVERFLOW: int = Field(default=5, description="Worker sync pool max overflow")
+
+    # Worker concurrency (gevent greenlets)
+    WORKER_CONCURRENCY: int = Field(default=50, description="Celery gevent worker concurrency")
     
     def get_ssl_connect_args(self) -> dict:
         """获取SSL连接参数（用于psycopg2）"""

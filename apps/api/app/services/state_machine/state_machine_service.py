@@ -16,6 +16,7 @@ from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 
 class StateMachineService:
@@ -289,8 +290,12 @@ class StateMachineService:
         return result.scalar_one_or_none()
     
     async def _get_job_with_version(self, db: AsyncSession, job_id: str) -> Optional[Job]:
-        """获取Job对象（包含版本号）"""
-        result = await db.execute(select(Job).where(Job.job_id == job_id))
+        """获取Job对象（仅加载状态转换所需列: status, version）"""
+        result = await db.execute(
+            select(Job)
+            .options(load_only(Job.job_id, Job.status, Job.version))
+            .where(Job.job_id == job_id)
+        )
         return result.scalar_one_or_none()
     
     
@@ -355,36 +360,37 @@ class StateMachineService:
             return False
     
     async def _update_job_error(
-        self, 
-        db: AsyncSession, 
-        job_id: str, 
-        error_message: str, 
+        self,
+        db: AsyncSession,
+        job_id: str,
+        error_message: str,
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None
     ):
-        """Update Job error information (DB + Redis)"""
+        """Update Job error information (DB + Redis) — single UPDATE, no ORM load"""
         try:
-            # Build values to update
-            update_values = {
+            from sqlalchemy import func
+            from sqlalchemy.dialects.postgresql import JSONB, array as pg_array
+
+            update_values: Dict[str, Any] = {
                 "error_message": error_message,
                 "error_code": error_code
             }
-            
-            # If error_details provided, merge into job_metadata
+
+            # If error_details provided, use jsonb_set to patch in-place
             if error_details:
-                # Get current job_metadata first
-                result = await db.execute(select(Job).where(Job.job_id == job_id))
-                job = result.scalar_one_or_none()
-                if job:
-                    current_metadata = job.job_metadata or {}
-                    current_metadata["error_details"] = error_details
-                    update_values["job_metadata"] = current_metadata
-                    
-                    # Also update Redis cache
-                    from shared.services.redis.job_metadata_service import JobMetadataService
-                    metadata_service = JobMetadataService(self.redis)
-                    await metadata_service.update_metadata(job_id, {"error_details": error_details})
-            
+                import json as _json
+                update_values["job_metadata"] = func.jsonb_set(
+                    func.coalesce(Job.job_metadata.cast(JSONB), func.cast("{}", JSONB)),
+                    pg_array(["error_details"]),
+                    func.cast(_json.dumps(error_details), JSONB),
+                )
+
+                # Also update Redis cache
+                from shared.services.redis.job_metadata_service import JobMetadataService
+                metadata_service = JobMetadataService(self.redis)
+                await metadata_service.update_metadata(job_id, {"error_details": error_details})
+
             await db.execute(
                 update(Job)
                 .where(Job.job_id == job_id)

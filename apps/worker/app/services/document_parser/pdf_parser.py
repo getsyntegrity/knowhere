@@ -1,13 +1,11 @@
 import os
 import time
-import asyncio
 import requests
 from typing import Callable, Optional
 from shared.core.exceptions.domain_exceptions import (
     PDFParsingException,
     MinerUServiceException,
     TimeoutException,
-    WorkerHandlingException,
     StorageServiceException
 )
 from shared.core.exceptions.knowhere_exception import KnowhereException
@@ -18,7 +16,7 @@ from shared.core.config import settings
 from shared.core.constants import APIConstants
 from app.services.document_parser.md_parser import parse_md
 from shared.utils.FileDownUpUtils import s3_download_extract_zip
-from shared.utils.CommonHelper import is_remote
+from shared.utils.CommonHelperSync import is_remote
 
 MINERU_API_TIMEOUT = 60       # For API calls (get status, etc.)
 MINERU_UPLOAD_TIMEOUT = 600   # For large file uploads (10 min max)
@@ -30,7 +28,7 @@ def get_mineru_headers() -> dict:
     }
 
 
-async def poll_mineru_task(
+def poll_mineru_task(
     status_url: str,
     task_id: str,
     output_dir: str,
@@ -80,7 +78,7 @@ async def poll_mineru_task(
                 status = get_status(response_json)
                 if not status:
                     logger.warning(f"Empty data received from MinerU: {response_json}")
-                    await asyncio.sleep(polling_interval)
+                    time.sleep(polling_interval)
                     attempt += 1
                     continue
 
@@ -137,17 +135,17 @@ async def poll_mineru_task(
 
                 # 动态调整轮询间隔
                 current_interval = get_polling_interval(state, attempt)
-                await asyncio.sleep(current_interval)
+                time.sleep(current_interval)
                 attempt += 1
 
             else:
                 logger.warning(f"Status query failed, status code: {res.status_code}")
-                await asyncio.sleep(polling_interval * 2)  # Extend wait on failure
+                time.sleep(polling_interval * 2)  # Extend wait on failure
                 attempt += 1
 
         except requests.RequestException as e:
             logger.warning(f"Network request failed: {e}")
-            await asyncio.sleep(polling_interval * 2)
+            time.sleep(polling_interval * 2)
             attempt += 1
         except KnowhereException:
             raise
@@ -167,7 +165,7 @@ async def poll_mineru_task(
         )
 
 
-async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
+def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
     base_url = settings.MINERU_URL
     headers = get_mineru_headers()
 
@@ -259,7 +257,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
             return extract_result[0] if extract_result else None
         return extract_result
 
-    await poll_mineru_task(
+    poll_mineru_task(
         status_url=status_url,
         task_id=batch_id,
         output_dir=output_dir,
@@ -267,7 +265,7 @@ async def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None
     )
 
 
-async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, relative_root=None):
+def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, relative_root=None):
     route = profile.route if profile else "standard"
     
     if route == "fast":
@@ -296,10 +294,10 @@ async def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=Non
         logger.info(f"⚡ Fast path: wrote {len(md_text)} chars to full.md, {img_count} images extracted")
     else:
         # Standard path: MinerU VLM API
-        await upload_and_parse(pdf_path, filename, output_dir)
+        upload_and_parse(pdf_path, filename, output_dir)
 
     logger.info("✅ PDF parsing step 1 complete: text extracted")
 
     base_llm_paras.update({"doc_name": filename})
-    parsed_df = await parse_md(output_dir, source_type='md', file_path=os.path.join(output_dir, 'full.md'), base_llm_paras=base_llm_paras, relative_root=relative_root)
+    parsed_df = parse_md(output_dir, source_type='md', file_path=os.path.join(output_dir, 'full.md'), base_llm_paras=base_llm_paras, relative_root=relative_root)
     return parsed_df

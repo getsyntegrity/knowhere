@@ -49,7 +49,7 @@ class BaseConfig(BaseSettings):
     @classmethod
     def validate_app_env(cls, v):
         app_env = v.strip().lower()
-        if app_env and app_env not in ['staging', 'production']:
+        if app_env and app_env not in ['development', 'staging', 'production']:
             raise ValueError('APP_ENV must be empty, staging, or production')
         return app_env
     

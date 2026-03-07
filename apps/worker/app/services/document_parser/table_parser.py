@@ -11,7 +11,7 @@ import openpyxl
 from collections import OrderedDict
 from typing import List, Union, Dict, Tuple, Optional
 from shared.core.config import settings
-from shared.services.ai import ai_query_service
+from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (flatten_dic2paths, gen_str_codes,
@@ -21,11 +21,10 @@ from shared.utils.text_utils import tokenize2stw_remove, remove_duplicates_order
 
 from app.services.document_parser.txt_parser import extract_summary_keywords
 from app.services.document_parser.html_parser import df2html, tb_htmlstr_to_df, html_to_md_lines
-from shared.utils.CommonHelper import load_file_bytes
+from shared.utils.CommonHelperSync import load_file_bytes
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from loguru import logger
 from shared.core.exceptions.domain_exceptions import TableParsingException
 from shared.core.exceptions.knowhere_exception import KnowhereException
 
@@ -892,7 +891,7 @@ def extract_tables_by_forms(tb_txt, form):
     return tb_strs
 
 
-async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True):
+def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True):
     def parse_headers_nonsmart(df_):
         non_na_row = df_[df_.notna().any(axis=1)].head(1)
         header_id = non_na_row.index[-1] if not non_na_row.empty else None
@@ -921,12 +920,12 @@ async def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True
             # Track task status via Redis (skip in LOCAL_DEBUG mode)
             import os
             if os.getenv("LOCAL_DEBUG", "0") != "1":
-                from shared.services.redis import RedisServiceFactory
-                redis_service = RedisServiceFactory.get_service()
-                await redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
+                from shared.services.redis.redis_sync_service import SyncRedisServiceFactory
+                redis_service = SyncRedisServiceFactory.get_service()
+                redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
             
             # Use unified AI service
-            header_res = await ai_query_service.query_ai(
+            header_res = ai_query_service.query_ai(
                 messages=messages,
                 user_id=ctx_task_id,
                 conversation_id=ctx_task_id,
@@ -1252,7 +1251,7 @@ def format_tb_scope(df, num):
     return scope_str
 
 
-async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, window_h=10, relative_root=None, use_precision_mode=True, include_hidden_sheets=False):
+def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, window_h=10, relative_root=None, use_precision_mode=True, include_hidden_sheets=False):
     """
     Parse Excel file and extract table content.
     
@@ -1276,7 +1275,7 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
     time_stamp = get_str_time()
     df_list = []
 
-    table_data = await load_file_bytes(file_path, file_url=baseurl)
+    table_data = load_file_bytes(file_path, file_url=baseurl)
     table_stream = io.BytesIO(table_data)
     
     tb_dir = os.path.join(output_dir, "tables")
@@ -1319,7 +1318,7 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
                 # In precision mode, headers are already correctly set by parse_headers_from_excel
                 # In legacy mode, use LLM/heuristic header parsing
                 if not precision_mode_active:
-                    tb = await parse_headers(tb, paras=base_llm_paras)
+                    tb = parse_headers(tb, paras=base_llm_paras)
                 
                 # Get row header column count from DataFrame attrs (set in parse_headers_from_excel)
                 row_header_cols = tb.attrs.get('row_header_cols', 0)
@@ -1330,7 +1329,7 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
                 if base_llm_paras['summary_table']:
                     summary_context = format_tb_scope(tb, window_h)
                     summary_context = f"Table columns:\n{tb_keywords}\n\nFirst {window_h} rows:\n{summary_context}"
-                    tb_summary = await extract_summary_keywords(summary_context, type_="summary", summary_len=100)
+                    tb_summary = extract_summary_keywords(summary_context, type_="summary", summary_len=100)
                 else:
                     tb_summary = tb_keywords
 
@@ -1367,4 +1366,3 @@ async def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=N
     table_df = pd.DataFrame(df_list, columns=all_df_cols)
     table_df = process_dup_paths_df(table_df)
     return table_df
-

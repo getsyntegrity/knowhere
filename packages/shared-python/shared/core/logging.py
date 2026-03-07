@@ -119,10 +119,14 @@ def setup_logging(
     # Console handler - respects LOG_LEVEL
     log_level = settings.LOG_LEVEL
 
+    # enqueue=True uses a background thread for log writes, which deadlocks
+    # with gevent's cooperative scheduling on stdout. Disable for worker.
+    use_enqueue = service_name != "knowhere-worker"
+
     logger.add(
         sys.stdout,
         level=log_level,
-        enqueue=True,
+        enqueue=use_enqueue,
         format=(
             "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | "
             "{extra[event]} | {message}"
@@ -160,12 +164,19 @@ def setup_logging(
                 # Redis instrumentation disabled to reduce production noise/cost.
 
             elif service_name == "knowhere-worker":
-                logfire.instrument_celery()  # Consumer side
+                # NOTE: logfire.instrument_celery() is intentionally skipped for the worker.
+                # CeleryInstrumentor uses contextvars which raises ValueError under gevent
+                # ("token was created in a different Context") when greenlets switch during task execution.
                 logfire.instrument_httpx()  # Instrument HTTP client calls in worker
 
-                # Instrument database
-                from shared.core.database import engine
-                logfire.instrument_sqlalchemy(engine=engine)
+                # Instrument sync database engine (worker uses psycopg2 via gevent)
+                try:
+                    from shared.core.database_sync import sync_engine
+                    logfire.instrument_sqlalchemy(engine=sync_engine)
+                except ImportError:
+                    logger.bind(event=LogEvent.LOGGING_CONFIGURED.value).warning(
+                        "Sync database engine not available for Logfire instrumentation"
+                    )
 
                 # Redis instrumentation disabled to reduce production noise/cost.
 

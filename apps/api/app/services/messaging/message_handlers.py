@@ -7,8 +7,6 @@ from typing import Any, Dict
 
 from shared.core.database import get_db_context
 from shared.models.database.knowledge_base import KBPydantic
-from shared.models.database.job import Job  # Added for locking
-from sqlalchemy import select  # Added for locking
 from shared.models.schemas.messages import (JobFailureMessage,
                                          JobProgressUpdateMessage,
                                          JobResultMessage,
@@ -22,6 +20,12 @@ from app.services.state_machine import JobStateMachine
 from app.services.job_lifecycle_service import JobLifecycleService
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
+
+
+# Module-level singletons — these services are stateless, no need to
+# re-instantiate per message (avoids ~6 object allocations per message).
+_state_machine = JobStateMachine()
+_lifecycle_service = JobLifecycleService()
 
 
 async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,10 +81,21 @@ async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, An
 
 async def _handle_status_update_async(message: JobStatusUpdateMessage):
     """异步处理状态更新"""
-    state_machine = JobStateMachine()
+    state_machine = _state_machine
     
     try:
         async with get_db_context() as db:
+            # Only ignore the known poison-message id from parser internals.
+            # TODO need clean,
+            if message.job_id == "layout_parser":
+                logger.warning("Ignore status update for internal parser context id: layout_parser")
+                return {
+                    "status": "success",
+                    "job_id": message.job_id,
+                    "ignored": True,
+                    "reason": "layout_parser_internal_id",
+                }
+
             # 执行状态转换
             success = await state_machine.transition(
                 db=db,
@@ -239,7 +254,7 @@ async def handle_job_result(message_data: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _handle_result_async(message: JobResultMessage):
     """异步处理结果数据"""
-    state_machine = JobStateMachine()
+    state_machine = _state_machine
     
     try:
         async with get_db_context() as db:
@@ -253,7 +268,7 @@ async def _handle_result_async(message: JobResultMessage):
                 chunks = []
             
             # 2. Use JobLifecycleService for Atomic Transaction (Unit of Work)
-            lifecycle_service = JobLifecycleService()
+            lifecycle_service = _lifecycle_service
             inline_payload = {
                 "checksum": message.checksum,
             }
@@ -330,7 +345,7 @@ async def handle_job_failure(message_data: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _handle_failure_async(message: JobFailureMessage):
     """Async handle failure message"""
-    state_machine = JobStateMachine()
+    state_machine = _state_machine
     
     try:
         from typing import cast
@@ -350,7 +365,7 @@ async def _handle_failure_async(message: JobFailureMessage):
                  should_refund = True
             
             # Use JobLifecycleService for Atomic Transaction (Unit of Work)
-            lifecycle_service = JobLifecycleService()
+            lifecycle_service = _lifecycle_service
             success = await lifecycle_service.finalize_job_failure(
                 db=db,
                 job_id=message.job_id,

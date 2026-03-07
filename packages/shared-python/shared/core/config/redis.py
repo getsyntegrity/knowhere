@@ -39,6 +39,10 @@ class RedisConfig(BaseModel):
     REDIS_KEY_PREFIX: str = Field(default="knowhere-api", description="键前缀")
     REDIS_DEFAULT_TTL: int = Field(default=86400, description="默认TTL（秒）")
     
+    # Worker sync pool config (gevent BlockingConnectionPool)
+    REDIS_SYNC_MAX_CONNECTIONS: int = Field(default=50, description="Worker sync pool max connections")
+    REDIS_SYNC_POOL_TIMEOUT: int = Field(default=5, description="Worker sync pool blocking timeout (seconds)")
+
     # 健康检查配置
     REDIS_HEALTH_CHECK_INTERVAL: int = Field(default=30, description="健康检查间隔（秒）")
     REDIS_HEALTH_CHECK_TIMEOUT: float = Field(default=5.0, description="健康检查超时时间")
