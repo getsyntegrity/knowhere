@@ -31,7 +31,14 @@ class AIConfig(BaseModel):
     ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段）")
     ALI_URL: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="阿里云URL（兼容性字段）")
     MINERU_API_KEY: str = Field(default="", description="MinerU API密钥（兼容性字段）")
+    MINERU_API_KEYS: str = Field(
+        default="",
+        description="MinerU API密钥池；支持 JSON 数组或逗号/换行分隔，格式可为 token_id=api_key",
+    )
     MINERU_URL: str = Field(default="https://mineru.net/api/v4", description="MinerU API基础URL（不含端点路径，如 https://mineru.net/api/v4）")
+    MINERU_TOKEN_RPM_LIMIT: int = Field(default=300, description="单个 MinerU token 每分钟请求上限")
+    MINERU_TOKEN_DAILY_LIMIT: int = Field(default=10000, description="单个 MinerU token 每日请求上限")
+    MINERU_TOKEN_COOLDOWN_SECONDS: int = Field(default=60, description="MinerU token 触发限流后的冷却时间")
     IMAGE_MODEL_MAX: str = Field(default="", description="最大图像模型（兼容性字段）")
     REASON_MODEL: str = Field(default="", description="推理模型（兼容性字段）")
     IMG_HEADER: str = Field(default="", description="图像头部（兼容性字段）")

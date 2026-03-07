@@ -64,10 +64,51 @@ from app.services.workload.page_estimator import PageEstimator
 celery_app = get_celery_app()
 
 
+def _cleanup_temp_file(file_path: str | None) -> None:
+    """Best-effort cleanup for temp files created during parsing."""
+    if not file_path:
+        return
+
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except OSError as exc:
+        logger.warning(f"Failed to cleanup temp file {file_path}: {exc}")
+
+
+def _download_s3_file_to_temp(file_url: str, file_ext: str) -> str:
+    """Download the source file from object storage into a temp file."""
+    local_temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+            local_temp_path = tmp_file.name
+            with requests.get(
+                file_url,
+                timeout=120,
+                stream=True,
+                headers={"User-Agent": "Knowhere-Worker/1.0"},
+            ) as response:
+                response.raise_for_status()
+                for chunk in response.iter_content(chunk_size=65536):
+                    if chunk:
+                        tmp_file.write(chunk)
+    except requests.RequestException as exc:
+        _cleanup_temp_file(local_temp_path)
+        raise StorageServiceException(
+            internal_message=f"Failed to download source file from object storage: {exc}",
+            operation="download_source_file",
+            original_exception=exc,
+        ) from exc
+
+    return local_temp_path
+
+
 @celery_app.task(
     bind=True,
     base=KBBaseTask,
     name="app.core.tasks.kb_tasks.upload_url_file_task",
+    ignore_result=True,
     autoretry_for=RETRYABLE_EXCEPTIONS,
     retry_kwargs={"countdown": settings.KB_TASK_RETRY_COUNTDOWN, "max_retries": settings.KB_TASK_MAX_RETRIES},
 )
@@ -233,6 +274,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
     bind=True,
     base=KBBaseTask,
     name="app.core.tasks.kb_tasks.parse_task",
+    ignore_result=True,
     autoretry_for=RETRYABLE_EXCEPTIONS,
     retry_kwargs={"countdown": settings.KB_TASK_RETRY_COUNTDOWN, "max_retries": settings.KB_TASK_MAX_RETRIES},
 )
@@ -366,15 +408,10 @@ def _parse(job_id: str, user_id: str | None):
     filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
 
     # Download file to temp location
-    local_temp_path = None
     page_count = 1
 
     file_ext = os.path.splitext(filename)[1].lower() if filename else ""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
-        local_temp_path = tmp_file.name
-        response = requests.get(file_url, timeout=120)
-        response.raise_for_status()
-        tmp_file.write(response.content)
+    local_temp_path = _download_s3_file_to_temp(file_url, file_ext)
 
     logger.info(f"File downloaded: job_id={job_id}, local_path={local_temp_path}")
 

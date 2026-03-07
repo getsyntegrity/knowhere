@@ -6,7 +6,8 @@ from shared.core.exceptions.domain_exceptions import (
     PDFParsingException,
     MinerUServiceException,
     TimeoutException,
-    StorageServiceException
+    StorageServiceException,
+    UnavailableException,
 )
 from shared.core.exceptions.knowhere_exception import KnowhereException
 
@@ -15,17 +16,48 @@ from loguru import logger
 from shared.core.config import settings
 from shared.core.constants import APIConstants
 from app.services.document_parser.md_parser import parse_md
+from app.services.document_parser.mineru_quota_manager import get_mineru_quota_manager
 from shared.utils.FileDownUpUtils import s3_download_extract_zip
 from shared.utils.CommonHelperSync import is_remote
 
 MINERU_API_TIMEOUT = 60       # For API calls (get status, etc.)
 MINERU_UPLOAD_TIMEOUT = 600   # For large file uploads (10 min max)
 
-def get_mineru_headers() -> dict:
+
+def get_mineru_headers(api_key: str) -> dict:
     return {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.MINERU_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
     }
+
+
+def _get_retry_after_seconds(response: requests.Response, default_retry_after: int) -> int:
+    """Parse Retry-After header with sane bounds for worker backoff."""
+    retry_after_header = response.headers.get("Retry-After")
+    if retry_after_header:
+        try:
+            return max(1, min(int(retry_after_header), MINERU_RATE_LIMIT_MAX_RETRY_AFTER))
+        except ValueError:
+            logger.debug(f"Invalid MinerU Retry-After header: {retry_after_header}")
+
+    return max(1, min(default_retry_after, MINERU_RATE_LIMIT_MAX_RETRY_AFTER))
+
+
+MINERU_RATE_LIMIT_DEFAULT_RETRY_AFTER = 15
+MINERU_RATE_LIMIT_MAX_RETRY_AFTER = 60
+
+
+def _raise_mineru_unavailable(token_id: str, response: requests.Response, operation: str) -> None:
+    retry_after = _get_retry_after_seconds(response, settings.MINERU_TOKEN_COOLDOWN_SECONDS)
+    quota_manager = get_mineru_quota_manager()
+    quota_manager.mark_rate_limited(token_id, retry_after)
+    raise UnavailableException(
+        internal_message=f"MinerU rate limited during {operation}",
+        retry_after=retry_after,
+        limit=settings.MINERU_TOKEN_RPM_LIMIT,
+        period="minute",
+        user_message="MinerU is busy right now. Please retry shortly.",
+    )
 
 
 def poll_mineru_task(
@@ -33,9 +65,10 @@ def poll_mineru_task(
     task_id: str,
     output_dir: str,
     get_status: Callable[[dict], Optional[dict]],
+    preferred_token_id: Optional[str] = None,
 ) -> None:
     # Optimize polling strategy: add delay, timeout and error handling
-    status_header = get_mineru_headers()
+    quota_manager = get_mineru_quota_manager()
 
     max_polling_attempts = 120  # Max polling attempts (10 minutes)
     polling_interval = 5.0  # Polling interval (seconds)
@@ -66,14 +99,35 @@ def poll_mineru_task(
             logger.debug(
                 f"parse_pdfs status_url: {status_url} (attempt {attempt + 1}/{max_polling_attempts})"
             )
+            lease = quota_manager.acquire_request(
+                operation="poll_status",
+                preferred_token_id=preferred_token_id,
+            )
+            status_header = get_mineru_headers(lease.api_key)
             res = requests.get(status_url, headers=status_header, timeout=MINERU_API_TIMEOUT)
+
+            if res.status_code == 429:
+                _raise_mineru_unavailable(lease.token_id, res, operation="poll_status")
 
             if res.status_code == 200:
                 response_json = res.json()
                 if response_json.get("code") != 0:
-                     raise MinerUServiceException(
-                         internal_message=f"MinerU API Error: {response_json.get('msg')}"
-                     )
+                    response_message = str(response_json.get("msg") or "Unknown error")
+                    if "rate limit" in response_message.lower():
+                        quota_manager.mark_rate_limited(
+                            lease.token_id,
+                            settings.MINERU_TOKEN_COOLDOWN_SECONDS,
+                        )
+                        raise UnavailableException(
+                            internal_message=f"MinerU rate limited during poll_status: {response_message}",
+                            retry_after=settings.MINERU_TOKEN_COOLDOWN_SECONDS,
+                            limit=lease.rpm_limit,
+                            period="minute",
+                            user_message="MinerU is busy right now. Please retry shortly.",
+                        )
+                    raise MinerUServiceException(
+                        internal_message=f"MinerU API Error: {response_message}"
+                    )
                 
                 status = get_status(response_json)
                 if not status:
@@ -167,7 +221,7 @@ def poll_mineru_task(
 
 def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
     base_url = settings.MINERU_URL
-    headers = get_mineru_headers()
+    quota_manager = get_mineru_quota_manager()
 
     url = f"{base_url}/file-urls/batch"
     payload = {
@@ -179,7 +233,11 @@ def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
     }
 
     logger.info(f"Requesting upload URL for: {filename}")
+    lease = quota_manager.acquire_request(operation="upload_url")
+    headers = get_mineru_headers(lease.api_key)
     res = requests.post(url, headers=headers, json=payload, timeout=MINERU_API_TIMEOUT)
+    if res.status_code == 429:
+        _raise_mineru_unavailable(lease.token_id, res, operation="upload_url")
     if res.status_code != 200:
         raise MinerUServiceException(
             internal_message=f"Failed to get upload URL: {res.text}",
@@ -188,8 +246,21 @@ def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
 
     result = res.json()
     if result.get("code") != 0:
+        response_message = str(result.get("msg", "Unknown error"))
+        if "rate limit" in response_message.lower():
+            quota_manager.mark_rate_limited(
+                lease.token_id,
+                settings.MINERU_TOKEN_COOLDOWN_SECONDS,
+            )
+            raise UnavailableException(
+                internal_message=f"MinerU rate limited during upload_url: {response_message}",
+                retry_after=settings.MINERU_TOKEN_COOLDOWN_SECONDS,
+                limit=lease.rpm_limit,
+                period="minute",
+                user_message="MinerU is busy right now. Please retry shortly.",
+            )
         raise MinerUServiceException(
-            internal_message=f"MinerU API error: {result.get('msg', 'Unknown error')}"
+            internal_message=f"MinerU API error: {response_message}"
         )
 
     batch_id = result["data"]["batch_id"]
@@ -262,6 +333,7 @@ def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
         task_id=batch_id,
         output_dir=output_dir,
         get_status=get_batch_status,
+        preferred_token_id=lease.token_id,
     )
 
 
