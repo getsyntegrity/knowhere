@@ -309,16 +309,23 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
     @staticmethod
     def _minute_key(token_id: str, now_ts: int) -> str:
         minute_bucket = now_ts // MinerUQuotaManager.MINUTE_WINDOW_SECONDS
-        return f"mineru:quota:{token_id}:minute:{minute_bucket}"
+        slot_tag = MinerUQuotaManager._token_slot_tag(token_id)
+        return f"mineru:quota:{{{slot_tag}}}:minute:{minute_bucket}"
 
     @staticmethod
     def _day_key(token_id: str, now_ts: int) -> str:
         day_bucket = now_ts // MinerUQuotaManager.DAY_WINDOW_SECONDS
-        return f"mineru:quota:{token_id}:day:{day_bucket}"
+        slot_tag = MinerUQuotaManager._token_slot_tag(token_id)
+        return f"mineru:quota:{{{slot_tag}}}:day:{day_bucket}"
 
     @staticmethod
     def _cooldown_key(token_id: str) -> str:
-        return f"mineru:quota:{token_id}:cooldown"
+        slot_tag = MinerUQuotaManager._token_slot_tag(token_id)
+        return f"mineru:quota:{{{slot_tag}}}:cooldown"
+
+    @staticmethod
+    def _token_slot_tag(token_id: str) -> str:
+        return str(token_id).replace("{", "_").replace("}", "_")
 
 
 _quota_manager: Optional[MinerUQuotaManager] = None

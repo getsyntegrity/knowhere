@@ -1,6 +1,7 @@
 from typing import Any, Optional, cast
 
 import pytest
+from redis.crc import key_slot
 
 from app.services.document_parser import mineru_pdf_service, pdf_parser
 from app.services.document_parser.mineru_quota_manager import (
@@ -188,6 +189,19 @@ def test_lua_round_robin_uses_backup_token_after_cooldown():
     lease = manager.acquire_request(operation="upload_url")
 
     assert lease.token_id == "backup"
+
+
+def test_quota_keys_share_cluster_hash_slot():
+    fixed_now = 1_700_000_000
+    minute_key = MinerUQuotaManager._minute_key("primary", fixed_now)
+    day_key = MinerUQuotaManager._day_key("primary", fixed_now)
+    cooldown_key = MinerUQuotaManager._cooldown_key("primary")
+
+    assert "{primary}" in minute_key
+    assert "{primary}" in day_key
+    assert "{primary}" in cooldown_key
+    assert key_slot(minute_key.encode()) == key_slot(day_key.encode())
+    assert key_slot(minute_key.encode()) == key_slot(cooldown_key.encode())
 
 
 def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_path):
