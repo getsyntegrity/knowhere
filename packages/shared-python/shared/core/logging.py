@@ -8,6 +8,12 @@ from typing import Any, Dict
 from loguru import logger
 
 _log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
+_DEFAULT_CONSOLE_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {extra[event]} | {message}"
+)
+_DEVELOPMENT_CONSOLE_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {extra[event]} | {message} | {extra}"
+)
 
 class LogEvent(Enum):
     """
@@ -118,6 +124,7 @@ def setup_logging(
 
     # Console handler - respects LOG_LEVEL
     log_level = settings.LOG_LEVEL
+    show_bind_data = settings.ENVIRONMENT == "development"
 
     # enqueue=True uses a background thread for log writes, which deadlocks
     # with gevent's cooperative scheduling on stdout. Disable for worker.
@@ -128,8 +135,9 @@ def setup_logging(
         level=log_level,
         enqueue=use_enqueue,
         format=(
-            "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | "
-            "{extra[event]} | {message}"
+            _DEVELOPMENT_CONSOLE_FORMAT
+            if show_bind_data
+            else _DEFAULT_CONSOLE_FORMAT
         ),
     )
 
