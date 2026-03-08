@@ -130,10 +130,6 @@ def setup_logging(
     # with gevent's cooperative scheduling on stdout. Disable for worker.
     use_enqueue = service_name != "knowhere-worker"
 
-    # enqueue=True uses a background thread for log writes, which deadlocks
-    # with gevent's cooperative scheduling on stdout. Disable for worker.
-    use_enqueue = service_name != "knowhere-worker"
-
     logger.add(
         sys.stdout,
         level=log_level,
