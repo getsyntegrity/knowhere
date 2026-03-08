@@ -306,7 +306,7 @@ jobs:
             echo "ECR Image: (not pushed for web service or PR event)"
           fi
 
-  # Job 2: 环境部署
+# Job 2: 环境部署
   deploy:
     runs-on: ubuntu-latest
     needs: build-and-push
@@ -323,7 +323,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+  
       - name: Check if should deploy this service
         id: check-deploy
         run: |
@@ -345,13 +345,13 @@ jobs:
             echo "should_deploy=false" >> $GITHUB_OUTPUT
             echo "⏭️  Skipping service: $CURRENT_SERVICE (manual input specified: $INPUT_SERVICE)"
           fi
-
+  
       - name: Download image URIs artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.service }}-image-uris
           path: /tmp/image-uris
-
+  
       - name: Load image URIs from file
         id: load-uris
         run: |
@@ -378,7 +378,7 @@ jobs:
             echo "❌ Error: Image URIs file not found: $ENV_FILE"
             exit 1
           fi
-
+  
       - name: Determine deployment type and namespace
         id: deploy-type
         run: |
@@ -434,29 +434,15 @@ jobs:
       
       # 阿里云 ACK 部署步骤
       - name: Deploy to Aliyun ACK (生产环境)
-        if: |
-          steps.deploy-type.outputs.deploy_type == 'k8s' && 
-          steps.check-deploy.outputs.should_deploy == 'true' &&
-          github.event_name != 'pull_request'
+        if: steps.deploy-type.outputs.deploy_type == 'k8s' && steps.check-deploy.outputs.should_deploy == 'true'
         env:
-          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-          ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
+         ALIYUN_ACK_KUBECONFIG: ${{ secrets.ALIYUN_ACK_KUBECONFIG }} 
         run: |
           echo "🚀 Deploying ${{ matrix.service }} to Aliyun ACK Production Cluster"
-          
-          # 配置阿里云CLI
-          aliyun configure set --profile default \
-            --access-key-id $ALIYUN_ACCESS_KEY_ID \
-            --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
-            --region $ALIYUN_REGION
-          
-          # 获取ACK集群kubeconfig
-          aliyun cs GetClusterKubeConfig \
-            --ClusterId ${{ env.ALIYUN_ACK_PROD_CLUSTER_ID }} \
-            --RegionId $ALIYUN_REGION > kubeconfig.yaml
-          
-          export KUBECONFIG=kubeconfig.yaml
+
+          ACK_KUBECONFIG_FILE="ack_kubeconfig.yaml"
+          echo "$ALIYUN_ACK_KUBECONFIG" > "$ACK_KUBECONFIG_FILE"
+          echo "✅ Kubeconfig 文件已从 Secret 生成"
           
           # 使用ACR镜像（阿里云环境优先使用ACR）
           IMAGE="${{ env.ACR_IMAGE_URI }}"
@@ -465,16 +451,122 @@ jobs:
           fi
           
           echo "Using image: $IMAGE"
+          DEPLOYMENT_NAME="knowhere-${{ matrix.service }}"
+          NAMESPACE="${{ steps.deploy-type.outputs.aliyun_ack_namespace }}" 
+          echo "Deployment名称: $DEPLOYMENT_NAME"
+          echo "容器名称: ${{ matrix.service }}"
+          echo "命名空间: $NAMESPACE"
           
-          # 更新K8s Deployment
-          kubectl set image deployment/${{ matrix.service }} \
+          if ! kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n $NAMESPACE > /dev/null 2>&1; then
+            echo "❌ 错误：Deployment $DEPLOYMENT_NAME 在命名空间 $NAMESPACE 中不存在"
+            echo "请先确认以下Deployment是否存在："
+            kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployments -n $NAMESPACE
+            exit 1
+          fi
+          
+          # 检查Deployment中的容器名称
+          echo "检查Deployment中的容器信息..."
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n $NAMESPACE -o jsonpath='{.spec.template.spec.containers[*].name}'
+          echo ""
+          
+          # 更新K8s Deployment - 使用正确的Deployment名称和容器名称
+          echo "更新Deployment $DEPLOYMENT_NAME 的镜像..."
+          kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" set image deployment/"$DEPLOYMENT_NAME" \
             ${{ matrix.service }}=$IMAGE \
-            --namespace=prod
+            --namespace=$NAMESPACE
           
           # 验证部署状态
-          kubectl rollout status deployment/${{ matrix.service }} \
-            --namespace=prod \
-            --timeout=300s
+          echo "验证部署状态..."
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          ROLLOUT_SUCCESS=false
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "检查部署状态 (尝试 $ATTEMPT/$MAX_ATTEMPTS)..."
+            
+            # 检查rollout状态
+            if kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" rollout status deployment/"$DEPLOYMENT_NAME" \
+              --namespace="$NAMESPACE" \
+              --timeout=60s 2>&1 | tee /tmp/rollout-status.txt; then
+              echo "✅ 部署成功完成！"
+              ROLLOUT_SUCCESS=true
+              break
+            else
+              echo "⚠️ 部署检查未完成，等待后重试..."
+              
+              # 检查Pod状态以提供更多信息
+              echo "当前Pod状态:"
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o wide
+              
+              # 检查Pod事件
+              echo "Pod事件:"
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get events -n "$NAMESPACE" --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' | grep "$DEPLOYMENT_NAME" | tail -5
+              
+              # 如果Pod存在，检查容器状态
+              POD_NAME=$(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+              if [ -n "$POD_NAME" ]; then
+                echo "容器状态:"
+                kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[*].name}{" : "}{.status.containerStatuses[*].ready}{"\n"}'
+              fi
+              
+              # 等待一段时间后重试
+              sleep 30
+              ATTEMPT=$((ATTEMPT + 1))
+            fi
+          done
+          
+          if [ "$ROLLOUT_SUCCESS" = false ]; then
+            echo "❌ 部署检查超时，达到最大重试次数 ($MAX_ATTEMPTS)"
+            
+            # 提供更详细的错误信息
+            echo "=== 详细错误诊断 ==="
+            echo "1. Deployment状态:"
+            kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" describe deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE"
+            
+            echo "2. Pod状态:"
+            kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o wide
+            
+            echo "3. Pod详细状态:"
+            for POD in $(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o name); do
+              echo "Pod: $POD"
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" describe "$POD" -n "$NAMESPACE" | grep -A 10 "Events:"
+            done
+            
+            # 尝试获取容器日志
+            echo "4. 容器日志 (最后50行):"
+            for POD in $(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get pods -n "$NAMESPACE" -l app="$DEPLOYMENT_NAME" -o jsonpath='{.items[*].metadata.name}'); do
+              echo "=== Pod $POD 日志 ==="
+              kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" logs "$POD" -n "$NAMESPACE" --tail=50 2>/dev/null || echo "无法获取日志"
+            done
+            
+            exit 1
+          fi
+          
+          # 额外检查服务是否真的可用
+          echo "执行最终健康检查..."
+          HEALTH_CHECK_ATTEMPTS=6
+          HEALTH_ATTEMPT=1
+          
+          while [ $HEALTH_ATTEMPT -le $HEALTH_CHECK_ATTEMPTS ]; do
+            echo "健康检查 (尝试 $HEALTH_ATTEMPT/$HEALTH_CHECK_ATTEMPTS)..."
+            
+            # 检查所有Pod是否都就绪
+            READY_PODS=$(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            DESIRED_PODS=$(kubectl --kubeconfig="$ACK_KUBECONFIG_FILE" get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+            
+            if [ "$READY_PODS" = "$DESIRED_PODS" ] && [ "$READY_PODS" != "0" ]; then
+              echo "✅ 所有Pod都已就绪 ($READY_PODS/$DESIRED_PODS)"
+              break
+            else
+              echo "⚠️ Pod就绪状态: $READY_PODS/$DESIRED_PODS"
+              sleep 10
+              HEALTH_ATTEMPT=$((HEALTH_ATTEMPT + 1))
+            fi
+          done
+          
+          if [ $HEALTH_ATTEMPT -gt $HEALTH_CHECK_ATTEMPTS ]; then
+            echo "⚠️ 健康检查未完全通过，但部署已更新。Pod就绪状态: $READY_PODS/$DESIRED_PODS"
+          fi
           
           echo "✅ ${{ matrix.service }} deployed to Aliyun ACK"
       
@@ -536,15 +628,15 @@ jobs:
             --timeout=300s
           
           echo "✅ knowhere-$SERVICE 已成功部署到 AWS EKS (${{ steps.deploy-type.outputs.aws_eks_namespace }})"
-
-      - name: Set up Aliyun CLI
+  
+      - name: Set up Aliyun CLI for ECS deployment
         if: steps.check-deploy.outputs.should_deploy == 'true' && steps.deploy-type.outputs.deploy_type == 'mixed'
         uses: aliyun/setup-aliyun-cli-action@v1
         with:
           access-key-id: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           access-key-secret: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           region: ${{ secrets.ALIYUN_REGION }}
-
+  
       # 阿里云 ECS 部署步骤（仅预发布环境）
       - name: Deploy to Aliyun ECS via Docker Compose (预发布环境)
         if: |
@@ -556,8 +648,8 @@ jobs:
           ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
         run: |
           echo "🚀 开始部署 ${{ matrix.service }} 服务到阿里云ECS（通过Docker Compose）"
-          
-          # 配置阿里云CLI
+
+          echo "配置阿里云CLI凭据..."
           aliyun configure set --profile default \
             --access-key-id $ALIYUN_ACCESS_KEY_ID \
             --access-key-secret $ALIYUN_ACCESS_KEY_SECRET \
@@ -588,18 +680,18 @@ jobs:
             --Type RunShellScript \
             --CommandContent "$DEPLOY_SCRIPT_CONTENT" \
             --Timeout 600)
-
+  
           echo "命令原始返回: $RAW_OUTPUT"
           # 从返回信息中提取 InvokeId
           INVOKE_ID=$(echo "$RAW_OUTPUT" | grep -oP '(?<="InvokeId": ")[^"]+' | head -1)
-
+  
           if [[ -z "$INVOKE_ID" ]]; then
             echo "❌ 无法从命令返回中提取执行ID (InvokeId)，可能命令发送失败。"
             echo "请检查上方命令的原始输出。"
             exit 1
           fi
           echo "命令已发送，执行ID为: $INVOKE_ID"
-
+  
           # 轮询查询执行结果
           MAX_POLL=30
           POLL_INTERVAL=10
@@ -609,7 +701,7 @@ jobs:
                 --RegionId "$ALIYUN_REGION" \
                 --InstanceId "${{ env.ALIYUN_ECS_STAGING_INSTANCE_ID }}" \
                 --InvokeId "$INVOKE_ID" 2>/dev/null)
-
+  
               STATUS=$(echo "$INVOCATION_RAW" | grep -oP '(?<="InvocationStatus": ")[^"]+' | head -1)
               EXIT_CODE=$(echo "$INVOCATION_RAW" | grep -oP '(?<="ExitCode": )[0-9]+' | head -1)
               
