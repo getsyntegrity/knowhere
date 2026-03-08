@@ -51,6 +51,10 @@ class SyncRedisService:
             )
         return self._client
 
+    def pipeline(self, transaction: bool = False):
+        """Return a Redis pipeline for batching commands (1 pool checkout)."""
+        return self._get_client().pipeline(transaction)
+
     def _build_key(self, key: str) -> str:
         prefix = self._KEY_PREFIX
         return f"{prefix}:{key}" if not key.startswith(prefix) else key
@@ -383,22 +387,15 @@ class SyncTaskRedisService:
 
     def set_task_status(self, task_id: str, status: str) -> bool:
         try:
-            status_key = redis_key_builder.task_status(task_id)
-            self.redis.set(
-                status_key,
-                status,
-                ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK),
-            )
+            task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
+            status_key = self.redis._build_key(redis_key_builder.task_status(task_id))
+            progress_key = self.redis._build_key(redis_key_builder.task_progress(task_id))
 
-            progress_key = redis_key_builder.task_progress(task_id)
-            self.redis.hset(
-                progress_key,
-                mapping={"status": status, "timestamp": self._get_current_timestamp()},
-            )
-            self.redis.expire(
-                progress_key,
-                redis_key_builder.get_key_ttl(RedisKeyType.TASK),
-            )
+            pipe = self.redis.pipeline()
+            pipe.set(status_key, status, ex=task_ttl)
+            pipe.hset(progress_key, mapping={"status": status, "timestamp": self._get_current_timestamp()})
+            pipe.expire(progress_key, task_ttl)
+            pipe.execute()
             return True
         except Exception as e:
             logger.error(f"设置任务 {task_id} 状态失败: {e}")
@@ -406,15 +403,24 @@ class SyncTaskRedisService:
 
     def save_task_result(self, task_id: str, result: Dict[str, Any]) -> bool:
         try:
-            result_key = redis_key_builder.task_result(task_id)
-            self.redis.set(
-                result_key,
-                result,
-                ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK),
-            )
-            self.set_task_status(task_id, "done")
-            processing_tasks_key = redis_key_builder.set_processing_tasks()
-            self.redis.srem(processing_tasks_key, task_id)
+            from shared.utils.json_utils import make_json_safe
+
+            task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
+            result_key = self.redis._build_key(redis_key_builder.task_result(task_id))
+            status_key = self.redis._build_key(redis_key_builder.task_status(task_id))
+            progress_key = self.redis._build_key(redis_key_builder.task_progress(task_id))
+            processing_key = self.redis._build_key(redis_key_builder.set_processing_tasks())
+
+            result_json = json.dumps(make_json_safe(result), ensure_ascii=False)
+            ts = self._get_current_timestamp()
+
+            pipe = self.redis.pipeline()
+            pipe.set(result_key, result_json, ex=task_ttl)
+            pipe.set(status_key, "done", ex=task_ttl)
+            pipe.hset(progress_key, mapping={"status": "done", "timestamp": ts})
+            pipe.expire(progress_key, task_ttl)
+            pipe.srem(processing_key, task_id)
+            pipe.execute()
             return True
         except Exception as e:
             logger.error(f"保存任务 {task_id} 结果失败: {e}")
@@ -422,23 +428,28 @@ class SyncTaskRedisService:
 
     def mark_task_failed(self, task_id: str, error_message: str) -> bool:
         try:
-            self.set_task_status(task_id, f"failed: {error_message}")
-            processing_tasks_key = redis_key_builder.set_processing_tasks()
-            self.redis.srem(processing_tasks_key, task_id)
+            task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
+            list_ttl = redis_key_builder.get_key_ttl(RedisKeyType.LIST)
+            status_key = self.redis._build_key(redis_key_builder.task_status(task_id))
+            progress_key = self.redis._build_key(redis_key_builder.task_progress(task_id))
+            processing_key = self.redis._build_key(redis_key_builder.set_processing_tasks())
+            error_logs_key = self.redis._build_key(redis_key_builder.list_error_logs())
 
-            error_logs_key = redis_key_builder.list_error_logs()
-            self.redis.rpush(
-                error_logs_key,
-                {
-                    "task_id": task_id,
-                    "error": error_message,
-                    "timestamp": self._get_current_timestamp(),
-                },
+            status_value = f"failed: {error_message}"
+            ts = self._get_current_timestamp()
+            error_log_entry = json.dumps(
+                {"task_id": task_id, "error": error_message, "timestamp": ts},
+                ensure_ascii=False,
             )
-            self.redis.expire(
-                error_logs_key,
-                redis_key_builder.get_key_ttl(RedisKeyType.LIST),
-            )
+
+            pipe = self.redis.pipeline()
+            pipe.set(status_key, status_value, ex=task_ttl)
+            pipe.hset(progress_key, mapping={"status": status_value, "timestamp": ts})
+            pipe.expire(progress_key, task_ttl)
+            pipe.srem(processing_key, task_id)
+            pipe.rpush(error_logs_key, error_log_entry)
+            pipe.expire(error_logs_key, list_ttl)
+            pipe.execute()
             return True
         except Exception as e:
             logger.error(f"标记任务 {task_id} 失败时出错: {e}")
