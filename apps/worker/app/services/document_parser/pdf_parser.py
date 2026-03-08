@@ -144,7 +144,7 @@ def poll_mineru_task(
                     s3_download_extract_zip(
                         res_zip_url,
                         dest_dir=output_dir,
-                        keep_exts=[".md", ".jpg", ".jpeg", ".png", ".gif", ".json"],
+                        keep_exts=(".md", ".jpg", ".jpeg", ".png", ".gif", ".json"),
                         exclude_patterns=("content_list", "middle.json", "model.json"),  # Only keep layout.json
                     )
                     logger.info(f"PDF parsing completed, Task ID: {task_id}")

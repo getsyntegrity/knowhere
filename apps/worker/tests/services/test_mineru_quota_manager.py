@@ -1,3 +1,5 @@
+from typing import Any, Optional, cast
+
 import pytest
 
 from app.services.document_parser import pdf_parser
@@ -6,38 +8,9 @@ from app.services.document_parser.mineru_quota_manager import (
     MinerUTokenConfig,
 )
 from shared.core.exceptions.domain_exceptions import UnavailableException
+from shared.services.redis.redis_sync_service import SyncRedisService
 
 fakeredis = pytest.importorskip("fakeredis")
-
-
-class DummyRedisService:
-    def __init__(self):
-        self.values = {}
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
-
-    def set(self, key, value, ttl=None, ex=None):
-        self.values[key] = value
-        return True
-
-    def eval(self, script, keys, args=None):
-        raise NotImplementedError
-
-
-class StubQuotaManager(MinerUQuotaManager):
-    def __init__(self, token_configs, results):
-        super().__init__(DummyRedisService(), token_configs)
-        self.results = {
-            token_id: list(outcomes)
-            for token_id, outcomes in results.items()
-        }
-
-    def _reserve_token_capacity(self, token, now_ts):
-        outcomes = self.results[token.token_id]
-        if not outcomes:
-            return False, 60, "minute"
-        return outcomes.pop(0)
 
 
 class FakeSyncRedisService:
@@ -56,6 +29,27 @@ class FakeSyncRedisService:
         return self.client.eval(script, len(keys), *(list(keys) + list(args or [])))
 
 
+def build_manager(
+    *,
+    tokens=None,
+    decode_responses=True,
+    fake_server=None,
+):
+    redis_client = fakeredis.FakeRedis(
+        server=fake_server,
+        decode_responses=decode_responses,
+    )
+    manager = MinerUQuotaManager(
+        cast(SyncRedisService, FakeSyncRedisService(redis_client)),
+        tokens
+        or [
+            MinerUTokenConfig("primary", "sk-1", rpm_limit=300, daily_limit=10000),
+            MinerUTokenConfig("backup", "sk-2", rpm_limit=300, daily_limit=10000),
+        ],
+    )
+    return manager, redis_client
+
+
 def test_parse_token_specs_supports_json_entries():
     specs = MinerUQuotaManager._parse_token_specs(
         '[{"id":"primary","key":"sk-1","rpm_limit":250},{"id":"backup","key":"sk-2","daily_limit":9000}]',
@@ -71,17 +65,15 @@ def test_parse_token_specs_supports_json_entries():
     assert specs[1].daily_limit == 9000
 
 
-def test_acquire_request_skips_exhausted_token():
-    manager = StubQuotaManager(
-        token_configs=[
-            MinerUTokenConfig(token_id="primary", api_key="sk-1", rpm_limit=300, daily_limit=10000),
-            MinerUTokenConfig(token_id="backup", api_key="sk-2", rpm_limit=300, daily_limit=10000),
-        ],
-        results={
-            "primary": [(False, 12, "minute")],
-            "backup": [(True, 0, "minute")],
-        },
+def test_acquire_request_skips_exhausted_token(monkeypatch):
+    fixed_now = 1_700_000_000
+    monkeypatch.setattr(
+        "app.services.document_parser.mineru_quota_manager.time.time",
+        lambda: fixed_now,
     )
+    manager, redis_client = build_manager()
+    primary_minute_key = manager._minute_key("primary", fixed_now)
+    redis_client.set(primary_minute_key, 300, ex=12)
 
     lease = manager.acquire_request(operation="upload_url")
 
@@ -89,17 +81,18 @@ def test_acquire_request_skips_exhausted_token():
     assert lease.api_key == "sk-2"
 
 
-def test_acquire_request_reports_shortest_retry_window():
-    manager = StubQuotaManager(
-        token_configs=[
-            MinerUTokenConfig(token_id="primary", api_key="sk-1", rpm_limit=300, daily_limit=10000),
-            MinerUTokenConfig(token_id="backup", api_key="sk-2", rpm_limit=300, daily_limit=10000),
-        ],
-        results={
-            "primary": [(False, 1800, "day")],
-            "backup": [(False, 45, "minute")],
-        },
+def test_acquire_request_reports_shortest_retry_window(monkeypatch):
+    fixed_now = 1_700_000_000
+    monkeypatch.setattr(
+        "app.services.document_parser.mineru_quota_manager.time.time",
+        lambda: fixed_now,
     )
+    manager, redis_client = build_manager()
+
+    primary_day_key = manager._day_key("primary", fixed_now)
+    backup_minute_key = manager._minute_key("backup", fixed_now)
+    redis_client.set(primary_day_key, 10000, ex=1800)
+    redis_client.set(backup_minute_key, 300, ex=45)
 
     try:
         manager.acquire_request(operation="poll_status")
@@ -110,7 +103,10 @@ def test_acquire_request_reports_shortest_retry_window():
 
 
 def test_lua_reservation_enforces_rpm_limit():
-    redis_service = FakeSyncRedisService(fakeredis.FakeRedis(decode_responses=True))
+    redis_service = cast(
+        SyncRedisService,
+        FakeSyncRedisService(fakeredis.FakeRedis(decode_responses=True)),
+    )
     manager = MinerUQuotaManager(
         redis_service,
         [
@@ -143,7 +139,10 @@ def test_lua_reservation_respects_daily_limit(monkeypatch):
         lambda: fixed_now,
     )
 
-    redis_service = FakeSyncRedisService(fakeredis.FakeRedis(decode_responses=True))
+    redis_service = cast(
+        SyncRedisService,
+        FakeSyncRedisService(fakeredis.FakeRedis(decode_responses=True)),
+    )
     manager = MinerUQuotaManager(
         redis_service,
         [
@@ -167,8 +166,11 @@ def test_lua_reservation_respects_daily_limit(monkeypatch):
 
 def test_lua_round_robin_uses_backup_token_after_cooldown():
     fake_server = fakeredis.FakeServer()
-    redis_service = FakeSyncRedisService(
-        fakeredis.FakeRedis(server=fake_server, decode_responses=True)
+    redis_service = cast(
+        SyncRedisService,
+        FakeSyncRedisService(
+            fakeredis.FakeRedis(server=fake_server, decode_responses=True)
+        ),
     )
     manager = MinerUQuotaManager(
         redis_service,
@@ -193,7 +195,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     )
 
     redis_client = fakeredis.FakeRedis(decode_responses=True)
-    redis_service = FakeSyncRedisService(redis_client)
+    redis_service = cast(SyncRedisService, FakeSyncRedisService(redis_client))
     manager = MinerUQuotaManager(
         redis_service,
         [
@@ -206,16 +208,28 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     mineru_calls = []
 
     class Response:
-        def __init__(self, status_code, json_data=None, text="", headers=None):
+        def __init__(
+            self,
+            status_code: int,
+            json_data: Optional[dict[str, Any]] = None,
+            text: str = "",
+            headers: Optional[dict[str, str]] = None,
+        ) -> None:
             self.status_code = status_code
             self._json_data = json_data or {}
             self.text = text
             self.headers = headers or {}
 
-        def json(self):
+        def json(self) -> dict[str, Any]:
             return self._json_data
 
-    def fake_post(url, headers=None, json=None, timeout=None):
+    def fake_post(
+        url: str,
+        headers: Optional[dict[str, str]] = None,
+        json: Optional[dict[str, Any]] = None,
+        timeout: Optional[int] = None,
+    ) -> Response:
+        assert headers is not None
         mineru_calls.append(("post", headers["Authorization"], url))
         return Response(
             200,
@@ -228,11 +242,16 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
             },
         )
 
-    def fake_put(url, data=None, timeout=None):
+    def fake_put(url: str, data: Any = None, timeout: Optional[int] = None) -> Response:
         mineru_calls.append(("put", url, timeout))
         return Response(200, {})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(
+        url: str,
+        headers: Optional[dict[str, str]] = None,
+        timeout: Optional[int] = None,
+    ) -> Response:
+        assert headers is not None
         mineru_calls.append(("get", headers["Authorization"], url))
         return Response(
             200,

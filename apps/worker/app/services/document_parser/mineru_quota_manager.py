@@ -126,17 +126,7 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
             if parsed:
                 return parsed
 
-        if settings.MINERU_API_KEY:
-            return [
-                MinerUTokenConfig(
-                    token_id="default",
-                    api_key=settings.MINERU_API_KEY,
-                    rpm_limit=default_rpm_limit,
-                    daily_limit=default_daily_limit,
-                )
-            ]
-
-        raise ValueError("No MinerU API key configured")
+        raise ValueError("No MinerU API keys configured")
 
     @staticmethod
     def _parse_token_specs(

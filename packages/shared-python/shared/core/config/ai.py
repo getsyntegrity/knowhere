@@ -30,10 +30,9 @@ class AIConfig(BaseModel):
     ARK_URL: str = Field(default="", description="ARK URL（兼容性字段）")
     ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段）")
     ALI_URL: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="阿里云URL（兼容性字段）")
-    MINERU_API_KEY: str = Field(default="", description="MinerU API密钥（兼容性字段）")
     MINERU_API_KEYS: str = Field(
         default="",
-        description="MinerU API密钥池；支持 JSON 数组或逗号/换行分隔，格式可为 token_id=api_key",
+        description="MinerU API key pool. Supports a JSON array or comma/newline-separated values; entries may use token_id=api_key format.",
     )
     MINERU_URL: str = Field(default="https://mineru.net/api/v4", description="MinerU API基础URL（不含端点路径，如 https://mineru.net/api/v4）")
     MINERU_TOKEN_RPM_LIMIT: int = Field(default=300, description="单个 MinerU token 每分钟请求上限")
