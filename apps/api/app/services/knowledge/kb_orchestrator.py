@@ -112,37 +112,6 @@ class KBOrchestrator:
             kwargs=task_kwargs,
         ).set(queue=queue_name)
     
-    def get_workflow_status(self, workflow_id: str) -> dict:
-        """
-        获取工作流状态
-        
-        Args:
-            workflow_id: 工作流ID
-            
-        Returns:
-            dict: 工作流状态信息
-        """
-        try:
-            from shared.core.celery_app import get_celery_app
-            celery_app = get_celery_app()
-            
-            result = celery_app.AsyncResult(workflow_id)
-            
-            return {
-                "workflow_id": workflow_id,
-                "status": result.state,
-                "result": result.result if result.state == 'SUCCESS' else None,
-                "error": str(result.info) if result.state == 'FAILURE' else None
-            }
-            
-        except Exception as e:
-            logger.error(f"获取工作流状态失败: {e}")
-            return {
-                "workflow_id": workflow_id,
-                "status": "UNKNOWN",
-                "error": str(e)
-            }
-    
     def cancel_workflow(self, workflow_id: str) -> bool:
         """
         取消工作流

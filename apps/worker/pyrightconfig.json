@@ -7,9 +7,8 @@
   ],
   "include": [
     "app",
-    "__tests__",
-    "scripts",
-    "alembic"
+    "tests",
+    "worker.py"
   ],
   "exclude": [
     "**/__pycache__",
@@ -17,7 +16,6 @@
     ".venv",
     "venv",
     "logs",
-    "alembic/versions_archive_20260305",
     "**/node_modules",
     "**/.*"
   ],

@@ -84,6 +84,7 @@ shared/repositories/credits_repository.py
 shared/repositories/webhook_secret_repository.py
 shared/services/ai/__init__.py
 shared/services/ai/ai_query_service.py
+shared/services/ai/ai_query_service_sync.py
 shared/services/ai/prompt_service.py
 shared/services/ai/response_process_service.py
 shared/services/billing/__init__.py
@@ -122,9 +123,12 @@ shared/services/webhook/dispatcher.py
 shared/services/webhook/validator.py
 shared/tests/fakes.py
 shared/tests/test_fernet_service.py
+shared/tests/test_logging.py
 shared/utils/CommonHelper.py
+shared/utils/CommonHelperSync.py
 shared/utils/FileDownUpUtils.py
 shared/utils/OpenAICompatibleClient.py
+shared/utils/OpenAICompatibleClientSync.py
 shared/utils/__init__.py
 shared/utils/device_utils.py
 shared/utils/file_transfer.py
