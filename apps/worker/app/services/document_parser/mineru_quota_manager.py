@@ -235,7 +235,7 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
             retry_after=earliest_retry_after or settings.MINERU_TOKEN_COOLDOWN_SECONDS,
             limit=max(token.rpm_limit for token in self.tokens),
             period=retry_period,
-            user_message="MinerU is busy right now. Please retry shortly.",
+            user_message="Document processing is busy right now. Please retry shortly.",
         )
 
     def mark_rate_limited(self, token_id: str, retry_after: Optional[int] = None) -> None:

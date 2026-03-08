@@ -2,7 +2,7 @@ from typing import Any, Optional, cast
 
 import pytest
 
-from app.services.document_parser import pdf_parser
+from app.services.document_parser import mineru_pdf_service, pdf_parser
 from app.services.document_parser.mineru_quota_manager import (
     MinerUQuotaManager,
     MinerUTokenConfig,
@@ -100,6 +100,7 @@ def test_acquire_request_reports_shortest_retry_window(monkeypatch):
     except UnavailableException as exc:
         assert exc.retry_after == 45
         assert exc.period == "minute"
+        assert exc.user_message == "Document processing is busy right now. Please retry shortly."
 
 
 def test_lua_reservation_enforces_rpm_limit():
@@ -130,6 +131,7 @@ def test_lua_reservation_enforces_rpm_limit():
 
     assert exc_info.value.period == "minute"
     assert 1 <= exc_info.value.retry_after <= 60
+    assert exc_info.value.user_message == "Document processing is busy right now. Please retry shortly."
 
 
 def test_lua_reservation_respects_daily_limit(monkeypatch):
@@ -162,6 +164,7 @@ def test_lua_reservation_respects_daily_limit(monkeypatch):
 
     assert exc_info.value.period == "day"
     assert exc_info.value.retry_after > 0
+    assert exc_info.value.user_message == "Document processing is busy right now. Please retry shortly."
 
 
 def test_lua_round_robin_uses_backup_token_after_cooldown():
@@ -203,7 +206,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
             MinerUTokenConfig("backup", "sk-backup", rpm_limit=10, daily_limit=100),
         ],
     )
-    monkeypatch.setattr(pdf_parser, "get_mineru_quota_manager", lambda: manager)
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     mineru_calls = []
 
@@ -272,10 +275,10 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
         extracted["url"] = url
         extracted["dest_dir"] = dest_dir
 
-    monkeypatch.setattr(pdf_parser.requests, "post", fake_post)
-    monkeypatch.setattr(pdf_parser.requests, "put", fake_put)
-    monkeypatch.setattr(pdf_parser.requests, "get", fake_get)
-    monkeypatch.setattr(pdf_parser, "s3_download_extract_zip", fake_extract)
+    monkeypatch.setattr(mineru_pdf_service.requests, "post", fake_post)
+    monkeypatch.setattr(mineru_pdf_service.requests, "put", fake_put)
+    monkeypatch.setattr(mineru_pdf_service.requests, "get", fake_get)
+    monkeypatch.setattr(mineru_pdf_service, "s3_download_extract_zip", fake_extract)
 
     local_pdf_path = tmp_path / "sample.pdf"
     local_pdf_path.write_bytes(b"%PDF-1.4\n")
@@ -302,3 +305,51 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     day_key = manager._day_key("primary", fixed_now)
     assert int(redis_client.get(minute_key)) == 2
     assert int(redis_client.get(day_key)) == 2
+
+
+def test_parse_pdfs_standard_route_uses_extracted_mineru_workflow(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+
+    def fake_upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
+        captured["pdf_url"] = pdf_url
+        captured["filename"] = filename
+        captured["output_dir"] = output_dir
+        (tmp_path / "output" / "full.md").write_text("# parsed", encoding="utf-8")
+
+    def fake_parse_md(
+        output_dir: str,
+        source_type: str,
+        file_path: str,
+        base_llm_paras: dict[str, Any],
+        relative_root: Optional[str] = None,
+    ) -> dict[str, Any]:
+        captured["parse_md_output_dir"] = output_dir
+        captured["parse_md_file_path"] = file_path
+        captured["base_llm_paras"] = dict(base_llm_paras)
+        captured["relative_root"] = relative_root
+        return {"ok": True}
+
+    monkeypatch.setattr(pdf_parser, "upload_and_parse", fake_upload_and_parse)
+    monkeypatch.setattr(pdf_parser, "parse_md", fake_parse_md)
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    base_llm_paras = {"foo": "bar"}
+
+    result = pdf_parser.parse_pdfs(
+        str(tmp_path / "sample.pdf"),
+        filename="sample.pdf",
+        output_dir=str(output_dir),
+        base_llm_paras=base_llm_paras,
+        profile=None,
+        relative_root="root",
+    )
+
+    assert result == {"ok": True}
+    assert captured["pdf_url"].endswith("sample.pdf")
+    assert captured["filename"] == "sample.pdf"
+    assert captured["output_dir"] == str(output_dir)
+    assert captured["parse_md_output_dir"] == str(output_dir)
+    assert captured["parse_md_file_path"] == str(output_dir / "full.md")
+    assert captured["base_llm_paras"]["doc_name"] == "sample.pdf"
+    assert captured["relative_root"] == "root"
