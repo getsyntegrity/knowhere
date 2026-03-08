@@ -4,7 +4,7 @@ Under gevent, sync socket operations yield cooperatively via monkey patching.
 API service continues using async RedisService.
 """
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, cast
 
 from redis import Redis as SyncRedisClient
 from redis.connection import BlockingConnectionPool
@@ -103,6 +103,13 @@ class SyncRedisService:
         full_key = self._build_key(key)
         return bool(client.expire(full_key, ttl))
 
+    def eval(self, script: str, keys: Sequence[str], args: Optional[Sequence[Any]] = None) -> Any:
+        """Execute a Lua script with namespaced Redis keys."""
+        client = self._get_client()
+        full_keys = [self._build_key(key) for key in keys]
+        raw_args = list(args or [])
+        return client.eval(script, len(full_keys), *(full_keys + raw_args))
+
     def hset(self, key: str, field: Optional[str] = None, value: Any = None, mapping: Optional[Dict[str, Any]] = None) -> int:
         try:
             client = self._get_client()
@@ -161,7 +168,7 @@ class SyncRedisService:
             full_key = self._build_key(key)
             if isinstance(value, (dict, list)):
                 value = json.dumps(value, ensure_ascii=False)
-            return int(client.rpush(full_key, value))
+            return cast(int, client.rpush(full_key, value))
         except Exception as e:
             logger.error(f"Redis RPUSH failed: key={key}, error={e}")
             raise
@@ -170,13 +177,13 @@ class SyncRedisService:
         try:
             client = self._get_client()
             full_key = self._build_key(key)
-            serialized = []
+            serialized: list[str] = []
             for value in values:
                 if isinstance(value, (dict, list)):
                     serialized.append(json.dumps(value, ensure_ascii=False))
                 else:
                     serialized.append(str(value))
-            return int(client.sadd(full_key, *serialized))
+            return cast(int, client.sadd(full_key, *serialized))
         except Exception as e:
             logger.error(f"Redis SADD failed: key={key}, error={e}")
             raise
@@ -185,13 +192,13 @@ class SyncRedisService:
         try:
             client = self._get_client()
             full_key = self._build_key(key)
-            serialized = []
+            serialized: list[str] = []
             for value in values:
                 if isinstance(value, (dict, list)):
                     serialized.append(json.dumps(value, ensure_ascii=False))
                 else:
                     serialized.append(str(value))
-            return int(client.srem(full_key, *serialized))
+            return cast(int, client.srem(full_key, *serialized))
         except Exception as e:
             logger.error(f"Redis SREM failed: key={key}, error={e}")
             raise

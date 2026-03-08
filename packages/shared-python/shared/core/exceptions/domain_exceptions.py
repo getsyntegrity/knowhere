@@ -704,12 +704,12 @@ class RedisServiceException(KnowhereException):
 
 class MinerUServiceException(KnowhereException):
     """
-    MinerU PDF extraction service failed.
+    Third-party PDF extraction service failed.
 
     5xx Error: Auto-defaults to safe user_message.
 
     Details schema:
-        {"service": "mineru", "status_code": <int>, "error_message": "..."}
+        {"service": "document_processing", "status_code": <int>, "error_message": "..."}
     """
 
     def __init__(
@@ -720,7 +720,7 @@ class MinerUServiceException(KnowhereException):
         user_message: Optional[str] = None,
         original_exception: Optional[Exception] = None,
     ):
-        details: Dict[str, Any] = {"service": "mineru"}
+        details: Dict[str, Any] = {"service": "document_processing"}
         if status_code is not None:
             details["status_code"] = status_code
         # SECURITY: error_message might contain sensitive info, don't include in details
