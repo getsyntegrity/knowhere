@@ -62,6 +62,10 @@ dependencies = [
     # 图像处理（ZipResultService需要）
     "pillow==11.2.1",
     
+    # Gevent协程池支持
+    "gevent>=24.11.1",
+    "psycogreen>=1.0.2",
+
     # 测试相关
     "pytest==8.3.4",
     "pytest-asyncio==0.24.0",

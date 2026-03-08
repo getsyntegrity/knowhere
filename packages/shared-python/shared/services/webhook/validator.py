@@ -39,6 +39,21 @@ async def async_validate_url(hostname: str) -> str:
     raise ValueError(f"Hostname {hostname} failed validation")
 
 
+def validate_url(hostname: str) -> str:
+    """Sync hostname validation. Returns pinned public IP."""
+    try:
+        addrinfo = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"Unable to resolve hostname {hostname}: {exc}") from exc
+
+    for family, _, _, _, sockaddr in addrinfo:
+        ip_address = sockaddr[0]
+        if family in (socket.AF_INET, socket.AF_INET6) and is_public_ip(ip_address):
+            return ip_address
+
+    raise ValueError(f"Hostname {hostname} failed validation")
+
+
 # ── Integration wrapper for our dispatcher ────────────────────────────
 
 
@@ -70,6 +85,36 @@ async def validate_webhook_url_async(url: str) -> WebhookValidationResult:
         validated_ip: str = await async_validate_url(hostname)
         return WebhookValidationResult(
             is_valid=True, validated_ip=validated_ip, hostname=hostname,
+        )
+    except ValueError as exc:
+        return WebhookValidationResult(is_valid=False, error_message=str(exc))
+    except Exception as exc:
+        return WebhookValidationResult(
+            is_valid=False, error_message=f"URL validation failed: {exc}",
+        )
+
+
+def validate_webhook_url(url: str) -> WebhookValidationResult:
+    """Sync webhook URL validation with SSRF checks."""
+    try:
+        parsed = urlparse(url)
+        is_dev: bool = app_config.ENVIRONMENT.lower() in ("dev", "development", "local")
+        allowed_schemes: list[str] = ["https"] if not is_dev else ["https", "http"]
+        if parsed.scheme not in allowed_schemes:
+            return WebhookValidationResult(
+                is_valid=False,
+                error_message=f"Invalid scheme: {parsed.scheme}. Must be HTTPS.",
+            )
+
+        hostname: Optional[str] = parsed.hostname
+        if not hostname:
+            return WebhookValidationResult(is_valid=False, error_message="URL must have a hostname")
+
+        validated_ip: str = validate_url(hostname)
+        return WebhookValidationResult(
+            is_valid=True,
+            validated_ip=validated_ip,
+            hostname=hostname,
         )
     except ValueError as exc:
         return WebhookValidationResult(is_valid=False, error_message=str(exc))

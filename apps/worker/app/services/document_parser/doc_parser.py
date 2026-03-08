@@ -18,7 +18,7 @@ from app.services.document_parser.toc_parser import (detect_doc_tocs,
                                                      get_toc_level)
 from app.services.document_parser.txt_parser import (extract_summary_keywords,
                                                      postprocess_leaf_dics)
-from shared.utils.CommonHelper import load_file_bytes
+from shared.utils.CommonHelperSync import load_file_bytes
 from bs4 import BeautifulSoup
 from docx import Document
 from docx.oxml.table import CT_Tbl
@@ -84,7 +84,7 @@ def _find_img_context(headings_stack, max_chars=100):
         )
 
 
-async def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, img_count, smart_summary=False):
+def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, img_count, smart_summary=False):
     time_stamp = get_str_time()
     client = OpenAI(
         api_key=settings.ALI_API_KEY,
@@ -106,7 +106,7 @@ async def handle_image(df_list, img_file, img_dir, headings_stack, current_headi
     # LLM summary (optional, with fallback to last_context)
     llm_summary = None
     if smart_summary:
-        llm_summary = await ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
+        llm_summary = ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
     
     # Fallback: LLM summary -> last_context -> None
     if llm_summary:
@@ -189,7 +189,7 @@ def _first_cols_rows(table_block, max_items=10, max_chars=20):
     return first_row_text, first_col_text
 
 
-async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_count,
+def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_count,
                        summary_table=False, summary_image=False,
                        cell_images=None, img_dir=None, img_count=0):
     time_stamp = get_str_time()
@@ -219,7 +219,7 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
                 if summary_image:
                     try:
                         client = OpenAI(api_key=settings.ALI_API_KEY, base_url=settings.ALI_URL)
-                        img_summary = await ask_image(
+                        img_summary = ask_image(
                             client, img_dir, [f'{img_name}{img_ext}'],
                             title_text=current_heading
                         )
@@ -274,7 +274,7 @@ async def handle_table(df_list, block, tb_dir, headings_stack, current_heading, 
     # LLM summary (optional, only when smart_summary is enabled and succeeds)
     llm_summary = None
     if summary_table:
-        llm_summary = await extract_summary_keywords(tb_html_str, type_="summary")
+        llm_summary = extract_summary_keywords(tb_html_str, type_="summary")
     
     # Build tb_summary for df_list: table-n + optional LLM summary
     if llm_summary:
@@ -455,8 +455,8 @@ def iter_block_items(doc_data):
             map_index += 1
 
 
-async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", start_text="", end_text="", relative_root=None):
-    doc_data = await load_file_bytes(docx_path, file_url=file_url)
+def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", start_text="", end_text="", relative_root=None):
+    doc_data = load_file_bytes(docx_path, file_url=file_url)
 
     doc_structure = []
     heading_data = pd.DataFrame(columns=['text', 'level'])
@@ -485,7 +485,7 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
     smart_title_parse = llm_paras['smart_title_parse']
     if not llm_paras['doc_type'] in "templates":
         model_name = llm_paras.get("model_name", "deepseek-chat") if llm_paras else "deepseek-chat"
-        heading_candidates = await pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name, output_dir=output_dir)
+        heading_candidates = pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name, output_dir=output_dir)
 
     if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique
@@ -540,7 +540,7 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
             if meta and meta.get("size", 0) < 10 * 1024:
                 continue
 
-            headings_stack, df_list = await handle_image(
+            headings_stack, df_list = handle_image(
                 df_list, meta, img_dir, headings_stack,
                 current_heading, image_count, llm_paras["summary_image"]
             )
@@ -549,7 +549,7 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
 
         elif label == 'TABLE': 
             # TODO: handle cross-page tables
-            headings_stack, df_list, image_count = await handle_table(
+            headings_stack, df_list, image_count = handle_table(
                 df_list, block, tb_dir, headings_stack,
                 current_heading, table_count,
                 summary_table=llm_paras["summary_table"],
@@ -565,10 +565,10 @@ async def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_ur
     return {'content' : doc_structure}, df_list
 
 
-async def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, relative_root=None):
+def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, relative_root=None):
     split_char = settings.SPLIT_CHAR or "/"
     leaf_dics = get_leaf_dics(parsed_structure)
-    leaf_dics = await postprocess_leaf_dics(leaf_dics, base_llm_paras)
+    leaf_dics = postprocess_leaf_dics(leaf_dics, base_llm_paras)
 
     # Use relative_root for path construction instead of absolute output_dir
     doc_name = relative_root if relative_root else output_dir.split(os.sep)[-1]

@@ -1,53 +1,48 @@
 #!/usr/bin/env python3
-"""
-Celery Worker Startup Script
-Starts the Celery worker with all registered tasks.
-"""
-import os
-import sys
-import asyncio
+# CRITICAL: Monkey patch MUST be the very first thing before ANY other imports.
+# This patches stdlib (socket, ssl, threading, etc.) for cooperative greenlet scheduling.
+import gevent.monkey
+gevent.monkey.patch_all()
 
-# Import from shared packages
-from shared.core.celery_app import celery_app
-from shared.core.config import redis_pool_manager
-from shared.core.logging import setup_logging
+# Patch psycopg2 for cooperative DB access under gevent.
+from psycogreen.gevent import patch_psycopg
+patch_psycopg()
+
+# Now safe to import everything else
+import os
+import socket
+import sys
+
 from celery.signals import worker_init
 from loguru import logger
 
+from shared.core.celery_app import celery_app
+from shared.core.logging import setup_logging
+
 # Explicitly import task modules to register tasks with Celery
-# Note: Must import after celery_app to ensure decorators register correctly
 import app.core.tasks.kb_tasks
 import app.core.tasks.webhook_tasks
 
 
 @worker_init.connect
-def init_worker_logging(**kwargs):
-    """Initialize structured logging and Logfire when worker process starts."""
+def init_worker(**kwargs):
+    """Initialize structured logging and sync Redis when worker process starts."""
     setup_logging(service_name="knowhere-worker")
 
-
-async def init_redis():
-    """Initialize Redis connection pool."""
+    # Verify Redis connectivity (lazy init on first use if this fails)
     try:
-        await redis_pool_manager.init_pool()
-        logger.info("Celery Worker Redis connection pool initialized")
+        from shared.services.redis.redis_sync_service import SyncRedisServiceFactory
+        service = SyncRedisServiceFactory.get_service()
+        if service.ping():
+            logger.info("Worker sync Redis connection verified")
+        else:
+            logger.warning("Worker sync Redis ping failed, will retry on first use")
     except Exception as e:
-        logger.error(f"Celery Worker Redis initialization failed: {e}")
-        raise
+        logger.warning(f"Worker sync Redis init deferred: {e}")
+
 
 if __name__ == "__main__":
-    # Set environment variables
-    os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
-
-    # Initialize Redis connection pool
-    try:
-        asyncio.run(init_redis())
-    except Exception as e:
-        logger.error(f"Worker startup failed: {e}")
-        sys.exit(1)
-
     # Generate unique node name
-    import socket
     hostname = socket.gethostname()
     pid = os.getpid()
     node_name = f"celery@{hostname}-{pid}"
@@ -55,13 +50,18 @@ if __name__ == "__main__":
     # Get log level setting
     log_level = os.getenv("LOG_LEVEL", "INFO").lower()
 
-    # Start worker with queue whitelist (CRITICAL: Exclude wait queues!)
-    # If we don't specify -Q, specific workers will consume from ALL queues including wait queues,
-    # which breaks the DLX retry delay (messages get consumed immediately instead of waiting).
+    # Start worker with gevent pool
+    # Queue whitelist: exclude wait queues to preserve DLX retry delays
+    from shared.core.config import settings
+    concurrency = settings.WORKER_CONCURRENCY
+
     celery_app.worker_main([
         "worker",
+        "--pool=gevent",
+        f"--concurrency={concurrency}",
         f"--loglevel={log_level}",
-        "--concurrency=8",
         f"--hostname={node_name}",
-        "-Q", "webhook_work,webhook_dead,kb_high,kb_medium,kb_low,ai_high_priority,default"
+        "-Q", "webhook_work,webhook_dead,kb_high,kb_medium,kb_low,ai_high_priority,default",
+        "--without-gossip",
+        "--without-mingle",
     ])

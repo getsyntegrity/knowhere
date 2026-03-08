@@ -320,7 +320,7 @@ async def create_job(
             job_metadata["source_file_name"] = payload.file_name
             job_metadata["source_type"] = "file"
 
-            # 创建状态为waiting-file的job
+            # 创建状态为waiting-file的job (s3_key set at creation — single INSERT)
             job_repo = JobRepository()
             job = await job_repo.create_job(
                 db=db,
@@ -332,6 +332,7 @@ async def create_job(
                 webhook_url=payload.webhook.url if payload.webhook else None,
                 metadata=job_metadata,
                 initial_state="waiting-file",
+                s3_key=s3_key,
             )
 
             if not job:
@@ -344,9 +345,6 @@ async def create_job(
             upload_info = await upload_service.generate_upload_url(
                 job_id, file_extension
             )
-
-            # 更新job的s3_key
-            await job_repo.update_job_s3_key(db, job_id, s3_key)
 
             # 3. 保存job_metadata到Redis（2小时缓存）
             from shared.services.redis.job_metadata_service import \
@@ -369,6 +367,8 @@ async def create_job(
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             await job_info_service.save_job_info(job_id, job_info)
+
+            logger.info(f"Job {job_id} upload_url returned to client: {upload_info['upload_url']}")
 
             # 构建响应
             response = create_job_response(
@@ -505,7 +505,7 @@ async def create_job(
 @router.get("/page", response_model=JobList, summary="获取任务列表")
 async def list_jobs(
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=10000, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     job_status: Optional[str] = Query(None, description="状态过滤"),
     job_type: Optional[str] = Query(None, description="任务类型过滤"),
     recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
@@ -546,6 +546,8 @@ async def list_jobs(
             user_id=current_user.user_id,
             created_after=created_after,
             created_before=created_before,
+            job_type=job_type,
+            job_status=job_status,
         )
 
         # 获取任务列表
@@ -556,37 +558,27 @@ async def list_jobs(
             offset=(page - 1) * page_size,
             created_after=created_after,
             created_before=created_before,
+            job_type=job_type,
+            job_status=job_status,
         )
-
-        # 类型过滤
-        if job_type:
-            jobs = [job for job in jobs if job.job_type == job_type]
-
-        # 状态过滤
-        if job_status:
-            jobs = [
-                job
-                for job in jobs
-                if job.status == job_status
-            ]
 
         # 构建响应
         job_responses = []
         upload_service = FileUploadService()
         from shared.models.schemas.job_metadata import JobMetadataHelper
         from shared.services.redis import RedisServiceFactory
-        
+
         redis_service = RedisServiceFactory.get_service()
         for job in jobs:
             # 使用统一接口获取job_metadata
             job_metadata = await job_repo.get_job_metadata(db, job.job_id, redis_service)
             job_result = job.job_result
             status_for_api = job.status
-            
+
             result_url = None
             result = None
             result_url_expires_at = job.created_at  # 默认使用创建时间
-            
+
             if job_result and job_result.result_s3_key:
                 result_url_info = cast(Dict[str, Any], await upload_service.generate_download_url(
                     job_result.result_s3_key

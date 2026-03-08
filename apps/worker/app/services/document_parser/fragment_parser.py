@@ -9,12 +9,12 @@ import os
 from loguru import logger
 from shared.core.config import settings
 from shared.utils.file_utils import path_handle
-from shared.services.ai import ai_query_service
+from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
 
 from app.services.document_parser.md_parser import parse_md
 
 
-async def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
+def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
     """
     Generate a concise title for fragment content using AI.
     
@@ -31,7 +31,7 @@ async def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
             "Return ONLY the title, no quotes or explanation:\n\n"
             f"{content[:500]}"
         )
-        generated_title = await ai_query_service.query_ai(
+        generated_title = ai_query_service.query_ai(
             messages=[{"role": "user", "content": title_prompt}],
             max_tokens=max_tokens,
             timeout=30
@@ -44,7 +44,7 @@ async def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
         return None
 
 
-async def parse_fragment(
+def parse_fragment(
     fragment_content: str,
     filename: str = None,
     output_dir: str = None,
@@ -69,7 +69,7 @@ async def parse_fragment(
     
     # Generate filename if not provided or is just ".fragment"
     if not filename or filename.lower() in ['.fragment', 'fragment', '']:
-        generated_title = await generate_fragment_title(fragment_content)
+        generated_title = generate_fragment_title(fragment_content)
         if generated_title:
             filename = path_handle(generated_title, mode="clean_single") + ".fragment"
         else:
@@ -89,7 +89,7 @@ async def parse_fragment(
     
     # Parse fragment content using md_parser
     txt_lines = fragment_content.splitlines() if fragment_content else []
-    parsed_df = await parse_md(
+    parsed_df = parse_md(
         full_output_dir, 
         source_type='md', 
         md_lines=txt_lines, 

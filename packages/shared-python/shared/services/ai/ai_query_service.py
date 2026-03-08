@@ -1,13 +1,11 @@
 """
 AI查询服务
-统一处理AI查询任务，支持Celery和本地直连模式
+统一处理AI查询任务，支持内联执行和本地直连模式
 """
-import asyncio
 import os
 import time
 from typing import Any, Optional
 
-from celery import current_task
 from loguru import logger
 
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException, KnowhereException
@@ -23,7 +21,7 @@ class AIQueryService:
         初始化AI查询服务
 
         Args:
-            use_celery: 是否使用Celery，False则使用本地直连模式
+            use_celery: 保留历史参数。True 使用内联执行（默认），False 使用本地直连模式。
         """
         self.use_celery = use_celery and not LOCAL_DEBUG
 
@@ -33,7 +31,6 @@ class AIQueryService:
         user_id: str = "system",
         temperature: float = 0.1,
         conversation_id: Optional[str] = None,
-        timeout: int = 90,
         **kwargs
     ) -> Any:
         """
@@ -44,7 +41,6 @@ class AIQueryService:
             user_id: 用户ID
             temperature: 温度参数
             conversation_id: 对话ID
-            timeout: 超时时间
             **kwargs: 其他参数
 
         Returns:
@@ -55,62 +51,15 @@ class AIQueryService:
             return await self._execute_direct(
                 messages, user_id, temperature, conversation_id, **kwargs
             )
-        
-        # 生产模式：使用 Celery
-        return await self._query_with_celery(
-            messages, user_id, temperature, conversation_id, timeout, **kwargs
+
+        # 统一架构：worker中只允许内联执行，不再进行嵌套Celery调用
+        return await self._execute_inline(
+            messages=messages,
+            user_id=user_id,
+            temperature=temperature,
+            conversation_id=conversation_id,
+            **kwargs,
         )
-
-    async def _query_with_celery(
-        self,
-        messages: Any,
-        user_id: str,
-        temperature: float,
-        conversation_id: Optional[str],
-        timeout: int,
-        **kwargs
-    ) -> Any:
-        """使用Celery执行AI查询"""
-        try:
-            if self._running_inside_celery_worker():
-                return await self._execute_inline(
-                    messages=messages,
-                    user_id=user_id,
-                    temperature=temperature,
-                    conversation_id=conversation_id,
-                    **kwargs,
-                )
-
-            # 延迟导入避免循环导入
-            from shared.core.tasks.celery_tasks import \
-                process_ai_query as celery_process_ai_query
-
-            # 提交Celery任务
-            task = celery_process_ai_query.delay(
-                prompt=messages,
-                user_id=user_id,
-                temperature=temperature,
-                conversation_id=conversation_id,
-                **kwargs
-            )
-
-            # 等待任务完成（避免阻塞事件循环）
-            result = await asyncio.to_thread(task.get, timeout=timeout)
-
-            if result.get("status") == "success":
-                return result.get("result", {})
-            raise WorkerHandlingException(
-                internal_message=f"Celery任务失败: {result.get('error', '未知错误')}"
-            )
-
-        except KnowhereException:
-            raise
-        except Exception as e:
-            logger.error(f"Celery AI查询失败: {e}")
-            raise WorkerHandlingException(
-                internal_message=f"Celery AI查询失败: {str(e)}",
-                original_exception=e
-            )
 
     async def _execute_direct(
         self,
@@ -156,14 +105,6 @@ class AIQueryService:
                 internal_message=f"Local direct AI query failed: {str(exc)}",
                 original_exception=exc
             )
-
-    @staticmethod
-    def _running_inside_celery_worker() -> bool:
-        """检测当前是否处于Celery worker上下文"""
-        try:
-            return bool(current_task and getattr(current_task, "request", None))
-        except Exception:
-            return False
 
     async def _execute_inline(
         self,
@@ -217,7 +158,7 @@ class AIQueryService:
                 },
             )
             return result
-        except KnowhereException:
+        except KnowhereException as exc:
             await task_service.mark_task_failed(user_id, str(exc))
             raise
         except Exception as exc:  # pragma: no cover - redis failure cases
@@ -229,7 +170,7 @@ class AIQueryService:
 
 
 # ai service instance
-# default use celery, but switch to direct mode in LOCAL_DEBUG mode
+# default use inline execution, but switch to direct mode in LOCAL_DEBUG mode
 ai_query_service = AIQueryService(use_celery=True)
 
 # local direct service instance (not using Celery/Redis)

@@ -8,7 +8,7 @@ from shared.models.database.job import Job
 from shared.models.database.job_state_history import JobStateHistory
 from app.services.state_machine import JobStateMachine
 from loguru import logger
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -52,8 +52,9 @@ class JobRepository:
             
             db.add(job)
             await db.commit()
-            await db.refresh(job)
-            
+            # Skip db.refresh() — all fields are already set in-memory.
+            # This avoids an extra SELECT round-trip after INSERT.
+
             logger.info(f"Job {job.job_id} 创建成功")
             return job
             
@@ -63,14 +64,11 @@ class JobRepository:
             return None
     
     async def get_job_by_id(self, db: AsyncSession, job_id: str) -> Optional[Job]:
-        """根据ID获取Job"""
+        """根据ID获取Job (only loads job_result; state_history loaded on demand)"""
         try:
             stmt = (
                 select(Job)
-                .options(
-                    selectinload(Job.job_result),
-                    selectinload(Job.state_history)
-                )
+                .options(selectinload(Job.job_result))
                 .where(Job.job_id == job_id)
             )
             result = await db.execute(stmt)
@@ -80,13 +78,15 @@ class JobRepository:
             return None
     
     async def get_jobs_by_user(
-        self, 
-        db: AsyncSession, 
-        user_id: str, 
-        limit: int = 50, 
+        self,
+        db: AsyncSession,
+        user_id: str,
+        limit: int = 50,
         offset: int = 0,
         created_after: Optional[datetime] = None,
-        created_before: Optional[datetime] = None
+        created_before: Optional[datetime] = None,
+        job_type: Optional[str] = None,
+        job_status: Optional[str] = None,
     ) -> Sequence[Job]:
         """获取用户的Jobs"""
         try:
@@ -102,6 +102,10 @@ class JobRepository:
                 stmt = stmt.where(Job.created_at >= created_after)
             if created_before:
                 stmt = stmt.where(Job.created_at <= created_before)
+            if job_type:
+                stmt = stmt.where(Job.job_type == job_type)
+            if job_status:
+                stmt = stmt.where(Job.status == job_status)
             result = await db.execute(stmt)
             return result.scalars().all()
         except Exception as e:
@@ -109,11 +113,13 @@ class JobRepository:
             return []
     
     async def count_jobs_by_user(
-        self, 
-        db: AsyncSession, 
+        self,
+        db: AsyncSession,
         user_id: str,
         created_after: Optional[datetime] = None,
-        created_before: Optional[datetime] = None
+        created_before: Optional[datetime] = None,
+        job_type: Optional[str] = None,
+        job_status: Optional[str] = None,
     ) -> int:
         """获取用户的Jobs总数"""
         try:
@@ -123,6 +129,10 @@ class JobRepository:
                 stmt = stmt.where(Job.created_at >= created_after)
             if created_before:
                 stmt = stmt.where(Job.created_at <= created_before)
+            if job_type:
+                stmt = stmt.where(Job.job_type == job_type)
+            if job_status:
+                stmt = stmt.where(Job.status == job_status)
             result = await db.execute(stmt)
             return result.scalar() or 0
         except Exception as e:
@@ -143,58 +153,64 @@ class JobRepository:
         )
     
     async def update_job_s3_key(
-        self, 
-        db: AsyncSession, 
-        job_id: str, 
+        self,
+        db: AsyncSession,
+        job_id: str,
         s3_key: str
     ) -> bool:
         """更新Job的S3键"""
         try:
-            job = await self.get_job_by_id(db, job_id)
-            if not job:
-                return False
-            
-            job.s3_key = s3_key
+            stmt = (
+                update(Job)
+                .where(Job.job_id == job_id)
+                .values(s3_key=s3_key)
+            )
+            result = await db.execute(stmt)
             await db.commit()
-            return True
-            
+            return result.rowcount > 0
+
         except Exception as e:
             logger.error(f"更新Job {job_id} S3键失败: {e}")
             await db.rollback()
             return False
     
     async def update_job_file_url(
-        self, 
-        db: AsyncSession, 
-        job_id: str, 
+        self,
+        db: AsyncSession,
+        job_id: str,
         file_url: str
     ) -> bool:
-        """更新Job的文件URL"""
+        """更新Job的文件URL (direct UPDATE + Redis, no ORM load)"""
         try:
-            job = await self.get_job_by_id(db, job_id)
-            if not job:
-                return False
-            
-            # 将file_url存储到job_metadata中
-            # 更新job_metadata中的file_url（同时更新Redis）
+            from sqlalchemy import func
+            from sqlalchemy.dialects.postgresql import JSONB, array as pg_array
             from shared.services.redis import RedisServiceFactory
-            from shared.services.redis.job_metadata_service import \
-                JobMetadataService
-            
+            from shared.services.redis.job_metadata_service import JobMetadataService
+
+            # Direct UPDATE using jsonb_set to patch only the file_url key
+            stmt = (
+                update(Job)
+                .where(Job.job_id == job_id)
+                .values(
+                    job_metadata=func.jsonb_set(
+                        func.coalesce(Job.job_metadata.cast(JSONB), func.cast("{}", JSONB)),
+                        pg_array(["file_url"]),
+                        func.to_jsonb(file_url),
+                    )
+                )
+            )
+            result = await db.execute(stmt)
+            await db.commit()
+
+            if result.rowcount == 0:
+                return False
+
+            # Update Redis cache
             redis_service = RedisServiceFactory.get_service()
             metadata_service = JobMetadataService(redis_service)
-            
-            # 更新数据库
-            if not job.job_metadata:
-                job.job_metadata = {}
-            job.job_metadata["file_url"] = file_url
-            await db.commit()
-            
-            # 更新Redis
             await metadata_service.update_metadata(job_id, {"file_url": file_url})
-            await db.commit()
             return True
-            
+
         except Exception as e:
             logger.error(f"更新Job {job_id} 文件URL失败: {e}")
             await db.rollback()
@@ -256,25 +272,23 @@ class JobRepository:
             return []
     
     async def update_job_status(
-        self, 
-        db: AsyncSession, 
-        job_id: str, 
-        status: str, 
+        self,
+        db: AsyncSession,
+        job_id: str,
+        status: str,
         error_message: Optional[str] = None
     ) -> bool:
-        """更新Job状态"""
+        """更新Job状态 (direct UPDATE, no ORM load)"""
         try:
-            result = await db.execute(select(Job).where(Job.job_id == job_id))
-            job = result.scalars().first()
-            
-            if job:
-                job.status = status
-                if error_message:
-                    job.error_message = error_message
-                
-                await db.commit()
-                await db.refresh(job)
-                
+            values: Dict[str, Any] = {"status": status}
+            if error_message:
+                values["error_message"] = error_message
+
+            stmt = update(Job).where(Job.job_id == job_id).values(**values)
+            result = await db.execute(stmt)
+            await db.commit()
+
+            if result.rowcount > 0:
                 logger.info(f"Job {job_id} 状态更新为 {status}")
                 return True
             return False
@@ -326,19 +340,19 @@ class JobRepository:
             return None
     
     async def get_job_metadata(
-        self, 
-        db: AsyncSession, 
+        self,
+        db: AsyncSession,
         job_id: str,
         redis_service: Optional[Any] = None
     ) -> Optional[Dict[str, Any]]:
         """
         获取job_metadata（优先从Redis读取，2小时缓存）
-        
+
         Args:
             db: 数据库会话
             job_id: 任务ID
             redis_service: Redis服务
-            
+
         Returns:
             job_metadata字典或None
         """
@@ -350,16 +364,24 @@ class JobRepository:
             metadata = await metadata_service.get_metadata(job_id)
             if metadata:
                 return metadata
-        
-        # 2. 从数据库获取
-        job = await self.get_job_by_id(db, job_id)
-        if job and job.job_metadata:
+
+        # 2. Lightweight scalar query — only fetch the JSON column, no ORM load
+        try:
+            result = await db.execute(
+                select(Job.job_metadata).where(Job.job_id == job_id)
+            )
+            metadata = result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"获取Job {job_id} metadata失败: {e}")
+            metadata = None
+
+        if metadata:
             # 回写到Redis（2小时缓存）
             if redis_service:
                 from shared.services.redis.job_metadata_service import \
                     JobMetadataService
                 metadata_service = JobMetadataService(redis_service)
-                await metadata_service.save_metadata(job_id, job.job_metadata)
-            return job.job_metadata
-        
+                await metadata_service.save_metadata(job_id, metadata)
+            return metadata
+
         return None

@@ -96,21 +96,25 @@ aws --endpoint-url=http://localhost:4566 sns list-topics
 aws --endpoint-url=http://localhost:4566 s3api get-bucket-notification-configuration --bucket knowhere-uploads
 
 # 订阅SNS主题到webhook
-# NOTE: HTTP subscriptions require the endpoint to be reachable for confirmation.
-# The API server (port 5005) must be running, so we wait indefinitely for it.
+# NOTE: The API server runs on the host (WSL2), so use host.docker.internal
+# to reach it from inside the container.
 echo "🔗 等待API服务启动以订阅SNS到webhook..."
+ATTEMPT=0
 while true; do
-  if curl -sf http://localhost:5005/health > /dev/null 2>&1; then
-    echo "✅ API服务已就绪"
+  ATTEMPT=$((ATTEMPT + 1))
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://host.docker.internal:5005/health 2>&1) || true
+  if [ "$HTTP_CODE" = "200" ]; then
+    echo "✅ API服务已就绪 (attempt #$ATTEMPT)"
     break
   fi
+  echo "⏳ [attempt #$ATTEMPT] API服务未就绪 - http_code=$HTTP_CODE, retrying in 2s..."
   sleep 2
 done
 
 aws --endpoint-url=http://localhost:4566 sns subscribe \
   --topic-arn "$TOPIC_ARN" \
   --protocol http \
-  --notification-endpoint http://localhost:5005/v1/internal/s3-events
+  --notification-endpoint http://host.docker.internal:5005/v1/internal/s3-events
 echo "✅ SNS订阅完成"
 
 echo "🎉 LocalStack AWS资源初始化完成！"

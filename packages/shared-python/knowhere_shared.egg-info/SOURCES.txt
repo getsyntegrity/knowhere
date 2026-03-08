@@ -9,8 +9,8 @@ shared/core/__init__.py
 shared/core/async_utils.py
 shared/core/celery_app.py
 shared/core/celery_router.py
-shared/core/context.py
 shared/core/database.py
+shared/core/database_sync.py
 shared/core/logging.py
 shared/core/security.py
 shared/core/billing/__init__.py
@@ -19,7 +19,6 @@ shared/core/billing/micro_dollar.py
 shared/core/config/__init__.py
 shared/core/config/ai.py
 shared/core/config/app.py
-shared/core/config/auth.py
 shared/core/config/base.py
 shared/core/config/billing.py
 shared/core/config/celery.py
@@ -57,7 +56,9 @@ shared/models/database/job_state_history.py
 shared/models/database/knowledge_base.py
 shared/models/database/payment_record.py
 shared/models/database/stripe_price_config.py
-shared/models/database/usage_log.py
+shared/models/database/system_limit.py
+shared/models/database/tier_limit.py
+shared/models/database/user.py
 shared/models/database/user_balance.py
 shared/models/database/webhook.py
 shared/models/database/webhook_log.py
@@ -73,11 +74,9 @@ shared/models/schemas/job_metadata.py
 shared/models/schemas/kb_user.py
 shared/models/schemas/knowledge_base.py
 shared/models/schemas/messages.py
-shared/models/schemas/oauth.py
 shared/models/schemas/oss_event.py
 shared/models/schemas/s3_event.py
 shared/models/schemas/s3_file.py
-shared/models/schemas/user.py
 shared/models/schemas/webhook.py
 shared/models/schemas/word.py
 shared/repositories/__init__.py
@@ -96,6 +95,7 @@ shared/services/messaging/async_config.py
 shared/services/messaging/async_connection.py
 shared/services/messaging/message_publisher.py
 shared/services/messaging/monitoring.py
+shared/services/messaging/sync_publisher.py
 shared/services/redis/__init__.py
 shared/services/redis/chunks_redis_service.py
 shared/services/redis/job_info_redis_service.py
@@ -105,11 +105,13 @@ shared/services/redis/redis_alerts.py
 shared/services/redis/redis_monitor.py
 shared/services/redis/redis_service.py
 shared/services/redis/redis_service_factory.py
+shared/services/redis/redis_sync_service.py
 shared/services/redis/task_redis_service.py
 shared/services/redis/user_redis_service.py
 shared/services/storage/__init__.py
 shared/services/storage/file_encryptor_service.py
 shared/services/storage/file_upload_service.py
+shared/services/storage/hierarchy_html_generator.py
 shared/services/storage/storage_adapter.py
 shared/services/storage/zip_result_service.py
 shared/services/storage/adapters/__init__.py
