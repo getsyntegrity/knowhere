@@ -209,6 +209,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     mineru_calls = []
+    captured_payloads: dict[str, Any] = {}
 
     class Response:
         def __init__(
@@ -233,6 +234,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
         timeout: Optional[int] = None,
     ) -> Response:
         assert headers is not None
+        captured_payloads["upload_url_request"] = json
         mineru_calls.append(("post", headers["Authorization"], url))
         return Response(
             200,
@@ -300,6 +302,13 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     )
     assert extracted["url"] == "https://mineru-results.example/full.zip"
     assert extracted["dest_dir"] == str(output_dir)
+    assert captured_payloads["upload_url_request"] == {
+        "files": [{"name": "sample.pdf", "is_ocr": True}],
+        "enable_formula": True,
+        "enable_table": True,
+        "language": "auto",
+        "model_version": "vlm",
+    }
 
     minute_key = manager._minute_key("primary", fixed_now)
     day_key = manager._day_key("primary", fixed_now)

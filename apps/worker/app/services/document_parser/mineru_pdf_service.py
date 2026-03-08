@@ -307,8 +307,13 @@ def _request_upload_target(pdf_url: str, filename: str) -> tuple[str, str, str]:
     )
     url = f"{base_url}/file-urls/batch"
     payload = {
+        "files": [
+            {
+                "name": filename,
+                "is_ocr": True,
+            }
+        ],
         "enable_formula": True,
-        "enable_ocr": True,
         "enable_table": True,
         "language": "auto",
         "model_version": "vlm",
