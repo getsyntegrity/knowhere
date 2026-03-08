@@ -218,6 +218,15 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
                 earliest_retry_after = retry_after
                 retry_period = quota_period
 
+        logger.bind(
+            service="mineru",
+            step="quota_exhausted",
+            operation=operation,
+            preferred_token_id=preferred_token_id,
+            retry_after=earliest_retry_after or settings.MINERU_TOKEN_COOLDOWN_SECONDS,
+            retry_period=retry_period,
+            token_count=len(self.tokens),
+        ).warning("MinerU quota exhausted")
         raise UnavailableException(
             internal_message=(
                 f"MinerU quota exhausted for operation={operation}; "
