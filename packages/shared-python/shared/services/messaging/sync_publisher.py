@@ -40,6 +40,7 @@ class SyncMessagePublisher:
         self._connection: Optional[Connection] = None
         self._producer: Optional[Producer] = None
         self._exchange: Optional[Exchange] = None
+        self._declared_queues: set[str] = set()
 
     def _ensure_connection(self):
         if self._connection is not None and self._connection.connected:
@@ -96,8 +97,10 @@ class SyncMessagePublisher:
                     durable=True,
                     queue_arguments={"x-max-priority": messaging_config.QUEUE_MAX_PRIORITY},
                 )
-                queue.maybe_bind(self._connection)
-                queue.declare()
+                if queue_name not in self._declared_queues:
+                    queue.maybe_bind(self._connection)
+                    queue.declare()
+                    self._declared_queues.add(queue_name)
 
                 message_dict = message.model_dump(mode="json")
                 message_body = json.dumps(message_dict, ensure_ascii=False)
@@ -119,6 +122,7 @@ class SyncMessagePublisher:
                 # Reset connection so next attempt reconnects
                 self._connection = None
                 self._producer = None
+                self._declared_queues.clear()
 
                 if attempt < max_retries - 1:
                     logger.warning(
