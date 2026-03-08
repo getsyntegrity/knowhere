@@ -74,11 +74,26 @@ def _raise_mineru_unavailable(
 
 
 def _polling_interval_for_state(state: str, attempt: int) -> float:
+    """Return seconds to sleep before the next poll.
+
+    Tuned so that ``WORKER_CONCURRENCY`` scales safely with MinerU limits.
+    With a 4-token pool (300 RPM each), total budget is 1200 req/min:
+
+        150 tasks × (60 s / 15 s) = 600 req/min total
+        600 / 4 tokens = 150 req/min per token   ← leaves headroom
+
+    Observed data (Logfire, 2026-03-08 dev batch):
+    - 99 % of tasks never enter ``running``; lifecycle is
+      ``waiting-file`` → ``done`` in 2-4 s on MinerU's side.
+    - Longest observed task: 21 s (5 poll attempts).
+    - Peak burst: 351 concurrent tasks, 308 req/min → rate-limited.
+    """
     if state == "pending":
-        return min(10.0, 2.0 + attempt * 0.5)
+        return min(20.0, 5.0 + attempt * 1.5)
     if state == "running":
-        return 5.0
-    return 2.0
+        return 10.0
+    # waiting-file, converting, unknown, etc.
+    return 15.0
 
 
 def _get_batch_status(data: dict[str, Any]) -> Optional[dict[str, Any]]:
