@@ -95,9 +95,6 @@ class StorageConfig(BaseModel):
         
         # 配置重试策略
         config_kwargs['retries'] = {'max_attempts': 5, 'mode': 'standard'}
-
-        # Size the urllib3 pool to match WORKER_CONCURRENCY (every job uses S3)
-        config_kwargs['max_pool_connections'] = 150
         
         config = Config(**config_kwargs) if config_kwargs else None
         
