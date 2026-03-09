@@ -2,6 +2,7 @@
 Synchronous OpenAI-compatible client for gevent worker tasks.
 """
 import os
+import time
 from typing import Any, Dict, List, Optional, Union
 
 import httpx
@@ -102,10 +103,12 @@ class OpenAICompatibleClientSync:
                 payload[key] = value
 
         try:
+            request_start = time.time()
             client = get_sync_client()
             response = client.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
+            duration = time.time() - request_start
 
             choices = data.get("choices", [])
             if not choices:
@@ -115,10 +118,14 @@ class OpenAICompatibleClientSync:
                 )
 
             content = choices[0].get("message", {}).get("content") or ""
+            logger.debug(f"LLM request completed: url={self.api_url}, model={payload['model']}, duration={duration:.2f}s")
             return content
         except httpx.HTTPStatusError as exc:
+            duration = time.time() - request_start
             logger.error(
-                f"API request failed: {exc}, response={exc.response.text if hasattr(exc, 'response') else 'N/A'}"
+                f"LLM request failed: url={self.api_url}, model={payload['model']}, "
+                f"status={exc.response.status_code}, duration={duration:.2f}s, "
+                f"response={exc.response.text[:500] if hasattr(exc, 'response') else 'N/A'}"
             )
             raise LLMServiceException(
                 internal_message=f"API request failed: {str(exc)}",
@@ -127,6 +134,11 @@ class OpenAICompatibleClientSync:
                 original_exception=exc,
             ) from exc
         except httpx.TimeoutException as exc:
+            duration = time.time() - request_start
+            logger.error(
+                f"LLM request timeout: url={self.api_url}, model={payload['model']}, "
+                f"timeout={self.timeout}s, duration={duration:.2f}s"
+            )
             raise LLMServiceException(
                 internal_message=f"API request timeout: {str(exc)}",
                 provider=self.default_model,

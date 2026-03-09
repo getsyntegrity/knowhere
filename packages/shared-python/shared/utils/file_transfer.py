@@ -7,6 +7,7 @@ Uses httpx for proper total timeout enforcement.
 import os
 import tempfile
 from typing import Optional, Dict
+from urllib.parse import urlparse
 from loguru import logger
 import httpx
 
@@ -75,6 +76,8 @@ def stream_download_and_upload(
     """
     # Create temp file manually for explicit cleanup control
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".tmp")
+    source_host = urlparse(source_url).hostname or source_url[:60]
+    target_host = urlparse(target_url).hostname or target_url[:60]
     
     try:
         # Phase 1: Download to temp file
@@ -91,11 +94,11 @@ def stream_download_and_upload(
                         downloaded_bytes += len(chunk)
                     
         except httpx.TimeoutException as e:
-            raise DownloadError(f"Download timed out after {download_timeout}s") from e
+            raise DownloadError(f"Download timed out: host={source_host}, timeout={download_timeout}s") from e
         except httpx.HTTPStatusError as e:
-            raise DownloadError(f"Download failed: HTTP {e.response.status_code}") from e
+            raise DownloadError(f"Download failed: host={source_host}, status={e.response.status_code}") from e
         except httpx.RequestError as e:
-            raise DownloadError(f"Download failed: {e}") from e
+            raise DownloadError(f"Download failed: host={source_host}, error={e}") from e
         
         # Get file size
         file_size = os.path.getsize(tmp_path)
@@ -123,13 +126,13 @@ def stream_download_and_upload(
                 
             except (httpx.TimeoutException, httpx.RequestError) as e:
                 last_error = e
-                logger.warning(f"Upload attempt {attempt} failed: {e}")
+                logger.warning(f"Upload attempt {attempt} failed: host={target_host}, error={e}")
                 if attempt < upload_retries:
                     logger.info(f"Retrying upload...")
                 continue
         
         # All retries exhausted
-        raise UploadError(f"Upload failed after {upload_retries} attempts: {last_error}") from last_error
+        raise UploadError(f"Upload failed: host={target_host}, attempts={upload_retries}, last_error={last_error}") from last_error
         
     finally:
         # Manual cleanup of temp file
