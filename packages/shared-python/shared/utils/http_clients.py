@@ -9,7 +9,6 @@ from typing import Optional
 import httpx
 
 _DEFAULT_LIMITS = httpx.Limits(
-    max_connections=100,
     max_keepalive_connections=20,
     keepalive_expiry=30,
 )
