@@ -7,6 +7,7 @@ Uses the cryptography library's Fernet implementation which provides:
 - Automatic IV/salt handling
 """
 import secrets
+import threading
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -105,29 +106,32 @@ class FernetService:
 
 # Singleton instance (lazy loaded)
 _fernet_service: Optional[FernetService] = None
+_fernet_service_lock = threading.Lock()
 
 
 def get_fernet_service() -> FernetService:
     """
     Get the singleton FernetService instance.
-    
+
     Loads the master key from environment on first call.
-    
+
     Returns:
         FernetService instance.
-        
+
     Raises:
         SystemSettingMissingException: If WEBHOOK_MASTER_KEY is not configured.
     """
     global _fernet_service
-    
+
     if _fernet_service is None:
-        import os
-        
-        master_key = os.environ.get('WEBHOOK_MASTER_KEY')
-        if not master_key:
-            raise SystemSettingMissingException(internal_message="WEBHOOK_MASTER_KEY must be set in environment")
-        
-        _fernet_service = FernetService(master_key)
-    
+        with _fernet_service_lock:
+            if _fernet_service is None:
+                import os
+
+                master_key = os.environ.get('WEBHOOK_MASTER_KEY')
+                if not master_key:
+                    raise SystemSettingMissingException(internal_message="WEBHOOK_MASTER_KEY must be set in environment")
+
+                _fernet_service = FernetService(master_key)
+
     return _fernet_service

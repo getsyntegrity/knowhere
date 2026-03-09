@@ -126,6 +126,8 @@ class FileUploadService:
                 headers={"Content-Type": content_type}
             )
 
+            logger.info(f"Generated presigned upload URL: {upload_url}")
+
             return {
                 "upload_url": upload_url,
                 "s3_key": s3_key,

@@ -4,6 +4,7 @@
 无需锁，避免死锁问题
 """
 import asyncio
+import threading
 from contextvars import ContextVar
 from typing import Optional
 
@@ -62,18 +63,18 @@ class AsyncConnectionManager:
                         password=params["password"],
                         virtualhost=params["virtualhost"],
                         client_properties=params.get("client_properties", {}),
-                        heartbeat=params.get("heartbeat", 600),
-                        blocked_connection_timeout=params.get("blocked_connection_timeout", 300),
+                        heartbeat=params.get("heartbeat", 30),
+                        blocked_connection_timeout=params.get("blocked_connection_timeout", 60),
                     ),
                     timeout=30.0
-                )                
+                )
             else:
                 connection = await asyncio.wait_for(
                     aio_pika.connect_robust(
                         url=params["CELERY_BROKER_URL"],
                         client_properties=params.get("client_properties", {}),
-                        heartbeat=params.get("heartbeat", 600),
-                        blocked_connection_timeout=params.get("blocked_connection_timeout", 300),
+                        heartbeat=params.get("heartbeat", 30),
+                        blocked_connection_timeout=params.get("blocked_connection_timeout", 60),
                     ),
                     timeout=30.0
                 )
@@ -189,12 +190,15 @@ class AsyncConnectionManager:
 
 # 全局连接管理器实例
 _connection_manager: Optional[AsyncConnectionManager] = None
+_connection_manager_lock = threading.Lock()
 
 
 def get_connection_manager() -> AsyncConnectionManager:
     """获取全局连接管理器实例（单例模式）"""
     global _connection_manager
     if _connection_manager is None:
-        _connection_manager = AsyncConnectionManager()
+        with _connection_manager_lock:
+            if _connection_manager is None:
+                _connection_manager = AsyncConnectionManager()
     return _connection_manager
 

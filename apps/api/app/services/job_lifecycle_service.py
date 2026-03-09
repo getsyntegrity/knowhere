@@ -179,6 +179,7 @@ class JobLifecycleService:
                             amount=amount_to_refund,
                             job_id=job_id
                         )
+                        job.billing_status = "refunded"
                         logger.info(f"Refunded {amount_to_refund} credits for job {job_id}")
 
             # 3. Prepare Webhook (No Commit)
@@ -195,7 +196,6 @@ class JobLifecycleService:
                     error_code=error_code,
                     error_details=error_details,
                     webhook_url=job.webhook_url,
-                    request_id=job_id,
                 )
 
             # 4. ATOMIC COMMIT

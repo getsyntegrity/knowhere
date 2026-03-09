@@ -7,8 +7,11 @@ Uses httpx for proper total timeout enforcement.
 import os
 import tempfile
 from typing import Optional, Dict
+from urllib.parse import urlparse
 from loguru import logger
 import httpx
+
+from shared.utils.http_clients import get_sync_client
 
 
 class FileTransferError(Exception):
@@ -73,27 +76,29 @@ def stream_download_and_upload(
     """
     # Create temp file manually for explicit cleanup control
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".tmp")
+    source_host = urlparse(source_url).hostname or source_url[:60]
+    target_host = urlparse(target_url).hostname or target_url[:60]
     
     try:
         # Phase 1: Download to temp file
         logger.debug(f"Downloading from {source_url[:100]}...")
         try:
-            with httpx.Client(timeout=download_timeout) as client:
-                with client.stream("GET", source_url) as response:
-                    response.raise_for_status()
-                    
-                    downloaded_bytes = 0
-                    with os.fdopen(tmp_fd, 'wb') as tmp_file:
-                        for chunk in response.iter_bytes(chunk_size=chunk_size):
-                            tmp_file.write(chunk)
-                            downloaded_bytes += len(chunk)
+            client = get_sync_client()
+            with client.stream("GET", source_url, timeout=download_timeout) as response:
+                response.raise_for_status()
+
+                downloaded_bytes = 0
+                with os.fdopen(tmp_fd, 'wb') as tmp_file:
+                    for chunk in response.iter_bytes(chunk_size=chunk_size):
+                        tmp_file.write(chunk)
+                        downloaded_bytes += len(chunk)
                     
         except httpx.TimeoutException as e:
-            raise DownloadError(f"Download timed out after {download_timeout}s") from e
+            raise DownloadError(f"Download timed out: host={source_host}, timeout={download_timeout}s") from e
         except httpx.HTTPStatusError as e:
-            raise DownloadError(f"Download failed: HTTP {e.response.status_code}") from e
+            raise DownloadError(f"Download failed: host={source_host}, status={e.response.status_code}") from e
         except httpx.RequestError as e:
-            raise DownloadError(f"Download failed: {e}") from e
+            raise DownloadError(f"Download failed: host={source_host}, error={e}") from e
         
         # Get file size
         file_size = os.path.getsize(tmp_path)
@@ -110,24 +115,24 @@ def stream_download_and_upload(
                 
                 # Stream directly from file without loading to memory
                 with open(tmp_path, 'rb') as f:
-                    with httpx.Client(timeout=upload_timeout) as client:
-                        if upload_method.upper() == "PUT":
-                            upload_response = client.put(target_url, content=f, headers=headers)
-                        else:
-                            upload_response = client.post(target_url, content=f, headers=headers)
+                    client = get_sync_client()
+                    if upload_method.upper() == "PUT":
+                        upload_response = client.put(target_url, content=f, headers=headers, timeout=upload_timeout)
+                    else:
+                        upload_response = client.post(target_url, content=f, headers=headers, timeout=upload_timeout)
                 
                 logger.info(f"Upload completed: status={upload_response.status_code}")
                 return upload_response
                 
             except (httpx.TimeoutException, httpx.RequestError) as e:
                 last_error = e
-                logger.warning(f"Upload attempt {attempt} failed: {e}")
+                logger.warning(f"Upload attempt {attempt} failed: host={target_host}, error={e}")
                 if attempt < upload_retries:
                     logger.info(f"Retrying upload...")
                 continue
         
         # All retries exhausted
-        raise UploadError(f"Upload failed after {upload_retries} attempts: {last_error}") from last_error
+        raise UploadError(f"Upload failed: host={target_host}, attempts={upload_retries}, last_error={last_error}") from last_error
         
     finally:
         # Manual cleanup of temp file

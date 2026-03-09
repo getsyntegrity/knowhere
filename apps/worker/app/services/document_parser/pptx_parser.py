@@ -11,7 +11,7 @@ from shared.core.config import settings
 from app.services.common.kb_utils import find_images
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
-from shared.utils.CommonHelper import load_file_bytes
+from shared.utils.CommonHelperSync import load_file_bytes
 from shared.utils.file_utils import path_handle
 from markitdown import MarkItDown
 from pptx import Presentation
@@ -170,7 +170,7 @@ def _render_pdf_to_image_pdf(pdf_bytes: bytes, scale: int = 3) -> bytes:
 
 # ==================== main parsing entrance ====================
 
-async def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
+def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
                      strategy="to_pdf_api", relative_root=None, baseurl=""):
     """
     PPTX parsing entrance, aligned with parse_pdfs / parse_docx pattern.
@@ -180,26 +180,26 @@ async def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
         - "to_pdf":     use LibreOffice to convert to PDF, then parse via MinerU
         - "to_pdf_api": use iLoveAPI to convert to PDF, then parse via MinerU (recommended)
     """
-    pptx_data = await load_file_bytes(pptx_path, file_url=baseurl)
+    pptx_data = load_file_bytes(pptx_path, file_url=baseurl)
     logger.info(f"[parse_pptx] PPTX loaded: {len(pptx_data)/1024:.1f} KB")
 
     if strategy == "to_pdf_api":
-        return await _parse_pptx_via_api(pptx_data, filename, output_dir,
+        return _parse_pptx_via_api(pptx_data, filename, output_dir,
                                          base_llm_paras, relative_root)
 
     elif strategy == "to_pdf":
-        return await _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
+        return _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
                                                   base_llm_paras, relative_root)
 
     elif strategy == "to_md":
-        return await _parse_pptx_to_md(pptx_data, filename, output_dir,
+        return _parse_pptx_to_md(pptx_data, filename, output_dir,
                                        base_llm_paras, relative_root)
 
     else:
         raise ValueError(f"Unknown pptx strategy: {strategy}")
 
 
-async def _parse_pptx_via_api(pptx_data, filename, output_dir,
+def _parse_pptx_via_api(pptx_data, filename, output_dir,
                                base_llm_paras, relative_root):
     """
     PPTX bytes → iLoveAPI PDF bytes → image-only PDF bytes → temp file → MinerU.
@@ -217,9 +217,9 @@ async def _parse_pptx_via_api(pptx_data, filename, output_dir,
         f.write(img_pdf_bytes)
 
     try:
-        parsed_df = await parse_pdfs(
+        parsed_df = parse_pdfs(
             tmp_path, filename, output_dir, base_llm_paras,
-            mode="api", relative_root=relative_root
+            relative_root=relative_root
         )
         return parsed_df
     finally:
@@ -227,7 +227,7 @@ async def _parse_pptx_via_api(pptx_data, filename, output_dir,
             os.remove(tmp_path)
 
 
-async def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
+def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
                                        base_llm_paras, relative_root):
     """
     LibreOffice requires file paths (subprocess), so temp dir is unavoidable here.
@@ -259,9 +259,9 @@ async def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
         f.write(img_pdf_bytes)
 
     try:
-        parsed_df = await parse_pdfs(
+        parsed_df = parse_pdfs(
             tmp_path, filename, output_dir, base_llm_paras,
-            mode="api", relative_root=relative_root
+            relative_root=relative_root
         )
         return parsed_df
     finally:
@@ -269,7 +269,7 @@ async def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
             os.remove(tmp_path)
 
 
-async def _parse_pptx_to_md(pptx_data, filename, output_dir, base_llm_paras, relative_root):
+def _parse_pptx_to_md(pptx_data, filename, output_dir, base_llm_paras, relative_root):
     """Extract content from PPTX XML via pptx2md + MarkItDown → parse_md."""
     # pptx2md and MarkItDown require file paths
     local_pptx = os.path.join(output_dir, "_pptx_tmp.pptx")
@@ -309,7 +309,7 @@ async def _parse_pptx_to_md(pptx_data, filename, output_dir, base_llm_paras, rel
             ppt_md_lines.append(f"![image{image_index + 1}]({md_imgs[image_index]})")
             image_index += 1
 
-        parsed_df = await parse_md(
+        parsed_df = parse_md(
             output_dir, source_type="pptx",
             md_lines=ppt_md_lines, base_llm_paras=base_llm_paras,
             relative_root=relative_root

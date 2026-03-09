@@ -35,6 +35,8 @@ Requires-Dist: pytz==2025.2
 Requires-Dist: PyYAML==6.0.2
 Requires-Dist: typing-extensions==4.14.1
 Requires-Dist: pillow==11.2.1
+Requires-Dist: gevent>=24.11.1
+Requires-Dist: psycogreen>=1.0.2
 Requires-Dist: pytest==8.3.4
 Requires-Dist: pytest-asyncio==0.24.0
 Requires-Dist: pytest-mock==3.14.0

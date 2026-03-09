@@ -1,0 +1,23 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": [
+    ".",
+    "../../packages/shared-python"
+  ],
+  "include": [
+    "app",
+    "tests",
+    "worker.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    "logs",
+    "**/node_modules",
+    "**/.*"
+  ],
+  "typeCheckingMode": "basic"
+}

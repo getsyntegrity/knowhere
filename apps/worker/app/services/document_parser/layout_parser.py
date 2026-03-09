@@ -16,7 +16,7 @@ except ImportError:
             return content
 from shared.core.config import settings
 # ARQ dependency is removed, use Celery instead
-from shared.services.ai import ai_query_service
+from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
 # TaskRedis dependency is removed, use Redis directly to track
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
@@ -884,7 +884,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
     return preds_df
 
 
-async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=8192, task="eval-headings"):
+def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=8192, task="eval-headings"):
     """Apply LLM to analyze the hierarchy of headings
     
     Args:
@@ -911,7 +911,7 @@ async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_l
     ]
     
     try:
-        answer = await ai_query_service.query_ai(
+        answer = ai_query_service.query_ai(
             messages=messages,
             user_id="layout_parser",
             model=model_name,
@@ -926,7 +926,7 @@ async def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_l
         raise
 
 
-async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None):
+def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None):
     """
     predict title hierarchy
     
@@ -960,7 +960,7 @@ async def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, e
     save_intermediate_csv(heading_preds, output_dir, "preds_2_naive_processed")
 
     if smart_parse:
-        heading_preds = await est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name, output_dir=output_dir)
+        heading_preds = est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name, output_dir=output_dir)
         logger.info("✅ LLM hierarchy parsing completed")
 
     # 3. final polishing for certain types
@@ -1020,7 +1020,7 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
     return heading_preds
 
 
-async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None):
+def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None):
     """LLM-based hiearchy detection
     
     Args:
@@ -1044,7 +1044,7 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
         df4llm = basic_df.drop(columns=["reason"])
         logger.debug(f"DataFrame transformation completed, rows: {len(df4llm)}")
         
-        layout_res = await hiearchy_llm(df4llm, model_name, max_depth, toc_hierarchies, task="eval-headings")
+        layout_res = hiearchy_llm(df4llm, model_name, max_depth, toc_hierarchies, task="eval-headings")
         
         base_preds = pd.DataFrame(layout_res)
         base_preds.insert(1, "heading", basic_df["heading"].values)  # insert original headings back

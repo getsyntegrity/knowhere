@@ -8,6 +8,12 @@ from typing import Any, Dict
 from loguru import logger
 
 _log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
+_DEFAULT_CONSOLE_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {extra[event]} | {message}"
+)
+_DEVELOPMENT_CONSOLE_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {extra[event]} | {message} | {extra}"
+)
 
 class LogEvent(Enum):
     """
@@ -40,6 +46,12 @@ class LogEvent(Enum):
     APP_LOG = "app.log"
 
     S3_WEBHOOK_EVENT = "s3.webhook"
+
+    # Network / AMQP events
+    NETWORK_AMQP_CONNECT = "network.amqp.connect"
+    NETWORK_AMQP_DISCONNECT = "network.amqp.disconnect"
+    NETWORK_AMQP_PUBLISH_ERROR = "network.amqp.publish_error"
+    NETWORK_AMQP_CONSUME_ERROR = "network.amqp.consume_error"
 
 
 @contextmanager
@@ -112,20 +124,26 @@ def setup_logging(
     # Set base context BEFORE any log emission so every line has base fields
     logger.configure(extra={
         "schema_version": "1.0",
-        "environment": settings.ENVIRONMENT,
+        "environment": settings.APP_ENV,
         "event": LogEvent.APP_LOG.value,
     })
 
     # Console handler - respects LOG_LEVEL
     log_level = settings.LOG_LEVEL
+    show_bind_data = settings.ENVIRONMENT == "development"
+
+    # enqueue=True uses a background thread for log writes, which deadlocks
+    # with gevent's cooperative scheduling on stdout. Disable for worker.
+    use_enqueue = service_name != "knowhere-worker"
 
     logger.add(
         sys.stdout,
         level=log_level,
-        enqueue=True,
+        enqueue=use_enqueue,
         format=(
-            "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | "
-            "{extra[event]} | {message}"
+            _DEVELOPMENT_CONSOLE_FORMAT
+            if show_bind_data
+            else _DEFAULT_CONSOLE_FORMAT
         ),
     )
 
@@ -137,6 +155,7 @@ def setup_logging(
             logfire.configure(
                 service_name=service_name,
                 token=settings.LOGFIRE_TOKEN,
+                environment=settings.APP_ENV,
                 console=False,
                 distributed_tracing=True,
             )
@@ -159,12 +178,19 @@ def setup_logging(
                 # Redis instrumentation disabled to reduce production noise/cost.
 
             elif service_name == "knowhere-worker":
-                logfire.instrument_celery()  # Consumer side
+                # NOTE: logfire.instrument_celery() is intentionally skipped for the worker.
+                # CeleryInstrumentor uses contextvars which raises ValueError under gevent
+                # ("token was created in a different Context") when greenlets switch during task execution.
                 logfire.instrument_httpx()  # Instrument HTTP client calls in worker
 
-                # Instrument database
-                from shared.core.database import engine
-                logfire.instrument_sqlalchemy(engine=engine)
+                # Instrument sync database engine (worker uses psycopg2 via gevent)
+                try:
+                    from shared.core.database_sync import sync_engine
+                    logfire.instrument_sqlalchemy(engine=sync_engine)
+                except ImportError:
+                    logger.bind(event=LogEvent.LOGGING_CONFIGURED.value).warning(
+                        "Sync database engine not available for Logfire instrumentation"
+                    )
 
                 # Redis instrumentation disabled to reduce production noise/cost.
 

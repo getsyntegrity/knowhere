@@ -13,6 +13,7 @@ class BaseConfig(BaseSettings):
 
     # 环境配置
     ENVIRONMENT: str = Field(default="production", description="运行环境")
+    APP_ENV: str = Field(default="", description="deploy env (<empty>|staging|production）")
     DEBUG: bool = Field(default=False, description="调试模式")
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
 
@@ -43,6 +44,14 @@ class BaseConfig(BaseSettings):
         if v not in ['development', 'staging', 'production']:
             raise ValueError('ENVIRONMENT must be development, staging, or production')
         return v
+
+    @field_validator('APP_ENV')
+    @classmethod
+    def validate_app_env(cls, v):
+        app_env = v.strip().lower()
+        if app_env and app_env not in ['development', 'staging', 'production']:
+            raise ValueError('APP_ENV must be empty, staging, or production')
+        return app_env
     
     @field_validator('LOG_LEVEL')
     @classmethod

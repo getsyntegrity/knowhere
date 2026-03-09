@@ -9,9 +9,7 @@ from shared.utils.file_utils import path_handle
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import (
     ValidationException,
-    WorkerHandlingException,
 )
-from shared.core.exceptions.knowhere_exception import KnowhereException
 
 # document_parser imports
 from app.services.document_parser.doc_profiler import profile_document
@@ -56,7 +54,22 @@ def cleanup_unreferenced_images(output_dir: str) -> int:
     return removed_count
 
 
-async def checkerboard_inject_parse(
+def checkerboard_inject_parse_sync(
+    file_full_path: str,
+    filename: str,
+    output_dir: str,
+    **kwargs,
+):
+    """Backward-compatible sync alias for parser entrypoint."""
+    return checkerboard_inject_parse(
+        file_full_path=file_full_path,
+        filename=filename,
+        output_dir=output_dir,
+        **kwargs,
+    )
+
+
+def checkerboard_inject_parse(
     file_full_path: str, 
     filename: str, 
     output_dir: str,
@@ -129,50 +142,50 @@ async def checkerboard_inject_parse(
         from app.services.document_parser.fragment_parser import parse_fragment
 
         fragment_content = kwargs.get('fragment_content', '')
-        full_output_dir, relative_root, parsed_df = await parse_fragment(fragment_content, filename=filename, output_dir=output_dir, kb_dir=kb_dir, base_llm_paras=base_llm_paras)
+        full_output_dir, relative_root, parsed_df = parse_fragment(fragment_content, filename=filename, output_dir=output_dir, kb_dir=kb_dir, base_llm_paras=base_llm_paras)
 
     elif '.txt' in file_path_lower:
         logger.debug("file type is txt")
         from app.services.document_parser.md_parser import parse_md
         from app.services.document_parser.txt_parser import parse_texts
 
-        txt_lines = await parse_texts(file_path=file_full_path, baseurl=baseurl)
-        parsed_df = await parse_md(full_output_dir, source_type='md', md_lines=txt_lines, base_llm_paras=base_llm_paras, relative_root=relative_root)
+        txt_lines = parse_texts(file_path=file_full_path, baseurl=baseurl)
+        parsed_df = parse_md(full_output_dir, source_type='md', md_lines=txt_lines, base_llm_paras=base_llm_paras, relative_root=relative_root)
 
     elif ('.png' in file_path_lower or '.jpg' in file_path_lower or '.jpeg' in file_path_lower):
         logger.debug(f"file type is image")
         from app.services.document_parser.image_parser import parse_image
 
-        parsed_df = await parse_image(file_full_path, filename=filename, output_dir=full_output_dir, baseurl=baseurl, base_llm_paras=base_llm_paras, relative_root=relative_root)
+        parsed_df = parse_image(file_full_path, filename=filename, output_dir=full_output_dir, baseurl=baseurl, base_llm_paras=base_llm_paras, relative_root=relative_root)
 
     elif '.pdf' in file_path_lower:
         logger.debug(f"file type is pdf")
         from app.services.document_parser.pdf_parser import parse_pdfs
 
         if filename and file_full_path:
-            parsed_df = await parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root)
+            parsed_df = parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root)
 
     elif '.docx' in file_path_lower:
         logger.debug(f"file type is docx")
         from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
 
         if filename and file_full_path:
-            parsed_structure, df_list = await parse_docx(file_full_path, base_llm_paras, full_output_dir, filename, baseurl, relative_root=relative_root)
-            parsed_df = await convert_doc2dics(parsed_structure, df_list, full_output_dir, base_llm_paras=base_llm_paras, relative_root=relative_root)
+            parsed_structure, df_list = parse_docx(file_full_path, base_llm_paras, full_output_dir, filename, baseurl, relative_root=relative_root)
+            parsed_df = convert_doc2dics(parsed_structure, df_list, full_output_dir, base_llm_paras=base_llm_paras, relative_root=relative_root)
 
     elif '.xlsx' in file_path_lower:
         logger.debug(f"file type is xlsx")
         from app.services.document_parser.table_parser import parse_xlsx
 
         if filename and file_full_path:
-            parsed_df = await parse_xlsx(file_full_path, filename, full_output_dir, baseurl, base_llm_paras=base_llm_paras, relative_root=relative_root)
+            parsed_df = parse_xlsx(file_full_path, filename, full_output_dir, baseurl, base_llm_paras=base_llm_paras, relative_root=relative_root)
 
     elif '.pptx' in file_path_lower:
         logger.debug(f"file type is pptx")
         from app.services.document_parser.pptx_parser import parse_pptx
 
         if filename and file_full_path:
-            parsed_df = await parse_pptx(
+            parsed_df = parse_pptx(
                 file_full_path, filename=filename,
                 output_dir=full_output_dir,
                 base_llm_paras=base_llm_paras,
@@ -186,7 +199,7 @@ async def checkerboard_inject_parse(
         from app.services.document_parser.md_parser import parse_md
 
         if filename and file_full_path:
-            parsed_df = await parse_md(full_output_dir, source_type="md", file_path=file_full_path, base_llm_paras=base_llm_paras, relative_root=relative_root)
+            parsed_df = parse_md(full_output_dir, source_type="md", file_path=file_full_path, base_llm_paras=base_llm_paras, relative_root=relative_root)
 
     elif '.json' in file_path_lower:
         logger.debug(f"file type is json")

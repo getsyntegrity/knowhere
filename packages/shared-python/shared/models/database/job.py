@@ -61,13 +61,12 @@ class Job(Base):
     credits_charged: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False, comment="In micro-dollars: $1.00 = 1,000,000")
     billing_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False, comment="pending, charged, billing_failed, refunded")
     
-    # 关系
-    # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    # Relationships
-    state_history: Mapped[list["JobStateHistory"]] = relationship("JobStateHistory", back_populates="job", cascade="all, delete-orphan")
-    state_audit_logs: Mapped[list["JobStateAuditLog"]] = relationship("JobStateAuditLog", back_populates="job", cascade="all, delete-orphan")
-    webhook_logs: Mapped[list["WebhookLog"]] = relationship("WebhookLog", back_populates="job", cascade="all, delete-orphan")
-    job_result: Mapped[Optional["JobResult"]] = relationship("JobResult", back_populates="job", uselist=False, lazy="selectin")
+    # Relationships — default to noload to prevent implicit SELECTs.
+    # Use explicit selectinload() in queries that need related data.
+    state_history: Mapped[list["JobStateHistory"]] = relationship("JobStateHistory", back_populates="job", cascade="all, delete-orphan", lazy="noload")
+    state_audit_logs: Mapped[list["JobStateAuditLog"]] = relationship("JobStateAuditLog", back_populates="job", cascade="all, delete-orphan", lazy="noload")
+    webhook_logs: Mapped[list["WebhookLog"]] = relationship("WebhookLog", back_populates="job", cascade="all, delete-orphan", lazy="noload")
+    job_result: Mapped[Optional["JobResult"]] = relationship("JobResult", back_populates="job", uselist=False, lazy="noload")
     
     # Indexes
     __table_args__ = (

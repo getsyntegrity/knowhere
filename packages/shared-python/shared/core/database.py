@@ -65,7 +65,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 # 创建一个App上下文管理器，用于在无法传入db参数时执行数据库操作
 @asynccontextmanager
-async def get_db_context():
+async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
     session = None
     try:
         session = AsyncSessionFactory()

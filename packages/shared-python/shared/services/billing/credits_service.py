@@ -363,10 +363,8 @@ class CreditsService:
             reason: Refund reason
             
         Returns:
-            New balance after refund
-            
-        Raises:
-            ValueError: If job already refunded
+            New balance after refund. If the job was already refunded,
+            returns the current balance without creating a duplicate ledger entry.
         """
         from sqlalchemy import select, func
         
@@ -383,8 +381,8 @@ class CreditsService:
         existing = result.first()
         
         if existing:
-            logger.info(f"Job {job_id} already refunded, skipping")
-            raise ValueError(f"Job {job_id} already refunded")
+            logger.info(f"Job {job_id} already refunded, returning current balance")
+            return await self.repository.get_balance(session, user_id)
         
         # Execute refund
         new_balance = await self.add_credits(
