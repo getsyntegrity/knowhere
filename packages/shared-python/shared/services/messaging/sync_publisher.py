@@ -5,6 +5,8 @@ Under gevent, Kombu socket operations become cooperative automatically.
 API service continues using async MessagePublisher with aio-pika.
 """
 import json
+import os
+import socket
 import sys
 import threading
 from typing import Any, Dict, List, Optional
@@ -16,6 +18,7 @@ sys.set_int_max_str_digits(10000)
 
 from shared.core.config import app_config
 from shared.core.config.messaging import messaging_config
+from shared.core.logging import LogEvent
 from shared.models.schemas.messages import (
     BaseMessage,
     JobFailureMessage,
@@ -47,7 +50,12 @@ class SyncMessagePublisher:
             return
 
         broker_url = app_config.get_celery_broker_url()
-        self._connection = Connection(broker_url, heartbeat=600)
+        connection_name = f"worker-publisher@{socket.gethostname()}-{os.getpid()}"
+        self._connection = Connection(
+            broker_url,
+            heartbeat=30,
+            transport_options={"client_properties": {"connection_name": connection_name}},
+        )
         self._connection.ensure_connection(max_retries=3, interval_start=1, interval_step=2)
 
         self._exchange = Exchange(
@@ -59,7 +67,9 @@ class SyncMessagePublisher:
 
         channel = self._connection.channel()
         self._producer = Producer(channel, exchange=self._exchange, serializer="json")
-        logger.info("Sync message publisher connected to broker")
+        logger.bind(event=LogEvent.NETWORK_AMQP_CONNECT.value).info(
+            f"Sync publisher connected: connection_name={connection_name}"
+        )
 
     def _get_routing_key(self, message_type: str) -> str:
         routing_keys = {
@@ -125,13 +135,16 @@ class SyncMessagePublisher:
                 self._declared_queues.clear()
 
                 if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Message publish failed (attempt {attempt + 1}/{max_retries}), "
-                        f"reconnecting: {message.message_type}, job_id={message.job_id}, error={e}"
+                    logger.bind(event=LogEvent.NETWORK_AMQP_PUBLISH_ERROR.value).warning(
+                        f"Publish failed (attempt {attempt + 1}/{max_retries}), "
+                        f"reconnecting: message_type={message.message_type}, job_id={message.job_id}, error={e}"
                     )
                     continue
 
-                logger.error(f"Message publish failed after {max_retries} attempts: {message.message_type}, job_id={message.job_id}, error={e}")
+                logger.bind(event=LogEvent.NETWORK_AMQP_PUBLISH_ERROR.value).error(
+                    f"Publish failed after {max_retries} attempts: "
+                    f"message_type={message.message_type}, job_id={message.job_id}, error={e}"
+                )
                 message_monitoring.record_message_published(message.message_type, message.job_id, False)
                 return False
         return False

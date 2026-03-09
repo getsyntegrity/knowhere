@@ -41,7 +41,8 @@ class S3StorageAdapter(StorageAdapter):
                 "status": "success"
             }
         except ClientError as e:
-            logger.error(f"S3 upload failed: {e}")
+            error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
+            logger.error(f"S3 upload_file failed: bucket={bucket_name}, key={key}, error_code={error_code}, error={e}")
             raise StorageServiceException(
                 internal_message=f"S3 upload failed: {str(e)}",
                 operation="upload_file",
@@ -70,7 +71,8 @@ class S3StorageAdapter(StorageAdapter):
                 "status": "success"
             }
         except ClientError as e:
-            logger.error(f"S3 upload file object failed: {e}")
+            error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
+            logger.error(f"S3 upload_fileobj failed: bucket={bucket_name}, key={key}, error_code={error_code}, error={e}")
             raise StorageServiceException(
                 internal_message=f"S3 upload file object failed: {str(e)}",
                 operation="upload_fileobj",
@@ -85,7 +87,8 @@ class S3StorageAdapter(StorageAdapter):
             logger.debug(f"S3下载成功: {bucket_name}/{key} -> {local_path}")
             return local_path
         except ClientError as e:
-            logger.error(f"S3 download failed: {e}")
+            error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
+            logger.error(f"S3 download_file failed: bucket={bucket_name}, key={key}, error_code={error_code}, error={e}")
             raise StorageServiceException(
                 internal_message=f"S3 download failed: {str(e)}",
                 operation="download_file",
@@ -99,7 +102,8 @@ class S3StorageAdapter(StorageAdapter):
             response = self.s3_client.get_object(Bucket=bucket_name, Key=key)
             return response['Body'].read()
         except ClientError as e:
-            logger.error(f"S3 download file object failed: {e}")
+            error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
+            logger.error(f"S3 download_fileobj failed: bucket={bucket_name}, key={key}, error_code={error_code}, error={e}")
             raise StorageServiceException(
                 internal_message=f"S3 download file object failed: {str(e)}",
                 operation="download_fileobj",
@@ -114,7 +118,8 @@ class S3StorageAdapter(StorageAdapter):
             logger.debug(f"S3删除成功: {bucket_name}/{key}")
             return True
         except ClientError as e:
-            logger.error(f"S3删除失败: {e}")
+            error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
+            logger.error(f"S3 delete_object failed: bucket={bucket_name}, key={key}, error_code={error_code}, error={e}")
             return False
     
     def list_objects(self, prefix: str = "", bucket: Optional[str] = None) -> Iterator[str]:
@@ -129,7 +134,8 @@ class S3StorageAdapter(StorageAdapter):
                     for obj in page['Contents']:
                         yield obj['Key']
         except ClientError as e:
-            logger.error(f"S3列出对象失败: {e}")
+            error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
+            logger.error(f"S3 list_objects failed: bucket={bucket_name}, prefix={prefix}, error_code={error_code}, error={e}")
             return
     
     def generate_presigned_url(self, key: str, expiration: int = 3600,
@@ -159,7 +165,8 @@ class S3StorageAdapter(StorageAdapter):
             logger.debug(f"S3生成预签名URL成功: {key}")
             return url
         except ClientError as e:
-            logger.error(f"S3 generate presigned URL failed: {e}")
+            error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
+            logger.error(f"S3 generate_presigned_url failed: bucket={bucket_name}, key={key}, method={method}, error_code={error_code}, error={e}")
             raise StorageServiceException(
                 internal_message=f"S3 generate presigned URL failed: {str(e)}",
                 operation="generate_presigned_url",
@@ -190,7 +197,7 @@ class S3StorageAdapter(StorageAdapter):
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
                 return None
-            logger.error(f"S3 get object size failed: {e}")
+            logger.error(f"S3 get_object_size failed: bucket={bucket_name}, key={key}, error={e}")
             raise StorageServiceException(
                 internal_message=f"S3 get object size failed: {str(e)}",
                 operation="get_object_size",

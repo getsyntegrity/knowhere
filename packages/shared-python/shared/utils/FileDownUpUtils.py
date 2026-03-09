@@ -11,6 +11,7 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from shared.core.config import settings
+from shared.core.config.storage import get_cached_storage_adapter
 from shared.core.exceptions.domain_exceptions import StorageServiceException, NotFoundException, KnowhereException
 from shared.models.schemas.s3_file import FliesDownload
 
@@ -25,7 +26,7 @@ def s3_upload_file(file: UploadFile , prefix: str ):
     if prefix and not prefix.endswith('/'):
         prefix += '/'
     object_key = f"{prefix}{file.filename}"
-    adapter = settings.get_storage_adapter()
+    adapter = get_cached_storage_adapter()
     try:
         # 使用 upload_fileobj 可以高效地以流式方式上传，避免占用过多内存
         adapter.upload_fileobj(

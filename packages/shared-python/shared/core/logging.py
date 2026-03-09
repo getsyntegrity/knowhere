@@ -47,6 +47,12 @@ class LogEvent(Enum):
 
     S3_WEBHOOK_EVENT = "s3.webhook"
 
+    # Network / AMQP events
+    NETWORK_AMQP_CONNECT = "network.amqp.connect"
+    NETWORK_AMQP_DISCONNECT = "network.amqp.disconnect"
+    NETWORK_AMQP_PUBLISH_ERROR = "network.amqp.publish_error"
+    NETWORK_AMQP_CONSUME_ERROR = "network.amqp.consume_error"
+
 
 @contextmanager
 def log_context(**kwargs):
