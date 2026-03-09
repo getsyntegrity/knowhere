@@ -451,26 +451,25 @@ def _upload_file_to_mineru(
         upload_logger.bind(local_path=pdf_url).info("Uploading local file to MinerU")
         try:
             with open(pdf_url, "rb") as file_obj:
-                try:
-                    upload_response = requests.put(
-                        upload_url,
-                        data=file_obj,
-                        timeout=MINERU_UPLOAD_TIMEOUT,
-                    )
-                except requests.RequestException as exc:
-                    upload_logger.bind(error_message=str(exc)).error(
-                        "Failed to upload local file to MinerU"
-                    )
-                    raise MinerUServiceException(
-                        internal_message=f"Failed to upload file to MinerU: {exc}",
-                        original_exception=exc,
-                    )
+                upload_response = requests.put(
+                    upload_url,
+                    data=file_obj,
+                    timeout=MINERU_UPLOAD_TIMEOUT,
+                )
         except OSError as exc:
             upload_logger.bind(error_message=str(exc)).error(
                 "Failed to read local file for MinerU upload"
             )
             raise StorageServiceException(
                 internal_message=f"Failed to read local file: {exc}",
+                original_exception=exc,
+            )
+        except requests.RequestException as exc:
+            upload_logger.bind(error_message=str(exc)).error(
+                "Failed to upload local file to MinerU"
+            )
+            raise MinerUServiceException(
+                internal_message=f"Failed to upload file to MinerU: {exc}",
                 original_exception=exc,
             )
 
