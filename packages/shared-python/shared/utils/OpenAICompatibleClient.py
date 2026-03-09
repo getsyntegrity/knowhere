@@ -16,7 +16,6 @@ from shared.core.exceptions.domain_exceptions import (
     UnknownException,
 )
 from shared.utils.http_clients import get_async_client
-from shared.utils.concurrency_limits import async_concurrency_limit
 
 # Local debug mode: do not use Redis
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
@@ -241,8 +240,7 @@ class OpenAICompatibleClient:
             request_start = time.time()
 
             client = get_async_client()
-            async with async_concurrency_limit("llm_http"):
-                response = await client.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
+            response = await client.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
 

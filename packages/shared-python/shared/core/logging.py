@@ -53,10 +53,6 @@ class LogEvent(Enum):
     NETWORK_AMQP_PUBLISH_ERROR = "network.amqp.publish_error"
     NETWORK_AMQP_CONSUME_ERROR = "network.amqp.consume_error"
 
-    # Concurrency limiter events
-    CONCURRENCY_LIMIT_WAIT = "concurrency.limit.wait"
-    CONCURRENCY_LIMIT_TIMEOUT = "concurrency.limit.timeout"
-
 
 @contextmanager
 def log_context(**kwargs):

@@ -11,7 +11,6 @@ from loguru import logger
 import httpx
 
 from shared.utils.http_clients import get_sync_client
-from shared.utils.concurrency_limits import concurrency_limit
 
 
 class FileTransferError(Exception):
@@ -114,11 +113,10 @@ def stream_download_and_upload(
                 # Stream directly from file without loading to memory
                 with open(tmp_path, 'rb') as f:
                     client = get_sync_client()
-                    with concurrency_limit("mineru_upload"):
-                        if upload_method.upper() == "PUT":
-                            upload_response = client.put(target_url, content=f, headers=headers, timeout=upload_timeout)
-                        else:
-                            upload_response = client.post(target_url, content=f, headers=headers, timeout=upload_timeout)
+                    if upload_method.upper() == "PUT":
+                        upload_response = client.put(target_url, content=f, headers=headers, timeout=upload_timeout)
+                    else:
+                        upload_response = client.post(target_url, content=f, headers=headers, timeout=upload_timeout)
                 
                 logger.info(f"Upload completed: status={upload_response.status_code}")
                 return upload_response

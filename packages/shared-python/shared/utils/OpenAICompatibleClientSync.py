@@ -10,7 +10,6 @@ from loguru import logger
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import LLMServiceException, UnknownException
 from shared.utils.http_clients import get_sync_client
-from shared.utils.concurrency_limits import concurrency_limit
 
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
@@ -104,8 +103,7 @@ class OpenAICompatibleClientSync:
 
         try:
             client = get_sync_client()
-            with concurrency_limit("llm_http"):
-                response = client.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
+            response = client.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
 

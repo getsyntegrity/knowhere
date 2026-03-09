@@ -19,7 +19,6 @@ sys.set_int_max_str_digits(10000)
 from shared.core.config import app_config
 from shared.core.config.messaging import messaging_config
 from shared.core.logging import LogEvent
-from shared.utils.concurrency_limits import concurrency_limit
 from shared.models.schemas.messages import (
     BaseMessage,
     JobFailureMessage,
@@ -116,15 +115,14 @@ class SyncMessagePublisher:
                 message_dict = message.model_dump(mode="json")
                 message_body = json.dumps(message_dict, ensure_ascii=False)
 
-                with concurrency_limit("rabbitmq_publish"):
-                    self._producer.publish(
-                        message_body,
-                        routing_key=routing_key,
-                        delivery_mode=2,
-                        priority=priority,
-                        content_type="application/json",
-                        content_encoding="utf-8",
-                    )
+                self._producer.publish(
+                    message_body,
+                    routing_key=routing_key,
+                    delivery_mode=2,
+                    priority=priority,
+                    content_type="application/json",
+                    content_encoding="utf-8",
+                )
 
                 message_monitoring.record_message_published(message.message_type, message.job_id, True)
                 logger.debug(f"Message published: {message.message_type}, job_id={message.job_id}")
