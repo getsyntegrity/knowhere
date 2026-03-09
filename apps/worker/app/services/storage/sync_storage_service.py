@@ -11,12 +11,13 @@ import requests
 from loguru import logger
 
 from shared.core.config import settings
+from shared.core.config.storage import get_cached_storage_adapter
 from shared.core.exceptions.domain_exceptions import StorageServiceException
 
 
 def get_storage_adapter():
     """Get the storage adapter for direct sync S3 operations."""
-    return settings.get_storage_adapter()
+    return get_cached_storage_adapter()
 
 
 def verify_s3_file_exists(s3_key: str, bucket: Optional[str] = None) -> Dict[str, Any]:

@@ -13,7 +13,7 @@ import os
 import socket
 import sys
 
-from celery.signals import worker_init
+from celery.signals import worker_init, worker_shutdown
 from loguru import logger
 
 from shared.core.celery_app import celery_app
@@ -39,6 +39,17 @@ def init_worker(**kwargs):
             logger.warning("Worker sync Redis ping failed, will retry on first use")
     except Exception as e:
         logger.warning(f"Worker sync Redis init deferred: {e}")
+
+
+@worker_shutdown.connect
+def shutdown_worker(**kwargs):
+    """Clean up shared resources on worker shutdown."""
+    try:
+        from shared.utils.http_clients import close_sync_client
+        close_sync_client()
+        logger.info("Worker sync HTTP client closed")
+    except Exception as e:
+        logger.warning(f"Worker HTTP client cleanup failed: {e}")
 
 
 if __name__ == "__main__":

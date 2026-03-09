@@ -62,18 +62,18 @@ class AsyncConnectionManager:
                         password=params["password"],
                         virtualhost=params["virtualhost"],
                         client_properties=params.get("client_properties", {}),
-                        heartbeat=params.get("heartbeat", 600),
-                        blocked_connection_timeout=params.get("blocked_connection_timeout", 300),
+                        heartbeat=params.get("heartbeat", 30),
+                        blocked_connection_timeout=params.get("blocked_connection_timeout", 60),
                     ),
                     timeout=30.0
-                )                
+                )
             else:
                 connection = await asyncio.wait_for(
                     aio_pika.connect_robust(
                         url=params["CELERY_BROKER_URL"],
                         client_properties=params.get("client_properties", {}),
-                        heartbeat=params.get("heartbeat", 600),
-                        blocked_connection_timeout=params.get("blocked_connection_timeout", 300),
+                        heartbeat=params.get("heartbeat", 30),
+                        blocked_connection_timeout=params.get("blocked_connection_timeout", 60),
                     ),
                     timeout=30.0
                 )

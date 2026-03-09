@@ -9,6 +9,12 @@ from shared.core.exceptions.domain_exceptions import KnowhereException
 
 import aio_pika
 from aio_pika import IncomingMessage
+from aio_pika.exceptions import (
+    AMQPChannelError,
+    AMQPConnectionError,
+    ChannelClosed,
+    ChannelInvalidStateError,
+)
 from loguru import logger
 
 from shared.services.messaging.async_config import (
@@ -18,6 +24,7 @@ from shared.services.messaging.async_config import (
     get_routing_key,
 )
 from shared.services.messaging.async_connection import get_connection_manager
+from shared.core.logging import LogEvent
 from app.services.messaging.message_handlers import (
     handle_job_failure,
     handle_job_progress_update,
@@ -282,6 +289,12 @@ class MessageConsumer:
                                             # 其他消息失败时拒绝并重新入队
                                             await message.nack(requeue=True)
                                             logger.warning(f"Message processing failed and was requeued: {message_type}")
+                                    except (AMQPConnectionError, AMQPChannelError, ChannelClosed, ChannelInvalidStateError) as ack_error:
+                                        logger.bind(event=LogEvent.NETWORK_AMQP_CONSUME_ERROR.value).error(
+                                            f"AMQP error during ack/nack: queue={queue.name}, "
+                                            f"error_type={type(ack_error).__name__}, error={ack_error}"
+                                        )
+                                        break  # Exit consume loop to trigger reconnection
                                     except Exception as ack_error:
                                         logger.error(f"Error while acking/nacking message: {message_type}, error={ack_error}", exc_info=True)
                             except StopAsyncIteration:
@@ -289,6 +302,12 @@ class MessageConsumer:
                                 break
                             except asyncio.CancelledError:
                                 raise
+                            except (AMQPConnectionError, AMQPChannelError, ChannelClosed, ChannelInvalidStateError) as e:
+                                logger.bind(event=LogEvent.NETWORK_AMQP_CONSUME_ERROR.value).error(
+                                    f"AMQP error while receiving message: queue={queue.name}, "
+                                    f"error_type={type(e).__name__}, error={e}"
+                                )
+                                break  # Exit inner loop to trigger reconnection
                             except Exception as e:
                                 logger.error(f"Error while receiving message: {message_type}, error={e}", exc_info=True)
                                 message_task = None  # 重置任务，继续循环

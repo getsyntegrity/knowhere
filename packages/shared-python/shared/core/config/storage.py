@@ -2,6 +2,7 @@
 存储配置
 """
 import os
+import threading
 
 import boto3
 from botocore.config import Config
@@ -163,3 +164,21 @@ class StorageConfig(BaseModel):
     def get_supported_extensions(self) -> list:
         """获取支持的文件扩展名列表"""
         return [ext.strip() for ext in self.SUPPORTED_EXTENSIONS.split(',')]
+
+
+_cached_adapter = None
+_cached_adapter_lock = threading.Lock()
+
+
+def get_cached_storage_adapter():
+    """
+    Return a cached storage adapter singleton.
+    Thread-safe with double-checked locking.
+    """
+    global _cached_adapter
+    if _cached_adapter is None:
+        with _cached_adapter_lock:
+            if _cached_adapter is None:
+                from shared.core.config import app_config
+                _cached_adapter = app_config.storage.get_storage_adapter()
+    return _cached_adapter

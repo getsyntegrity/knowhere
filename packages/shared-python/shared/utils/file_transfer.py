@@ -10,6 +10,9 @@ from typing import Optional, Dict
 from loguru import logger
 import httpx
 
+from shared.utils.http_clients import get_sync_client
+from shared.utils.concurrency_limits import concurrency_limit
+
 
 class FileTransferError(Exception):
     """Base exception for file transfer operations"""
@@ -78,15 +81,15 @@ def stream_download_and_upload(
         # Phase 1: Download to temp file
         logger.debug(f"Downloading from {source_url[:100]}...")
         try:
-            with httpx.Client(timeout=download_timeout) as client:
-                with client.stream("GET", source_url) as response:
-                    response.raise_for_status()
-                    
-                    downloaded_bytes = 0
-                    with os.fdopen(tmp_fd, 'wb') as tmp_file:
-                        for chunk in response.iter_bytes(chunk_size=chunk_size):
-                            tmp_file.write(chunk)
-                            downloaded_bytes += len(chunk)
+            client = get_sync_client()
+            with client.stream("GET", source_url, timeout=download_timeout) as response:
+                response.raise_for_status()
+
+                downloaded_bytes = 0
+                with os.fdopen(tmp_fd, 'wb') as tmp_file:
+                    for chunk in response.iter_bytes(chunk_size=chunk_size):
+                        tmp_file.write(chunk)
+                        downloaded_bytes += len(chunk)
                     
         except httpx.TimeoutException as e:
             raise DownloadError(f"Download timed out after {download_timeout}s") from e
@@ -110,11 +113,12 @@ def stream_download_and_upload(
                 
                 # Stream directly from file without loading to memory
                 with open(tmp_path, 'rb') as f:
-                    with httpx.Client(timeout=upload_timeout) as client:
+                    client = get_sync_client()
+                    with concurrency_limit("mineru_upload"):
                         if upload_method.upper() == "PUT":
-                            upload_response = client.put(target_url, content=f, headers=headers)
+                            upload_response = client.put(target_url, content=f, headers=headers, timeout=upload_timeout)
                         else:
-                            upload_response = client.post(target_url, content=f, headers=headers)
+                            upload_response = client.post(target_url, content=f, headers=headers, timeout=upload_timeout)
                 
                 logger.info(f"Upload completed: status={upload_response.status_code}")
                 return upload_response
