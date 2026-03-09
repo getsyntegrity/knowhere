@@ -1058,13 +1058,11 @@ async def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_
 
         if len(level_dfs) > 1:
             logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
-
             lvl_mapping = handle_unseen_codes(raw_preds, level_dfs, lvl_mapping, output_dir)
-            for l, level_df in enumerate(level_dfs):
-                level_df = execute_level_mapping(level_df, lvl_mapping)
-                full_preds.append(level_df)
-        else:
-            full_preds.append(base_preds)
+
+        for l, level_df in enumerate(level_dfs):
+            level_df = execute_level_mapping(level_df, lvl_mapping)
+            full_preds.append(level_df)
 
         full_preds = pd.concat(full_preds, ignore_index=True)
         full_preds['heading'] = raw_headings

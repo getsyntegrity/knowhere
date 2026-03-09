@@ -216,6 +216,8 @@ async def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_
             path_stack = [(h, lvl) for h, lvl in path_stack if lvl < adjusted_level]
             
             # Build tentative path to check for duplicates
+            # Sanitize heading: replace split_char in heading text to prevent path corruption
+            current_heading = current_heading.replace(split_char, "∕") if split_char in current_heading else current_heading
             tentative_heading = current_heading
             tentative_names = [h for h, lvl in path_stack] + [tentative_heading]
             tentative_path_parts = [relative_root] if relative_root else []
