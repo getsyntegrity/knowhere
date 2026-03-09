@@ -19,7 +19,7 @@ from app.services.common.kb_utils import normalize_md, truncate_text
 from app.services.document_parser.table_parser import df2md
 from app.services.document_parser.html_parser import df2html
 from app.services.document_parser.layout_parser import hiearchy_llm, judge_by_conditions, remove_by_conditions
-from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
+from shared.utils.OpenAICompatibleClientSync import get_openai_client
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 
@@ -311,11 +311,9 @@ def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None, u
     ]
     
     try:
-        answer = ai_query_service.query_ai(
+        answer = get_openai_client(model=model_name).chat_completion(
             messages=messages,
-            user_id="toc_detector",
             model=model_name,
-            stream=False,
             max_tokens=max_tokens,
             temperature=temperature
         )

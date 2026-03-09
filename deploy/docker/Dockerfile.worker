@@ -104,7 +104,7 @@ fi' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
-    CMD python -c "from shared.core.celery_app import celery_app; celery_app.control.inspect().stats()" || exit 1
+    CMD python -c "from shared.services.worker_health import assert_worker_healthy; assert_worker_healthy()" || exit 1
 
 # 暴露端口（Worker通常不需要暴露端口，但保留用于健康检查）
 # EXPOSE 不适用

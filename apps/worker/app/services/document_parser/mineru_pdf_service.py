@@ -464,7 +464,7 @@ def _upload_file_to_mineru(
                     raise MinerUServiceException(
                         internal_message=f"Failed to upload file to MinerU: {exc}",
                         original_exception=exc,
-                    )
+                    ) from exc
         except OSError as exc:
             upload_logger.bind(error_message=str(exc)).error(
                 "Failed to read local file for MinerU upload"
@@ -472,7 +472,7 @@ def _upload_file_to_mineru(
             raise StorageServiceException(
                 internal_message=f"Failed to read local file: {exc}",
                 original_exception=exc,
-            )
+            ) from exc
 
     if upload_response.status_code != 200:
         upload_logger.bind(status_code=upload_response.status_code).error(

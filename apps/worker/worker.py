@@ -18,6 +18,11 @@ from loguru import logger
 
 from shared.core.celery_app import celery_app
 from shared.core.logging import setup_logging
+from shared.services.messaging.sync_publisher import close_sync_message_publisher
+from shared.services.worker_health import (
+    start_worker_heartbeat,
+    stop_worker_heartbeat,
+)
 
 # Explicitly import task modules to register tasks with Celery
 import app.core.tasks.kb_tasks
@@ -28,6 +33,7 @@ import app.core.tasks.webhook_tasks
 def init_worker(**kwargs):
     """Initialize structured logging and sync Redis when worker process starts."""
     setup_logging(service_name="knowhere-worker")
+    start_worker_heartbeat()
 
     # Verify Redis connectivity (lazy init on first use if this fails)
     try:
@@ -44,6 +50,18 @@ def init_worker(**kwargs):
 @worker_shutdown.connect
 def shutdown_worker(**kwargs):
     """Clean up shared resources on worker shutdown."""
+    try:
+        close_sync_message_publisher()
+        logger.info("Worker sync message publisher closed")
+    except Exception as e:
+        logger.warning(f"Worker sync message publisher cleanup failed: {e}")
+
+    try:
+        stop_worker_heartbeat()
+        logger.info("Worker heartbeat stopped")
+    except Exception as e:
+        logger.warning(f"Worker heartbeat cleanup failed: {e}")
+
     try:
         from shared.utils.http_clients import close_sync_client
         close_sync_client()

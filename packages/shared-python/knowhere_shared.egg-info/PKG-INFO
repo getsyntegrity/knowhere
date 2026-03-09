@@ -27,6 +27,7 @@ Requires-Dist: email-validator==2.2.0
 Requires-Dist: httpx==0.28.1
 Requires-Dist: requests==2.32.4
 Requires-Dist: aiohttp==3.12.15
+Requires-Dist: openai>=1.0.0
 Requires-Dist: boto3==1.38.46
 Requires-Dist: botocore==1.38.46
 Requires-Dist: loguru==0.7.3

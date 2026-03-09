@@ -10,7 +10,7 @@ from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
                                           get_str_time, process_dup_paths_df,
                                           process_path_texts, remove_spaces)
 from shared.utils.text_utils import tokenize2stw_remove
-from app.services.document_parser.image_parser import ask_image
+from app.services.document_parser.image_parser import ask_image, _get_vision_client
 from app.services.document_parser.layout_parser import pred_titles
 from app.services.document_parser.html_parser import table2html
 from app.services.document_parser.toc_parser import (detect_doc_tocs,
@@ -27,7 +27,6 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from loguru import logger
 from lxml import etree
-from openai import OpenAI
 from shared.core.exceptions.domain_exceptions import DocxParsingException
 from shared.core.exceptions.knowhere_exception import KnowhereException
 
@@ -86,10 +85,7 @@ def _find_img_context(headings_stack, max_chars=100):
 
 def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, img_count, smart_summary=False):
     time_stamp = get_str_time()
-    client = OpenAI(
-        api_key=settings.ALI_API_KEY,
-        base_url=settings.ALI_URL
-    )
+    client = _get_vision_client()
 
     last_context = _find_img_context(headings_stack)
     
@@ -218,7 +214,7 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
                 img_summary = None
                 if summary_image:
                     try:
-                        client = OpenAI(api_key=settings.ALI_API_KEY, base_url=settings.ALI_URL)
+                        client = _get_vision_client()
                         img_summary = ask_image(
                             client, img_dir, [f'{img_name}{img_ext}'],
                             title_text=current_heading

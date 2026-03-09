@@ -12,7 +12,7 @@ _DEFAULT_CONSOLE_FORMAT = (
     "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {extra[event]} | {message}"
 )
 _DEVELOPMENT_CONSOLE_FORMAT = (
-    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {extra[event]} | {message} | {extra}"
+    "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level> <cyan>{extra}</cyan>"
 )
 
 class LogEvent(Enum):

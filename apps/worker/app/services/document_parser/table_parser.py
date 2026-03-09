@@ -11,7 +11,7 @@ import openpyxl
 from collections import OrderedDict
 from typing import List, Union, Dict, Tuple, Optional
 from shared.core.config import settings
-from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
+from shared.utils.OpenAICompatibleClientSync import get_openai_client
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (flatten_dic2paths, gen_str_codes,
@@ -925,10 +925,8 @@ def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True):
                 redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
             
             # Use unified AI service
-            header_res = ai_query_service.query_ai(
+            header_res = get_openai_client().chat_completion(
                 messages=messages,
-                user_id=ctx_task_id,
-                conversation_id=ctx_task_id,
                 timeout=60
             )
             header_res = eval_response(header_res)

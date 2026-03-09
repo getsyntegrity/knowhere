@@ -15,16 +15,24 @@ from app.services.common.kb_utils import (gen_str_codes, get_str_time,
 from shared.utils.CommonHelperSync import is_remote, load_file_bytes
 from shared.utils.file_utils import path_handle
 from loguru import logger
-from openai import OpenAI
 from shared.core.exceptions.domain_exceptions import (
     LLMServiceException,
     ImageParsingException,
 )
 from shared.core.exceptions.knowhere_exception import KnowhereException
+from shared.utils.OpenAICompatibleClientSync import OpenAICompatibleClientSync, get_openai_client
 from PIL import Image
 
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
 g_img_lock = threading.Lock()
+
+
+def _get_vision_client() -> OpenAICompatibleClientSync:
+    return get_openai_client(
+        api_key=settings.ALI_API_KEY,
+        api_url=settings.ALI_URL,
+        timeout=settings.OPENAI_CLIENT_TIMEOUT,
+    )
 
 def image_bytes_to_base64(img_data: bytes, ext: str):
     mime_type = {
@@ -73,7 +81,7 @@ def process_img_path4read(paths_, kb_dir, cut):
             urls.append(path_)
     return urls
 
-def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
+def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
     from shared.core.constants import ProcessingConstants
     if max_tokens is None:
         max_tokens = ProcessingConstants.IMG_MAX_TOKENS
@@ -119,14 +127,13 @@ def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", quer
             messages[0]['content'].append(url_header)
         resp = ''
         try:
-            resp = client.chat.completions.create(
-                model=image_model,
+            resp = client.chat_completion(
                 messages=messages,
+                model=image_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                top_p=top_p
+                top_p=top_p,
             )
-            resp = resp.choices[0].message.content
             logger.debug(f"Image understanding response: {resp}")
             resp = eval_response(resp)
             return resp
@@ -141,10 +148,7 @@ def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", quer
         return None
 
 def detect_summary_img_md(line, last_context, kb_dir, mode=False):
-    client = OpenAI(
-        api_key=settings.ALI_API_KEY,
-        base_url=settings.ALI_URL
-    )
+    client = _get_vision_client()
     imgs = []
     img_paths = re.findall(MD_IMAGE_PATTERN, line, flags=re.IGNORECASE)
     for i, ip in enumerate(img_paths):
@@ -173,10 +177,7 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         img_obj.save(img_path)
 
         # Extract image content
-        client = OpenAI(
-            api_key=settings.ALI_API_KEY,
-            base_url=settings.ALI_URL
-        )
+        client = _get_vision_client()
 
         ## Determine image category and task
         img_task = "summary-images"

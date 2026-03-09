@@ -45,6 +45,9 @@ dependencies = [
     "httpx==0.28.1",
     "requests==2.32.4",
     "aiohttp==3.12.15",
+
+    # OpenAI SDK
+    "openai>=1.0.0",
     
     # 云存储
     "boto3==1.38.46",
