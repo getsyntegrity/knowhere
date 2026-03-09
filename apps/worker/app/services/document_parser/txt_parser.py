@@ -2,7 +2,7 @@ import re
 import uuid
 import pandas as pd
 from shared.core.config import settings
-from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
+from shared.utils.OpenAICompatibleClientSync import get_openai_client
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from shared.utils.CommonHelperSync import load_file_bytes
@@ -81,10 +81,8 @@ def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_
             redis_service = SyncRedisServiceFactory.get_service()
             redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
 
-        resp = ai_query_service.query_ai(
+        resp = get_openai_client().chat_completion(
             messages=messages,
-            user_id=ctx_task_id,
-            conversation_id=ctx_task_id,
             timeout=90,
             max_tokens=max_tokens
         )

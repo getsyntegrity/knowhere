@@ -118,9 +118,6 @@ celery_app.conf.update(
     broker_pool_limit=10,
     # 任务路由配置
     task_routes={
-        # 现有任务路由
-        'shared.core.tasks.celery_tasks.process_ai_query': {'queue': 'ai_high_priority'},
-        
         # Knowledge base tasks (dynamic routing)
         'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},  # Default medium priority
         

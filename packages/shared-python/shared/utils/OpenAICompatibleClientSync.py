@@ -1,22 +1,28 @@
 """
 Synchronous OpenAI-compatible client for gevent worker tasks.
+Uses the official OpenAI SDK with shared httpx connection pooling
+and built-in 429 retry with exponential backoff.
 """
 import os
-import time
+import threading
 from typing import Any, Dict, List, Optional, Union
 
-import httpx
 from loguru import logger
+from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import LLMServiceException, UnknownException
+from shared.core.exceptions.domain_exceptions import LLMServiceException
 from shared.utils.http_clients import get_sync_client
 
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
+_client_cache: Dict[tuple, "OpenAICompatibleClientSync"] = {}
+_client_cache_lock = threading.Lock()
+
 
 class OpenAICompatibleClientSync:
-    """Sync OpenAI-compatible client."""
+    """Sync OpenAI-compatible client backed by the official OpenAI SDK."""
 
     def __init__(
         self,
@@ -24,6 +30,7 @@ class OpenAICompatibleClientSync:
         api_url: Optional[str] = None,
         default_model: Optional[str] = None,
         timeout: int = 300,
+        max_retries: int = 2,
     ):
         self.default_model = default_model or getattr(settings, "NORMOL_MODEL", "deepseek-chat")
         resolved_key, resolved_url = self._resolve_api_config(
@@ -31,13 +38,25 @@ class OpenAICompatibleClientSync:
             api_key=api_key,
             api_url=api_url,
         )
-        self.api_key = resolved_key
-        self.api_url = resolved_url
         self.timeout = (
             getattr(settings, "OPENAI_CLIENT_TIMEOUT", 300)
             if timeout is None
             else timeout
         )
+        self._client = OpenAI(
+            api_key=resolved_key,
+            base_url=resolved_url,
+            http_client=get_sync_client(),
+            max_retries=max_retries,
+            timeout=self.timeout,
+        )
+
+    @staticmethod
+    def _strip_chat_completions(url: Optional[str]) -> Optional[str]:
+        """Strip /chat/completions suffix so the OpenAI SDK can append it."""
+        if url and url.rstrip("/").endswith("/chat/completions"):
+            return url.rstrip("/").removesuffix("/chat/completions")
+        return url
 
     def _resolve_api_config(
         self,
@@ -46,56 +65,45 @@ class OpenAICompatibleClientSync:
         api_url: Optional[str],
     ) -> tuple[Optional[str], Optional[str]]:
         if api_key and api_url:
-            return api_key, api_url
+            return api_key, self._strip_chat_completions(api_url)
 
         model_lower = (model_name or "").lower()
         if "qwen" in model_lower:
             resolved_key = api_key or getattr(settings, "ALI_API_KEY", None)
             ali_base = getattr(settings, "ALI_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            if ali_base and not ali_base.endswith("/chat/completions"):
-                resolved_url = api_url or f"{ali_base}/chat/completions"
-            else:
-                resolved_url = api_url or ali_base
-            return resolved_key, resolved_url
+            resolved_url = api_url or ali_base
+            return resolved_key, self._strip_chat_completions(resolved_url)
 
         if "doubao" in model_lower or model_lower.startswith("ep-"):
             resolved_key = api_key or getattr(settings, "ARK_API_KEY", None)
             resolved_url = api_url or getattr(settings, "ARK_URL", None)
-            return resolved_key, resolved_url
+            return resolved_key, self._strip_chat_completions(resolved_url)
 
         resolved_key = api_key or settings.DS_KEY
         resolved_url = api_url or settings.DS_URL
-        return resolved_key, resolved_url
+        return resolved_key, self._strip_chat_completions(resolved_url)
 
     def chat_completion(
         self,
-        messages: Union[str, List[Dict[str, str]]],
+        messages: Union[str, List[ChatCompletionMessageParam]],
         model: Optional[str] = None,
         temperature: float = 0.1,
         max_tokens: int = 4096,
         top_p: Optional[float] = None,
-        stream: bool = False,
+        timeout: Optional[int] = None,
         **kwargs,
     ) -> str:
+        all_messages: List[ChatCompletionMessageParam]
         if isinstance(messages, list):
-            all_messages = messages
+            all_messages = messages  # type: ignore[assignment]
         else:
             all_messages = [{"role": "user", "content": str(messages)}]
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        payload: Dict[str, Any] = {
-            "model": model or self.default_model,
-            "messages": all_messages,
-            "stream": stream,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        api_kwargs: Dict[str, Any] = {}
         if top_p is not None:
-            payload["top_p"] = top_p
+            api_kwargs["top_p"] = top_p
+        if timeout is not None:
+            api_kwargs["timeout"] = timeout
 
         allowed_api_params = {
             "n", "stop", "presence_penalty", "frequency_penalty",
@@ -104,51 +112,59 @@ class OpenAICompatibleClientSync:
         }
         for key, value in kwargs.items():
             if key in allowed_api_params:
-                payload[key] = value
+                api_kwargs[key] = value
 
         try:
-            request_start = time.time()
-            client = get_sync_client()
-            response = client.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json()
-            duration = time.time() - request_start
+            response = self._client.chat.completions.create(
+                model=model or self.default_model,
+                messages=all_messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **api_kwargs,
+            )
 
-            choices = data.get("choices", [])
+            choices = response.choices
             if not choices:
                 raise LLMServiceException(
                     internal_message="AI returned empty result",
                     provider=self.default_model,
                 )
 
-            content = choices[0].get("message", {}).get("content") or ""
-            logger.debug(f"LLM request completed: url={self.api_url}, model={payload['model']}, duration={duration:.2f}s")
+            content = choices[0].message.content or ""
             return content
-        except httpx.HTTPStatusError as exc:
-            duration = time.time() - request_start
-            logger.error(
-                f"LLM request failed: url={self.api_url}, model={payload['model']}, "
-                f"status={exc.response.status_code}, duration={duration:.2f}s, "
-                f"response={exc.response.text[:500] if hasattr(exc, 'response') else 'N/A'}"
-            )
-            raise LLMServiceException(
-                internal_message=f"API request failed: {str(exc)}",
-                provider=self.default_model,
-                status_code=exc.response.status_code if hasattr(exc, "response") else None,
-                original_exception=exc,
-            ) from exc
-        except httpx.TimeoutException as exc:
-            duration = time.time() - request_start
-            logger.error(
-                f"LLM request timeout: url={self.api_url}, model={payload['model']}, "
-                f"timeout={self.timeout}s, duration={duration:.2f}s"
-            )
-            raise LLMServiceException(
-                internal_message=f"API request timeout: {str(exc)}",
-                provider=self.default_model,
-                original_exception=exc,
-            ) from exc
         except LLMServiceException:
             raise
         except Exception as exc:
-            raise UnknownException(original_exception=exc) from exc
+            logger.error(f"LLM request failed: model={model or self.default_model}, error={exc}")
+            raise LLMServiceException(
+                internal_message=f"API request failed: {str(exc)}",
+                provider=self.default_model,
+                original_exception=exc,
+            ) from exc
+
+
+def get_openai_client(
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_url: Optional[str] = None,
+    timeout: int = 300,
+    max_retries: int = 2,
+) -> OpenAICompatibleClientSync:
+    """Return a cached OpenAICompatibleClientSync instance keyed by config."""
+    cache_key = (model, api_key, api_url, timeout, max_retries)
+    client = _client_cache.get(cache_key)
+    if client is not None:
+        return client
+    with _client_cache_lock:
+        client = _client_cache.get(cache_key)
+        if client is not None:
+            return client
+        client = OpenAICompatibleClientSync(
+            api_key=api_key,
+            api_url=api_url,
+            default_model=model,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        _client_cache[cache_key] = client
+        return client
