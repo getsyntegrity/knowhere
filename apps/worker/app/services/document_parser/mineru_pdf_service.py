@@ -20,7 +20,12 @@ from shared.utils.CommonHelperSync import is_remote
 from shared.utils.FileDownUpUtils import s3_download_extract_zip
 
 MINERU_API_TIMEOUT = 60
-MINERU_UPLOAD_TIMEOUT = 600
+MINERU_UPLOAD_CONNECT_TIMEOUT = 10
+MINERU_UPLOAD_READ_TIMEOUT = 600
+MINERU_UPLOAD_TIMEOUT = (
+    MINERU_UPLOAD_CONNECT_TIMEOUT,
+    MINERU_UPLOAD_READ_TIMEOUT,
+)
 MINERU_RATE_LIMIT_MAX_RETRY_AFTER = 60
 
 
@@ -446,17 +451,27 @@ def _upload_file_to_mineru(
         upload_logger.bind(local_path=pdf_url).info("Uploading local file to MinerU")
         try:
             with open(pdf_url, "rb") as file_obj:
-                upload_response = requests.put(
-                    upload_url,
-                    data=file_obj,
-                    timeout=MINERU_UPLOAD_TIMEOUT,
-                )
-        except IOError as exc:
+                try:
+                    upload_response = requests.put(
+                        upload_url,
+                        data=file_obj,
+                        timeout=MINERU_UPLOAD_TIMEOUT,
+                    )
+                except requests.RequestException as exc:
+                    upload_logger.bind(error_message=str(exc)).error(
+                        "Failed to upload local file to MinerU"
+                    )
+                    raise MinerUServiceException(
+                        internal_message=f"Failed to upload file to MinerU: {exc}",
+                        original_exception=exc,
+                    )
+        except OSError as exc:
             upload_logger.bind(error_message=str(exc)).error(
                 "Failed to read local file for MinerU upload"
             )
             raise StorageServiceException(
-                internal_message=f"Failed to read local file: {exc}"
+                internal_message=f"Failed to read local file: {exc}",
+                original_exception=exc,
             )
 
     if upload_response.status_code != 200:
