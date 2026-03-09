@@ -8,7 +8,10 @@ from app.services.document_parser.mineru_quota_manager import (
     MinerUQuotaManager,
     MinerUTokenConfig,
 )
-from shared.core.exceptions.domain_exceptions import UnavailableException
+from shared.core.exceptions.domain_exceptions import (
+    MinerUServiceException,
+    UnavailableException,
+)
 from shared.services.redis.redis_sync_service import SyncRedisService
 
 fakeredis = pytest.importorskip("fakeredis")
@@ -261,7 +264,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
             },
         )
 
-    def fake_put(url: str, data: Any = None, timeout: Optional[int] = None) -> Response:
+    def fake_put(url: str, data: Any = None, timeout: Any = None) -> Response:
         mineru_calls.append(("put", url, timeout))
         return Response(200, {})
 
@@ -308,6 +311,11 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
         "post",
         "Bearer sk-primary",
         "https://mineru.net/api/v4/file-urls/batch",
+    )
+    assert mineru_calls[1] == (
+        "put",
+        "https://mineru-upload.example/file",
+        mineru_pdf_service.MINERU_UPLOAD_TIMEOUT,
     )
     assert mineru_calls[2] == (
         "get",
@@ -376,3 +384,27 @@ def test_parse_pdfs_standard_route_uses_extracted_mineru_workflow(monkeypatch, t
     assert captured["parse_md_file_path"] == str(output_dir / "full.md")
     assert captured["base_llm_paras"]["doc_name"] == "sample.pdf"
     assert captured["relative_root"] == "root"
+
+
+def test_local_upload_network_errors_raise_mineru_service_exception(
+    monkeypatch, tmp_path
+):
+    local_pdf_path = tmp_path / "sample.pdf"
+    local_pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    def fake_put(url: str, data: Any = None, timeout: Any = None) -> None:
+        assert url == "https://mineru-upload.example/file"
+        assert timeout == mineru_pdf_service.MINERU_UPLOAD_TIMEOUT
+        raise mineru_pdf_service.requests.exceptions.ConnectTimeout("connect timed out")
+
+    monkeypatch.setattr(mineru_pdf_service.requests, "put", fake_put)
+
+    with pytest.raises(MinerUServiceException) as exc_info:
+        mineru_pdf_service._upload_file_to_mineru(
+            str(local_pdf_path),
+            "sample.pdf",
+            "https://mineru-upload.example/file",
+            "token-1",
+        )
+
+    assert "Failed to upload file to MinerU" in exc_info.value.internal_message

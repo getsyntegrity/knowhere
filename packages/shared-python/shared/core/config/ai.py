@@ -30,6 +30,7 @@ class AIConfig(BaseModel):
     ARK_URL: str = Field(default="", description="ARK URL（兼容性字段）")
     ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段）")
     ALI_URL: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="阿里云URL（兼容性字段）")
+    OPENAI_CLIENT_TIMEOUT: int = Field(default=300, description="OpenAI-compatible client timeout in seconds")
     MINERU_API_KEYS: str = Field(
         default="",
         description="MinerU API key pool. Supports a JSON array or comma/newline-separated values; entries may use token_id=api_key format.",

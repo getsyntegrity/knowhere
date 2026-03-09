@@ -774,7 +774,7 @@ resource "aws_ecs_task_definition" "worker" {
         }
       }
       healthCheck = {
-        command     = ["CMD-SHELL", "python -c \"from app.core.celery_app import celery_app; celery_app.control.inspect().stats()\" || exit 1"]
+        command     = ["CMD-SHELL", "python -c \"from shared.services.worker_health import assert_worker_healthy; assert_worker_healthy()\" || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
