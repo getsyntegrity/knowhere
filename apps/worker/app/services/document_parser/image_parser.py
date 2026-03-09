@@ -143,7 +143,8 @@ def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", quer
 def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     client = OpenAI(
         api_key=settings.ALI_API_KEY,
-        base_url=settings.ALI_URL
+        base_url=settings.ALI_URL,
+        timeout=settings.OPENAI_CLIENT_TIMEOUT,
     )
     imgs = []
     img_paths = re.findall(MD_IMAGE_PATTERN, line, flags=re.IGNORECASE)
@@ -175,7 +176,8 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         # Extract image content
         client = OpenAI(
             api_key=settings.ALI_API_KEY,
-            base_url=settings.ALI_URL
+            base_url=settings.ALI_URL,
+            timeout=settings.OPENAI_CLIENT_TIMEOUT,
         )
 
         ## Determine image category and task

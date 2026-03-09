@@ -88,7 +88,8 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     time_stamp = get_str_time()
     client = OpenAI(
         api_key=settings.ALI_API_KEY,
-        base_url=settings.ALI_URL
+        base_url=settings.ALI_URL,
+        timeout=settings.OPENAI_CLIENT_TIMEOUT,
     )
 
     last_context = _find_img_context(headings_stack)
@@ -218,7 +219,11 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
                 img_summary = None
                 if summary_image:
                     try:
-                        client = OpenAI(api_key=settings.ALI_API_KEY, base_url=settings.ALI_URL)
+                        client = OpenAI(
+                            api_key=settings.ALI_API_KEY,
+                            base_url=settings.ALI_URL,
+                            timeout=settings.OPENAI_CLIENT_TIMEOUT,
+                        )
                         img_summary = ask_image(
                             client, img_dir, [f'{img_name}{img_ext}'],
                             title_text=current_heading

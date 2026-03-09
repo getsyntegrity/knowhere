@@ -66,7 +66,11 @@ class OpenAICompatibleClient:
         
         self.api_key = resolved_key
         self.api_url = resolved_url
-        self.timeout = timeout
+        self.timeout = (
+            getattr(settings, "OPENAI_CLIENT_TIMEOUT", 300)
+            if timeout is None
+            else timeout
+        )
         
         logger.debug(f"Initializing OpenAI-compatible client: URL={self.api_url}, Model={self.default_model}, Redis={'enabled' if self.redis_service else 'disabled'}")
     

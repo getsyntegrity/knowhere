@@ -33,7 +33,11 @@ class OpenAICompatibleClientSync:
         )
         self.api_key = resolved_key
         self.api_url = resolved_url
-        self.timeout = timeout
+        self.timeout = (
+            getattr(settings, "OPENAI_CLIENT_TIMEOUT", 300)
+            if timeout is None
+            else timeout
+        )
 
     def _resolve_api_config(
         self,
