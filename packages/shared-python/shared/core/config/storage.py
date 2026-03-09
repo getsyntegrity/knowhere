@@ -180,5 +180,5 @@ def get_cached_storage_adapter():
         with _cached_adapter_lock:
             if _cached_adapter is None:
                 from shared.core.config import app_config
-                _cached_adapter = app_config.storage.get_storage_adapter()
+                _cached_adapter = app_config.get_storage_adapter()
     return _cached_adapter
