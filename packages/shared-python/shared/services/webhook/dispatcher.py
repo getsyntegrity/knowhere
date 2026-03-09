@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import socket
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -493,12 +494,15 @@ class WebhookDispatcher:
 
 # Singleton instance
 _dispatcher: Optional[WebhookDispatcher] = None
+_dispatcher_lock = threading.Lock()
 
 
 def get_webhook_dispatcher() -> WebhookDispatcher:
     """Get the singleton WebhookDispatcher instance."""
     global _dispatcher
     if _dispatcher is None:
-        _dispatcher = WebhookDispatcher()
+        with _dispatcher_lock:
+            if _dispatcher is None:
+                _dispatcher = WebhookDispatcher()
     return _dispatcher
 

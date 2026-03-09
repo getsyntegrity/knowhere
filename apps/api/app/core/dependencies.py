@@ -1,4 +1,5 @@
 import hashlib
+import threading
 from datetime import timedelta
 from typing import Any
 
@@ -25,27 +26,30 @@ JWKS_CACHE_TTL_SECONDS = 60 * 60  # 3600 seconds
 
 # Cached PyJWKClient instance
 _jwks_client: PyJWKClient | None = None
+_jwks_client_lock = threading.Lock()
 
 
 def _get_jwks_client() -> PyJWKClient:
     """
     Get or create a cached PyJWKClient instance.
-    
+
     The JWKS endpoint is constructed from INTERNAL_DASHBOARD_ENDPOINT + fixed path.
     PyJWKClient caches the JWKS response for 1 hour.
     """
     global _jwks_client
-    
+
     if _jwks_client is None:
-        jwks_url = f"{settings.INTERNAL_DASHBOARD_ENDPOINT}{JWKS_ENDPOINT_PATH}"
-        _jwks_client = PyJWKClient(
-            jwks_url,
-            cache_jwk_set=True,
-            lifespan=JWKS_CACHE_TTL_SECONDS,
-            timeout=30
-        )
-        logger.info(f"Initialized JWKS client with endpoint: {jwks_url}")
-    
+        with _jwks_client_lock:
+            if _jwks_client is None:
+                jwks_url = f"{settings.INTERNAL_DASHBOARD_ENDPOINT}{JWKS_ENDPOINT_PATH}"
+                _jwks_client = PyJWKClient(
+                    jwks_url,
+                    cache_jwk_set=True,
+                    lifespan=JWKS_CACHE_TTL_SECONDS,
+                    timeout=30
+                )
+                logger.info(f"Initialized JWKS client with endpoint: {jwks_url}")
+
     return _jwks_client
 
 
