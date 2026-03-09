@@ -135,7 +135,7 @@ class OpenAICompatibleClientSync:
         except LLMServiceException:
             raise
         except Exception as exc:
-            logger.error(f"LLM request failed: model={model or self.default_model}, error={exc}")
+            logger.error(f"LLM request failed: model={model or self.default_model}, base_url={self._client.base_url}, error={exc}")
             raise LLMServiceException(
                 internal_message=f"API request failed: {str(exc)}",
                 provider=self.default_model,

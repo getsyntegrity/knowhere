@@ -3,7 +3,6 @@ Local-only worker heartbeat used by container health probes.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
@@ -32,12 +31,8 @@ _heartbeat_lock = Semaphore()
 
 def write_worker_heartbeat() -> None:
     HEARTBEAT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "pid": os.getpid(),
-        "timestamp": time.time(),
-    }
     temp_path = HEARTBEAT_PATH.with_suffix(f"{HEARTBEAT_PATH.suffix}.tmp")
-    temp_path.write_text(json.dumps(payload), encoding="utf-8")
+    temp_path.write_text(str(os.getpid()), encoding="utf-8")
     os.replace(temp_path, HEARTBEAT_PATH)
 
 

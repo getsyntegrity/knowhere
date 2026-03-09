@@ -54,7 +54,7 @@ class SyncMessagePublisher:
         self._exchange: Optional[Exchange] = None
         self._queues: dict[str, Queue] = {}
 
-    def _get_routing_key(self, message_type: str) -> str:
+    def get_routing_key(self, message_type: str) -> str:
         routing_keys = {
             "job_status_update": messaging_config.ROUTING_KEY_STATUS_UPDATE,
             "job_progress_update": messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
@@ -63,7 +63,7 @@ class SyncMessagePublisher:
         }
         return routing_keys.get(message_type, messaging_config.ROUTING_KEY_STATUS_UPDATE)
 
-    def _get_queue_name(self, message_type: str) -> str:
+    def get_queue_name(self, message_type: str) -> str:
         queue_names = {
             "job_status_update": messaging_config.QUEUE_STATUS_UPDATES,
             "job_progress_update": messaging_config.QUEUE_PROGRESS_UPDATES,
@@ -98,8 +98,8 @@ class SyncMessagePublisher:
             "job_result",
             "job_failure",
         ):
-            routing_key = self._get_routing_key(message_type)
-            queue_name = self._get_queue_name(message_type)
+            routing_key = self.get_routing_key(message_type)
+            queue_name = self.get_queue_name(message_type)
             queue = self._build_queue(queue_name, routing_key)
             queue.maybe_bind(self._connection)
             queue.declare()
@@ -238,14 +238,14 @@ class ProcessWideSyncMessagePublisher:
         self._max_queue_size = max_queue_size or int(
             os.getenv("SYNC_PUBLISHER_QUEUE_SIZE", "256")
         )
-        self._progress_drop_threshold = progress_drop_threshold
-        if self._progress_drop_threshold is None:
+        if progress_drop_threshold is None:
             threshold_ratio = float(
                 os.getenv("SYNC_PUBLISHER_PROGRESS_DROP_RATIO", "0.75")
             )
-            self._progress_drop_threshold = max(
+            progress_drop_threshold = max(
                 1, int(self._max_queue_size * threshold_ratio)
             )
+        self._progress_drop_threshold: int = progress_drop_threshold
         self._enqueue_timeout = enqueue_timeout or float(
             os.getenv("SYNC_PUBLISHER_ENQUEUE_TIMEOUT_SECONDS", "5")
         )
@@ -275,17 +275,26 @@ class ProcessWideSyncMessagePublisher:
 
     def _publisher_loop(self) -> None:
         while not self._stop_event.is_set():
+            request = None
             try:
                 request = self._queue.get(timeout=1.0)
             except Empty:
                 continue
 
-            success = self._publisher.publish_immediately(
-                request.message,
-                request.routing_key,
-                request.queue_name,
-                priority=request.priority,
-            )
+            try:
+                success = self._publisher.publish_immediately(
+                    request.message,
+                    request.routing_key,
+                    request.queue_name,
+                    priority=request.priority,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error in publisher loop: "
+                    f"message_type={request.message.message_type}, "
+                    f"job_id={request.message.job_id}, error={exc}"
+                )
+                success = False
 
             if request.result is not None and not request.result.ready():
                 request.result.set(success)
@@ -377,8 +386,8 @@ class ProcessWideSyncMessagePublisher:
         )
         return self._submit(
             message,
-            self._publisher._get_routing_key("job_status_update"),
-            self._publisher._get_queue_name("job_status_update"),
+            self._publisher.get_routing_key("job_status_update"),
+            self._publisher.get_queue_name("job_status_update"),
             messaging_config.get_message_priority("job_status_update"),
             wait_for_confirmation=True,
             best_effort=False,
@@ -399,8 +408,8 @@ class ProcessWideSyncMessagePublisher:
         )
         return self._submit(
             message,
-            self._publisher._get_routing_key("job_progress_update"),
-            self._publisher._get_queue_name("job_progress_update"),
+            self._publisher.get_routing_key("job_progress_update"),
+            self._publisher.get_queue_name("job_progress_update"),
             messaging_config.get_message_priority("job_progress_update"),
             wait_for_confirmation=False,
             best_effort=True,
@@ -433,8 +442,8 @@ class ProcessWideSyncMessagePublisher:
         )
         return self._submit(
             message,
-            self._publisher._get_routing_key("job_result"),
-            self._publisher._get_queue_name("job_result"),
+            self._publisher.get_routing_key("job_result"),
+            self._publisher.get_queue_name("job_result"),
             messaging_config.get_message_priority("job_result"),
             wait_for_confirmation=True,
             best_effort=False,
@@ -459,8 +468,8 @@ class ProcessWideSyncMessagePublisher:
         )
         return self._submit(
             message,
-            self._publisher._get_routing_key("job_failure"),
-            self._publisher._get_queue_name("job_failure"),
+            self._publisher.get_routing_key("job_failure"),
+            self._publisher.get_queue_name("job_failure"),
             messaging_config.get_message_priority("job_failure"),
             wait_for_confirmation=True,
             best_effort=False,
