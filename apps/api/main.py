@@ -109,7 +109,13 @@ async def lifespan(app: FastAPI):
         await messaging_service.stop()
     except Exception as e:
         logger.error(f"message consumer stop failed: {e}")
-    
+
+    try:
+        from shared.utils.http_clients import close_async_client
+        await close_async_client()
+    except Exception as e:
+        logger.error(f"async HTTP client close failed: {e}")
+
     logger.info("knowledge library API service stopped!")
     await safe_dispose_engine(engine)
     logger.info("database engine connection pool disposed.")

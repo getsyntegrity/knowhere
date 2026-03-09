@@ -15,6 +15,7 @@ from shared.core.exceptions.domain_exceptions import (
     LLMServiceException,
     UnknownException,
 )
+from shared.utils.http_clients import get_async_client
 
 # Local debug mode: do not use Redis
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
@@ -237,11 +238,11 @@ class OpenAICompatibleClient:
         try:
             logger.info(f"🌐 Starting HTTP request to {self.api_url} (model: {payload['model']}, timeout: {self.timeout}s)...")
             request_start = time.time()
-            
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.api_url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+
+            client = get_async_client()
+            response = await client.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
 
             request_duration = time.time() - request_start
             logger.info(f"✅ AI request completed, duration: {request_duration:.2f}s")
@@ -273,10 +274,15 @@ class OpenAICompatibleClient:
             return content
 
         except httpx.HTTPStatusError as e:
+            request_duration = time.time() - request_start
             if self.redis_service is not None:
                 conversation_state["status"] = "failed"
                 await self.update_conversation_state(conversation_state)
-            logger.error(f"❌ API request failed: {str(e)}, Response: {e.response.text if hasattr(e, 'response') else 'N/A'}")
+            logger.error(
+                f"LLM request failed: url={self.api_url}, model={payload['model']}, "
+                f"status={e.response.status_code}, duration={request_duration:.2f}s, "
+                f"response={e.response.text[:500] if hasattr(e, 'response') else 'N/A'}"
+            )
             raise LLMServiceException(
                 internal_message=f"API request failed: {str(e)}",
                 provider=self.default_model,
@@ -284,10 +290,14 @@ class OpenAICompatibleClient:
                 original_exception=e,
             ) from e
         except httpx.TimeoutException as e:
+            request_duration = time.time() - request_start
             if self.redis_service is not None:
                 conversation_state["status"] = "failed"
                 await self.update_conversation_state(conversation_state)
-            logger.error(f"⏱️ API request timeout: {str(e)}")
+            logger.error(
+                f"LLM request timeout: url={self.api_url}, model={payload['model']}, "
+                f"timeout={self.timeout}s, duration={request_duration:.2f}s"
+            )
             raise LLMServiceException(
                 internal_message=f"API request timeout: {str(e)}",
                 provider=self.default_model,
@@ -297,10 +307,14 @@ class OpenAICompatibleClient:
             # Re-raise LLMServiceException without wrapping
             raise
         except Exception as e:
+            request_duration = time.time() - request_start
             if self.redis_service is not None:
                 conversation_state["status"] = "failed"
                 await self.update_conversation_state(conversation_state)
-            logger.error(f"❌ Unknown error during request processing: {str(e)}")
+            logger.error(
+                f"LLM request error: url={self.api_url}, model={payload['model']}, "
+                f"duration={request_duration:.2f}s, error={e}"
+            )
             raise UnknownException(original_exception=e) from e
 
     async def reset_conversation(self, conversation_id: str = "default"):

@@ -2,6 +2,8 @@
 异步消息配置适配器
 将现有messaging_config适配为aio-pika格式
 """
+import os
+import socket
 from typing import Any, Dict
 from urllib.parse import urlparse
 
@@ -55,9 +57,10 @@ def get_connection_params() -> Dict[str, Any]:
         "CELERY_BROKER_URL": app_config.CELERY_BROKER_URL,
         "client_properties": {
             "application_name": "knowhere_api",
+            "connection_name": f"api-consumer@{socket.gethostname()}-{os.getpid()}",
         },
-        "heartbeat": 600,  # 心跳间隔（秒）
-        "blocked_connection_timeout": 300,  # 阻塞连接超时（秒）
+        "heartbeat": 30,  # 心跳间隔（秒）
+        "blocked_connection_timeout": 60,  # 阻塞连接超时（秒）
     }
     
     return params

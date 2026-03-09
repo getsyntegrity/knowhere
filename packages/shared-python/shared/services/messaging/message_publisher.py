@@ -5,6 +5,7 @@
 import asyncio
 import json
 import sys
+import threading
 from typing import Any, Dict, List, Optional
 
 import aio_pika
@@ -381,13 +382,16 @@ class MessagePublisher:
 
 # 全局消息发布器实例（延迟初始化）
 _message_publisher: Optional[MessagePublisher] = None
+_message_publisher_lock = threading.Lock()
 
 
 def get_message_publisher() -> MessagePublisher:
     """获取消息发布器实例（单例模式）"""
     global _message_publisher
     if _message_publisher is None:
-        _message_publisher = MessagePublisher()
+        with _message_publisher_lock:
+            if _message_publisher is None:
+                _message_publisher = MessagePublisher()
     return _message_publisher
 
 
