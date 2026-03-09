@@ -7,7 +7,6 @@ import json
 from typing import Any, Dict, Optional
 from shared.core.exceptions.domain_exceptions import KnowhereException
 
-import aio_pika
 from aio_pika import IncomingMessage
 from aio_pika.exceptions import (
     AMQPChannelError,
@@ -71,25 +70,15 @@ class MessageConsumer:
         if self._running:
             logger.warning("Message consumer is already running")
             return
-        
+
         self._running = True
         self._stop_event.clear()
         logger.info("Starting async message consumer...")
-        
+
         try:
-            # 建立连接和通道
+            # Establish initial connection
             await self._connection_manager.connect()
-            channel = await self._connection_manager.get_channel()
-            
-            # 声明交换器
-            exchange_config = get_exchange_config()
-            exchange = await channel.declare_exchange(
-                exchange_config["name"],
-                exchange_config["type"],
-                durable=exchange_config["durable"],
-                auto_delete=exchange_config["auto_delete"],
-            )
-            
+
             # 创建并启动消费者
             message_handlers = {
                 'job_status_update': handle_job_status_update,
@@ -99,34 +88,18 @@ class MessageConsumer:
             }
 
             for message_type, handler_func in message_handlers.items():
-                queue_name = get_queue_name(message_type)
-                routing_key = get_routing_key(message_type)
-                
-                # 声明队列
-                queue_config = get_queue_config(queue_name)
-                queue = await channel.declare_queue(
-                    queue_name,
-                    durable=queue_config["durable"],
-                    auto_delete=queue_config["auto_delete"],
-                    exclusive=queue_config["exclusive"],
-                    arguments=queue_config["arguments"],
-                )
-                
-                # 绑定队列到交换器
-                await queue.bind(exchange, routing_key=routing_key)
-                
-                # 创建消费者任务
+                # 创建消费者任务 — each task manages its own channel/queue
                 consumer_task = asyncio.create_task(
-                    self._consume_queue(queue, handler_func, message_type)
+                    self._consume_queue(handler_func, message_type)
                 )
                 self._consumers.append(consumer_task)
-                logger.debug(f"Started consumer: {message_type} -> {queue_name}")
-            
+                logger.debug(f"Started consumer: {message_type}")
+
             logger.info("All message consumers started and listening")
-            
+
             # 等待停止信号
             await self._stop_event.wait()
-            
+
         except KnowhereException:
             raise
         except Exception as e:
@@ -187,27 +160,85 @@ class MessageConsumer:
         
         logger.info("Message consumer stopped")
     
+    RECONNECT_DELAY = 5  # seconds between reconnection attempts
+
     async def _consume_queue(
         self,
-        queue: aio_pika.Queue,
         handler_func,
         message_type: str
     ):
         """
-        消费队列消息
-        
-        使用 asyncio.wait 同时等待消息和停止事件，确保：
-        1. 有消息时立即处理，不影响业务性能
-        2. 停止时立即响应，不会阻塞
+        消费队列消息 with automatic reconnection.
+
+        Outer loop: reconnects channel and re-declares queue on AMQP errors.
+        Inner loop: processes messages, breaks on AMQP errors to trigger reconnect.
         """
-        logger.debug(f"Start consuming queue: {queue.name}, type: {message_type}")
+        queue_name = get_queue_name(message_type)
+        routing_key = get_routing_key(message_type)
+        exchange_config = get_exchange_config()
+
+        while self._running:
+            try:
+                await self._consume_queue_inner(
+                    handler_func, message_type, queue_name, routing_key, exchange_config
+                )
+                # Normal exit (stop_event set) — don't reconnect
+                break
+            except asyncio.CancelledError:
+                raise
+            except (AMQPConnectionError, AMQPChannelError, ChannelClosed, ChannelInvalidStateError) as e:
+                if not self._running:
+                    break
+                logger.bind(event=LogEvent.NETWORK_AMQP_CONSUME_ERROR.value).warning(
+                    f"Consumer reconnecting: queue={queue_name}, "
+                    f"error_type={type(e).__name__}, error={e}, "
+                    f"retry_in={self.RECONNECT_DELAY}s"
+                )
+                await asyncio.sleep(self.RECONNECT_DELAY)
+            except Exception as e:
+                if not self._running:
+                    break
+                logger.error(
+                    f"Unexpected error in consumer, reconnecting: queue={queue_name}, error={e}",
+                    exc_info=True
+                )
+                await asyncio.sleep(self.RECONNECT_DELAY)
+
+        logger.debug(f"Consumer exited: {message_type}")
+
+    async def _consume_queue_inner(
+        self,
+        handler_func,
+        message_type: str,
+        queue_name: str,
+        routing_key: str,
+        exchange_config: dict,
+    ):
+        """Inner consume loop. Raises AMQP exceptions to trigger reconnection."""
+        # Get a fresh channel via connect_robust (handles connection recovery)
+        channel = await self._connection_manager.get_channel()
+        exchange = await channel.declare_exchange(
+            exchange_config["name"],
+            exchange_config["type"],
+            durable=exchange_config["durable"],
+            auto_delete=exchange_config["auto_delete"],
+        )
+        queue_config = get_queue_config(queue_name)
+        queue = await channel.declare_queue(
+            queue_name,
+            durable=queue_config["durable"],
+            auto_delete=queue_config["auto_delete"],
+            exclusive=queue_config["exclusive"],
+            arguments=queue_config["arguments"],
+        )
+        await queue.bind(exchange, routing_key=routing_key)
+
+        logger.info(f"Consumer connected: queue={queue_name}, type={message_type}")
+
         message_task: asyncio.Task | None = None
         stop_task: asyncio.Task | None = None
         try:
             async with queue.iterator() as queue_iter:
-                logger.debug(f"Queue iterator created and waiting for messages: {queue.name}")
-                
-                # 创建消息接收任务
                 stop_task = asyncio.create_task(self._stop_event.wait())
 
                 while self._running:
@@ -291,10 +322,10 @@ class MessageConsumer:
                                             logger.warning(f"Message processing failed and was requeued: {message_type}")
                                     except (AMQPConnectionError, AMQPChannelError, ChannelClosed, ChannelInvalidStateError) as ack_error:
                                         logger.bind(event=LogEvent.NETWORK_AMQP_CONSUME_ERROR.value).error(
-                                            f"AMQP error during ack/nack: queue={queue.name}, "
+                                            f"AMQP error during ack/nack: queue={queue_name}, "
                                             f"error_type={type(ack_error).__name__}, error={ack_error}"
                                         )
-                                        break  # Exit consume loop to trigger reconnection
+                                        raise  # Propagate to outer reconnection loop
                                     except Exception as ack_error:
                                         logger.error(f"Error while acking/nacking message: {message_type}, error={ack_error}", exc_info=True)
                             except StopAsyncIteration:
@@ -304,10 +335,10 @@ class MessageConsumer:
                                 raise
                             except (AMQPConnectionError, AMQPChannelError, ChannelClosed, ChannelInvalidStateError) as e:
                                 logger.bind(event=LogEvent.NETWORK_AMQP_CONSUME_ERROR.value).error(
-                                    f"AMQP error while receiving message: queue={queue.name}, "
+                                    f"AMQP error while receiving message: queue={queue_name}, "
                                     f"error_type={type(e).__name__}, error={e}"
                                 )
-                                break  # Exit inner loop to trigger reconnection
+                                raise  # Propagate to outer reconnection loop
                             except Exception as e:
                                 logger.error(f"Error while receiving message: {message_type}, error={e}", exc_info=True)
                                 message_task = None  # 重置任务，继续循环
@@ -318,18 +349,12 @@ class MessageConsumer:
                         raise
                 
                 logger.debug(f"Consumer loop exited: {message_type}")
-                
+
         except asyncio.CancelledError:
             logger.debug(f"Consumer task {message_type} cancelled")
             raise
-        except KnowhereException:
-            raise
-        except Exception as e:
-            logger.error(f"Error while consuming queue {queue.name}: {e}", exc_info=True)
-            raise WorkerHandlingException(
-                internal_message=f"Failed to consume queue: {str(e)}",
-                original_exception=e
-            )
+        except (AMQPConnectionError, AMQPChannelError, ChannelClosed, ChannelInvalidStateError):
+            raise  # Let outer _consume_queue handle reconnection
         finally:
             if message_task and not message_task.done():
                 message_task.cancel()
