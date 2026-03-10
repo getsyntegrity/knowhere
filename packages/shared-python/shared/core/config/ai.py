@@ -33,19 +33,9 @@ class AIConfig(BaseModel):
     ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段）")
     ALI_URL: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="阿里云URL（兼容性字段）")
     OPENAI_CLIENT_TIMEOUT: int = Field(default=300, description="OpenAI-compatible client timeout in seconds")
-    MINERU_API_KEYS: str = Field(
-        default="",
-        description="MinerU API key pool. Supports a JSON array or comma/newline-separated values; entries may use token_id=api_key format.",
-    )
-    MINERU_URL: str = Field(default="https://mineru.net/api/v4", description="Base MinerU API URL without endpoint path, for example https://mineru.net/api/v4.")
-    MINERU_TOKEN_RPM_LIMIT: int = Field(default=300, description="Per-token requests-per-minute limit for MinerU.")
-    MINERU_TOKEN_DAILY_LIMIT: int = Field(default=10000, description="Per-token daily request limit for MinerU.")
-    MINERU_TOKEN_COOLDOWN_SECONDS: int = Field(default=60, description="Cooldown time in seconds after a MinerU token is rate-limited.")
     IMAGE_MODEL_MAX: str = Field(default="", description="最大图像模型（兼容性字段）")
     REASON_MODEL: str = Field(default="", description="推理模型（兼容性字段）")
     IMG_HEADER: str = Field(default="", description="图像头部（兼容性字段）")
-    MINERU_CONFIG: str = Field(default="", description="MinerU配置（兼容性字段）")
-    MINERU_SOURCE: str = Field(default="", description="MinerU源（兼容性字段）")
     CONFIG_PATH: str = Field(default="app/core/config/config.txt", description="配置路径（兼容性字段）")
     META_PATH: str = Field(default="app/core/config/Meta_setting.csv", description="元数据路径（兼容性字段）")
     IMG_TBL_PATTERN: str = Field(default="", description="图像表格模式（兼容性字段）")
@@ -57,8 +47,6 @@ class AIConfig(BaseModel):
     ILOVEAPI_BASE_URL: str = Field(default="https://api.ilovepdf.com/v1", description="iLoveAPI 基础URL")
     ILOVEAPI_TIMEOUT: int = Field(default=120, description="iLoveAPI 请求超时(秒)")
     PROD_URL: str = Field(default="", description="生产URL（兼容性字段）")
-    
-    # 业务配置字段（兼容性）
     ALL_DF_COLS: str = Field(default="content,path,type,length,keywords,summary,know_id,tokens,extra,addtime", description="所有数据框列（兼容性字段）")
     DEFAULT_FOLDERS: str = Field(default="Supplementary_Files,Temporary_Files,templates,images,fragments", description="默认文件夹（兼容性字段）")
     KB_TERM: str = Field(default="KB_DATA", description="知识库术语（兼容性字段）")
