@@ -100,6 +100,17 @@ class OpenAICompatibleClient:
             logger.debug(f"Model '{model_name}' routed to Aliyun DashScope")
             return resolved_key, resolved_url
         
+        # GLM models → Zhipu AI
+        if 'glm' in model_lower:
+            resolved_key = api_key or getattr(settings, 'GLM_API_KEY', None)
+            glm_base = getattr(settings, 'GLM_URL', 'https://open.bigmodel.cn/api/paas/v4')
+            if glm_base and not glm_base.endswith('/chat/completions'):
+                resolved_url = api_url or f"{glm_base}/chat/completions"
+            else:
+                resolved_url = api_url or glm_base
+            logger.debug(f"Model '{model_name}' routed to Zhipu GLM")
+            return resolved_key, resolved_url
+        
         # Doubao/Ark models → Volcano Engine
         if 'doubao' in model_lower or model_lower.startswith('ep-'):
             resolved_key = api_key or getattr(settings, 'ARK_API_KEY', None)

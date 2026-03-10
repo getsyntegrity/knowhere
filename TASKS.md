@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-03-02 — Excel 子表碎片合并 (min_cells=4) + 隐藏 Sheet 参数化 + `_src_row` 行号保留 + `postprocess_tb` bug fixes
+> **Last session**: 2026-03-10 — GLM 集成：统一视觉/文本 LLM 路由，替代 DeepSeek + Qwen 硬编码
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -14,6 +14,7 @@
 | 2026-02-26 | ~1h 10m | ~5K | ~40K | Table Parser P0 评估（HTMLHeaderExpander 移植+回滚）、MD 分隔线修复、关键词去重 |
 | 2026-02-27 | ~2h | ~8K | ~60K | DOCX 表格内嵌图片提取 + summary prompt 优化 + Agentic Profiler (doc_profiler/fast path pymupdf4llm/ppt_converted) + 表格 summary fallback |
 | 2026-03-02 | ~1h 20m | ~5K | ~40K | Excel 子表碎片合并 + 隐藏 Sheet 参数化 + _src_row 行号保留 + postprocess_tb index collision fix |
+| 2026-03-10 | ~1h | ~3K | ~25K | GLM 集成: 统一 LLM 路由 (glm/qwen/deepseek) + `_get_vision_client()` 消除 4 处硬编码 + MinerU key 修复 |
 
 ---
 
@@ -57,7 +58,8 @@ graph TD
     API --> DB[(MySQL)]
     API --> Redis[(Redis)]
     Worker --> S3[MinIO/S3]
-    Worker --> AI[LLM API]
+    Worker --> AI[LLM API
+    GLM / DeepSeek / Qwen]
     Worker --> DB
     Worker --> Redis
 
@@ -226,6 +228,8 @@ sequenceDiagram
 | 2026-02-27 | fix | 表格 summary fallback: 图片为主表格 LLM 返回无效内容时用 table_idx 回退 | `doc_parser.py`, `prompt_service.py` |
 | 2026-03-02 | feature | Excel 子表碎片合并: `_merge_small_subtables` + `_count_non_empty_cells` + `include_hidden_sheets` 参数 + `_src_row` 行号列 | `table_parser.py` |
 | 2026-03-02 | fix | `postprocess_tb` bug fixes: dropna RangeIndex→Int64Index 导致假 index 列 + `reset_index` 列名撞名崩溃 | `table_parser.py` |
+| 2026-03-10 | feature | GLM 集成: `_resolve_api_config` 加 glm 路由分支 (async+sync)，`_get_vision_client()` 按 IMAGE_MODEL 名自动路由，消除 4 处硬编码 ALI_API_KEY | `OpenAICompatibleClient.py`, `OpenAICompatibleClientSync.py`, `image_parser.py`, `doc_parser.py`, `ai.py`, `.env` |
+| 2026-03-10 | fix | MinerU API key 字段名: `MINERU_API_KEY` → `MINERU_API_KEYS` (匹配 config) + `debug_parse.py` await 移除 (sync 函数) | `.env`, `debug_parse.py` |
 
 ---
 

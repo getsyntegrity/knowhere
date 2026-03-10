@@ -8,6 +8,8 @@ class AIConfig(BaseModel):
     """AI模型配置"""
     
     # AI模型配置
+    GLM_API_KEY: str = Field(default="", description="智谱GLM API密钥")
+    GLM_URL: str = Field(default="https://open.bigmodel.cn/api/paas/v4", description="智谱GLM API URL")
     DS_KEY: str = Field(..., description="DeepSeek API密钥")
     DS_URL: str = Field(..., description="DeepSeek API URL")
     GPT_API_KEY: str = Field(default="", description="OpenAI API密钥")

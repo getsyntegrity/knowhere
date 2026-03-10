@@ -26,6 +26,20 @@ from PIL import Image
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
 g_img_lock = threading.Lock()
 
+def _get_vision_client():
+    """Create OpenAI client for vision models, auto-routing by IMAGE_MODEL name."""
+    model_name = (settings.IMAGE_MODEL or "").lower()
+    if 'glm' in model_name:
+        api_key = settings.GLM_API_KEY
+        base_url = settings.GLM_URL
+    elif 'qwen' in model_name:
+        api_key = settings.ALI_API_KEY
+        base_url = settings.ALI_URL
+    else:
+        api_key = settings.GLM_API_KEY or settings.ALI_API_KEY
+        base_url = settings.GLM_URL or settings.ALI_URL
+    return OpenAI(api_key=api_key, base_url=base_url)
+
 def image_bytes_to_base64(img_data: bytes, ext: str):
     mime_type = {
         ".jpg": "image/jpeg",
@@ -141,10 +155,7 @@ def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", quer
         return None
 
 def detect_summary_img_md(line, last_context, kb_dir, mode=False):
-    client = OpenAI(
-        api_key=settings.ALI_API_KEY,
-        base_url=settings.ALI_URL
-    )
+    client = _get_vision_client()
     imgs = []
     img_paths = re.findall(MD_IMAGE_PATTERN, line, flags=re.IGNORECASE)
     for i, ip in enumerate(img_paths):
@@ -173,10 +184,7 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         img_obj.save(img_path)
 
         # Extract image content
-        client = OpenAI(
-            api_key=settings.ALI_API_KEY,
-            base_url=settings.ALI_URL
-        )
+        client = _get_vision_client()
 
         ## Determine image category and task
         img_task = "summary-images"
