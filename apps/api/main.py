@@ -142,7 +142,7 @@ def create_app() -> FastAPI:
     if config_settings.LOGFIRE_TOKEN:
         try:
             import logfire
-            logfire.instrument_fastapi(app, excluded_urls="/health,/api/health,/database/*")
+            logfire.instrument_fastapi(app, excluded_urls="/,/health,/api/health,/database/*")
         except ImportError:
             pass
 
