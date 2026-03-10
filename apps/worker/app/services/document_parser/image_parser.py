@@ -38,7 +38,7 @@ def _get_vision_client():
     else:
         api_key = settings.GLM_API_KEY or settings.ALI_API_KEY
         base_url = settings.GLM_URL or settings.ALI_URL
-    return OpenAI(api_key=api_key, base_url=base_url)
+    return get_openai_client(api_key=api_key, api_url=base_url)
 
 
 def image_bytes_to_base64(img_data: bytes, ext: str):
