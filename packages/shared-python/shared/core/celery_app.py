@@ -115,7 +115,7 @@ celery_app.conf.update(
     broker_connection_retry=True,
     broker_connection_max_retries=10,
     broker_heartbeat=30,
-    broker_pool_limit=10,
+    broker_pool_limit=app_config.BROKER_POOL_LIMIT,
     # 任务路由配置
     task_routes={
         # Knowledge base tasks (dynamic routing)
