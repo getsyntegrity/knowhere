@@ -15,18 +15,20 @@ from .base import BaseConfig
 from .celery import CeleryConfig
 from .database import DatabaseConfig
 from .messaging import MessagingConfig, messaging_config
+from .mineru import MineruConfig
 from .redis import RedisConfig, RedisConfigManager, RedisPoolManager
 from .storage import StorageConfig
 
 __all__ = [
     'BaseConfig',
-    'DatabaseConfig', 
+    'DatabaseConfig',
     'RedisConfig',
     'RedisConfigManager',
     'RedisPoolManager',
     'CeleryConfig',
     'StorageConfig',
     'AIConfig',
+    'MineruConfig',
     'AppConfig',
     'MessagingConfig',
     'app_config',
