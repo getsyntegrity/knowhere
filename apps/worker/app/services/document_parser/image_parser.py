@@ -26,13 +26,20 @@ from PIL import Image
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
 g_img_lock = threading.Lock()
 
+def _get_vision_client():
+    """Create OpenAI client for vision models, auto-routing by IMAGE_MODEL name."""
+    model_name = (settings.IMAGE_MODEL or "").lower()
+    if 'glm' in model_name:
+        api_key = settings.GLM_API_KEY
+        base_url = settings.GLM_URL
+    elif 'qwen' in model_name:
+        api_key = settings.ALI_API_KEY
+        base_url = settings.ALI_URL
+    else:
+        api_key = settings.GLM_API_KEY or settings.ALI_API_KEY
+        base_url = settings.GLM_URL or settings.ALI_URL
+    return OpenAI(api_key=api_key, base_url=base_url)
 
-def _get_vision_client() -> OpenAICompatibleClientSync:
-    return get_openai_client(
-        api_key=settings.ALI_API_KEY,
-        api_url=settings.ALI_URL,
-        timeout=settings.OPENAI_CLIENT_TIMEOUT,
-    )
 
 def image_bytes_to_base64(img_data: bytes, ext: str):
     mime_type = {

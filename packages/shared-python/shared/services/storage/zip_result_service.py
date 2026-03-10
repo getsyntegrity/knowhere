@@ -634,8 +634,9 @@ class ZipResultService:
             if not path:
                 continue
             
-            # Normalize separators: support "-->", "/", "\\"
-            normalized_path = path.replace("-->", "/").replace("\\", "/")
+            # Only normalize '-->' legacy separator; do NOT replace '\' since
+            # heading text may contain LaTeX backslashes (e.g. \mathrm, \mathbf)
+            normalized_path = path.replace("-->", "/")
             nodes = [n.strip() for n in normalized_path.split("/") if n.strip()]
             
             current_dict = root_dict
