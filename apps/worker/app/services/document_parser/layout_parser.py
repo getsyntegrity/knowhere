@@ -16,7 +16,7 @@ except ImportError:
             return content
 from shared.core.config import settings
 # ARQ dependency is removed, use Celery instead
-from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
+from shared.utils.OpenAICompatibleClientSync import get_openai_client
 # TaskRedis dependency is removed, use Redis directly to track
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
@@ -911,11 +911,9 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
     ]
     
     try:
-        answer = ai_query_service.query_ai(
+        answer = get_openai_client(model=model_name).chat_completion(
             messages=messages,
-            user_id="layout_parser",
             model=model_name,
-            stream=False,
             max_tokens=max_tokens,
             temperature=temperature
         )

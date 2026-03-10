@@ -15,12 +15,12 @@ from app.services.common.kb_utils import (gen_str_codes, get_str_time,
 from shared.utils.CommonHelperSync import is_remote, load_file_bytes
 from shared.utils.file_utils import path_handle
 from loguru import logger
-from openai import OpenAI
 from shared.core.exceptions.domain_exceptions import (
     LLMServiceException,
     ImageParsingException,
 )
 from shared.core.exceptions.knowhere_exception import KnowhereException
+from shared.utils.OpenAICompatibleClientSync import OpenAICompatibleClientSync, get_openai_client
 from PIL import Image
 
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
@@ -39,6 +39,7 @@ def _get_vision_client():
         api_key = settings.GLM_API_KEY or settings.ALI_API_KEY
         base_url = settings.GLM_URL or settings.ALI_URL
     return OpenAI(api_key=api_key, base_url=base_url)
+
 
 def image_bytes_to_base64(img_data: bytes, ext: str):
     mime_type = {
@@ -87,7 +88,7 @@ def process_img_path4read(paths_, kb_dir, cut):
             urls.append(path_)
     return urls
 
-def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
+def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
     from shared.core.constants import ProcessingConstants
     if max_tokens is None:
         max_tokens = ProcessingConstants.IMG_MAX_TOKENS
@@ -133,14 +134,13 @@ def ask_image(client, kb_dir, paths_, title_text="", task="summary-images", quer
             messages[0]['content'].append(url_header)
         resp = ''
         try:
-            resp = client.chat.completions.create(
-                model=image_model,
+            resp = client.chat_completion(
                 messages=messages,
+                model=image_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                top_p=top_p
+                top_p=top_p,
             )
-            resp = resp.choices[0].message.content
             logger.debug(f"Image understanding response: {resp}")
             resp = eval_response(resp)
             return resp

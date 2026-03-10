@@ -9,7 +9,7 @@ import os
 from loguru import logger
 from shared.core.config import settings
 from shared.utils.file_utils import path_handle
-from shared.services.ai.ai_query_service_sync import sync_ai_query_service as ai_query_service
+from shared.utils.OpenAICompatibleClientSync import get_openai_client
 
 from app.services.document_parser.md_parser import parse_md
 
@@ -31,7 +31,7 @@ def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
             "Return ONLY the title, no quotes or explanation:\n\n"
             f"{content[:500]}"
         )
-        generated_title = ai_query_service.query_ai(
+        generated_title = get_openai_client().chat_completion(
             messages=[{"role": "user", "content": title_prompt}],
             max_tokens=max_tokens,
             timeout=30

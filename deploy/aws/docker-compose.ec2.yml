@@ -135,7 +135,7 @@ services:
       - knowhere-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "from shared.core.celery_app import celery_app; celery_app.control.inspect().stats()"]
+      test: ["CMD", "python", "-c", "from shared.services.worker_health import assert_worker_healthy; assert_worker_healthy()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -167,4 +167,3 @@ services:
 networks:
   knowhere-network:
     driver: bridge
-
