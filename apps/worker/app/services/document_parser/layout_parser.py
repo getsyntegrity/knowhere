@@ -918,7 +918,17 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
             temperature=temperature
         )
         layout_res = eval_response(answer)
-        return layout_res
+        
+        # LLM now only returns heading rows (level > -1)
+        # Reconstruct full result: fill missing IDs with level=-1
+        all_ids = df["id"].tolist()
+        llm_levels = {item["id"]: item["level"] for item in layout_res}
+        full_result = [
+            {"id": row_id, "level": llm_levels.get(row_id, -1)}
+            for row_id in all_ids
+        ]
+        logger.debug(f"LLM returned {len(layout_res)} headings out of {len(all_ids)} rows")
+        return full_result
     except Exception as e:
         logger.error(f"detect hierarchy by LLM failed: {e}")
         raise

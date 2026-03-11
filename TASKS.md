@@ -145,14 +145,10 @@ sequenceDiagram
 
 #### High Priority — Agentic Profiler
 
-- [/] **Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
-  - [x] `doc_profiler.py` — 通用文档 profiling 入口 + PDF scan_type / doc_category / ppt_converted 检测 (completed: 2026-02-27)
-  - [x] Fast Path — 单栏电子版 PDF 走 `pymupdf4llm`（替换 markitdown），跳过 MinerU (completed: 2026-02-27)
-  - [x] `parse_service.py` / `pdf_parser.py` 路由集成 (profiler 在 `checkerboard_inject_parse` 入口) (completed: 2026-02-27)
+- [/] 继续优化**Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
   - [ ] profile metadata 写入解析结果
   - [ ] 端到端验证 — 不同 PDF 类型 (扫描件/电子版/PPT转换) 路由准确性测试
 
-#### High Priority — Document Parser
 - [ ] **Excel 子表公式依赖合并 (Phase 2)** — 通过解析公式引用（SUM/AVERAGE 等）构建 cell 依赖图，将汇总行/计算区域自动归属到其数据来源所在的子表
 
 - [ ] **表格内嵌图片 Phase 2** — PDF 表格中带图的恢复 → 详见 [PDF_TABLE_IMAGE_PLAN.md](./PDF_TABLE_IMAGE_PLAN.md)
