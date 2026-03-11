@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -53,6 +54,11 @@ class SyncMessagePublisher:
         self._producer: Optional[Producer] = None
         self._exchange: Optional[Exchange] = None
         self._queues: dict[str, Queue] = {}
+
+    def heartbeat_check(self) -> None:
+        if self._connection is None or not self._connection.connected:
+            return
+        self._connection.heartbeat_check(rate=2)
 
     def get_routing_key(self, message_type: str) -> str:
         routing_keys = {
@@ -235,23 +241,17 @@ class ProcessWideSyncMessagePublisher:
         publish_timeout: Optional[float] = None,
     ):
         self._publisher = SyncMessagePublisher()
-        self._max_queue_size = max_queue_size or int(
-            os.getenv("SYNC_PUBLISHER_QUEUE_SIZE", "256")
-        )
+        self._max_queue_size = max_queue_size or messaging_config.SYNC_PUBLISHER_QUEUE_SIZE
         if progress_drop_threshold is None:
-            threshold_ratio = float(
-                os.getenv("SYNC_PUBLISHER_PROGRESS_DROP_RATIO", "0.75")
-            )
+            threshold_ratio = messaging_config.SYNC_PUBLISHER_PROGRESS_DROP_RATIO
             progress_drop_threshold = max(
                 1, int(self._max_queue_size * threshold_ratio)
             )
         self._progress_drop_threshold: int = progress_drop_threshold
-        self._enqueue_timeout = enqueue_timeout or float(
-            os.getenv("SYNC_PUBLISHER_ENQUEUE_TIMEOUT_SECONDS", "5")
-        )
-        self._publish_timeout = publish_timeout or float(
-            os.getenv("SYNC_PUBLISHER_CONFIRM_TIMEOUT_SECONDS", "30")
-        )
+        self._enqueue_timeout = enqueue_timeout or messaging_config.SYNC_PUBLISHER_ENQUEUE_TIMEOUT_SECONDS
+        self._publish_timeout = publish_timeout or messaging_config.SYNC_PUBLISHER_CONFIRM_TIMEOUT_SECONDS
+        self._last_activity = time.monotonic()
+        self._idle_close_seconds = messaging_config.SYNC_PUBLISHER_IDLE_CLOSE_SECONDS
 
         self._queue: GeventQueue[_PublishRequest] = GeventQueue(
             maxsize=self._max_queue_size
@@ -279,6 +279,12 @@ class ProcessWideSyncMessagePublisher:
             try:
                 request = self._queue.get(timeout=1.0)
             except Empty:
+                try:
+                    self._publisher.heartbeat_check()
+                except Exception:
+                    self._publisher.close()
+                if time.monotonic() - self._last_activity > self._idle_close_seconds:
+                    self._publisher.close()
                 continue
 
             try:
@@ -295,6 +301,9 @@ class ProcessWideSyncMessagePublisher:
                     f"job_id={request.message.job_id}, error={exc}"
                 )
                 success = False
+
+            if success:
+                self._last_activity = time.monotonic()
 
             if request.result is not None and not request.result.ready():
                 request.result.set(success)

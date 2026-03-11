@@ -105,6 +105,7 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_disable_rate_limits=True,
     task_reject_on_worker_lost=True,
+    worker_cancel_long_running_tasks_on_connection_loss=True,
     task_ignore_result=True,
     result_expires=3600,  # 1小时
     # 节点名称和PID配置
