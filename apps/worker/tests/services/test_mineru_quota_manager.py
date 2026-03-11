@@ -294,9 +294,8 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
         extracted["url"] = url
         extracted["dest_dir"] = dest_dir
 
-    monkeypatch.setattr(mineru_pdf_service.requests, "post", fake_post)
-    monkeypatch.setattr(mineru_pdf_service.requests, "put", fake_put)
-    monkeypatch.setattr(mineru_pdf_service.requests, "get", fake_get)
+    fake_session = type("FakeSession", (), {"post": staticmethod(fake_post), "put": staticmethod(fake_put), "get": staticmethod(fake_get)})()
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
     monkeypatch.setattr(mineru_pdf_service, "s3_download_extract_zip", fake_extract)
 
     local_pdf_path = tmp_path / "sample.pdf"

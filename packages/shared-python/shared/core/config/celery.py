@@ -20,6 +20,9 @@ class CeleryConfig(BaseModel):
     CELERY_BROKER_URL: str = Field(default="amqp://guest:guest@localhost:5672//", description="Celery消息代理URL")
     CELERY_RESULT_BACKEND: str = Field(default="rpc://", description="Celery结果后端URL")
     
+    # Broker connection pool
+    BROKER_POOL_LIMIT: int = Field(default=10, description="Celery broker connection pool limit")
+
     # 任务重试配置
     KB_TASK_MAX_RETRIES: int = Field(default=2, description="知识库任务最大重试次数")
     KB_TASK_RETRY_COUNTDOWN: int = Field(default=120, description="知识库任务重试等待时间(秒)")

@@ -4,6 +4,8 @@ from typing import Any, Callable, Optional
 
 import requests
 from loguru import logger
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from app.services.document_parser.mineru_quota_manager import get_mineru_quota_manager
 from shared.core.config import settings
@@ -19,14 +21,39 @@ from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.utils.CommonHelperSync import is_remote
 from shared.utils.FileDownUpUtils import s3_download_extract_zip
 
-MINERU_API_TIMEOUT = 60
-MINERU_UPLOAD_CONNECT_TIMEOUT = 10
-MINERU_UPLOAD_READ_TIMEOUT = 600
 MINERU_UPLOAD_TIMEOUT = (
-    MINERU_UPLOAD_CONNECT_TIMEOUT,
-    MINERU_UPLOAD_READ_TIMEOUT,
+    settings.MINERU_UPLOAD_CONNECT_TIMEOUT,
+    settings.MINERU_UPLOAD_READ_TIMEOUT,
 )
-MINERU_RATE_LIMIT_MAX_RETRY_AFTER = 60
+
+
+def _build_mineru_session() -> requests.Session:
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=settings.MINERU_UPLOAD_RETRY_TOTAL,
+        backoff_factor=settings.MINERU_UPLOAD_RETRY_BACKOFF_FACTOR,
+        status_forcelist=[502, 503, 504],
+        allowed_methods=["GET", "POST", "PUT"],
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=1,
+        pool_maxsize=settings.MINERU_POOL_MAXSIZE,
+    )
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_mineru_session: Optional[requests.Session] = None
+
+
+def get_mineru_session() -> requests.Session:
+    global _mineru_session
+    if _mineru_session is None:
+        _mineru_session = _build_mineru_session()
+    return _mineru_session
 
 
 def get_mineru_headers(api_key: str) -> dict[str, str]:
@@ -47,11 +74,11 @@ def _get_retry_after_seconds(
     retry_after_header = response.headers.get("Retry-After")
     if retry_after_header:
         try:
-            return max(1, min(int(retry_after_header), MINERU_RATE_LIMIT_MAX_RETRY_AFTER))
+            return max(1, min(int(retry_after_header), settings.MINERU_RATE_LIMIT_MAX_RETRY_AFTER))
         except ValueError:
             logger.debug(f"Invalid MinerU Retry-After header: {retry_after_header}")
 
-    return max(1, min(default_retry_after, MINERU_RATE_LIMIT_MAX_RETRY_AFTER))
+    return max(1, min(default_retry_after, settings.MINERU_RATE_LIMIT_MAX_RETRY_AFTER))
 
 
 def _raise_mineru_unavailable(
@@ -163,10 +190,9 @@ def poll_mineru_task(
                 ).info("Acquired MinerU token for polling")
                 last_token_id = lease.token_id
 
-            response = requests.get(
-                status_url,
+            response = get_mineru_session().get(                status_url,
                 headers=get_mineru_headers(lease.api_key),
-                timeout=MINERU_API_TIMEOUT,
+                timeout=settings.MINERU_API_TIMEOUT,
             )
 
             if response.status_code == 429:
@@ -344,11 +370,11 @@ def _request_upload_target(pdf_url: str, filename: str) -> tuple[str, str, str]:
     upload_logger.bind(token_id=lease.token_id).info(
         "Acquired MinerU token for upload URL"
     )
-    response = requests.post(
+    response = get_mineru_session().post(
         url,
         headers=get_mineru_headers(lease.api_key),
         json=payload,
-        timeout=MINERU_API_TIMEOUT,
+        timeout=settings.MINERU_API_TIMEOUT,
     )
     if response.status_code == 429:
         _raise_mineru_unavailable(lease.token_id, response, operation="upload_url")
@@ -415,7 +441,7 @@ def _upload_file_to_mineru(
 
         upload_logger.info("Downloading remote source file before MinerU upload")
         try:
-            download_response = requests.get(
+            download_response = get_mineru_session().get(
                 pdf_url,
                 stream=True,
                 timeout=APIConstants.S3_FILE_DOWNLOAD_TIMEOUT,
@@ -433,7 +459,7 @@ def _upload_file_to_mineru(
                 "Uploading staged file to MinerU"
             )
             with open(temp_path, "rb") as file_obj:
-                upload_response = requests.put(
+                upload_response = get_mineru_session().put(
                     upload_url,
                     data=file_obj,
                     timeout=MINERU_UPLOAD_TIMEOUT,
@@ -452,7 +478,7 @@ def _upload_file_to_mineru(
         try:
             with open(pdf_url, "rb") as file_obj:
                 try:
-                    upload_response = requests.put(
+                    upload_response = get_mineru_session().put(
                         upload_url,
                         data=file_obj,
                         timeout=MINERU_UPLOAD_TIMEOUT,

@@ -32,6 +32,7 @@ def _get_vision_client() -> OpenAICompatibleClientSync:
     return get_openai_client(model=image_model)
 
 
+
 def image_bytes_to_base64(img_data: bytes, ext: str):
     mime_type = {
         ".jpg": "image/jpeg",
