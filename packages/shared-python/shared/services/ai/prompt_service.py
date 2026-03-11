@@ -112,9 +112,12 @@ def build_prompt(task, texts, query, **kwargs):
         2. Levels between consecutive headings cannot skip (e.g., jumping from level 1 to level 3)
 
         ***Output requirements***
-        - Output must be a [JSON array] only, each element should contain the following fields in order:
+        - Output must be a [JSON array] only
+        - **Only include rows that you judge to be headings** (level >= 1). Do NOT include body text rows (level = -1) in the output
+        - Any row not present in your output will be automatically treated as body text (level = -1)
+        - Each element should contain the following fields in order:
             - "id": original line number (integer);
-            - "level": the new adjusted level for that row (integer from 1~{max_depth} or -1)
+            - "level": the heading level for that row (integer from 1~{max_depth})
 
         ***Other requirements***
         - Output only standard JSON, do not add any format wrappers (e.g., do not add ```json)
