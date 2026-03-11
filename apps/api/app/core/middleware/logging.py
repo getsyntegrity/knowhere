@@ -2,13 +2,11 @@
 Request logging middleware with structured logging support.
 Pure ASGI implementation to avoid BaseHTTPMiddleware body buffering.
 """
-import time
 import uuid
 
-from loguru import logger
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from shared.core.logging import log_context, LogEvent
+from shared.core.logging import log_context
 
 SKIP_PATHS = {"/health", "/api/health"}
 
@@ -42,13 +40,8 @@ class LoggingMiddleware:
         scope.setdefault("state", {})
         scope["state"]["request_id"] = request_id
 
-        start_time = time.time()
-        status_code = 500  # default in case of unhandled error
-
         async def send_wrapper(message: Message) -> None:
-            nonlocal status_code
             if message["type"] == "http.response.start":
-                status_code = message["status"]
                 # Inject X-Request-ID header
                 raw_headers = [
                     (k, v)
@@ -63,15 +56,3 @@ class LoggingMiddleware:
 
         with log_context(request_id=request_id):
             await self.app(scope, receive, send_wrapper)
-
-            duration_ms = (time.time() - start_time) * 1000
-            user_id = scope.get("state", {}).get("user_id")
-
-            completion_log = logger.bind(
-                event=LogEvent.HTTP_REQUEST_COMPLETE.value,
-                status_code=status_code,
-                duration_ms=round(duration_ms, 2),
-            )
-            if user_id:
-                completion_log = completion_log.bind(user_id=user_id)
-            completion_log.info("HTTP request completed")
