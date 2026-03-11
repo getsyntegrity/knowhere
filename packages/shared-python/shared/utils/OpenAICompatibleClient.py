@@ -1,6 +1,9 @@
 """
 OpenAI-compatible universal AI client
 Supports any model that follows the OpenAI API specification (DeepSeek, Qwen, GLM, etc.)
+
+For Aliyun (qwen) models, api keys are drawn from the AliQuotaManager
+token pool and automatically rotated on HTTP 429.
 """
 import json
 import os
@@ -19,6 +22,13 @@ from shared.utils.http_clients import get_async_client
 
 # Local debug mode: do not use Redis
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
+
+
+
+
+def _is_ali_model(model_name: str) -> bool:
+    """Check whether a model name routes to Aliyun DashScope."""
+    return "qwen" in (model_name or "").lower()
 
 
 class OpenAICompatibleClient:
@@ -56,6 +66,9 @@ class OpenAICompatibleClient:
         
         # Get model name for routing
         self.default_model = default_model or getattr(settings, 'NORMOL_MODEL', 'deepseek-chat')
+        
+        # Store explicit overrides for pool bypass detection
+        self._explicit_api_key = api_key
         
         # Auto-route API based on model name (if api_key/api_url not explicitly provided)
         resolved_key, resolved_url = self._resolve_api_config(
@@ -178,6 +191,111 @@ class OpenAICompatibleClient:
         }
         await self.redis_service.set(key, state_json, ttl=7200)
 
+    # ------------------------------------------------------------------
+    # Ali token-pool helpers
+    # ------------------------------------------------------------------
+
+    def _should_use_ali_pool(self) -> bool:
+        """Whether to route through the AliQuotaManager instead of a fixed key."""
+        if self._explicit_api_key:
+            return False
+        return _is_ali_model(self.default_model)
+
+    async def _make_ali_pool_call(
+        self,
+        payload: Dict[str, Any],
+        all_messages: List[Dict[str, str]],
+        conversation_state: Dict[str, Any],
+    ) -> str:
+        """Acquire a token, make the call, and retry inline on 429."""
+        from shared.utils.ali_quota_manager import get_ali_quota_manager
+
+        quota_manager = get_ali_quota_manager()
+
+        max_retries = settings.ALI_INLINE_MAX_RETRIES
+        for attempt in range(max_retries):
+            lease = quota_manager.acquire_request(operation="chat_completion")
+            headers = {
+                "Authorization": f"Bearer {lease.api_key}",
+                "Content-Type": "application/json",
+            }
+            try:
+                logger.info(
+                    f"🌐 Starting HTTP request to {self.api_url} "
+                    f"(model: {payload['model']}, token: {lease.token_id}, timeout: {self.timeout}s)..."
+                )
+                request_start = time.time()
+                client = get_async_client()
+                response = await client.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout,
+                )
+
+                if response.status_code == 429:
+                    retry_after = _parse_retry_after_header(response)
+                    quota_manager.mark_rate_limited(lease.token_id, retry_after)
+                    logger.warning(
+                        f"Ali token {lease.token_id} rate-limited "
+                        f"(attempt {attempt + 1}/{max_retries}), "
+                        f"cooling down {retry_after}s and retrying with next token"
+                    )
+                    if attempt == max_retries - 1:
+                        response.raise_for_status()
+                    continue
+
+                response.raise_for_status()
+                data = response.json()
+
+                request_duration = time.time() - request_start
+                logger.info(f"✅ AI request completed, duration: {request_duration:.2f}s")
+
+                choices = data.get("choices", [])
+                if not choices:
+                    raise LLMServiceException(
+                        internal_message="AI returned empty result",
+                        provider=self.default_model,
+                    )
+
+                message = choices[0].get("message", {})
+                content = message.get("content", "")
+                if content is None:
+                    content = ""
+
+                # Update session state (only when Redis is available)
+                if self.redis_service is not None:
+                    if message:
+                        assistant_message = {"role": message.get("role", "assistant"), "content": content}
+                    else:
+                        assistant_message = {"role": "assistant", "content": content}
+
+                    conversation_state["messages"] = all_messages + [assistant_message]
+                    conversation_state["progress"] = len(content)
+                    conversation_state["status"] = "completed"
+                    await self.update_conversation_state(conversation_state)
+
+                return content
+
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429 and attempt < max_retries - 1:
+                    retry_after = _parse_retry_after_header(exc.response)
+                    quota_manager.mark_rate_limited(lease.token_id, retry_after)
+                    logger.warning(
+                        f"Ali token {lease.token_id} rate-limited "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    continue
+                raise
+
+        # unreachable but satisfies the type checker
+        raise LLMServiceException(
+            internal_message="Ali token pool retry loop exited unexpectedly",
+            provider=self.default_model,
+        )
+
+    # ------------------------------------------------------------------
+
     async def chat_completion(
         self,
         messages: Union[str, List[Dict[str, str]]],
@@ -220,12 +338,6 @@ class OpenAICompatibleClient:
             previous_messages = conversation_state.get("messages", []) or []
             all_messages = previous_messages + incoming_messages
 
-        # Build request headers
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
         # Build request body
         payload = {
             "model": model or self.default_model,
@@ -249,6 +361,59 @@ class OpenAICompatibleClient:
         for key, value in kwargs.items():
             if key in allowed_api_params:
                 payload[key] = value
+
+        # Route through Ali token pool when applicable
+        if self._should_use_ali_pool():
+            try:
+                return await self._make_ali_pool_call(
+                    payload=payload,
+                    all_messages=all_messages,
+                    conversation_state=conversation_state,
+                )
+            except LLMServiceException:
+                raise
+            except httpx.HTTPStatusError as e:
+                if self.redis_service is not None:
+                    conversation_state["status"] = "failed"
+                    await self.update_conversation_state(conversation_state)
+                logger.error(
+                    f"LLM request failed (Ali pool): url={self.api_url}, model={payload['model']}, "
+                    f"status={e.response.status_code}"
+                )
+                raise LLMServiceException(
+                    internal_message=f"API request failed: {str(e)}",
+                    provider=self.default_model,
+                    status_code=e.response.status_code if hasattr(e, 'response') else None,
+                    original_exception=e,
+                ) from e
+            except httpx.TimeoutException as e:
+                if self.redis_service is not None:
+                    conversation_state["status"] = "failed"
+                    await self.update_conversation_state(conversation_state)
+                logger.error(
+                    f"LLM request timeout (Ali pool): url={self.api_url}, model={payload['model']}, "
+                    f"timeout={self.timeout}s"
+                )
+                raise LLMServiceException(
+                    internal_message=f"API request timeout: {str(e)}",
+                    provider=self.default_model,
+                    original_exception=e,
+                ) from e
+            except Exception as e:
+                if self.redis_service is not None:
+                    conversation_state["status"] = "failed"
+                    await self.update_conversation_state(conversation_state)
+                logger.error(
+                    f"LLM request error (Ali pool): url={self.api_url}, model={payload['model']}, error={e}"
+                )
+                raise UnknownException(original_exception=e) from e
+
+        # Non-Ali path: original behaviour with fixed key
+        # Build request headers
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
 
         try:
             logger.info(f"🌐 Starting HTTP request to {self.api_url} (model: {payload['model']}, timeout: {self.timeout}s)...")
@@ -333,14 +498,14 @@ class OpenAICompatibleClient:
             raise UnknownException(original_exception=e) from e
 
     async def reset_conversation(self, conversation_id: str = "default"):
-        """重置对话历史"""
+        """Reset conversation history"""
         if self.redis_service is None:
             return
         key = f"ai_conversation:{conversation_id}"
         await self.redis_service.delete(key)
 
     async def get_conversation_progress(self, conversation_id: str = "default") -> Dict[str, Any]:
-        """获取对话进度"""
+        """Get conversation progress"""
         state = await self.get_conversation_state(conversation_id)
         return {
             "id": conversation_id,
@@ -350,14 +515,25 @@ class OpenAICompatibleClient:
         }
 
     async def get_all_conversations(self) -> List[str]:
-        """获取所有对话ID列表"""
+        """Get list of all conversation IDs"""
         if self.redis_service is None:
             return []
         keys = await self.redis_service._get_client().keys("ai_conversation:*")
         return [key.decode('utf-8').split(":", 1)[1] for key in keys]
 
 
-# 向后兼容：DeepSeekRedisStreamClient别名
+def _parse_retry_after_header(response: httpx.Response) -> int:
+    """Extract Retry-After seconds from an httpx response, with sane bounds."""
+    try:
+        header_value = response.headers.get("retry-after") or response.headers.get("Retry-After")
+        if header_value:
+            return max(1, min(int(header_value), 120))
+    except (ValueError, TypeError):
+        pass
+    return settings.ALI_TOKEN_COOLDOWN_SECONDS
+
+
+# Backward compatibility alias
 class DeepSeekRedisStreamClient(OpenAICompatibleClient):
-    """向后兼容的DeepSeek客户端（实际使用OpenAI兼容客户端）"""
+    """Backward-compatible DeepSeek client (uses OpenAI-compatible client)"""
     pass
