@@ -51,6 +51,13 @@ class MessagingConfig(BaseModel):
         'job_progress_update': 3,  # 最低优先级
     }, description="消息类型优先级配置")
     
+    # Sync Publisher Configuration
+    SYNC_PUBLISHER_QUEUE_SIZE: int = Field(default=256, description="Sync Publisher local queue size")
+    SYNC_PUBLISHER_PROGRESS_DROP_RATIO: float = Field(default=0.75, description="Queue capacity ratio that triggers dropping progress messages")
+    SYNC_PUBLISHER_ENQUEUE_TIMEOUT_SECONDS: float = Field(default=5.0, description="Enqueue timeout in seconds")
+    SYNC_PUBLISHER_CONFIRM_TIMEOUT_SECONDS: float = Field(default=30.0, description="Wait time for publish confirmation in seconds")
+    SYNC_PUBLISHER_IDLE_CLOSE_SECONDS: float = Field(default=300.0, description="Connection idle close timeout in seconds")
+    
     def get_queue_config(self, queue_name: str) -> Dict[str, Any]:
         """获取队列配置"""
         return {
