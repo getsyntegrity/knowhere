@@ -30,8 +30,28 @@ class AIConfig(BaseModel):
     DX_KEy: str = Field(default="", description="DX密钥（兼容性字段）")
     ARK_API_KEY: str = Field(default="", description="ARK API密钥（兼容性字段）")
     ARK_URL: str = Field(default="", description="ARK URL（兼容性字段）")
-    ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段）")
+    ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段，单key回退）")
+    ALI_API_KEYS: str = Field(
+        default="",
+        description="Ali API key pool. Supports JSON array or comma/newline-separated values; entries may use token_id=api_key format.",
+    )
     ALI_URL: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="阿里云URL（兼容性字段）")
+    ALI_TOKEN_RPM_LIMIT: int = Field(
+        default=300,
+        description="Per-token requests-per-minute limit for Ali API keys.",
+    )
+    ALI_TOKEN_DAILY_LIMIT: int = Field(
+        default=10000,
+        description="Per-token daily request limit for Ali API keys.",
+    )
+    ALI_TOKEN_COOLDOWN_SECONDS: int = Field(
+        default=60,
+        description="Cooldown seconds after an Ali token receives 429.",
+    )
+    ALI_INLINE_MAX_RETRIES: int = Field(
+        default=3,
+        description="Maximum inline retries when an Ali token is rate-limited (429). Each retry acquires the next available token.",
+    )
     OPENAI_CLIENT_TIMEOUT: int = Field(default=300, description="OpenAI-compatible client timeout in seconds")
     IMAGE_MODEL_MAX: str = Field(default="", description="最大图像模型（兼容性字段）")
     REASON_MODEL: str = Field(default="", description="推理模型（兼容性字段）")

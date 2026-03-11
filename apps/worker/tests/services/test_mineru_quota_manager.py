@@ -55,7 +55,7 @@ def build_manager(
 
 
 def test_parse_token_specs_supports_json_entries():
-    specs = MinerUQuotaManager._parse_token_specs(
+    specs = MinerUQuotaManager.parse_token_specs(
         '[{"id":"primary","key":"sk-1","rpm_limit":250},{"id":"backup","key":"sk-2","daily_limit":9000}]',
         default_rpm_limit=300,
         default_daily_limit=10000,
@@ -72,7 +72,7 @@ def test_parse_token_specs_supports_json_entries():
 def test_acquire_request_skips_exhausted_token(monkeypatch):
     fixed_now = 1_700_000_000
     monkeypatch.setattr(
-        "app.services.document_parser.mineru_quota_manager.time.time",
+        "shared.utils.quota_manager.time.time",
         lambda: fixed_now,
     )
     manager, redis_client = build_manager()
@@ -88,7 +88,7 @@ def test_acquire_request_skips_exhausted_token(monkeypatch):
 def test_acquire_request_reports_shortest_retry_window(monkeypatch):
     fixed_now = 1_700_000_000
     monkeypatch.setattr(
-        "app.services.document_parser.mineru_quota_manager.time.time",
+        "shared.utils.quota_manager.time.time",
         lambda: fixed_now,
     )
     manager, redis_client = build_manager()
@@ -141,7 +141,7 @@ def test_lua_reservation_enforces_rpm_limit():
 def test_lua_reservation_respects_daily_limit(monkeypatch):
     fixed_now = 1_700_000_000
     monkeypatch.setattr(
-        "app.services.document_parser.mineru_quota_manager.time.time",
+        "shared.utils.quota_manager.time.time",
         lambda: fixed_now,
     )
 
@@ -196,9 +196,10 @@ def test_lua_round_robin_uses_backup_token_after_cooldown():
 
 def test_quota_keys_share_cluster_hash_slot():
     fixed_now = 1_700_000_000
-    minute_key = MinerUQuotaManager._minute_key("primary", fixed_now)
-    day_key = MinerUQuotaManager._day_key("primary", fixed_now)
-    cooldown_key = MinerUQuotaManager._cooldown_key("primary")
+    manager, _ = build_manager()
+    minute_key = manager._minute_key("primary", fixed_now)
+    day_key = manager._day_key("primary", fixed_now)
+    cooldown_key = manager._cooldown_key("primary")
 
     assert "{primary}" in minute_key
     assert "{primary}" in day_key
@@ -210,7 +211,7 @@ def test_quota_keys_share_cluster_hash_slot():
 def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_path):
     fixed_now = 1_700_000_000
     monkeypatch.setattr(
-        "app.services.document_parser.mineru_quota_manager.time.time",
+        "shared.utils.quota_manager.time.time",
         lambda: fixed_now,
     )
 
