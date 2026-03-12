@@ -134,12 +134,13 @@ class OpenAICompatibleClientSync:
         for attempt in range(max_retries):
             lease = quota_manager.acquire_request(operation="chat_completion")
             try:
-                # Build a per-request client with the leased api_key
+                # Hybrid rate-limit control: SDK handles per-key backoff (exp. backoff + jitter),
+                # outer loop handles token rotation across the pool on persistent 429s.
                 client = OpenAI(
                     api_key=lease.api_key,
                     base_url=str(self._client.base_url),
                     http_client=get_sync_client(),
-                    max_retries=0,  # we handle retries ourselves
+                    max_retries=2,
                     timeout=self.timeout,
                 )
                 response = client.chat.completions.create(
