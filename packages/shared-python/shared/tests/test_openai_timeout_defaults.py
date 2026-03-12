@@ -14,23 +14,18 @@ os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 from shared.core.config import settings
-from shared.utils.OpenAICompatibleClient import OpenAICompatibleClient
 from shared.utils.OpenAICompatibleClientSync import OpenAICompatibleClientSync
 
 
 def test_openai_compatible_client_uses_config_timeout_by_default(monkeypatch):
     monkeypatch.setattr(settings, "OPENAI_CLIENT_TIMEOUT", 300, raising=False)
 
-    client = OpenAICompatibleClient(skip_redis=True)
     sync_client = OpenAICompatibleClientSync()
 
-    assert client.timeout == 300
     assert sync_client.timeout == 300
 
 
 def test_openai_compatible_client_allows_timeout_override():
-    client = OpenAICompatibleClient(timeout=180, skip_redis=True)
     sync_client = OpenAICompatibleClientSync(timeout=180)
 
-    assert client.timeout == 180
     assert sync_client.timeout == 180

@@ -12,7 +12,7 @@ from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from loguru import logger
-
+from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import (
     SystemSettingInvalidException,
     SystemSettingMissingException
@@ -128,7 +128,7 @@ def get_fernet_service() -> FernetService:
             if _fernet_service is None:
                 import os
 
-                master_key = os.environ.get('WEBHOOK_MASTER_KEY')
+                master_key = settings.WEBHOOK_MASTER_KEY
                 if not master_key:
                     raise SystemSettingMissingException(internal_message="WEBHOOK_MASTER_KEY must be set in environment")
 

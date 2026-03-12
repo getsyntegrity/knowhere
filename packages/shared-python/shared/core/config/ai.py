@@ -52,6 +52,10 @@ class AIConfig(BaseModel):
         default=3,
         description="Maximum inline retries when an Ali token is rate-limited (429). Each retry acquires the next available token.",
     )
+    ALI_SDK_MAX_RETRIES: int = Field(
+        default=3,
+        description="OpenAI SDK max_retries per token for transient 429s (exponential backoff + jitter).",
+    )
     OPENAI_CLIENT_TIMEOUT: int = Field(default=300, description="OpenAI-compatible client timeout in seconds")
     IMAGE_MODEL_MAX: str = Field(default="", description="最大图像模型（兼容性字段）")
     REASON_MODEL: str = Field(default="", description="推理模型（兼容性字段）")

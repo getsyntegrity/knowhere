@@ -29,10 +29,13 @@ MINERU_UPLOAD_TIMEOUT = (
 
 def _build_mineru_session() -> requests.Session:
     session = requests.Session()
+    # Hybrid rate-limit control: urllib3 handles transient 429s with backoff
+    # (respects Retry-After header); application-level handling in callers
+    # covers persistent rate limits with Redis token marking and pool rotation.
     retry_strategy = Retry(
         total=settings.MINERU_UPLOAD_RETRY_TOTAL,
         backoff_factor=settings.MINERU_UPLOAD_RETRY_BACKOFF_FACTOR,
-        status_forcelist=[502, 503, 504],
+        status_forcelist=[429, 502, 503, 504],
         allowed_methods=["GET", "POST", "PUT"],
         raise_on_status=False,
     )
@@ -190,12 +193,14 @@ def poll_mineru_task(
                 ).info("Acquired MinerU token for polling")
                 last_token_id = lease.token_id
 
-            response = get_mineru_session().get(                status_url,
+            response = get_mineru_session().get(status_url,
                 headers=get_mineru_headers(lease.api_key),
                 timeout=settings.MINERU_API_TIMEOUT,
             )
 
             if response.status_code == 429:
+                # urllib3 already retried with backoff — if we still see 429,
+                # mark the token and let Celery handle task-level retry.
                 _raise_mineru_unavailable(
                     lease.token_id, response, operation="poll_status"
                 )
