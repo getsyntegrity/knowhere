@@ -140,7 +140,7 @@ class OpenAICompatibleClientSync:
                     api_key=lease.api_key,
                     base_url=str(self._client.base_url),
                     http_client=get_sync_client(),
-                    max_retries=2,
+                    max_retries=settings.ALI_SDK_MAX_RETRIES,
                     timeout=self.timeout,
                 )
                 response = client.chat.completions.create(
