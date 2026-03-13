@@ -530,6 +530,7 @@ def _parse(job_id: str, user_id: str | None):
             summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
             summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),
             add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
+            s3_key=s3_key,
         )
     finally:
         if local_temp_path and os.path.exists(local_temp_path):

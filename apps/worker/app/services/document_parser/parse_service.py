@@ -163,7 +163,7 @@ def checkerboard_inject_parse(
         from app.services.document_parser.pdf_parser import parse_pdfs
 
         if filename and file_full_path:
-            parsed_df = parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root)
+            parsed_df = parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root, s3_key=kwargs.get('s3_key'))
 
     elif '.docx' in file_path_lower:
         logger.debug(f"file type is docx")
