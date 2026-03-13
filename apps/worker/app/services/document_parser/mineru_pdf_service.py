@@ -517,9 +517,110 @@ def _upload_file_to_mineru(
     upload_logger.info("MinerU file upload completed, switching to polling")
 
 
-def parse_pdf_via_mineru(pdf_url: str, filename: str, output_dir: str) -> None:
-    batch_id, upload_url, token_id = _request_upload_target(pdf_url, filename)
-    _upload_file_to_mineru(pdf_url, filename, upload_url, token_id)
+def _submit_url_task(presigned_url: str, filename: str) -> tuple[str, str]:
+    """Submit a URL-based extraction task to MinerU.
+
+    Uses the /extract/task/batch endpoint so MinerU fetches the file
+    directly from our S3 via presigned URL, skipping the OSS upload hop.
+
+    Returns (batch_id, token_id).
+    """
+    base_url = settings.MINERU_URL
+    quota_manager = get_mineru_quota_manager()
+    submit_logger = _mineru_logger(
+        "submit_url_task",
+        operation="submit_url_task",
+        filename=filename,
+    )
+
+    url = f"{base_url}/extract/task/batch"
+    payload = {
+        "files": [{"url": presigned_url}],
+        "is_ocr": True,
+        "enable_formula": True,
+        "enable_table": True,
+        "language": "auto",
+        "model_version": "vlm",
+    }
+
+    submit_logger.info("Submitting URL-based MinerU extraction task")
+    lease = quota_manager.acquire_request(operation="submit_url_task")
+    submit_logger.bind(token_id=lease.token_id).info(
+        "Acquired MinerU token for URL task submission"
+    )
+
+    response = get_mineru_session().post(
+        url,
+        headers=get_mineru_headers(lease.api_key),
+        json=payload,
+        timeout=settings.MINERU_API_TIMEOUT,
+    )
+
+    if response.status_code == 429:
+        _raise_mineru_unavailable(
+            lease.token_id, response, operation="submit_url_task"
+        )
+
+    if response.status_code != 200:
+        submit_logger.bind(
+            token_id=lease.token_id,
+            status_code=response.status_code,
+        ).error("MinerU URL task submission failed")
+        raise MinerUServiceException(
+            internal_message=f"URL task submission failed: {response.text}",
+            status_code=response.status_code,
+        )
+
+    result = response.json()
+    if result.get("code") != 0:
+        response_message = str(result.get("msg", "Unknown error"))
+        if "rate limit" in response_message.lower():
+            quota_manager.mark_rate_limited(
+                lease.token_id,
+                settings.MINERU_TOKEN_COOLDOWN_SECONDS,
+            )
+            raise UnavailableException(
+                internal_message=f"MinerU rate limited during submit_url_task: {response_message}",
+                retry_after=settings.MINERU_TOKEN_COOLDOWN_SECONDS,
+                limit=lease.rpm_limit,
+                period="minute",
+                user_message="Document processing is busy right now. Please retry shortly.",
+            )
+        raise MinerUServiceException(
+            internal_message=f"MinerU API error: {response_message}"
+        )
+
+    batch_id = result["data"]["batch_id"]
+    submit_logger.bind(
+        token_id=lease.token_id, batch_id=batch_id
+    ).info("MinerU URL task submitted")
+    return batch_id, lease.token_id
+
+
+def parse_pdf_via_mineru(
+    pdf_url: str,
+    filename: str,
+    output_dir: str,
+    s3_key: Optional[str] = None,
+) -> None:
+    if settings.ENVIRONMENT != "development" and s3_key is not None:
+        from app.services.storage.sync_storage_service import generate_download_url
+
+        presigned = generate_download_url(
+            s3_key, expires_in=settings.MINERU_URL_MODE_PRESIGN_EXPIRY
+        )
+        presigned_url = presigned["download_url"]
+        _mineru_logger("ingestion_mode", mode="s3_url").info(
+            "Using S3 URL mode for MinerU ingestion"
+        )
+        batch_id, token_id = _submit_url_task(presigned_url, filename)
+    else:
+        _mineru_logger("ingestion_mode", mode="direct_upload").info(
+            "Using direct upload mode for MinerU ingestion"
+        )
+        batch_id, upload_url, token_id = _request_upload_target(pdf_url, filename)
+        _upload_file_to_mineru(pdf_url, filename, upload_url, token_id)
+
     poll_mineru_task(
         status_url=f"{settings.MINERU_URL}/extract-results/batch/{batch_id}",
         task_id=batch_id,

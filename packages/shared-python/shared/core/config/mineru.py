@@ -55,3 +55,7 @@ class MineruConfig(BaseModel):
         default=2,
         description="Backoff factor between upload retries.",
     )
+    MINERU_URL_MODE_PRESIGN_EXPIRY: int = Field(
+        default=3600,
+        description="Presigned URL TTL in seconds for S3 URL mode ingestion.",
+    )

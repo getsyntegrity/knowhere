@@ -8,12 +8,12 @@ from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.mineru_pdf_service import parse_pdf_via_mineru
 
 
-def upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
+def upload_and_parse(pdf_url: str, filename: str, output_dir: str, s3_key: str | None = None) -> None:
     """Compatibility wrapper for the extracted MinerU workflow module."""
-    parse_pdf_via_mineru(pdf_url, filename, output_dir)
+    parse_pdf_via_mineru(pdf_url, filename, output_dir, s3_key=s3_key)
 
 
-def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, relative_root=None):
+def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, relative_root=None, s3_key=None):
     route = profile.route if profile else "standard"
 
     if route == "fast":
@@ -40,7 +40,7 @@ def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, rel
             f"⚡ Fast path: wrote {len(md_text)} chars to full.md, {img_count} images extracted"
         )
     else:
-        upload_and_parse(pdf_path, filename, output_dir)
+        upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
 
     logger.info("✅ PDF parsing step 1 complete: text extracted")
 
