@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, cast
 from urllib.parse import urlparse
 
 from shared.core.config import settings
+from shared.utils.url_file_type import resolve_file_extension_async
 from shared.core.database import get_db
 from app.services.rate_limit.dependencies import (
     with_current_user,
@@ -269,15 +270,10 @@ async def create_job(
                 user_message=f"Unsupported file type. Supported formats: {supported_formats}",
                 violations=[{"field": "file_name", "description": "File type not supported"}]
             )
-        # TODO, we need to obtain the resource file name from the header, the url may do not have
-        # the file name
         elif payload.source_type == "url":
-            # 验证URL文件类型
-            parsed_url = urlparse(payload.source_url)
-            url_file_name: str = (
-                str(os.path.basename(parsed_url.path)) or f"url_file_{uuid.uuid4().hex[:8]}"
-            )
-            if not validate_file_type(url_file_name):
+            # Resolve file type from URL path or Content-Type header
+            file_ext = await resolve_file_extension_async(payload.source_url)
+            if not file_ext:
                 supported_formats = get_supported_formats()
                 raise ValidationException(
                     user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
@@ -377,20 +373,18 @@ async def create_job(
         else:
             # URL模式 - 创建Job后异步下载和上传
             try:
-                # 解析URL获取文件名和扩展名
-                parsed_url = urlparse(payload.source_url)
-                source_file_name: str = str(os.path.basename(parsed_url.path)) or f"url_file_{uuid.uuid4().hex[:8]}"
-                
-                # 提前验证文件类型（快速失败）
-                if not validate_file_type(source_file_name):
+                # Resolve file extension (URL path first, then Content-Type header)
+                file_extension = await resolve_file_extension_async(payload.source_url)
+                if not file_extension:
                     supported_formats = get_supported_formats()
                     raise ValidationException(
                         user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
                         violations=[{"field": "source_url", "description": "URL file type not supported"}]
                     )
-                
-                # 生成S3键（在API层面确定，避免异步任务中再更新）
-                file_extension = os.path.splitext(source_file_name)[1] or ".pdf"
+
+                parsed_url = urlparse(payload.source_url)
+                source_file_name: str = str(os.path.basename(parsed_url.path)) or f"url_file_{uuid.uuid4().hex[:8]}{file_extension}"
+
                 s3_key = f"uploads/{job_id}{file_extension}"
                 
                 job_metadata.update(
