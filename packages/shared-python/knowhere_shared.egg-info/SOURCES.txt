@@ -84,7 +84,6 @@ shared/repositories/credits_repository.py
 shared/repositories/webhook_secret_repository.py
 shared/services/worker_health.py
 shared/services/ai/__init__.py
-shared/services/ai/ai_query_service.py
 shared/services/ai/prompt_service.py
 shared/services/ai/response_process_service.py
 shared/services/billing/__init__.py
@@ -132,7 +131,6 @@ shared/tests/test_worker_health.py
 shared/utils/CommonHelper.py
 shared/utils/CommonHelperSync.py
 shared/utils/FileDownUpUtils.py
-shared/utils/OpenAICompatibleClient.py
 shared/utils/OpenAICompatibleClientSync.py
 shared/utils/__init__.py
 shared/utils/device_utils.py
