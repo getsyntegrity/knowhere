@@ -341,7 +341,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
 def test_parse_pdfs_standard_route_uses_extracted_mineru_workflow(monkeypatch, tmp_path):
     captured: dict[str, Any] = {}
 
-    def fake_upload_and_parse(pdf_url: str, filename: str, output_dir: str) -> None:
+    def fake_upload_and_parse(pdf_url: str, filename: str, output_dir: str, s3_key: str = "") -> None:
         captured["pdf_url"] = pdf_url
         captured["filename"] = filename
         captured["output_dir"] = output_dir
