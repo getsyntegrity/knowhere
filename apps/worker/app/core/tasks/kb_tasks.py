@@ -6,7 +6,6 @@ All I/O operations use sync services that yield cooperatively under gevent.
 """
 import os
 import tempfile
-from urllib.parse import urlparse
 
 import requests
 from loguru import logger
@@ -398,7 +397,10 @@ def _parse(job_id: str, user_id: str | None):
     # Download file to temp location
     page_count = 1
 
-    file_ext = os.path.splitext(filename)[1].lower() if filename else ""
+    # Derive file extension from s3_key (always has the correct extension)
+    # rather than filename, which may not have a real extension for URLs
+    # like arxiv.org/pdf/1706.03762
+    file_ext = os.path.splitext(s3_key)[1].lower() if s3_key else ""
     local_temp_path = _download_s3_file_to_temp(file_url, file_ext)
 
     logger.info(f"File downloaded: job_id={job_id}, local_path={local_temp_path}")

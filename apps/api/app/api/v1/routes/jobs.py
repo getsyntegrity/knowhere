@@ -383,7 +383,15 @@ async def create_job(
                     )
 
                 parsed_url = urlparse(payload.source_url)
-                source_file_name: str = str(os.path.basename(parsed_url.path)) or f"url_file_{uuid.uuid4().hex[:8]}{file_extension}"
+                url_basename = str(os.path.basename(parsed_url.path))
+                # Ensure source_file_name carries the correct extension.
+                # URLs like arxiv.org/pdf/1706.03762 have no real extension in the path.
+                if url_basename and os.path.splitext(url_basename)[1].lower() == file_extension:
+                    source_file_name = url_basename
+                elif url_basename:
+                    source_file_name = f"{url_basename}{file_extension}"
+                else:
+                    source_file_name = f"url_file_{uuid.uuid4().hex[:8]}{file_extension}"
 
                 s3_key = f"uploads/{job_id}{file_extension}"
                 
