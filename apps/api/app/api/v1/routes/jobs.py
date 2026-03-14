@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, cast
 from urllib.parse import urlparse
 
-from shared.core.constants.system import SystemConstants
 from shared.core.config import settings
 from shared.core.database import get_db
 from app.services.rate_limit.dependencies import (
@@ -49,10 +48,7 @@ router = APIRouter(tags=["Jobs"])
 
 def get_supported_formats() -> str:
     """获取所有支持的文件格式字符串"""
-    all_supported_extensions = []
-    for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
-        all_supported_extensions.extend(category)
-    return ", ".join(sorted(all_supported_extensions))
+    return ", ".join(sorted(settings.get_supported_extensions()))
 
 
 async def transition_to_uploaded(
@@ -218,12 +214,7 @@ def validate_file_type(file_name: str) -> bool:
 
     file_extension = os.path.splitext(file_name)[1].lower()
 
-    # 支持所有文件类型
-    all_supported_extensions = []
-    for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
-        all_supported_extensions.extend(category)
-
-    return file_extension in all_supported_extensions
+    return file_extension in settings.get_supported_extensions()
 
 
 def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:

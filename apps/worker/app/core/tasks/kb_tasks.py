@@ -53,7 +53,6 @@ from app.services.storage.sync_storage_service import (
 from app.core.tasks.base_task import KBBaseTask
 
 # Domain services
-from shared.core.constants.system import SystemConstants
 from shared.core.billing import BillingCalculator
 from shared.models.database.job import Job
 from shared.models.schemas.job_metadata import JobMetadataHelper
@@ -171,9 +170,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
     url_path = parsed_url.path
     file_extension = os.path.splitext(url_path)[1].lower()
 
-    all_supported_extensions = []
-    for category in SystemConstants.SUPPORTED_EXTENSIONS.values():
-        all_supported_extensions.extend(category)
+    all_supported_extensions = settings.get_supported_extensions()
 
     if not file_extension or file_extension not in all_supported_extensions:
         supported_formats = ", ".join(sorted(all_supported_extensions))
@@ -210,15 +207,11 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         # Step 3: Validate file size
         file_size = os.path.getsize(temp_file_path)
 
-        limit = 100 * 1024 * 1024
-        if file_extension in [".docx", ".xlsx", ".doc", ".xls"]:
-            limit = 50 * 1024 * 1024
-
-        if file_size > limit:
-            limit_mb = limit // (1024 * 1024)
+        if file_size > settings.MAX_FILE_SIZE:
+            limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
             raise ValidationException(
                 user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
-                violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {limit} bytes"}],
+                violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {settings.MAX_FILE_SIZE} bytes"}],
             )
 
         # Publish progress: uploading to S3
@@ -337,15 +330,11 @@ def _parse(job_id: str, user_id: str | None):
     file_size = file_info.get("size", 0)
     file_extension = os.path.splitext(s3_key)[1].lower()
 
-    limit = 100 * 1024 * 1024
-    if file_extension in [".docx", ".xlsx", ".doc", ".xls"]:
-        limit = 50 * 1024 * 1024
-
-    if file_size > limit:
-        limit_mb = limit // (1024 * 1024)
+    if file_size > settings.MAX_FILE_SIZE:
+        limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
         raise ValidationException(
             user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
-            violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {limit} bytes"}],
+            violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {settings.MAX_FILE_SIZE} bytes"}],
         )
 
     # Get job_metadata from Redis
