@@ -165,17 +165,16 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         message_text="Validating URL file type...",
     )
 
-    # Step 1: Validate URL file type
-    parsed_url = urlparse(source_url)
-    url_path = parsed_url.path
-    file_extension = os.path.splitext(url_path)[1].lower()
+    # Step 1: Validate URL file type (path first, then Content-Type header)
+    from shared.utils.url_file_type import resolve_file_extension_sync
 
-    all_supported_extensions = settings.get_supported_extensions()
+    file_extension = resolve_file_extension_sync(source_url)
 
-    if not file_extension or file_extension not in all_supported_extensions:
+    if not file_extension:
+        all_supported_extensions = settings.get_supported_extensions()
         supported_formats = ", ".join(sorted(all_supported_extensions))
         raise ValidationException(
-            user_message=f"Unsupported file type {file_extension}",
+            user_message="Unsupported file type",
             violations=[{"field": "file_extension", "description": f"Must be one of: {supported_formats}"}],
         )
 
