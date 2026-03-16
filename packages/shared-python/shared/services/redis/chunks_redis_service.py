@@ -112,6 +112,17 @@ class ChunksRedisService:
                 "relationships": safe_parse_rels(type_val, row.get("connectto")),
             }
 
+            # 解析 page_nums: "3,4" → [3, 4]
+            raw_page_nums = row.get("page_nums", "")
+            if raw_page_nums and not (pd is not None and pd.isna(raw_page_nums)):
+                try:
+                    page_nums_list = [int(p.strip()) for p in str(raw_page_nums).split(",") if p.strip()]
+                except (ValueError, TypeError):
+                    page_nums_list = []
+            else:
+                page_nums_list = []
+            metadata["page_nums"] = page_nums_list
+
             # 根据类型添加特定字段
             if chunk_type == "image":
                 img_name = (

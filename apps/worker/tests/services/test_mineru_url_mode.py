@@ -145,7 +145,7 @@ def test_submit_url_task_rate_limit_raises(monkeypatch):
     assert exc_info.value.period == "minute"
 
 
-def test_parse_pdf_via_mineru_uses_url_mode_in_staging(monkeypatch, tmp_path):
+def test_parse_via_full_uses_url_mode_in_staging(monkeypatch, tmp_path):
     """In non-development env with s3_key, uses URL mode (no upload)."""
     monkeypatch.setattr(
         "shared.core.config.settings.ENVIRONMENT", "staging"
@@ -188,7 +188,7 @@ def test_parse_pdf_via_mineru_uses_url_mode_in_staging(monkeypatch, tmp_path):
     )
 
     output_dir = str(tmp_path / "output")
-    mineru_pdf_service.parse_pdf_via_mineru(
+    mineru_pdf_service.parse_via_full(
         "/tmp/sample.pdf", "sample.pdf", output_dir,
         s3_key="uploads/sample.pdf",
     )
@@ -200,7 +200,7 @@ def test_parse_pdf_via_mineru_uses_url_mode_in_staging(monkeypatch, tmp_path):
     assert calls[2] == ("poll", "batch-url-2", "primary")
 
 
-def test_parse_pdf_via_mineru_uses_direct_upload_in_development(
+def test_parse_via_full_uses_direct_upload_in_development(
     monkeypatch, tmp_path
 ):
     """In development env, falls back to direct upload even with s3_key."""
@@ -246,7 +246,7 @@ def test_parse_pdf_via_mineru_uses_direct_upload_in_development(
     local_pdf = tmp_path / "sample.pdf"
     local_pdf.write_bytes(b"%PDF-1.4\n")
 
-    mineru_pdf_service.parse_pdf_via_mineru(
+    mineru_pdf_service.parse_via_full(
         str(local_pdf), "sample.pdf", str(tmp_path / "output"),
         s3_key="uploads/sample.pdf",
     )

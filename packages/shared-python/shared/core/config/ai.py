@@ -71,7 +71,7 @@ class AIConfig(BaseModel):
     ILOVEAPI_BASE_URL: str = Field(default="https://api.ilovepdf.com/v1", description="iLoveAPI 基础URL")
     ILOVEAPI_TIMEOUT: int = Field(default=120, description="iLoveAPI 请求超时(秒)")
     PROD_URL: str = Field(default="", description="生产URL（兼容性字段）")
-    ALL_DF_COLS: str = Field(default="content,path,type,length,keywords,summary,know_id,tokens,extra,addtime", description="所有数据框列（兼容性字段）")
+    ALL_DF_COLS: str = Field(default="content,path,type,length,keywords,summary,know_id,tokens,extra,addtime,page_nums", description="所有数据框列（兼容性字段）")
     DEFAULT_FOLDERS: str = Field(default="Supplementary_Files,Temporary_Files,templates,images,fragments", description="默认文件夹（兼容性字段）")
     KB_TERM: str = Field(default="KB_DATA", description="知识库术语（兼容性字段）")
     KB_VEC_TERM: str = Field(default="KB_VECS", description="知识库向量术语（兼容性字段）")

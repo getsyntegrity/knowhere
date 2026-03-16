@@ -143,6 +143,14 @@ sequenceDiagram
 
 ### 🟡 TODO
 
+#### High Priority — TOC Hierarchy Optimization
+
+- [ ] **TOC 层级：LLM 识别正则 → 正则批量处理** — `toc_parser.py` + `prompt_service.py:eval-toc-headings`
+  - 现状：LLM 逐行输出每行的 level（100 行 TOC → 100 个 `{id, level}` 输出），token 开销大、速度慢
+  - 优化：让 LLM 识别 TOC 中的**编号模式**并输出对应正则+level（如 `第X章` → L1, `X.Y` → L2），然后用正则批量分配 level
+  - 效果：LLM 输出从 O(N) 降到 O(patterns)（通常 2-5 个模式），大幅压缩 token 和耗时
+  - 参考：`layout_parser.py` 的 `judge_by_conditions()` 已有成熟的正则特征库可复用
+
 #### High Priority — Agentic Profiler
 
 - [/] 继续优化**Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
