@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from shared.core.config import settings
 from shared.utils.url_file_type import resolve_file_extension_async
+from shared.utils.error_details import normalize_error_details
 from shared.core.database import get_db
 from app.services.rate_limit.dependencies import (
     with_current_user,
@@ -154,7 +155,7 @@ def _build_error_response(job: Any, job_metadata: Optional[dict] = None) -> Opti
     # Extract error_details from job_metadata if present
     error_details = None
     if job_metadata and isinstance(job_metadata, dict):
-        error_details = job_metadata.get("error_details")
+        error_details = normalize_error_details(job_metadata.get("error_details"))
 
     return StandardErrorObject(
         code=job.error_code or "UNKNOWN",
