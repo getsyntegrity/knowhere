@@ -42,6 +42,18 @@ def _is_meaningful_token(token: str) -> bool:
     return bool(_CN_EN_NUM_RE.search(token))
 
 
+# Lazy-loaded default stopwords (module-level cache)
+_DEFAULT_STOPWORDS: Optional[frozenset] = None
+
+def _get_default_stopwords() -> frozenset:
+    """Load default stopwords on first call, then return cached frozenset."""
+    global _DEFAULT_STOPWORDS
+    if _DEFAULT_STOPWORDS is None:
+        from shared.core.constants.stopwords import DEFAULT_STOPWORDS
+        _DEFAULT_STOPWORDS = DEFAULT_STOPWORDS
+    return _DEFAULT_STOPWORDS
+
+
 # Pre-clean: strip chunk reference markers before tokenization
 _CHUNK_MARKER_RE = re.compile(
     r'IMAGE_\S+_IMAGE|TABLE_\S+_TABLE|image-\d+|table-\d+',
@@ -54,7 +66,20 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
     - Chinese: jieba word segmentation
     - English: space-delimited word splitting (e.g. "deep learning" → ["deep", "learning"])
     - Mixed: both handled correctly in one pass
+
+    Args:
+        stopwords: None → use built-in baidu stopwords (default);
+                   []   → no stopword filtering;
+                   [custom list] → use provided stopwords.
     """
+    # Resolve stopwords: None → default, [] → skip, list → convert to set
+    if stopwords is None:
+        sw_set = _get_default_stopwords()
+    elif stopwords:
+        sw_set = set(stopwords)
+    else:
+        sw_set = None
+
     res_contents = []
     for content in contents:
         # Pre-clean: remove IMAGE_/TABLE_ markers and reference labels
@@ -63,8 +88,8 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
         # Filter: keep only tokens with meaningful characters (Chinese/English/numbers)
         tokens = [t for t in raw_tokens if _is_meaningful_token(t)]
         # Remove stopwords
-        if stopwords:
-            tokens = [w for w in tokens if w not in stopwords]
+        if sw_set:
+            tokens = [w for w in tokens if w not in sw_set]
         # Deduplicate while preserving order
         tokens = remove_duplicates_orderkept(tokens)
         res_contents.append(link_char.join(tokens))
