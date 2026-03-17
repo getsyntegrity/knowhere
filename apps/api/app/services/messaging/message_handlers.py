@@ -20,6 +20,7 @@ from app.services.state_machine import JobStateMachine
 from app.services.job_lifecycle_service import JobLifecycleService
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
+from shared.utils.error_details import normalize_error_details
 
 
 # Module-level singletons — these services are stateless, no need to
@@ -357,7 +358,9 @@ async def _handle_failure_async(message: JobFailureMessage):
             error_code = message.error_code or "UNKNOWN"
             error_details = None
             if message.metadata and message.metadata.get("details"):
-                error_details = message.metadata.get("details")
+                error_details = normalize_error_details(
+                    message.metadata.get("details")
+                )
 
             # Check for refund request
             should_refund = False

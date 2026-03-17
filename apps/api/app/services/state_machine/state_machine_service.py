@@ -11,6 +11,7 @@ from shared.core.state_machine.states import (JobStatus, get_state_timeout,
 from shared.models.database.job import Job
 from shared.models.database.job_state_audit_log import JobStateAuditLog
 from shared.services.redis import RedisServiceFactory
+from shared.utils.error_details import normalize_error_details
 from shared.utils.json_utils import make_json_safe
 from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 from loguru import logger
@@ -151,15 +152,23 @@ class StateMachineService:
     ) -> bool:
         """Mark Job as failed state"""
         try:
+            normalized_error_details = normalize_error_details(error_details)
+
             # Update error information
-            await self._update_job_error(db, job_id, error_message, error_code, error_details)
+            await self._update_job_error(
+                db,
+                job_id,
+                error_message,
+                error_code,
+                normalized_error_details,
+            )
             
             # Execute state transition
             transition_metadata = (metadata or {}).copy()
             transition_metadata["error_message"] = error_message
             transition_metadata["error_code"] = error_code
-            if error_details:
-                transition_metadata["error_details"] = error_details
+            if normalized_error_details:
+                transition_metadata["error_details"] = normalized_error_details
             return await self.transition(
                 db, job_id, JobStatus.FAILED.value, 
                 "mark_failed", operator_id, "system",
