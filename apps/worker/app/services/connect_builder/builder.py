@@ -3,15 +3,12 @@ ConnectTo Builder — KB-level post-processor for inter-chunk relationships.
 
 This module discovers relationships between chunks across different files
 within a knowledge base, populating the `connectto` column in the DataFrame.
-
-Phase 1 (this file):  Keyword-overlap "related" relationship.
-Phase 2 (TODO):       Embedding cosine similarity (additive scoring).
-Phase 3 (TODO):       LLM-based relation classification (contradicts, causal, etc.).
 """
 
 import json
 import re
 from collections import defaultdict
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -56,15 +53,18 @@ RELATION_REGISTRY: Dict[str, Dict[str, Any]] = {
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     # Minimum number of shared keywords to consider a connection
-    "min_keyword_overlap": 2,
+    "min_keyword_overlap": 3,
     # Weight multiplier for keyword score (linear)
     "keyword_score_weight": 1.0,
     # Maximum connections per chunk (top-N by score)
     "max_connections_per_chunk": 10,
     # Minimum score threshold to create a connection
-    "min_score_threshold": 0.3,
+    "min_score_threshold": 0.8,
     # Only connect chunks from different files (skip intra-file)
     "cross_file_only": True,
+    # Maximum character overlap ratio to allow (filter near-duplicates)
+    # Pairs with SequenceMatcher.ratio() >= this are considered duplicates
+    "max_content_overlap": 0.8,
 }
 
 
@@ -251,31 +251,33 @@ def _parse_tokens_field(raw) -> List[str]:
 # ─── Scoring ─────────────────────────────────────────────────────────────────
 
 def _compute_keyword_score(
-    shared_count: int,
-    total_a: int,
-    total_b: int,
+    shared_kws: set,
+    kws_a: set,
+    kws_b: set,
     weight: float = 1.0,
 ) -> float:
     """
-    Compute keyword overlap score using linear proportional scoring.
+    Compute keyword overlap score using character-length-weighted scoring.
 
-    Formula: score = weight * shared_count / min(total_a, total_b)
-
-    This is linear — more shared keywords = higher score, as requested.
+    Longer tokens contribute more: '施工现场'(4) has 2x weight of '交底'(2).
+    Formula: score = weight * sum(len(kw) for shared) / min(sum(len) for A, sum(len) for B)
 
     Args:
-        shared_count: Number of overlapping keywords.
-        total_a: Total keywords in chunk A.
-        total_b: Total keywords in chunk B.
+        shared_kws: Set of shared (normalized) keywords.
+        kws_a: Full keyword set of chunk A.
+        kws_b: Full keyword set of chunk B.
         weight: Score multiplier.
 
     Returns:
         Float score in [0, weight].
     """
-    denominator = min(total_a, total_b)
+    weighted_a = sum(len(k) for k in kws_a)
+    weighted_b = sum(len(k) for k in kws_b)
+    denominator = min(weighted_a, weighted_b)
     if denominator == 0:
         return 0.0
-    return weight * shared_count / denominator
+    weighted_shared = sum(len(k) for k in shared_kws)
+    return weight * weighted_shared / denominator
 
 
 # ─── Main Entry Point ────────────────────────────────────────────────────────
@@ -305,12 +307,14 @@ def build_connections(
     max_conns = cfg["max_connections_per_chunk"]
     min_score = cfg["min_score_threshold"]
     cross_only = cfg["cross_file_only"]
+    max_overlap = cfg.get("max_content_overlap", 0.8)
 
     # Build inverted index
     kw_index = _build_keyword_index(chunks)
 
     # Pre-compute per-chunk data
     chunk_data: Dict[str, Tuple[str, set]] = {}  # chunk_id → (file_key, normalized_keywords)
+    chunk_content: Dict[str, str] = {}  # chunk_id → content (for dedup)
     for chunk in chunks:
         cid = str(chunk.get("chunk_id") or chunk.get("know_id", ""))
         if not cid:
@@ -320,6 +324,7 @@ def build_connections(
         normalized_kws = {_normalize_keyword(k) for k in kws if k}
         normalized_kws.discard("")
         chunk_data[cid] = (file_key, normalized_kws)
+        chunk_content[cid] = chunk.get("content") or chunk.get("text", "")
 
     # For each chunk, find candidates via keyword index
     connections: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -352,12 +357,22 @@ def build_connections(
 
             _, target_kws = target_data
             score = _compute_keyword_score(
-                shared_count=len(shared_kws),
-                total_a=len(my_kws),
-                total_b=len(target_kws),
+                shared_kws=shared_kws,
+                kws_a=my_kws,
+                kws_b=target_kws,
                 weight=kw_weight,
             )
             if score >= min_score:
+                # Near-duplicate filter: skip pairs with high character overlap
+                if max_overlap < 1.0:
+                    src_text = chunk_content.get(cid, "")
+                    tgt_text = chunk_content.get(target_id, "")
+                    if src_text and tgt_text:
+                        char_ratio = SequenceMatcher(
+                            None, src_text, tgt_text
+                        ).ratio()
+                        if char_ratio >= max_overlap:
+                            continue
                 scored.append((target_id, score, shared_kws))
 
         # Sort by score descending, keep top-N

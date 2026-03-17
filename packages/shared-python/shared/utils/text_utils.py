@@ -38,8 +38,14 @@ def count_cn_en(text: str) -> int:
 
 
 def _is_meaningful_token(token: str) -> bool:
-    """Check if a token contains at least one Chinese char, letter, or digit."""
-    return bool(_CN_EN_NUM_RE.search(token))
+    """Check if a token is worth keeping: has useful characters and isn't pure noise."""
+    if not _CN_EN_NUM_RE.search(token):
+        return False
+    # Filter single-character tokens: '共','年','月','1','9','m' etc.
+    # Multi-char English words like 'PPO' or Chinese words like '施工' are kept.
+    if len(token) == 1:
+        return False
+    return True
 
 
 # Lazy-loaded default stopwords (module-level cache)

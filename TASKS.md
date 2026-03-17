@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-03-17 — 分词管线简化、Schema 统一、TOC field 检测修复
+> **Last session**: 2026-03-17 — 停用词集成、ConnectTo 关系构建优化 (长度加权 + 字符去重)、token 过滤增强
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -15,7 +15,7 @@
 | 2026-02-27 | ~2h | ~8K | ~60K | DOCX 表格内嵌图片提取 + summary prompt 优化 + Agentic Profiler (doc_profiler/fast path pymupdf4llm/ppt_converted) + 表格 summary fallback |
 | 2026-03-02 | ~1h 20m | ~5K | ~40K | Excel 子表碎片合并 + 隐藏 Sheet 参数化 + _src_row 行号保留 + postprocess_tb index collision fix |
 | 2026-03-10 | ~1h | ~3K | ~25K | GLM 集成: 统一 LLM 路由 (glm/qwen/deepseek) + `_get_vision_client()` 消除 4 处硬编码 + MinerU key 修复 |
-| 2026-03-17 | ~2h | ~8K | ~60K | 分词管线简化 (去除 merge_non_chinese) + Schema 统一 (extra→connectto, 消除 fallback) + TOC field 检测修复 (PAGEREF _Toc 误触发) + ConnectTo 设计方案 |
+| 2026-03-17 | ~4h | ~15K | ~120K | 分词管线简化 + Schema 统一 + TOC field 检测修复 + 停用词集成 (百度词表 frozenset) + ConnectTo 优化 (长度加权评分 + SequenceMatcher 字符去重 + 单字符 token 过滤) |
 
 ---
 
@@ -140,17 +140,11 @@ sequenceDiagram
 
 ### 🔴 In Progress
 
-- [/] **ConnectTo 关系构建** — `connect_builder/builder.py` 基于关键词倒排索引建立跨 chunk 关系，填充 `connectto` 列 → 详见 [connect_to_design.md](.gemini/antigravity/brain/2754e2a9-e8f9-49e5-9711-8406dc3266b9/connect_to_design.md)
+- [/] **ConnectTo 关系构建** — `connect_builder/builder.py` 已实现: 长度加权评分 + SequenceMatcher 字符去重(≥0.8) + threshold=0.8 + min_overlap=3。1459→22 高质量 pair。待做: Phase 2 LLM predicate 分类
 
 ### 🟡 TODO
 
 #### High Priority
-
-- [ ] **TOC 层级：LLM 识别正则 → 正则批量处理** — `toc_parser.py` + `prompt_service.py:eval-toc-headings`
-  - 现状：LLM 逐行输出每行的 level（100 行 TOC → 100 个 `{id, level}` 输出），token 开销大、速度慢
-  - 优化：让 LLM 识别 TOC 中的**编号模式**并输出对应正则+level（如 `第X章` → L1, `X.Y` → L2），然后用正则批量分配 level
-  - 效果：LLM 输出从 O(N) 降到 O(patterns)（通常 2-5 个模式），大幅压缩 token 和耗时
-  - 参考：`layout_parser.py` 的 `judge_by_conditions()` 已有成熟的正则特征库可复用
 
 - [/] 继续优化**Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
   - [ ] profile metadata 写入解析结果
@@ -158,7 +152,7 @@ sequenceDiagram
 
 - [ ] **Excel 子表公式依赖合并 (Phase 2)** — 通过解析公式引用（SUM/AVERAGE 等）构建 cell 依赖图，将汇总行/计算区域自动归属到其数据来源所在的子表
 
-- [ ] **表格内嵌图片 Phase 2** — PDF 表格中带图的恢复 → 详见 [PDF_TABLE_IMAGE_PLAN.md](./PDF_TABLE_IMAGE_PLAN.md)
+- [ ] **PDF 表格中带图的恢复 Phase 2** — 详见 [PDF_TABLE_IMAGE_PLAN.md](./PDF_TABLE_IMAGE_PLAN.md)
   - 方案 D: PyMuPDF 坐标提取 — MinerU 解析后用 PyMuPDF 补回表格内图片（⚠️ 仅适用于电子版 PDF，扫描件无效）
   - 方案 C: MinerU 交叉对比（备选）
 
@@ -169,12 +163,20 @@ sequenceDiagram
 - [ ] **智能分块** — `txt_parser.py:124` 当前粗略分割，需更智能策略
 - [ ] **OCR 分支** — `toc_parser.py:609` 实现 OCR → 直接生成 toc-tree
 
+#### Normal Priority — ConnectTo Phase 2
+
+- [ ] **ConnectTo Embedding 语义相似度** — hybrid scoring: `0.5 × keyword_score + 0.5 × cosine_sim`，用 Qwen/ALI embedding API
+- [ ] **ConnectTo LLM Predicate 分类** — 参考 FinMemory `extraction_prompt_template` 模式，对 candidate pairs 做 LLM classify:
+  - Typed predicates: `extends` / `same_data` / `contains` / `contradicts` / `supplements` / `supersedes`
+  - Mem0 式 consolidation: 矛盾信号共存 (conflict_group)，不强制消解
+  - `classify_relation()` stub 已在 builder.py 中
+
 #### Normal Priority — TOC Field Depth Tracking
 
 - [ ] **TOC field depth tracking** — `toc_parser.py:detect_doc_tocs` + `doc_parser.py:iter_block_items`
   - 现状：用 boolean `toc_field_active` 跟踪 TOC 域，已修复 PAGEREF 误触发问题
   - 风险：field 域存在嵌套（PAGEREF 内嵌在 TOC 域中），当前无深度计数，嵌套 field 的 `fldChar end` 可能提前 reset `toc_field_active`
-  - 当前靠 `is_style`（toc style）兜底，绝大多数 Word 文档安全；但纯 field 标记（无 toc style）的 TOC 理论上会误判
+  - 当前靠 `is_style`（toc style）兜底，绝大多数 Word 文档安全；但纯field 标记（无 toc style）的TOC理论上会误判
   - 优化：维护 `field_depth` 计数器，`fldChar begin` 时 +1、`fldChar end` 时 -1，仅在 TOC 层 depth 归零时 reset `toc_field_active`
 
 - [ ] **表格 TOC** — `toc_parser.py:151` 提取表格内容但保持 id span 为 1
@@ -232,6 +234,10 @@ sequenceDiagram
 | 2026-03-17 | fix | 分词简化: `tokenize2stw_remove` 去除 `merge_non_chinese_until_chinese`，jieba 直出 + `_is_meaningful_token` 过滤 | `text_utils.py` |
 | 2026-03-17 | refactor | Schema 统一: 5 个 parser 消除 `ALL_DF_COLS` 内联 fallback，统一 `extra`→`connectto`；部署配置补齐 `page_nums` | `md_parser.py`, `table_parser.py`, `image_parser.py`, `atlas_parser.py`, `ai.py`, `configmap.yaml`, `env.template` |
 | 2026-03-17 | fix | TOC field 检测: `detect_doc_tocs` 修复 `PAGEREF _Toc` 子串误触发 + `is_field_end` 始终检测 | `toc_parser.py` |
+| 2026-03-17 | feature | 百度停用词集成: `stopwords.py` frozenset (1395词) + `tokenize2stw_remove` 三模式 (None/[]/custom) | `stopwords.py`, `text_utils.py`, `parse_service.py` |
+| 2026-03-17 | feature | Token 单字符过滤: `_is_meaningful_token` 过滤 len==1 tokens (数字+汉字+字母) | `text_utils.py` |
+| 2026-03-17 | feature | ConnectTo 长度加权评分: `_compute_keyword_score` 改为字符长度加权 `sum(len(kw))` | `builder.py` |
+| 2026-03-17 | feature | ConnectTo 字符去重: SequenceMatcher ratio≥0.8 过滤近重复 pair，1459→22 高质量关系 | `builder.py` |
 
 ---
 
