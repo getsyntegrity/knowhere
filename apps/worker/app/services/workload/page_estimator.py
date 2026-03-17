@@ -23,25 +23,7 @@ WORDS_PER_PAGE = 500  # Chinese chars + English words + numbers per page
 ROWS_PER_PAGE = 50    # For Excel files
 
 
-def count_cn_en(text: str) -> int:
-    """统计中英文单词和数字的数量 (Count Chinese chars, English words, and numbers)"""
-    if not text:
-        return 0
-    text = str(text)
-    
-    # Chinese characters
-    chinese_chars = re.findall(r'[\u4e00-\u9fff]', text)
-    cn_counts = len(chinese_chars)
-    
-    # English words
-    english_words = re.findall(r'[A-Za-z]+', text)
-    en_counts = len(english_words)
-    
-    # Numbers (including decimals)
-    numbers = re.findall(r'\d+(?:\.\d+)?', text)
-    number_count = len(numbers)
-    
-    return cn_counts + en_counts + number_count
+from shared.utils.text_utils import count_cn_en
 
 
 class PageEstimator:

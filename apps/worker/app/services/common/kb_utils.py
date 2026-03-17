@@ -10,17 +10,7 @@ from loguru import logger
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException, ValidationException
 
 
-def count_cn_en(text: str):
-    """统计中英文单词和数字的数量"""
-    chinese_chars = re.findall(r'[\u4e00-\u9fff]', str(text))
-    cn_counts = len(chinese_chars)
-
-    english_words = re.findall(r'[A-Za-z]+', str(text))
-    en_counts = len(english_words)
-
-    numbers = re.findall(r'\d+(?:\.\d+)?', text)
-    number_count = len(numbers)
-    return cn_counts + en_counts + number_count
+from shared.utils.text_utils import count_cn_en
 
 def gen_str_codes(input_string):
     """生成字符串的UUID5编码"""

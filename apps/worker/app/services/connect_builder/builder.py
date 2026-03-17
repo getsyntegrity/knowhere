@@ -163,6 +163,7 @@ def _get_keywords(chunk: Dict[str, Any]) -> List[str]:
     Extract keywords from a chunk, supporting multiple input formats:
       - chunk["metadata"]["keywords"] (list)
       - chunk["keywords"] (list or semicolon-separated string)
+      - chunk["metadata"]["tokens"] or chunk["tokens"] (fallback: jieba word chain)
     """
     # Try metadata.keywords first
     metadata = chunk.get("metadata", {})
@@ -183,7 +184,68 @@ def _get_keywords(chunk: Dict[str, Any]) -> List[str]:
             return [k.strip() for k in kws.split(",") if k.strip()]
         return [kws.strip()]
 
-    return []
+    # ─── Fallback: tokens (jieba word chain) ──────────────────────────────
+    tokens = _parse_tokens_field(metadata.get("tokens") if isinstance(metadata, dict) else None)
+    if not tokens:
+        tokens = _parse_tokens_field(chunk.get("tokens"))
+    return tokens
+
+
+# Pre-compiled patterns for token noise filtering
+_UUID_LIKE_RE = re.compile(r"^[0-9a-f]{4,}$", re.IGNORECASE)
+_MARKER_PREFIXES = ("IMAGE_", "TABLE_", "PTXT", "image-", "table-")
+
+
+def _parse_tokens_field(raw) -> List[str]:
+    """
+    Parse the tokens field into a filtered keyword list.
+
+    Accepts:
+      - List[str]: already parsed (from chunks.json after safe_parse_tokens)
+      - str with ';': semicolon-separated tokens (new format, matches keywords)
+      - str with '->': arrow-separated jieba word chain (legacy format)
+      - str with "['...']": legacy list-repr format
+
+    Filters out noise: single-char tokens, UUIDs, IMAGE_/TABLE_ markers.
+    """
+    if raw is None:
+        return []
+
+    # Already a list (from chunks.json)
+    if isinstance(raw, list):
+        words = raw
+    elif isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return []
+        # List-repr format: "['w1;w2;w3']" or "['w1->w2->w3']"
+        if raw.startswith("[") and raw.endswith("]"):
+            inner = raw[1:-1].strip()
+            if (inner.startswith("'") and inner.endswith("'")) or \
+               (inner.startswith('"') and inner.endswith('"')):
+                inner = inner[1:-1]
+            raw = inner
+        # Determine separator: semicolon (new) or arrow (legacy)
+        if ";" in raw:
+            words = [t.strip() for t in raw.split(";") if t.strip()]
+        elif "->" in raw:
+            words = [t.strip() for t in raw.split("->") if t.strip()]
+        else:
+            return []
+    else:
+        return []
+
+    # Filter noise
+    filtered = []
+    for w in words:
+        if len(w) <= 1:
+            continue
+        if any(w.startswith(p) for p in _MARKER_PREFIXES):
+            continue
+        if _UUID_LIKE_RE.match(w):
+            continue
+        filtered.append(w)
+    return filtered
 
 
 # ─── Scoring ─────────────────────────────────────────────────────────────────

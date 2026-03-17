@@ -12,6 +12,7 @@ from app.services.connect_builder.builder import (
     _compute_keyword_score,
     _extract_file_key,
     _normalize_keyword,
+    _parse_tokens_field,
     classify_relation,
 )
 
@@ -256,3 +257,76 @@ class TestClassifyRelation:
         assert result["relation"] == "related"
         assert result["confidence"] == 1.0
         assert "ppo" in result["reason"]
+
+
+# ─── Test: _parse_tokens_field ────────────────────────────────────────────────
+
+class TestParseTokensField:
+    def test_semicolon_string(self):
+        result = _parse_tokens_field("咸阳市;体育场;基坑;支护")
+        assert result == ["咸阳市", "体育场", "基坑", "支护"]
+
+    def test_legacy_arrow_string(self):
+        """Backward compatibility: old -> format still works."""
+        result = _parse_tokens_field("咸阳市->体育场->基坑->支护")
+        assert result == ["咸阳市", "体育场", "基坑", "支护"]
+
+    def test_list_repr_semicolon(self):
+        result = _parse_tokens_field("['咸阳市;体育场;基坑']")
+        assert result == ["咸阳市", "体育场", "基坑"]
+
+    def test_list_repr_legacy_arrow(self):
+        result = _parse_tokens_field("['咸阳市->体育场->基坑']")
+        assert result == ["咸阳市", "体育场", "基坑"]
+
+    def test_already_list(self):
+        result = _parse_tokens_field(["咸阳市", "体育场", "基坑"])
+        assert result == ["咸阳市", "体育场", "基坑"]
+
+    def test_empty(self):
+        assert _parse_tokens_field(None) == []
+        assert _parse_tokens_field("") == []
+        assert _parse_tokens_field([]) == []
+
+    def test_filter_single_char(self):
+        result = _parse_tokens_field("的;基坑;和;支护")
+        assert "的" not in result
+        assert "和" not in result
+        assert "基坑" in result
+
+    def test_filter_uuid(self):
+        result = _parse_tokens_field("基坑;40c5afd9;支护")
+        assert "40c5afd9" not in result
+
+    def test_filter_markers(self):
+        result = _parse_tokens_field("基坑;IMAGE_xxx;TABLE_yyy;支护")
+        assert len(result) == 2
+        assert "IMAGE_xxx" not in result
+
+
+# ─── Test: tokens fallback in build_connections ──────────────────────────────
+
+class TestTokensFallback:
+    def test_build_connections_with_tokens_only(self):
+        """Chunks with no keywords but overlapping tokens should connect."""
+        shared_tokens = "基坑;支护;施工;工程;混凝土;钢筋"
+        chunks = [
+            {
+                "chunk_id": "a1",
+                "path": "Root/doc1.docx/Section1",
+                "metadata": {"keywords": []},
+                "tokens": shared_tokens + ";专项方案",
+            },
+            {
+                "chunk_id": "b1",
+                "path": "Root/doc2.docx/Section1",
+                "metadata": {"keywords": []},
+                "tokens": shared_tokens + ";土方开挖",
+            },
+        ]
+        config = {**DEFAULT_CONFIG, "min_keyword_overlap": 2, "min_score_threshold": 0.1}
+        connections = build_connections(chunks, config=config)
+        # Both chunks share 6 tokens, should produce connections
+        assert len(connections) > 0
+        all_targets = [c["target"] for conns in connections.values() for c in conns]
+        assert "b1" in all_targets or "a1" in all_targets

@@ -60,6 +60,31 @@ class ChunksRedisService:
             else:
                 return [kw_str.strip()] if kw_str.strip() else []
 
+        def safe_parse_tokens(raw):
+            """解析 tokens 字段：保留 jieba 分词链为列表，兼容新旧格式。
+            
+            新格式：分号分隔 'word1;word2;word3'（与 keywords 列一致）
+            旧格式：箭头分隔 'word1->word2->word3' 或 "['word1->word2->...']"
+            """
+            if raw is None or (pd is not None and pd.isna(raw)):
+                return []
+            raw_str = str(raw).strip()
+            if not raw_str:
+                return []
+            # List-like string from DataFrame: "['w1;w2']" or "['w1->w2']"
+            if raw_str.startswith("[") and raw_str.endswith("]"):
+                inner = raw_str[1:-1].strip()
+                if (inner.startswith("'") and inner.endswith("'")) or \
+                   (inner.startswith('"') and inner.endswith('"')):
+                    inner = inner[1:-1]
+                raw_str = inner
+            # Determine separator: semicolon (new) or arrow (legacy)
+            if ";" in raw_str:
+                return [t.strip() for t in raw_str.split(";") if t.strip()]
+            if "->" in raw_str:
+                return [t.strip() for t in raw_str.split("->") if t.strip()]
+            return []
+
         def safe_parse_rels(type_val):
             """安全解析 intra-doc 关系 (图文表引用，来自 type 字段)"""
             rels = []
@@ -121,7 +146,7 @@ class ChunksRedisService:
                 "keywords": safe_split_kws(row.get("keywords")),
                 "summary": str(row.get("summary", "")),
                 "length": safe_int(row.get("length")) or len(content),
-                "tokens": safe_int(row.get("tokens")),
+                "tokens": safe_parse_tokens(row.get("tokens")),
                 "relationships": safe_parse_rels(type_val),
                 "connect_to": parse_connect_to(row.get("connectto")),
             }
