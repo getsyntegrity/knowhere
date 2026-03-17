@@ -353,7 +353,7 @@ def parse_atlas(
             "",             # summary
             know_id,        # know_id
             tokens,         # tokens
-            "",             # extra
+            "",             # connectto
             time_stamp,     # addtime
             str(page_num),  # page_nums
         ])
@@ -384,9 +384,6 @@ def parse_atlas(
 
     # ── Build DataFrame ──
     all_cols = settings.ALL_DF_COLS.split(",")
-    if len(all_cols) != 11:
-        all_cols = ["content", "path", "type", "length", "keywords", "summary",
-                     "know_id", "tokens", "extra", "addtime", "page_nums"]
 
     df = pd.DataFrame(df_list, columns=all_cols)
     df = process_dup_paths_df(df)

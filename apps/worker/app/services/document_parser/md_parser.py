@@ -386,8 +386,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
         chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
         df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
 
-    all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime,page_nums").split(',')
-    doc_df = pd.DataFrame(df_list, columns=all_df_cols)
+    doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     doc_df = process_dup_paths_df(doc_df)
 
     return doc_df

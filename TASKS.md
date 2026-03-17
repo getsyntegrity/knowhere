@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-03-10 — GLM 集成：统一视觉/文本 LLM 路由，替代 DeepSeek + Qwen 硬编码
+> **Last session**: 2026-03-17 — 分词管线简化、Schema 统一、TOC field 检测修复
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -15,6 +15,7 @@
 | 2026-02-27 | ~2h | ~8K | ~60K | DOCX 表格内嵌图片提取 + summary prompt 优化 + Agentic Profiler (doc_profiler/fast path pymupdf4llm/ppt_converted) + 表格 summary fallback |
 | 2026-03-02 | ~1h 20m | ~5K | ~40K | Excel 子表碎片合并 + 隐藏 Sheet 参数化 + _src_row 行号保留 + postprocess_tb index collision fix |
 | 2026-03-10 | ~1h | ~3K | ~25K | GLM 集成: 统一 LLM 路由 (glm/qwen/deepseek) + `_get_vision_client()` 消除 4 处硬编码 + MinerU key 修复 |
+| 2026-03-17 | ~2h | ~8K | ~60K | 分词管线简化 (去除 merge_non_chinese) + Schema 统一 (extra→connectto, 消除 fallback) + TOC field 检测修复 (PAGEREF _Toc 误触发) + ConnectTo 设计方案 |
 
 ---
 
@@ -139,19 +140,17 @@ sequenceDiagram
 
 ### 🔴 In Progress
 
-*(无)*
+- [/] **ConnectTo 关系构建** — `connect_builder/builder.py` 基于关键词倒排索引建立跨 chunk 关系，填充 `connectto` 列 → 详见 [connect_to_design.md](.gemini/antigravity/brain/2754e2a9-e8f9-49e5-9711-8406dc3266b9/connect_to_design.md)
 
 ### 🟡 TODO
 
-#### High Priority — TOC Hierarchy Optimization
+#### High Priority
 
 - [ ] **TOC 层级：LLM 识别正则 → 正则批量处理** — `toc_parser.py` + `prompt_service.py:eval-toc-headings`
   - 现状：LLM 逐行输出每行的 level（100 行 TOC → 100 个 `{id, level}` 输出），token 开销大、速度慢
   - 优化：让 LLM 识别 TOC 中的**编号模式**并输出对应正则+level（如 `第X章` → L1, `X.Y` → L2），然后用正则批量分配 level
   - 效果：LLM 输出从 O(N) 降到 O(patterns)（通常 2-5 个模式），大幅压缩 token 和耗时
   - 参考：`layout_parser.py` 的 `judge_by_conditions()` 已有成熟的正则特征库可复用
-
-#### High Priority — Agentic Profiler
 
 - [/] 继续优化**Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
   - [ ] profile metadata 写入解析结果
@@ -163,29 +162,22 @@ sequenceDiagram
   - 方案 D: PyMuPDF 坐标提取 — MinerU 解析后用 PyMuPDF 补回表格内图片（⚠️ 仅适用于电子版 PDF，扫描件无效）
   - 方案 C: MinerU 交叉对比（备选）
 
-- [ ] **DOCX TOC 利用** — `doc_parser.py:474` 当前临时移除 TOC 区域（`detect_sdt_toc` 检测正常，已验证可提取 191 条 TOC 条目），需将检测到的 TOC 数据传入层级分析（`eval_toc_levels`）辅助 heading 推断
-
+- [ ] **DOCX TOC 利用** — `doc_parser.py:474` 需将检测到的 TOC 数据传入层级（`eval_toc_levels`）辅助 heading 推断
 - [ ] **LLM 层级判断** — `layout_parser.py:552` 使用 LLM 基于窗口数据分配 heading level
 - [ ] **LaTeX 支持** — `doc_parser.py:489` 处理 LaTeX 等格式
 - [ ] **table_parser 已知问题** — `table_parser.py:863` 当前实现有问题 (见 docstring)
 - [ ] **智能分块** — `txt_parser.py:124` 当前粗略分割，需更智能策略
-- [ ] **表格 TOC** — `toc_parser.py:151` 提取表格内容但保持 id span 为 1
 - [ ] **OCR 分支** — `toc_parser.py:609` 实现 OCR → 直接生成 toc-tree
 
-#### Normal Priority — API Services
+#### Normal Priority — TOC Field Depth Tracking
 
-- [ ] **积分通知** — `credits_service.py:450` 实现积分预警/耗尽的邮件或推送通知
-- [ ] **Redis 缓存** — `api_key_service.py:185,189,194` API Key 验证的 Redis 缓存
-- [ ] **文件名获取** — `jobs.py:278` 从 header 获取资源文件名
-- [ ] **进度详情** — `jobs.py:703` 从 Redis 获取详细进度
-- [ ] **OSS 签名** — `s3_events.py:87` 实现 OSS 签名验证逻辑
-- [ ] **计费统计** — `billing.py:124,126` 计算实际成功率、获取 top endpoints
-- [ ] **用户识别** — `moesif_middleware.py:130,135` 从 JWT/API Key 解析 user ID
+- [ ] **TOC field depth tracking** — `toc_parser.py:detect_doc_tocs` + `doc_parser.py:iter_block_items`
+  - 现状：用 boolean `toc_field_active` 跟踪 TOC 域，已修复 PAGEREF 误触发问题
+  - 风险：field 域存在嵌套（PAGEREF 内嵌在 TOC 域中），当前无深度计数，嵌套 field 的 `fldChar end` 可能提前 reset `toc_field_active`
+  - 当前靠 `is_style`（toc style）兜底，绝大多数 Word 文档安全；但纯 field 标记（无 toc style）的 TOC 理论上会误判
+  - 优化：维护 `field_depth` 计数器，`fldChar begin` 时 +1、`fldChar end` 时 -1，仅在 TOC 层 depth 归零时 reset `toc_field_active`
 
-#### Low Priority
-
-- [ ] **Celery 优化** — `celery_router.py:197` 简化版本，后续优化异步操作
-- [ ] **配置限制** — `billing.py:92` 从配置中获取限制，或移除限制概念
+- [ ] **表格 TOC** — `toc_parser.py:151` 提取表格内容但保持 id span 为 1
 
 ### ✅ Done
 
@@ -195,7 +187,10 @@ sequenceDiagram
 - [x] ~~表格 Summary Fallback~~ — 图片为主表格 LLM 返回 HTML 时用 table_idx 回退 + prompt 增加拒绝原样返回指令 (completed: 2026-02-27)
 - [x] ~~PDF Fast Path (pymupdf4llm)~~ — doc_profiler 识别单栏电子版 PDF → pymupdf4llm 提取，跳过 MinerU；含 ppt_converted 检测路由至 standard (completed: 2026-02-27)
 - [x] ~~关键词跨行列去重~~ — doc_parser + md_parser 首行首列合并时消除重复 (completed: 2026-02-26)
-- [x] ~~Excel 子表碎片合并 Phase 1~~ — `_merge_small_subtables(min_cells=4)` 吸收碎片 + `include_hidden_sheets` 参数 + `_src_row` 原始行号列 + `postprocess_tb` index 撞名修复 (completed: 2026-03-02)
+- [x] ~~Excel 子表碎片合并 Phase 1~~ — `_merge_small_subtables(min_cells=4)` 吸收碎片 + `include_hidden_sheets` 参数 + `_src_row` 原始行号列 + `postprocess_tb` index collision fix (completed: 2026-03-02)
+- [x] ~~分词管线简化~~ — `tokenize2stw_remove` 去除 `merge_non_chinese_until_chinese`，直接用 jieba + 有意义 token 过滤，修复英文 token 拼接问题 (completed: 2026-03-17)
+- [x] ~~Schema 统一 (extra→connectto)~~ — 5 个 parser 统一使用 `settings.ALL_DF_COLS.split(',')`，消除所有内联 fallback；部署配置补齐 `page_nums` 列 (completed: 2026-03-17)
+- [x] ~~TOC field 检测修复~~ — `detect_doc_tocs` 修复两个 bug：`PAGEREF _TocXXXX` 中 `toc` 子串误触发 `is_field_start` + `is_field_end` 被 `is_style` 守卫跳过导致 field 永不关闭 (completed: 2026-03-17)
 
 ### 📋 Code-Level TODOs
 
@@ -234,6 +229,9 @@ sequenceDiagram
 | 2026-03-02 | fix | `postprocess_tb` bug fixes: dropna RangeIndex→Int64Index 导致假 index 列 + `reset_index` 列名撞名崩溃 | `table_parser.py` |
 | 2026-03-10 | feature | GLM 集成: `_resolve_api_config` 加 glm 路由分支 (async+sync)，`_get_vision_client()` 按 IMAGE_MODEL 名自动路由，消除 4 处硬编码 ALI_API_KEY | `OpenAICompatibleClient.py`, `OpenAICompatibleClientSync.py`, `image_parser.py`, `doc_parser.py`, `ai.py`, `.env` |
 | 2026-03-10 | fix | MinerU API key 字段名: `MINERU_API_KEY` → `MINERU_API_KEYS` (匹配 config) + `debug_parse.py` await 移除 (sync 函数) | `.env`, `debug_parse.py` |
+| 2026-03-17 | fix | 分词简化: `tokenize2stw_remove` 去除 `merge_non_chinese_until_chinese`，jieba 直出 + `_is_meaningful_token` 过滤 | `text_utils.py` |
+| 2026-03-17 | refactor | Schema 统一: 5 个 parser 消除 `ALL_DF_COLS` 内联 fallback，统一 `extra`→`connectto`；部署配置补齐 `page_nums` | `md_parser.py`, `table_parser.py`, `image_parser.py`, `atlas_parser.py`, `ai.py`, `configmap.yaml`, `env.template` |
+| 2026-03-17 | fix | TOC field 检测: `detect_doc_tocs` 修复 `PAGEREF _Toc` 子串误触发 + `is_field_end` 始终检测 | `toc_parser.py` |
 
 ---
 

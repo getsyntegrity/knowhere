@@ -243,8 +243,7 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
     relative_img_path = f"{relative_root}{split_char}{final_img_name}" if relative_root else final_img_name
     df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, know_id, "", "", time_stamp, ""])
 
-    all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime,page_nums").split(',')
-    img_df = pd.DataFrame(df_list, columns=all_df_cols)
+    img_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     img_df = process_dup_paths_df(img_df)
 
     return img_df

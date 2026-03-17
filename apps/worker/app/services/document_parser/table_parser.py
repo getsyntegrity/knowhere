@@ -1360,7 +1360,6 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
                     original_exception=e
                 )
 
-    all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime,page_nums").split(',')
-    table_df = pd.DataFrame(df_list, columns=all_df_cols)
+    table_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     table_df = process_dup_paths_df(table_df)
     return table_df

@@ -1,6 +1,7 @@
 """
 Chunks数据Redis服务
 """
+import json
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -59,26 +60,38 @@ class ChunksRedisService:
             else:
                 return [kw_str.strip()] if kw_str.strip() else []
 
-        def safe_parse_rels(type_val, connects):
-            """安全解析关系"""
+        def safe_parse_rels(type_val):
+            """安全解析 intra-doc 关系 (图文表引用，来自 type 字段)"""
             rels = []
-            # 从type字段提取关系（多行格式）
             type_is_valid = type_val and not (pd is not None and pd.isna(type_val))
             if type_is_valid:
                 type_str = str(type_val)
                 if "\n" in type_str:
                     lines = type_str.split("\n")[1:-1]
                     rels.extend([line.strip() for line in lines if line.strip()])
-            # 从connectto字段提取关系
-            connects_is_valid = connects and not (pd is not None and pd.isna(connects))
-            if connects_is_valid:
-                connects_str = str(connects)
-                if "\n" in connects_str:
-                    lines = connects_str.split("\n")
-                    rels.extend([line.strip() for line in lines if line.strip()])
-                else:
-                    rels.append(connects_str.strip())
             return rels if rels else []
+
+        def parse_connect_to(connects):
+            """解析 connectto 字段为 cross-chunk 关系列表"""
+            if not connects or (pd is not None and pd.isna(connects)):
+                return []
+            connects_str = str(connects).strip()
+            if not connects_str:
+                return []
+            # JSON array format (new)
+            if connects_str.startswith("["):
+                try:
+                    parsed = json.loads(connects_str)
+                    if isinstance(parsed, list):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+            # Legacy: newline-separated chunk IDs
+            if "\n" in connects_str:
+                lines = [line.strip() for line in connects_str.split("\n") if line.strip()]
+                return [{"target": line, "relation": "related", "score": 1.0, "keywords": []} for line in lines]
+            # Legacy: single value
+            return [{"target": connects_str, "relation": "related", "score": 1.0, "keywords": []}]
 
         chunks = []
         for i, (_, row) in enumerate(df.iterrows()):
@@ -109,7 +122,8 @@ class ChunksRedisService:
                 "summary": str(row.get("summary", "")),
                 "length": safe_int(row.get("length")) or len(content),
                 "tokens": safe_int(row.get("tokens")),
-                "relationships": safe_parse_rels(type_val, row.get("connectto")),
+                "relationships": safe_parse_rels(type_val),
+                "connect_to": parse_connect_to(row.get("connectto")),
             }
 
             # 解析 page_nums: "3,4" → [3, 4]

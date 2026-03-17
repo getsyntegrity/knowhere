@@ -101,7 +101,7 @@ data:
   SMTP_PASSWORD: "${SMTP_PASSWORD}"
   
   # 兼容性字段
-  ALL_DF_COLS: "content,path,type,length,keywords,summary,know_id,tokens,connectto,addtime"
+  ALL_DF_COLS: "content,path,type,length,keywords,summary,know_id,tokens,connectto,addtime,page_nums"
   DEFAULT_FOLDERS: "默认目录,Supplementary_Files,Temporary_Files,templates,images,fragments"
   KB_TERM: "KB_DATA"
   KB_VEC_TERM: "KB_VECS"
