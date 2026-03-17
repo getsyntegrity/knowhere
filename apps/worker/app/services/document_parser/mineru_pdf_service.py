@@ -597,7 +597,7 @@ def _submit_url_task(presigned_url: str, filename: str) -> tuple[str, str]:
     return batch_id, lease.token_id
 
 
-def parse_pdf_via_mineru(
+def parse_via_full(
     pdf_url: str,
     filename: str,
     output_dir: str,

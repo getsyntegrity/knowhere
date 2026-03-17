@@ -27,60 +27,77 @@ def remove_duplicates_orderkept(input_list: List) -> List:
     return output_list
 
 
-def merge_non_chinese_until_chinese(lst: List[str]) -> List[str]:
-    """
-    合并非中文字符直到遇到中文字符
-    
-    Args:
-        lst: 字符串列表
-    
-    Returns:
-        合并后的列表
-    """
-    # 去除空字符串
-    lst = [item for item in lst if item.strip()]
-    
-    result = []
-    temp = ""
-    
-    for item in lst:
-        # 判断是否是中文字符
-        if re.search(r'[\u4e00-\u9fff]', item):
-            # 如果前面有非中文字符要先合并
-            if temp:
-                result.append(temp)
-                temp = ""
-            result.append(item)
-        else:
-            temp += item  # 合并非中文字符
-    # 如果最后一个是非中文字符也要加到结果中
-    if temp:
-        result.append(temp)
-    return result
+# Single regex for Chinese chars, English words, and number groups
+_CN_EN_NUM_RE = re.compile(r'[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?')
+
+def count_cn_en(text: str) -> int:
+    """统计中英文单词和数字的数量（单次正则扫描）"""
+    if not text:
+        return 0
+    return len(_CN_EN_NUM_RE.findall(str(text)))
 
 
-def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = None, link_char: str = '->') -> List[str]:
+def _is_meaningful_token(token: str) -> bool:
+    """Check if a token is worth keeping: has useful characters and isn't pure noise."""
+    if not _CN_EN_NUM_RE.search(token):
+        return False
+    # Filter single-character tokens: '共','年','月','1','9','m' etc.
+    # Multi-char English words like 'PPO' or Chinese words like '施工' are kept.
+    if len(token) == 1:
+        return False
+    return True
+
+
+# Lazy-loaded default stopwords (module-level cache)
+_DEFAULT_STOPWORDS: Optional[frozenset] = None
+
+def _get_default_stopwords() -> frozenset:
+    """Load default stopwords on first call, then return cached frozenset."""
+    global _DEFAULT_STOPWORDS
+    if _DEFAULT_STOPWORDS is None:
+        from shared.core.constants.stopwords import DEFAULT_STOPWORDS
+        _DEFAULT_STOPWORDS = DEFAULT_STOPWORDS
+    return _DEFAULT_STOPWORDS
+
+
+# Pre-clean: strip chunk reference markers before tokenization
+_CHUNK_MARKER_RE = re.compile(
+    r'IMAGE_\S+_IMAGE|TABLE_\S+_TABLE|image-\d+|table-\d+',
+    re.IGNORECASE,
+)
+
+def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = None, link_char: str = ';') -> List[str]:
     """
-    分词并移除停用词
-    
+    Uses jieba for tokenization which handles both Chinese and English text natively:
+    - Chinese: jieba word segmentation
+    - English: space-delimited word splitting (e.g. "deep learning" → ["deep", "learning"])
+    - Mixed: both handled correctly in one pass
+
     Args:
-        contents: 文本内容列表
-        stopwords: 停用词列表
-        link_char: 连接字符
-    
-    Returns:
-        处理后的文本列表
+        stopwords: None → use built-in baidu stopwords (default);
+                   []   → no stopword filtering;
+                   [custom list] → use provided stopwords.
     """
+    # Resolve stopwords: None → default, [] → skip, list → convert to set
+    if stopwords is None:
+        sw_set = _get_default_stopwords()
+    elif stopwords:
+        sw_set = set(stopwords)
+    else:
+        sw_set = None
+
     res_contents = []
-    tokens = []
     for content in contents:
-        tokens.append(merge_non_chinese_until_chinese(jieba.lcut(content)))
-    for token in tokens:
-        if stopwords is not None:
-            filtered_tokens = [w for w in token if w not in stopwords and (not w.strip() == '')]
-        else:
-            filtered_tokens = token
-        filtered_tokens = remove_duplicates_orderkept(filtered_tokens)
-        res_contents.append(link_char.join(filtered_tokens))
+        # Pre-clean: remove IMAGE_/TABLE_ markers and reference labels
+        content = _CHUNK_MARKER_RE.sub('', content)
+        raw_tokens = jieba.lcut(content)
+        # Filter: keep only tokens with meaningful characters (Chinese/English/numbers)
+        tokens = [t for t in raw_tokens if _is_meaningful_token(t)]
+        # Remove stopwords
+        if sw_set:
+            tokens = [w for w in tokens if w not in sw_set]
+        # Deduplicate while preserving order
+        tokens = remove_duplicates_orderkept(tokens)
+        res_contents.append(link_char.join(tokens))
     return res_contents
 

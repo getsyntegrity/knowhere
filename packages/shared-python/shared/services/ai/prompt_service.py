@@ -232,6 +232,22 @@ def build_prompt(task, texts, query, **kwargs):
         - Do not return any additional explanations or descriptions
         '''
 
+    elif task == "atlas-page-info":
+        temperature = 0.1
+        max_tokens = 300
+        prompt = f'''
+        You will receive a scanned page from an engineering atlas (drawing collection).
+        Extract key information using the following priority:
+        
+        1. FIRST: Look for an info bar / title block (usually at the bottom-right corner or bottom edge of the page). If found, extract the key fields inside it (title, drawing number, etc.) and return them in a single line.
+        2. IF NO info bar is found: Identify the most important content visible on this page and summarize it in no more than 10 words.
+        3. IF the page is completely blank or contains only meaningless noise: return "null"
+        
+        Requirements:
+        - Return a single concise line, no explanations or prefixes
+        - Use the SAME LANGUAGE as the text visible on the page
+        '''
+
     # ==================== Table Processing Prompts ====================
 
     elif task == "detect-table-headers":

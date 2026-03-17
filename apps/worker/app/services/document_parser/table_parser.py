@@ -1347,7 +1347,7 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
                 all_tb_paths.extend(tb_paths)
                 # Use relative path for tables: "tables/xxx.html"
                 relative_tb_path = f"tables/{tb_name}"
-                df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp])
+                df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp, ""])
 
             except KnowhereException:
                 raise
@@ -1360,7 +1360,6 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
                     original_exception=e
                 )
 
-    all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
-    table_df = pd.DataFrame(df_list, columns=all_df_cols)
+    table_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     table_df = process_dup_paths_df(table_df)
     return table_df

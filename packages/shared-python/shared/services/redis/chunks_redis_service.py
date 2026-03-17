@@ -1,6 +1,7 @@
 """
 Chunks数据Redis服务
 """
+import json
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -59,26 +60,63 @@ class ChunksRedisService:
             else:
                 return [kw_str.strip()] if kw_str.strip() else []
 
-        def safe_parse_rels(type_val, connects):
-            """安全解析关系"""
+        def safe_parse_tokens(raw):
+            """解析 tokens 字段：保留 jieba 分词链为列表，兼容新旧格式。
+            
+            新格式：分号分隔 'word1;word2;word3'（与 keywords 列一致）
+            旧格式：箭头分隔 'word1->word2->word3' 或 "['word1->word2->...']"
+            """
+            if raw is None or (pd is not None and pd.isna(raw)):
+                return []
+            raw_str = str(raw).strip()
+            if not raw_str:
+                return []
+            # List-like string from DataFrame: "['w1;w2']" or "['w1->w2']"
+            if raw_str.startswith("[") and raw_str.endswith("]"):
+                inner = raw_str[1:-1].strip()
+                if (inner.startswith("'") and inner.endswith("'")) or \
+                   (inner.startswith('"') and inner.endswith('"')):
+                    inner = inner[1:-1]
+                raw_str = inner
+            # Determine separator: semicolon (new) or arrow (legacy)
+            if ";" in raw_str:
+                return [t.strip() for t in raw_str.split(";") if t.strip()]
+            if "->" in raw_str:
+                return [t.strip() for t in raw_str.split("->") if t.strip()]
+            return []
+
+        def safe_parse_rels(type_val):
+            """安全解析 intra-doc 关系 (图文表引用，来自 type 字段)"""
             rels = []
-            # 从type字段提取关系（多行格式）
             type_is_valid = type_val and not (pd is not None and pd.isna(type_val))
             if type_is_valid:
                 type_str = str(type_val)
                 if "\n" in type_str:
                     lines = type_str.split("\n")[1:-1]
                     rels.extend([line.strip() for line in lines if line.strip()])
-            # 从connectto字段提取关系
-            connects_is_valid = connects and not (pd is not None and pd.isna(connects))
-            if connects_is_valid:
-                connects_str = str(connects)
-                if "\n" in connects_str:
-                    lines = connects_str.split("\n")
-                    rels.extend([line.strip() for line in lines if line.strip()])
-                else:
-                    rels.append(connects_str.strip())
             return rels if rels else []
+
+        def parse_connect_to(connects):
+            """解析 connectto 字段为 cross-chunk 关系列表"""
+            if not connects or (pd is not None and pd.isna(connects)):
+                return []
+            connects_str = str(connects).strip()
+            if not connects_str:
+                return []
+            # JSON array format (new)
+            if connects_str.startswith("["):
+                try:
+                    parsed = json.loads(connects_str)
+                    if isinstance(parsed, list):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+            # Legacy: newline-separated chunk IDs
+            if "\n" in connects_str:
+                lines = [line.strip() for line in connects_str.split("\n") if line.strip()]
+                return [{"target": line, "relation": "related", "score": 1.0, "keywords": []} for line in lines]
+            # Legacy: single value
+            return [{"target": connects_str, "relation": "related", "score": 1.0, "keywords": []}]
 
         chunks = []
         for i, (_, row) in enumerate(df.iterrows()):
@@ -108,9 +146,21 @@ class ChunksRedisService:
                 "keywords": safe_split_kws(row.get("keywords")),
                 "summary": str(row.get("summary", "")),
                 "length": safe_int(row.get("length")) or len(content),
-                "tokens": safe_int(row.get("tokens")),
-                "relationships": safe_parse_rels(type_val, row.get("connectto")),
+                "tokens": safe_parse_tokens(row.get("tokens")),
+                "relationships": safe_parse_rels(type_val),
+                "connect_to": parse_connect_to(row.get("connectto")),
             }
+
+            # 解析 page_nums: "3,4" → [3, 4]
+            raw_page_nums = row.get("page_nums", "")
+            if raw_page_nums and not (pd is not None and pd.isna(raw_page_nums)):
+                try:
+                    page_nums_list = [int(p.strip()) for p in str(raw_page_nums).split(",") if p.strip()]
+                except (ValueError, TypeError):
+                    page_nums_list = []
+            else:
+                page_nums_list = []
+            metadata["page_nums"] = page_nums_list
 
             # 根据类型添加特定字段
             if chunk_type == "image":

@@ -99,7 +99,7 @@ def checkerboard_inject_parse(
         "summary_image": kwargs.get('summary_image', True),
         "summary_table": kwargs.get('summary_table', True),
         "summary_txt": kwargs.get('summary_txt', True),
-        "stopwords": kwargs.get('stopwords', []),
+        "stopwords": kwargs.get('stopwords', None),
         "doc_type": kwargs.get('doc_type', 'auto'),
         "frag_desc": kwargs.get('add_frag_desc', ''),
     }

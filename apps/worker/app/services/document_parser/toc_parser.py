@@ -111,18 +111,24 @@ def detect_doc_tocs(elem, ns):
     instrs = elem.findall('.//w:instrText', namespaces=ns)
     for instr in instrs:
         if instr.text:
-            instr_text_lower = instr.text.lower()
-            if 'toc' in instr_text_lower or 'table of contents' in instr_text_lower or '目录' in instr.text:
+            instr_text_stripped = instr.text.strip()
+            instr_text_lower = instr_text_stripped.lower()
+            # Match standalone TOC field commands, NOT "PAGEREF _TocXXXX"
+            # TOC fields start with "TOC" as the command word
+            if (instr_text_lower.startswith('toc')
+                    or 'table of contents' in instr_text_lower
+                    or '目录' in instr_text_stripped):
                 is_field_start = True
                 break
 
     is_field_end = False
-    if not is_style:
-        fldchars = elem.findall('.//w:fldChar', namespaces=ns)
-        for fld in fldchars:
-            if fld.get('{%s}fldCharType' % ns['w']) == 'end':
-                is_field_end = True
-                break
+    # Always check for fldChar end, even on TOC-styled paragraphs,
+    # so that the outer TOC field boundary can be properly closed.
+    fldchars = elem.findall('.//w:fldChar', namespaces=ns)
+    for fld in fldchars:
+        if fld.get('{%s}fldCharType' % ns['w']) == 'end':
+            is_field_end = True
+            break
     
     return {
         'is_style': is_style,

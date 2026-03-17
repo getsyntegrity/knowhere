@@ -26,11 +26,11 @@ from PIL import Image
 MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
 g_img_lock = threading.Lock()
 
+
 def _get_vision_client() -> OpenAICompatibleClientSync:
     """Create OpenAI-compatible client for vision models, auto-routing by IMAGE_MODEL name."""
     image_model = settings.IMAGE_MODEL or "qwen-vl-plus"
     return get_openai_client(model=image_model)
-
 
 
 def image_bytes_to_base64(img_data: bytes, ext: str):
@@ -42,6 +42,7 @@ def image_bytes_to_base64(img_data: bytes, ext: str):
     }.get(ext, "application/octet-stream")
     # b64_data = base64.b64encode(img_data).decode("utf-8")
     return f"data:{mime_type};base64,{img_data}"
+
 
 def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
     from shared.core.constants import ProcessingConstants
@@ -68,6 +69,7 @@ def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
         img_data_base64 = image_bytes_to_base64(img_data, path.suffix.lower())
     return img_data_base64
 
+
 def process_img_path4read(paths_, kb_dir, cut):
     urls = []
     for path_ in paths_:
@@ -79,6 +81,7 @@ def process_img_path4read(paths_, kb_dir, cut):
         else:
             urls.append(path_)
     return urls
+
 
 def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
     from shared.core.constants import ProcessingConstants
@@ -100,7 +103,7 @@ def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="",
     
     urls_ = process_img_path4read(valid_paths, kb_dir, size_cut)
 
-    if task == "summary-images":
+    if task in ("summary-images", "atlas-page-info"):
         image_model = settings.IMAGE_MODEL or "gpt-4-vision-preview"
     else: # Image Q&A and OCR use better models
         image_model = settings.IMAGE_MODEL_MAX or "gpt-4-vision-preview"
@@ -146,6 +149,7 @@ def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="",
     else:
         return None
 
+
 def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     client = _get_vision_client()
     imgs = []
@@ -161,6 +165,7 @@ def detect_summary_img_md(line, last_context, kb_dir, mode=False):
         if image_summary is not None:
             imgs.append((ip, image_summary))
     return imgs
+
 
 def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm_paras=None, auto_rename=True, relative_root=None):
     split_char = settings.SPLIT_CHAR or "/"
@@ -236,10 +241,9 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
     know_id = gen_str_codes(img_bottom_content + str(uuid.uuid4()))
     # Use relative path with relative_root prefix
     relative_img_path = f"{relative_root}{split_char}{final_img_name}" if relative_root else final_img_name
-    df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, know_id, "", "", time_stamp])
+    df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, know_id, "", "", time_stamp, ""])
 
-    all_df_cols = (settings.ALL_DF_COLS or "content,path,type,length,keywords,summary,know_id,tokens,extra,addtime").split(',')
-    img_df = pd.DataFrame(df_list, columns=all_df_cols)
+    img_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     img_df = process_dup_paths_df(img_df)
 
     return img_df

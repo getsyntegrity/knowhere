@@ -89,6 +89,14 @@ class ZipResultService:
                     markdown_path = full_md_path
                     zip_file.write(full_md_path, "full.md")
 
+                # 2b. Try to add toc_hierarchies.json (if exists)
+                has_toc = False
+                toc_path = os.path.join(add_dir, "toc_hierarchies.json")
+                if os.path.exists(toc_path):
+                    zip_file.write(toc_path, "toc_hierarchies.json")
+                    has_toc = True
+                    logger.info("Added toc_hierarchies.json to ZIP")
+
                 # 3. Add image files
                 for img_info in image_files_info:
                     source_path = img_info["source_path"]
@@ -153,6 +161,7 @@ class ZipResultService:
                     has_markdown=markdown_path is not None,
                     has_kb_csv=has_kb_csv,
                     has_hierarchy=has_hierarchy,
+                    has_toc=has_toc,
                 )
                 manifest_json = json.dumps(manifest, ensure_ascii=False, indent=2)
                 zip_file.writestr("manifest.json", manifest_json.encode("utf-8"))
@@ -254,6 +263,7 @@ class ZipResultService:
             metadata = {
                 "length": existing_metadata.get("length") or len(content),
                 "summary": existing_metadata.get("summary") or chunk.get("summary", ""),
+                "page_nums": existing_metadata.get("page_nums", []),
             }
 
             # Add type-specific fields
@@ -566,6 +576,7 @@ class ZipResultService:
         has_markdown: bool = False,
         has_kb_csv: bool = False,
         has_hierarchy: bool = False,
+        has_toc: bool = False,
     ) -> Dict[str, Any]:
         """Generate manifest.json"""
         # Prepare images array (keep only necessary fields: id, file_path, size_bytes, format, width, height)
@@ -602,6 +613,7 @@ class ZipResultService:
                 "markdown": "full.md" if has_markdown else None,
                 "kb_csv": "kb.csv" if has_kb_csv else None,
                 "hierarchy": "hierarchy.json" if has_hierarchy else None,
+                "toc_hierarchies": "toc_hierarchies.json" if has_toc else None,
                 "images": images,
                 "tables": tables,
             },

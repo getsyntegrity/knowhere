@@ -134,7 +134,7 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     img_path = f"images/{img_name}{img_ext}"
 
     headings_stack[-1]['content'].append(image_ref)
-    df_list.append([image_ref, img_path, img_id, len(image_ref), "", img_summary_field, temp_uid, "", "", time_stamp])
+    df_list.append([image_ref, img_path, img_id, len(image_ref), "", img_summary_field, temp_uid, "", "", time_stamp, ""])
     return headings_stack, df_list
 
 
@@ -237,7 +237,7 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
                 table_img_entries.append([
                     image_ref, relative_img_path, img_id,
                     len(image_ref), "", img_summary_field,
-                    temp_uid, "", "", time_stamp
+                    temp_uid, "", "", time_stamp, ""
                 ])
             
             cell_image_map[(row_idx, col_idx)] = ' '.join(descriptions)
@@ -295,7 +295,7 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
     else:
         table_ref = f"\n{table_index}\n{table_id}\n"
     headings_stack[-1]['content'].append(table_ref)
-    df_list.append([tb_html_str, tb_path, table_id, len(tb_html_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp])
+    df_list.append([tb_html_str, tb_path, table_id, len(tb_html_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp, ""])
     return headings_stack, df_list, img_count
 
 
@@ -607,7 +607,7 @@ def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, rela
             know_path = split_char.join([relative_root, path_suffix]) if relative_root and path_suffix else (relative_root or path_suffix)
             df_list.append(
                 [bottom_content, know_path, match_type, len(bottom_content), keywords, summary, know_id, bottom_tokens,
-                 "", time_stamp])
+                 "", time_stamp, ""])
         except KnowhereException:
             raise
         except Exception as e:

@@ -1,0 +1,390 @@
+"""
+Atlas-specific parsing pipeline.
+
+For documents detected as atlas (doc_category="atlas") — e.g. engineering drawing
+collections — this module BYPASSES MinerU entirely and uses PyMuPDF directly to:
+  1. Extract text from each page (for naming and content)
+  2. Render each page as a single complete image (preserving full-page layout)
+  3. For scanned atlases: auto-call VLM to extract drawing info from each page
+
+MinerU is unsuitable for atlas because it fragments each page into multiple
+sub-images (e.g. 700+ images for 135 pages), destroying per-page integrity.
+"""
+
+import json
+import os
+import re
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import fitz  # PyMuPDF
+import pandas as pd
+from loguru import logger
+from shared.core.config import settings
+from app.services.common.kb_utils import (
+    find_matches_parsing, gen_str_codes, get_str_time, process_dup_paths_df
+)
+from app.services.document_parser.toc_parser import detect_tocs_in_texts
+from shared.utils.text_utils import tokenize2stw_remove
+
+
+# ─── Config ───────────────────────────────────────────────────────────
+VLM_CONCURRENCY = 3          # concurrent VLM calls
+IMG_RENDER_DPI = 150         # DPI for full-page rendering
+IMG_MAX_SIDE = 1280          # max pixels on longest side for VLM input
+
+
+# ─── Helper: compress image for VLM ──────────────────────────────────
+
+def _compress_for_vlm(img_path: str, max_side: int = IMG_MAX_SIDE) -> str:
+    """
+    Resize image so the longest side <= max_side, save as JPEG for smaller size.
+    Returns path to the compressed image (or original if small enough).
+    """
+    from PIL import Image
+
+    img = Image.open(img_path)
+    w, h = img.size
+
+    if max(w, h) <= max_side:
+        return img_path
+
+    ratio = max_side / max(w, h)
+    new_w, new_h = int(w * ratio), int(h * ratio)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    compressed_path = img_path.replace(".png", "_vlm.jpg")
+    img.save(compressed_path, "JPEG", quality=85)
+    return compressed_path
+
+
+# ─── Helper: extract text from a PyMuPDF page ────────────────────────
+
+def _get_page_text_pymupdf(page: fitz.Page) -> str:
+    """Extract all text from a single PyMuPDF page."""
+    return page.get_text("text").strip()
+
+
+# ─── Helper: derive chunk title from page text ───────────────────────
+
+def _make_title_from_text(page_text: str, page_num: int, max_len: int = 25) -> str:
+    """
+    Build a chunk title from the first and last non-empty lines + page number.
+    
+    Example: "P5 室外出入口一般规定...比例1:50"
+    """
+    lines = [l.strip() for l in page_text.split("\n") if l.strip()]
+    if not lines:
+        return f"P{page_num}"
+
+    first = lines[0][:max_len]
+    if len(lines) > 1:
+        last = lines[-1][:max_len]
+        return f"P{page_num} {first}...{last}"
+    return f"P{page_num} {first}"
+
+
+# ─── Helper: VLM page info extraction ────────────────────────────────
+
+def _vlm_extract_page_info(output_dir: str, img_name: str) -> str:
+    """
+    Send the full page image (compressed) to VLM with atlas-page-info prompt.
+    Uses IMAGE_MODEL (PLUS) for cost efficiency.
+    
+    Returns extracted info string, or empty string on failure.
+    """
+    from app.services.document_parser.image_parser import ask_image, _get_vision_client
+
+    img_path = os.path.join(output_dir, "images", img_name)
+    if not os.path.exists(img_path):
+        return ""
+
+    # Compress for VLM
+    vlm_path = _compress_for_vlm(img_path)
+    # Use relative path from output_dir for ask_image
+    vlm_rel = os.path.relpath(vlm_path, output_dir)
+
+    try:
+        client = _get_vision_client()
+        result = ask_image(
+            client, output_dir, [vlm_rel],
+            title_text="",
+            task="atlas-page-info",
+            size_cut=False
+        )
+
+        # Clean up compressed file if different from original
+        if vlm_path != img_path:
+            try:
+                os.remove(vlm_path)
+            except OSError:
+                pass
+
+        if result and result.strip().lower() != "null":
+            return result.strip()
+        return ""
+    except Exception as e:
+        logger.warning(f"VLM atlas page info extraction failed for {img_name}: {e}")
+        return ""
+
+
+# ─── Helper: detect TOC pages via text heuristics ─────────────────────
+
+def _detect_toc_pages_from_text(doc: fitz.Document, model_name: str = "deepseek-chat") -> tuple:
+    """
+    Detect TOC pages by extracting text from all pages, assembling into
+    md_lines with page markers, then running detect_tocs_in_texts().
+    
+    Returns: (toc_page_set, toc_hierarchies)
+    """
+    md_lines = []
+    for page_idx in range(len(doc)):
+        page = doc[page_idx]
+        text = page.get_text("text").strip()
+        if text:
+            md_lines.append(f"<!-- page {page_idx + 1} -->")
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if stripped:
+                    md_lines.append(stripped)
+
+    if not md_lines:
+        return set(), None
+
+    toc_hierarchies, _ = detect_tocs_in_texts(md_lines, model_name=model_name)
+
+    if not toc_hierarchies:
+        return set(), None
+
+    # Map TOC line ranges back to page numbers
+    page_marker_re = re.compile(r'<!--\s*page\s+(\d+)\s*-->', re.IGNORECASE)
+    line_to_page = {}
+    current_page = 0
+    for i, line in enumerate(md_lines):
+        m = page_marker_re.search(line)
+        if m:
+            current_page = int(m.group(1))
+        line_to_page[i] = current_page
+
+    toc_pages = set()
+    for toc_info in toc_hierarchies:
+        toc_start = toc_info.get("toc_range", (0, 0))[0]
+        toc_end = toc_info.get("toc_range", (0, 0))[1]
+        for line_idx in range(toc_start, toc_end + 1):
+            pg = line_to_page.get(line_idx, 0)
+            if pg > 0:
+                toc_pages.add(pg)
+
+    return toc_pages, toc_hierarchies
+
+
+# ─── Main entry point ────────────────────────────────────────────────
+
+def parse_atlas(
+    pdf_path: str,
+    output_dir: str,
+    base_llm_paras: dict,
+    relative_root: str = None,
+    profile=None,
+) -> pd.DataFrame:
+    """
+    Atlas-specific parsing: one chunk per page using PyMuPDF directly.
+    
+    For scanned atlases (no extractable text), automatically calls VLM
+    to extract drawing info from each page with 3-way concurrency.
+    
+    Args:
+        pdf_path: original PDF file path
+        output_dir: output directory for images, full.md, etc.
+        base_llm_paras: LLM parameters dict
+        relative_root: path prefix for chunk path field
+        profile: DocProfile with scan_type info
+    
+    Returns:
+        pd.DataFrame with ALL_DF_COLS columns
+    """
+    logger.info(f"📐 Atlas pipeline: starting per-page chunking for {pdf_path}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    img_dir = os.path.join(output_dir, "images")
+    os.makedirs(img_dir, exist_ok=True)
+
+    # ── Open PDF ──
+    doc = fitz.open(pdf_path)
+    total_pages = len(doc)
+    logger.info(f"📐 Atlas: {total_pages} pages in PDF")
+
+    # ── Determine if VLM is needed ──
+    # For atlas, always use VLM to extract page info from rendered images.
+    # TODO: optimize non-scanned atlas — could skip VLM and use PyMuPDF text
+    #       extraction directly for pages with sufficient text density.
+    use_vlm = True
+    is_scanned = profile and profile.scan_type == "scanned"
+    scan_label = "scanned" if is_scanned else "non-scanned"
+    logger.info(f"📐 Atlas: {scan_label} document, VLM enabled for info extraction")
+
+    # ── TOC detection ──
+    model_name = base_llm_paras.get("model_name", "deepseek-chat")
+    toc_page_set, toc_hierarchies = _detect_toc_pages_from_text(doc, model_name)
+    
+    if toc_page_set:
+        logger.info(f"📐 Atlas: TOC pages detected: {sorted(toc_page_set)}")
+
+    if toc_hierarchies:
+        toc_json_path = os.path.join(output_dir, "toc_hierarchies.json")
+        with open(toc_json_path, "w", encoding="utf-8") as f:
+            json.dump(toc_hierarchies, f, ensure_ascii=False, indent=2)
+
+    # ── Config ──
+    stopwords = base_llm_paras.get("stopwords", [])
+    time_stamp = get_str_time()
+    split_char = settings.SPLIT_CHAR or "/"
+
+    # ── Phase 1: Render all non-TOC pages ──
+    page_data = []  # list of (page_num, page_text, img_name)
+    
+    for page_idx in range(total_pages):
+        page_num = page_idx + 1
+
+        if page_num in toc_page_set:
+            logger.debug(f"📐 Skipping TOC page {page_num}")
+            continue
+
+        page = doc[page_idx]
+        page_text = _get_page_text_pymupdf(page)
+
+        # Render full page as single image
+        pix = page.get_pixmap(dpi=IMG_RENDER_DPI)
+        img_name = f"page-{page_num}.png"
+        img_save_path = os.path.join(img_dir, img_name)
+        pix.save(img_save_path)
+
+        page_data.append((page_num, page_text, img_name))
+
+    doc.close()
+    logger.info(f"📐 Atlas: rendered {len(page_data)} pages as images")
+
+    # ── Phase 2: VLM extraction (concurrent if needed) ──
+    vlm_results = {}  # page_num → vlm_info string
+
+    if use_vlm and page_data:
+        logger.info(f"📐 Atlas: starting VLM extraction with {VLM_CONCURRENCY}-way concurrency")
+
+        def _vlm_task(page_num, img_name):
+            info = _vlm_extract_page_info(output_dir, img_name)
+            return page_num, info
+
+        with ThreadPoolExecutor(max_workers=VLM_CONCURRENCY) as executor:
+            futures = {
+                executor.submit(_vlm_task, pn, iname): pn
+                for pn, _, iname in page_data
+            }
+            done_count = 0
+            for future in as_completed(futures):
+                page_num, info = future.result()
+                vlm_results[page_num] = info
+                done_count += 1
+                if done_count % 10 == 0:
+                    logger.info(f"📐 VLM progress: {done_count}/{len(page_data)}")
+
+        vlm_ok = sum(1 for v in vlm_results.values() if v)
+        logger.info(f"📐 VLM extraction complete: {vlm_ok}/{len(page_data)} pages got info")
+
+    # ── Phase 3: Build chunks ──
+    df_list = []
+    custom_md_lines = []
+    skipped_null = 0
+
+    for page_num, page_text, img_name in page_data:
+        # Determine chunk title
+        vlm_info = vlm_results.get(page_num, "")
+
+        # If VLM is active and returned null → skip this page entirely
+        if use_vlm and not vlm_info:
+            skipped_null += 1
+            logger.debug(f"📐 Skipping page {page_num}: VLM returned null")
+            continue
+
+        if vlm_info:
+            chunk_title = f"P{page_num} {vlm_info[:50]}"
+        else:
+            chunk_title = _make_title_from_text(page_text, page_num)
+
+        # Sanitize title for path usage
+        safe_title = re.sub(r'[/\\:*?"<>|]', '_', chunk_title)
+
+        # Rename image file to use descriptive title
+        new_img_name = f"{safe_title}.png"
+        old_img_path = os.path.join(img_dir, img_name)
+        new_img_path = os.path.join(img_dir, new_img_name)
+        if os.path.exists(old_img_path):
+            os.rename(old_img_path, new_img_path)
+            img_name = new_img_name
+
+        # Build chunk content
+        img_ref = f"images/{img_name}"
+        know_id = gen_str_codes(f"atlas_page_{page_num}_{uuid.uuid4()}")
+        img_marker = f"IMAGE_{know_id}_IMAGE"
+
+        content_parts = [f"\n{img_marker}"]
+        if vlm_info:
+            content_parts.append(f"[page-{page_num}] {vlm_info}")
+        else:
+            content_parts.append(f"[page-{page_num}] {chunk_title}")
+        if page_text:
+            content_parts.append(page_text)
+        content = "\n".join(content_parts) + "\n"
+
+        # Build path
+        if relative_root:
+            chunk_path = f"{relative_root}{split_char}{safe_title}"
+        else:
+            chunk_path = safe_title
+
+        # Build df row (11 columns)
+        match_type = find_matches_parsing(content, chunk_path)
+        tokens = tokenize2stw_remove([content], stopwords)
+        df_list.append([
+            content,        # content
+            chunk_path,     # path
+            match_type,     # type
+            len(content),   # length
+            "",             # keywords
+            "",             # summary
+            know_id,        # know_id
+            tokens,         # tokens
+            "",             # connectto
+            time_stamp,     # addtime
+            str(page_num),  # page_nums
+        ])
+
+        # Build custom md line
+        custom_md_lines.append(f"<!-- page {page_num} -->")
+        custom_md_lines.append(f"## {chunk_title}")
+        custom_md_lines.append(f"![{chunk_title}]({img_ref})")
+        if vlm_info:
+            custom_md_lines.append(vlm_info)
+        elif page_text:
+            custom_md_lines.append(page_text[:200])
+        custom_md_lines.append("")
+
+    # ── Save custom full.md ──
+    custom_md_path = os.path.join(output_dir, "full.md")
+    with open(custom_md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(custom_md_lines))
+
+    logger.info(
+        f"📐 Atlas pipeline complete: {len(df_list)} chunks created "
+        f"(skipped {len(toc_page_set)} TOC + {skipped_null} null pages, total {total_pages})"
+    )
+
+    # TODO: build atlas hierarchy structure (e.g. atlas_name → page chunks)
+    #       Currently atlas chunks are flat with no parent-child relationships.
+    #       Future: integrate with hierarchy builder for unified schema.
+
+    # ── Build DataFrame ──
+    all_cols = settings.ALL_DF_COLS.split(",")
+
+    df = pd.DataFrame(df_list, columns=all_cols)
+    df = process_dup_paths_df(df)
+    return df
