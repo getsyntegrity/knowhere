@@ -2,8 +2,7 @@
 Startup rule loader for rate limit configuration.
 
 Queries tier_limits and system_limits from the database and updates the
-RateLimitConfig singleton. Called at startup and periodically by the
-background sync task.
+RateLimitConfig singleton during application startup.
 """
 from loguru import logger
 from sqlalchemy import select
@@ -58,8 +57,7 @@ async def load_rules(db: AsyncSession) -> None:
     """
     Load rate limit rules from DB and update in-memory config.
 
-    Called once at application startup and periodically by the
-    background sync task.
+    Called once at application startup.
     """
     try:
         tier_map = await _fetch_tier_map(db)

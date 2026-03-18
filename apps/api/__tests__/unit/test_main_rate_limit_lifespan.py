@@ -78,12 +78,10 @@ async def test_lifespan_initializes_and_tears_down_rate_limit_components(monkeyp
 
     test_app = FastAPI()
     async with app_main.lifespan(test_app):
-        assert hasattr(test_app.state, "rate_limit_rule_sync_task")
-        assert test_app.state.rate_limit_rule_sync_task.done() is False
+        assert hasattr(test_app.state, "rate_limit_rule_sync_task") is False
         assert len(load_calls) == 1
         assert messaging.start_calls == 1
 
-    assert test_app.state.rate_limit_rule_sync_task.done() is True
     assert messaging.stop_calls == 1
 
 

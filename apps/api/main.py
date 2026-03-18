@@ -1,4 +1,3 @@
-import asyncio
 import os
 from pathlib import Path
 import httpx
@@ -59,8 +58,8 @@ async def lifespan(app: FastAPI):
 
     ImageCli.http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
 
-    # Initialize rate limiter rules from DB and start Pub/Sub listener.
-    # Fail fast on init errors so we don't serve with partially enforced limits.
+    # Initialize rate limiter rules from DB.
+    # Changes now require a pod restart to take effect.
     from app.services.rate_limit.config import RateLimitConfig
     from shared.core.database import AsyncSessionFactory
 
@@ -68,24 +67,7 @@ async def lifespan(app: FastAPI):
     RateLimitConfig.get_instance(redis_url)
     async with AsyncSessionFactory() as session:
         await load_rules(session)
-
-    async def _rate_limit_rule_sync_loop():
-        sync_interval = 60
-        while True:
-            try:
-                await asyncio.sleep(sync_interval)
-                async with AsyncSessionFactory() as session:
-                    await load_rules(session)
-                logger.debug("rate limit rules periodic DB sync finished")
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"rate limit rules periodic DB sync failed: {e}")
-
-    app.state.rate_limit_rule_sync_task = asyncio.create_task(
-        _rate_limit_rule_sync_loop(),
-        name="rate_limit_rule_sync",
-    )
+    logger.info("rate limit rules loaded at startup; restart the pod to apply changes")
 
     try:
         from app.services.messaging_service import messaging_service
@@ -95,14 +77,6 @@ async def lifespan(app: FastAPI):
     
     logger.info("knowledge library API service started!")
     yield
-
-    # Stop rate limiter sync task
-    if hasattr(app.state, "rate_limit_rule_sync_task"):
-        app.state.rate_limit_rule_sync_task.cancel()
-        try:
-            await app.state.rate_limit_rule_sync_task
-        except asyncio.CancelledError:
-            pass
 
     try:
         from app.services.messaging_service import messaging_service

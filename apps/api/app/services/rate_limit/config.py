@@ -2,7 +2,7 @@
 Rate limit configuration singleton.
 
 Holds tier maps, system rules, and limits library instances.
-Supports atomic hot-reload of rules via GIL-safe reference swaps.
+Supports atomic rule updates via GIL-safe reference swaps.
 """
 
 import os
@@ -132,7 +132,7 @@ class RateLimitConfig:
         return self._storage
 
     # ------------------------------------------------------------------
-    # Hot-reload
+    # Rule updates
     # ------------------------------------------------------------------
 
     def update_rules(
