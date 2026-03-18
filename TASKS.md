@@ -1,6 +1,5 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-03-17 — 停用词集成、ConnectTo 关系构建优化 (长度加权 + 字符去重)、token 过滤增强
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -16,6 +15,8 @@
 | 2026-03-02 | ~1h 20m | ~5K | ~40K | Excel 子表碎片合并 + 隐藏 Sheet 参数化 + _src_row 行号保留 + postprocess_tb index collision fix |
 | 2026-03-10 | ~1h | ~3K | ~25K | GLM 集成: 统一 LLM 路由 (glm/qwen/deepseek) + `_get_vision_client()` 消除 4 处硬编码 + MinerU key 修复 |
 | 2026-03-17 | ~4h | ~15K | ~120K | 分词管线简化 + Schema 统一 + TOC field 检测修复 + 停用词集成 (百度词表 frozenset) + ConnectTo 优化 (长度加权评分 + SequenceMatcher 字符去重 + 单字符 token 过滤) |
+| 2026-03-18 | ~1h 40m | ~8K | ~60K | 单字符关键词过滤 (safe_split_kws) + env.example 同步 + KG edge 补 source_id/target_id + knowhere_memory SKILL.md 重写 (3层结构引导+零审批) + FinMemory Insight 分析 + KG Summary/Insight 规划 |
+| 2026-03-18 (夜) | ~35m | ~2K | ~20K | 清理 Qwen 本地测试残留 (debug_local_qwen.py + /tmp/ KMP locks) + Qwen3.5-35b-a3b DashScope API 评测: 思考模式 60题/106s vs 非思考模式 48题/9.2s vs DS baseline 50题/~10s，非思考 97.7% 一致率 |
 
 ---
 
@@ -140,7 +141,7 @@ sequenceDiagram
 
 ### 🔴 In Progress
 
-- [/] **KG Edge chunk_id + SKILL.md 优化** — graph_builder edge 补 source_id/target_id; SKILL.md 重写为 3 层结构引导 (completed: 2026-03-18)
+_(无)_
 
 ### 🟡 TODO
 
@@ -207,6 +208,7 @@ sequenceDiagram
   - **builder.py**: 倒排索引 + 长度加权评分 `score = Σlen(shared_kw) / min(Σlen(A), Σlen(B))` + SequenceMatcher 字符去重(≥0.8) + 配置: `min_overlap=3, threshold=0.8, cross_file_only=True`，1459→22 高质量 pair
   - **graph_builder.py**: chunk→file 聚合、TF-IDF top_keywords、`importance = 0.7×usage_heat + 0.3×freshness`(指数衰减 half_life=30d)、增量匹配 `_incremental_connections`
   - **chunks_redis_service.py**: `safe_split_kws` 单字符关键词过滤 (len≤1)
+- [x] ~~KG Edge chunk_id + SKILL.md 优化~~ — `graph_builder` edge `top_connections` 补 `source_id`/`target_id`; `knowhere_memory/SKILL.md` 重写为 3 层结构引导 (导航→内容→结构) + 零审批检索流程 (completed: 2026-03-18)
 
 ### 📋 Code-Level TODOs
 
@@ -277,6 +279,7 @@ cd packages/shared-python && pytest
 | 脚本 | 用途 |
 |------|------|
 | `debug_parse.py` | 文档解析调试 |
+| `debug_qwen_api.py` | Qwen3.5 API 效果评测 (DashScope/ModelScope, thinking/non-thinking) |
 | `debug_toc_prompt.py` | TOC 提示词调试 |
 | `debug_toc_detection.py` | TOC 检测调试 |
 | `debug_bfs_refine.py` | BFS 标题优化调试 |
