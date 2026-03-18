@@ -140,11 +140,29 @@ sequenceDiagram
 
 ### 🔴 In Progress
 
-- [/] **ConnectTo 关系构建** — `connect_builder/builder.py` 已实现: 长度加权评分 + SequenceMatcher 字符去重(≥0.8) + threshold=0.8 + min_overlap=3。1459→22 高质量 pair。待做: Phase 2 LLM predicate 分类
+- [/] **KG Edge chunk_id + SKILL.md 优化** — graph_builder edge 补 source_id/target_id; SKILL.md 重写为 3 层结构引导 (completed: 2026-03-18)
 
 ### 🟡 TODO
 
 #### High Priority
+
+- [ ] **KG Bottom-Up File Summary (Phase 1)** — 从 chunk `metadata.summary` 向上聚合为 `files[x].top_summary`
+  - 底层数据源: `extract_summary_keywords()` 已为每个 chunk 生成 summary（文本/表格/Excel 4 条路径）
+  - Prompt 设计借鉴 FinMemory Insight 的"识别"模式: 不只压缩，还提取 `key_findings`（关键结论/数据/判断）
+  - 输出: `{summary: "一句话主题", key_findings: ["发现1", "发现2"]}`
+  - 成本: 每文件 1 次 LLM 调用，build_knowledge_graph 时执行
+
+- [ ] **KG Cross-Doc Edge Insight (Phase 2)** — 对高分 edges 生成跨文件洞察，存入 `edge.insight`
+  - 输入: 两端文件的 `top_summary` + `top_connections` chunk 名
+  - 输出: `edge.insight` + `edge.relation_type` (supplements/extends/contradicts/same_topic) + `edge.insight_confidence`
+  - 目标: "这两个文件联合起来能得到什么新发现"
+  - 成本: 仅对 top-N 高分 edges 做 LLM 调用
+
+- [ ] **ConnectTo Embedding 语义相似度** — hybrid scoring: `0.5 x keyword_score + 0.5 x cosine_sim`，用 Qwen/ALI embedding API
+- [ ] **ConnectTo LLM Predicate 分类** — 参考 FinMemory `extraction_prompt_template` 模式，对 candidate pairs 做 LLM classify:
+  - Typed predicates: `extends` / `same_data` / `contains` / `contradicts` / `supplements` / `supersedes`
+  - Mem0 式 consolidation: 矛盾信号共存 (conflict_group)，不强制消解
+  - `classify_relation()` stub 已在 builder.py 中
 
 - [/] 继续优化**Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
   - [ ] profile metadata 写入解析结果
@@ -162,14 +180,6 @@ sequenceDiagram
 - [ ] **table_parser 已知问题** — `table_parser.py:863` 当前实现有问题 (见 docstring)
 - [ ] **智能分块** — `txt_parser.py:124` 当前粗略分割，需更智能策略
 - [ ] **OCR 分支** — `toc_parser.py:609` 实现 OCR → 直接生成 toc-tree
-
-#### Normal Priority — ConnectTo Phase 2
-
-- [ ] **ConnectTo Embedding 语义相似度** — hybrid scoring: `0.5 × keyword_score + 0.5 × cosine_sim`，用 Qwen/ALI embedding API
-- [ ] **ConnectTo LLM Predicate 分类** — 参考 FinMemory `extraction_prompt_template` 模式，对 candidate pairs 做 LLM classify:
-  - Typed predicates: `extends` / `same_data` / `contains` / `contradicts` / `supplements` / `supersedes`
-  - Mem0 式 consolidation: 矛盾信号共存 (conflict_group)，不强制消解
-  - `classify_relation()` stub 已在 builder.py 中
 
 #### Normal Priority — TOC Field Depth Tracking
 
@@ -193,6 +203,10 @@ sequenceDiagram
 - [x] ~~分词管线简化~~ — `tokenize2stw_remove` 去除 `merge_non_chinese_until_chinese`，直接用 jieba + 有意义 token 过滤，修复英文 token 拼接问题 (completed: 2026-03-17)
 - [x] ~~Schema 统一 (extra→connectto)~~ — 5 个 parser 统一使用 `settings.ALL_DF_COLS.split(',')`，消除所有内联 fallback；部署配置补齐 `page_nums` 列 (completed: 2026-03-17)
 - [x] ~~TOC field 检测修复~~ — `detect_doc_tocs` 修复两个 bug：`PAGEREF _TocXXXX` 中 `toc` 子串误触发 `is_field_start` + `is_field_end` 被 `is_style` 守卫跳过导致 field 永不关闭 (completed: 2026-03-17)
+- [x] ~~ConnectTo 关系构建 Phase 1~~ — 双模块架构完成 (completed: 2026-03-17)
+  - **builder.py**: 倒排索引 + 长度加权评分 `score = Σlen(shared_kw) / min(Σlen(A), Σlen(B))` + SequenceMatcher 字符去重(≥0.8) + 配置: `min_overlap=3, threshold=0.8, cross_file_only=True`，1459→22 高质量 pair
+  - **graph_builder.py**: chunk→file 聚合、TF-IDF top_keywords、`importance = 0.7×usage_heat + 0.3×freshness`(指数衰减 half_life=30d)、增量匹配 `_incremental_connections`
+  - **chunks_redis_service.py**: `safe_split_kws` 单字符关键词过滤 (len≤1)
 
 ### 📋 Code-Level TODOs
 

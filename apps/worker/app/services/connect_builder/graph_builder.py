@@ -458,14 +458,18 @@ def _aggregate_file_level_edges(
         if chunk_to_file.get(src_id) == pk[0]:
             pair_data[pk]["connections"].append({
                 "source_chunk": src_name,
+                "source_id": src_id,
                 "target_chunk": tgt_name,
+                "target_id": tgt_id,
                 "relation": edge.get("relation", "related"),
                 "score": edge.get("score", 0),
             })
         else:
             pair_data[pk]["connections"].append({
                 "source_chunk": tgt_name,
+                "source_id": tgt_id,
                 "target_chunk": src_name,
+                "target_id": src_id,
                 "relation": edge.get("relation", "related"),
                 "score": edge.get("score", 0),
             })
