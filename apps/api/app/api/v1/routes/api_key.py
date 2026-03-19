@@ -134,18 +134,12 @@ async def revoke_api_key(
     api_key_service = APIKeyService()
     
     try:
-        success = await api_key_service.revoke_api_key(
+        await api_key_service.revoke_api_key(
             session=db,
             api_key_id=request.api_key_id,
             user_id=current_user.user_id
         )
-        
-        if success:
-            return {"message": "API Key已撤销"}
-        else:
-            raise APIKeyOperationException(
-                internal_message="Failed to revoke API Key"
-            )
+        return {"message": "API Key已撤销"}
             
     except NotFoundException:
         raise
