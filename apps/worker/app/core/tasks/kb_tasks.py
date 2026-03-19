@@ -518,7 +518,7 @@ def _parse(job_id: str, user_id: str | None):
             smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
             summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
             summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
-            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", False),
+            summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),
             add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
             s3_key=s3_key,
         )

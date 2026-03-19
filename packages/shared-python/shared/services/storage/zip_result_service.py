@@ -312,7 +312,6 @@ class ZipResultService:
                         file_path = f"tables/{tbl_name}"
                 
                 metadata["file_path"] = file_path
-                metadata["table_type"] = existing_metadata.get("table_type")
 
             formatted_chunk = {
                 "chunk_id": chunk_id,

@@ -1327,11 +1327,16 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
                 if base_llm_paras['summary_table']:
                     summary_context = format_tb_scope(tb, window_h)
                     summary_context = f"Table columns:\n{tb_keywords}\n\nFirst {window_h} rows:\n{summary_context}"
-                    tb_summary = extract_summary_keywords(summary_context, type_="summary", summary_len=100)
+                    from app.services.document_parser.txt_parser import extract_summary_with_title
+                    llm_title, llm_summary = extract_summary_with_title(summary_context, summary_len=100)
+                    tb_summary = llm_summary if llm_summary else tb_keywords
                 else:
+                    llm_title = None
                     tb_summary = tb_keywords
 
-                tb_name = remove_spaces('table-' + sheet_name) + '.html'
+                # Use LLM title for filename when available, fallback to sheet_name
+                effective_name = llm_title if llm_title else sheet_name
+                tb_name = remove_spaces('table-' + effective_name) + '.html'
                 tb_path = os.path.join(tb_dir, tb_name)
                 soup = BeautifulSoup(tb_strs, features='html.parser')
                 tb_html_str = soup.prettify()

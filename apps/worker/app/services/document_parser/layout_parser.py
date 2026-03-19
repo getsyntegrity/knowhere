@@ -29,12 +29,15 @@ from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 def save_intermediate_csv(df: pd.DataFrame, output_dir: str, filename: str):
     """
     save intermediate result to csv file, use utf-8-sig encoding to support Chinese and English
+    Only saves when LOCAL_DEBUG environment variable is set to 'true'.
     
     Args:
         df: DataFrame to save
         output_dir: output directory path
         filename: filename (without extension)
     """
+    if not os.environ.get("LOCAL_DEBUG", "").lower() in ("true", "1"):
+        return
     if output_dir is None or df is None or df.empty:
         return
     

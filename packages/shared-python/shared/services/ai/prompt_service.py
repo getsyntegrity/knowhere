@@ -40,6 +40,22 @@ def build_prompt(task, texts, query, **kwargs):
         - Output the summary content DIRECTLY, do not start with phrases like "Here is the summary"
         - Do not add any format wrappers, prefixes, or explanations beyond the summary
         """
+
+    elif task == 'summary-titled':
+        max_tokens = kwargs['paras']['max_tokens']
+        prompt = f"""
+        You will receive a text passage (which may include HTML tables or structured data):
+        '''
+        {texts}
+        '''
+        Your task:
+        - Line 1: Output a short title (no more than 15 characters) that captures the core topic
+        - Line 2 onward: Output a detailed summary, not exceeding {max_tokens} characters
+        - If the input is an HTML table, summarize its structure and key data points in natural language, do NOT return the HTML code itself
+        - If the input content is too short, mostly empty, or lacks meaningful text, return exactly: null
+        - Your response must be in the SAME LANGUAGE as the input text
+        - Output DIRECTLY without any prefixes like "Title:" or "Summary:"
+        """
         
     elif task == 'summary-keywords':
         max_tokens = kwargs['paras']['max_tokens']
@@ -190,12 +206,13 @@ def build_prompt(task, texts, query, **kwargs):
         prompt = f'''
         You will receive an image, which may be a photo, chart, or an image requiring OCR.
         Your task is to extract the main content described in the image. Note:
-        - Provide a precise and concise summary, using text descriptions only, avoid extracting specific data from the image
+        - Line 1: Output a short title (no more than 15 characters) summarizing the image's core topic
+        - Line 2 onward: Provide a precise and concise summary, using text descriptions only, avoid extracting specific data from the image
         - Your response must be in the SAME LANGUAGE as any text visible in the image (or the context if provided)
         - If the image is blank, unreadable, or contains no meaningful content, return exactly: null
         {img_context}
-        - Output the summary DIRECTLY, do not start with phrases like "This image shows"
-        - Do not add any format wrappers, prefixes, or explanations beyond the summary
+        - Output DIRECTLY without any prefixes like "Title:" or "Summary:" or "This image shows"
+        - Do not add any format wrappers, prefixes, or explanations beyond the content
         '''
 
     elif task == "ocr-image":
