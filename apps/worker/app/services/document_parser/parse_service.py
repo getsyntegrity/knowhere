@@ -136,6 +136,16 @@ def checkerboard_inject_parse(
     profile = profile_document(file_full_path, filename)
     logger.info(f"📋 DocProfile: {profile.summary()}")
     logger.debug(f"📋 Reasoning: {profile.reasoning}")
+
+    # Atlas routing: rename output folder from .pdf → .atlas for easy filtering
+    if profile and profile.doc_category == "atlas":
+        name_base, _ = os.path.splitext(filename)
+        filename = name_base + ".atlas"
+        relative_root = "/".join(kb_dir_parts + [filename])
+        full_output_dir = os.path.join(output_dir, relative_root.replace("/", os.sep))
+        full_output_dir = path_handle(full_output_dir, mode="sanitize")
+        os.makedirs(full_output_dir, exist_ok=True)
+        logger.info(f"📐 Atlas output renamed: {filename}")
     
     if ".fragment" in file_path_lower:
         logger.debug("file type is fragment")

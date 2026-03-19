@@ -65,6 +65,8 @@ def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_
     try:
         if type_ == "summary":
             prompt, temperature, top_p, max_tokens = build_prompt(task='summary', texts=texts, query="", paras={'max_tokens': summary_len})
+        elif type_ == "summary-titled":
+            prompt, temperature, top_p, max_tokens = build_prompt(task='summary-titled', texts=texts, query="", paras={'max_tokens': summary_len})
         elif type_ == "keywords":
             prompt, temperature, top_p, max_tokens = build_prompt(task='summary-keywords', texts=texts, query="", paras={'max_tokens': int(keywords_num*20), 'kw_num': keywords_num})
 
@@ -86,14 +88,14 @@ def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_
             timeout=90,
             max_tokens=max_tokens
         )
-        resp = eval_response(resp)
 
         if type_ == "keywords":
+            resp = eval_response(resp)
             if isinstance(resp, dict):
                 return resp.get('answer', resp)
             return resp
         else:
-            # Validate summary quality: reject null, HTML echo, or overly long responses
+            # summary: plain text response, no JSON parsing needed
             if resp is None:
                 return ""
             if isinstance(resp, str):
@@ -106,6 +108,34 @@ def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_
     except Exception as e:
         print(f"❌ failed to extract summary or keywords {e}")
         return ""
+
+
+def split_title_summary(text):
+    """Split a title+summary response into (title, summary).
+    
+    Expected format: first line is title, remaining lines are summary.
+    Fallback: if only one line, it serves as both title and summary.
+    
+    Returns:
+        tuple: (title, summary) — both may be None if input is empty
+    """
+    if not text or not text.strip():
+        return None, None
+    parts = text.strip().split('\n', 1)
+    title = parts[0].strip()
+    summary = parts[1].strip() if len(parts) > 1 else title
+    return title, summary
+
+
+def extract_summary_with_title(texts, summary_len=None):
+    """Extract title + summary from text using the summary-titled prompt.
+    
+    Returns:
+        tuple: (title, summary) — title is a short name (≤15 chars),
+               summary is the full description. Both None if extraction fails.
+    """
+    resp = extract_summary_keywords(texts, type_="summary-titled", summary_len=summary_len)
+    return split_title_summary(resp)
 
 def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key='content', summary_len=None):
     from shared.core.constants import ProcessingConstants

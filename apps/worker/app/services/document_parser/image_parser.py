@@ -137,7 +137,13 @@ def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="",
                 top_p=top_p,
             )
             logger.debug(f"Image understanding response: {resp}")
-            resp = eval_response(resp)
+            # Only parse as JSON for tasks that return structured data
+            if task in ("judge-image-type",):
+                resp = eval_response(resp)
+            else:
+                # Text-output tasks: normalize "null" string → Python None
+                if isinstance(resp, str) and resp.strip().lower() in ("null", "none"):
+                    resp = None
             return resp
         except Exception as e:
             logger.error(f"Failed to understand image content: {e}\nResponse: {resp}")
@@ -157,13 +163,21 @@ def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     for i, ip in enumerate(img_paths):
         if mode:
             try:
-                image_summary = ask_image(client, kb_dir, paths_=[ip])
+                llm_resp = ask_image(client, kb_dir, paths_=[ip])
+                if llm_resp:
+                    from app.services.document_parser.txt_parser import split_title_summary
+                    img_title, image_summary = split_title_summary(llm_resp)
+                else:
+                    img_title = None
+                    image_summary = last_context + str(i)
             except:
+                img_title = None
                 image_summary = last_context + str(i)
         else:
+            img_title = None
             image_summary = last_context + str(i)
         if image_summary is not None:
-            imgs.append((ip, image_summary))
+            imgs.append((ip, img_title, image_summary))
     return imgs
 
 
@@ -202,14 +216,24 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
             image_content = filename
 
         if type_resp["answer"]=="text" and base_llm_paras['summary_image']:
-            image_summary = ask_image(client, output_dir, paths_=[filename], title_text=filename)
-            if image_summary is None:
+            llm_resp = ask_image(client, output_dir, paths_=[filename], title_text=filename)
+            if llm_resp:
+                from app.services.document_parser.txt_parser import split_title_summary
+                img_title, image_summary = split_title_summary(llm_resp)
+            else:
+                img_title = None
                 image_summary = image_content
         else:
-            image_summary = image_content
+            # For non-text images, split title from summary-images response
+            if base_llm_paras['summary_image'] and image_content != filename:
+                from app.services.document_parser.txt_parser import split_title_summary
+                img_title, image_summary = split_title_summary(image_content)
+            else:
+                img_title = None
+                image_summary = image_content
 
-        # 2. Decide whether to rename based on image content and filename
-        img_name = path_handle(image_summary[:20], mode="sanitize")
+        # 2. Decide whether to rename based on image title and filename
+        img_name = path_handle((img_title or image_summary)[:20], mode="sanitize")
         img_suffix = os.path.splitext(img_path)[-1]
         if auto_rename:
             update_img_path = os.path.join(output_dir, f"{img_name}{img_suffix}")

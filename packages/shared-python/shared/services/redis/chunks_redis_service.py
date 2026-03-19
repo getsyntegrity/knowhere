@@ -48,17 +48,19 @@ class ChunksRedisService:
                 return 0
 
         def safe_split_kws(kw):
-            """安全分割关键词"""
+            """安全分割关键词，过滤单字符（与 tokens 的 _is_meaningful_token 一致）"""
             if pd is not None and pd.isna(kw):
                 return []
             kw_str = str(kw)
             # 支持多种分隔符：分号、逗号
             if ";" in kw_str:
-                return [k.strip() for k in kw_str.split(";") if k.strip()]
+                parts = [k.strip() for k in kw_str.split(";") if k.strip()]
             elif "," in kw_str:
-                return [k.strip() for k in kw_str.split(",") if k.strip()]
+                parts = [k.strip() for k in kw_str.split(",") if k.strip()]
             else:
-                return [kw_str.strip()] if kw_str.strip() else []
+                parts = [kw_str.strip()] if kw_str.strip() else []
+            # 过滤单字符关键词（单个数字、汉字、字母无检索意义）
+            return [k for k in parts if len(k) > 1]
 
         def safe_parse_tokens(raw):
             """解析 tokens 字段：保留 jieba 分词链为列表，兼容新旧格式。

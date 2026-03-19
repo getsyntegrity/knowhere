@@ -16,8 +16,7 @@ from app.services.document_parser.html_parser import table2html
 from app.services.document_parser.toc_parser import (detect_doc_tocs,
                                                      detect_sdt_toc,
                                                      get_toc_level)
-from app.services.document_parser.txt_parser import (extract_summary_keywords,
-                                                     postprocess_leaf_dics)
+from app.services.document_parser.txt_parser import postprocess_leaf_dics
 from shared.utils.CommonHelperSync import load_file_bytes
 from bs4 import BeautifulSoup
 from docx import Document
@@ -99,20 +98,25 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     with open(img_raw_path, 'wb') as image_file:
         image_file.write(img_file["data"])
 
-    # LLM summary (optional, with fallback to last_context)
+    # LLM title + summary (optional, with fallback to last_context)
+    llm_title = None
     llm_summary = None
     if smart_summary:
-        llm_summary = ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
+        from app.services.document_parser.txt_parser import split_title_summary
+        llm_resp = ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
+        if llm_resp:
+            llm_title, llm_summary = split_title_summary(llm_resp)
     
     # Fallback: LLM summary -> last_context -> None
-    if llm_summary:
-        img_summary = llm_summary
-    elif last_context:
-        img_summary = last_context
-    else:
-        img_summary = None
+    img_summary = llm_summary or last_context or None
+    # Fallback: LLM title -> last_context -> None  
+    img_title = llm_title or last_context or None
 
-    img_name = process_path_texts(f"image-{str(img_count+1)} {current_heading} {img_summary or ''}", last=30)
+    # Use LLM title alone for clean naming; fallback to heading+context
+    if llm_title:
+        img_name = process_path_texts(f"image-{str(img_count+1)} {llm_title}", last=30)
+    else:
+        img_name = process_path_texts(f"image-{str(img_count+1)} {current_heading} {img_title or ''}", last=30)
     img_path = os.path.join(img_dir, f'{img_name}{img_ext}')
     os.rename(img_raw_path, img_path) # if summary fails, renaming is not applied
 
@@ -267,10 +271,12 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
     # Table index (always present)
     table_index = f"table-{table_count + 1}"
     
-    # LLM summary (optional, only when smart_summary is enabled and succeeds)
+    # LLM title + summary (optional, only when summary_table is enabled)
+    llm_title = None
     llm_summary = None
     if summary_table:
-        llm_summary = extract_summary_keywords(tb_html_str, type_="summary")
+        from app.services.document_parser.txt_parser import extract_summary_with_title
+        llm_title, llm_summary = extract_summary_with_title(tb_html_str)
     
     # Build tb_summary for df_list: table-n + optional LLM summary
     if llm_summary:
@@ -281,7 +287,9 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
     temp_uid = gen_str_codes((tb_html_str + str(table_count)))
     table_id = 'TABLE_' + temp_uid + '_TABLE'
 
-    tb_name = process_path_texts(f"table-{str(table_count+1)} {raw_tb_name}", last=30)
+    # Use LLM title for filename when available, fallback to raw_tb_name
+    effective_name = llm_title if llm_title else raw_tb_name
+    tb_name = process_path_texts(f"table-{str(table_count+1)} {effective_name}", last=30)
     tb_path = os.path.join(tb_dir, f'{tb_name}.html')
 
     with open(tb_path, 'w', encoding='utf-8') as f:

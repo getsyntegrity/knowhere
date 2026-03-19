@@ -48,6 +48,47 @@ DEFAULT_SCAN_ROOTS: List[str] = [
     "~/Library/Mobile Documents/com~apple~CloudDocs",      # iCloud Drive
 ]
 
+# ==================== App Data Auto-Discovery ====================
+
+# Known paths for app-managed file storage (macOS).
+# Each entry: (glob_pattern, description)
+# The glob should resolve to zero or more directories worth scanning.
+# TODO can add more app data paths such as dingding, feishu, etc.
+APP_DATA_GLOBS: List[Tuple[str, str]] = [
+    # WeChat (new xwechat): received files in msg/file/YYYY-MM/
+    (
+        "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/"
+        "xwechat_files/*/msg/file",
+        "WeChat 接收文件",
+    ),
+    # WeChat (legacy App Store): message attachments
+    (
+        "~/Library/Containers/com.tencent.xinWeChat/Data/Library/"
+        "Application Support/com.tencent.xinWeChat/*/*/Message/MessageData",
+        "WeChat 聊天附件 (旧版)",
+    ),
+]
+
+
+def _discover_app_roots() -> List[str]:
+    """
+    Auto-discover app-managed file directories on the local system.
+    Returns a list of existing, readable directory paths.
+    """
+    import glob
+    discovered = []
+    for pattern, label in APP_DATA_GLOBS:
+        expanded = os.path.expanduser(pattern)
+        for match in glob.glob(expanded):
+            if os.path.isdir(match):
+                try:
+                    os.listdir(match)  # readability check
+                    discovered.append(match)
+                    logger.info(f"🔍 Auto-discovered {label}: {match}")
+                except PermissionError:
+                    logger.debug(f"🔒 Permission denied: {match}")
+    return discovered
+
 # Directories to always skip (case-insensitive basenames)
 BLACKLIST_DIRS: Set[str] = {
     # System
@@ -69,6 +110,9 @@ BLACKLIST_DIRS: Set[str] = {
     ".cache", ".tmp", "tmp", "temp",
     # Cloud sync noise
     ".dropbox", ".dropbox.cache",
+    # WeChat internals (inside msg/file we only want the YYYY-MM subdirs)
+    "head_image", "emoticon", "imagetemp", "xlab",
+    "specialcharacter", "newinit_status", "newclientconfig",
 }
 
 # Files whose presence marks a directory as a code/engineering project root
@@ -174,6 +218,9 @@ class FileSystemScanner:
         self.scan_roots = [
             os.path.expanduser(r) for r in (scan_roots or DEFAULT_SCAN_ROOTS)
         ]
+        # Auto-discover app-managed directories (WeChat, etc.)
+        self.scan_roots.extend(_discover_app_roots())
+
         self.db_path = os.path.expanduser(db_path)
         self.blacklist_dirs = BLACKLIST_DIRS | (blacklist_extra or set())
         self.scan_time = datetime.now().isoformat(timespec="seconds")

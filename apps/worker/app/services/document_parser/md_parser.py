@@ -261,7 +261,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
             # Pass semantic context (not img_name) to avoid "image-" prefix duplication
             imgs = detect_summary_img_md(line, last_context, output_dir, mode=base_llm_paras['summary_image'])
 
-            for img_path, img_summary in imgs:
+            for img_path, img_title, img_summary in imgs:
                 img_suffix = os.path.splitext(img_path)[-1]
                 update_img_path = os.path.join(img_dir, f"{img_name}{img_suffix}")
 
@@ -278,12 +278,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 image_index = f"image-{img_count}"
                 
                 # Fallback: LLM summary -> last_context -> None
-                if img_summary:
-                    effective_summary = img_summary
-                elif last_context:
-                    effective_summary = last_context
-                else:
-                    effective_summary = None
+                effective_summary = img_summary or last_context or None
                 
                 temp_uid = gen_str_codes((effective_summary or image_index) + img_path.split(os.sep)[-1] + str(img_count))
                 img_id = 'IMAGE_' + temp_uid + '_IMAGE'
@@ -344,10 +339,12 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 # Table index (always present)
                 table_index = f"table-{table_count}"
                 
-                # LLM summary (optional, only when summary_table is enabled and succeeds)
+                # LLM title + summary (optional, only when summary_table is enabled)
+                llm_title = None
                 llm_summary = None
                 if base_llm_paras['summary_table']:
-                    llm_summary = extract_summary_keywords(tb_str, type_="summary")
+                    from app.services.document_parser.txt_parser import extract_summary_with_title
+                    llm_title, llm_summary = extract_summary_with_title(tb_str)
                 
                 # Build tb_summary for df_list: table-n + optional LLM summary
                 if llm_summary:
@@ -356,7 +353,9 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                     tb_summary = table_index
                 
                 raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
-                tb_name = path_handle(f"table-{str(table_count)} {raw_tb_name}", mode="clean_single")
+                # Use LLM title for filename when available, fallback to raw_tb_name
+                effective_name = llm_title if llm_title else raw_tb_name
+                tb_name = path_handle(f"table-{str(table_count)} {effective_name}", mode="clean_single")
                 temp_uid = gen_str_codes((tb_str + str(table_count)))
                 table_id = 'TABLE_' + temp_uid + '_TABLE'
 

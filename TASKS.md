@@ -1,6 +1,5 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-03-17 — 停用词集成、ConnectTo 关系构建优化 (长度加权 + 字符去重)、token 过滤增强
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -16,6 +15,8 @@
 | 2026-03-02 | ~1h 20m | ~5K | ~40K | Excel 子表碎片合并 + 隐藏 Sheet 参数化 + _src_row 行号保留 + postprocess_tb index collision fix |
 | 2026-03-10 | ~1h | ~3K | ~25K | GLM 集成: 统一 LLM 路由 (glm/qwen/deepseek) + `_get_vision_client()` 消除 4 处硬编码 + MinerU key 修复 |
 | 2026-03-17 | ~4h | ~15K | ~120K | 分词管线简化 + Schema 统一 + TOC field 检测修复 + 停用词集成 (百度词表 frozenset) + ConnectTo 优化 (长度加权评分 + SequenceMatcher 字符去重 + 单字符 token 过滤) |
+| 2026-03-18 | ~1h 40m | ~8K | ~60K | 单字符关键词过滤 (safe_split_kws) + env.example 同步 + KG edge 补 source_id/target_id + knowhere_memory SKILL.md 重写 (3层结构引导+零审批) + FinMemory Insight 分析 + KG Summary/Insight 规划 |
+| 2026-03-19 | ~57m | ~5K | ~40K | LLM 文本输出 eval_response 旁路 + prompt 防护强化 (null/anti-preamble) + atlas .atlas 扩展名 |
 
 ---
 
@@ -140,11 +141,29 @@ sequenceDiagram
 
 ### 🔴 In Progress
 
-- [/] **ConnectTo 关系构建** — `connect_builder/builder.py` 已实现: 长度加权评分 + SequenceMatcher 字符去重(≥0.8) + threshold=0.8 + min_overlap=3。1459→22 高质量 pair。待做: Phase 2 LLM predicate 分类
+_(无)_
 
 ### 🟡 TODO
 
 #### High Priority
+
+- [ ] **KG Bottom-Up File Summary (Phase 1)** — 从 chunk `metadata.summary` 向上聚合为 `files[x].top_summary`
+  - 底层数据源: `extract_summary_keywords()` 已为每个 chunk 生成 summary（文本/表格/Excel 4 条路径）
+  - Prompt 设计借鉴 FinMemory Insight 的"识别"模式: 不只压缩，还提取 `key_findings`（关键结论/数据/判断）
+  - 输出: `{summary: "一句话主题", key_findings: ["发现1", "发现2"]}`
+  - 成本: 每文件 1 次 LLM 调用，build_knowledge_graph 时执行
+
+- [ ] **KG Cross-Doc Edge Insight (Phase 2)** — 对高分 edges 生成跨文件洞察，存入 `edge.insight`
+  - 输入: 两端文件的 `top_summary` + `top_connections` chunk 名
+  - 输出: `edge.insight` + `edge.relation_type` (supplements/extends/contradicts/same_topic) + `edge.insight_confidence`
+  - 目标: "这两个文件联合起来能得到什么新发现"
+  - 成本: 仅对 top-N 高分 edges 做 LLM 调用
+
+- [ ] **ConnectTo Embedding 语义相似度** — hybrid scoring: `0.5 x keyword_score + 0.5 x cosine_sim`，用 Qwen/ALI embedding API
+- [ ] **ConnectTo LLM Predicate 分类** — 参考 FinMemory `extraction_prompt_template` 模式，对 candidate pairs 做 LLM classify:
+  - Typed predicates: `extends` / `same_data` / `contains` / `contradicts` / `supplements` / `supersedes`
+  - Mem0 式 consolidation: 矛盾信号共存 (conflict_group)，不强制消解
+  - `classify_relation()` stub 已在 builder.py 中
 
 - [/] 继续优化**Agentic Profiler** — PDF 智能分类与路由引擎 → 详见 [AGENTIC_PROFILER_SPEC.md](./AGENTIC_PROFILER_SPEC.md)
   - [ ] profile metadata 写入解析结果
@@ -162,14 +181,6 @@ sequenceDiagram
 - [ ] **table_parser 已知问题** — `table_parser.py:863` 当前实现有问题 (见 docstring)
 - [ ] **智能分块** — `txt_parser.py:124` 当前粗略分割，需更智能策略
 - [ ] **OCR 分支** — `toc_parser.py:609` 实现 OCR → 直接生成 toc-tree
-
-#### Normal Priority — ConnectTo Phase 2
-
-- [ ] **ConnectTo Embedding 语义相似度** — hybrid scoring: `0.5 × keyword_score + 0.5 × cosine_sim`，用 Qwen/ALI embedding API
-- [ ] **ConnectTo LLM Predicate 分类** — 参考 FinMemory `extraction_prompt_template` 模式，对 candidate pairs 做 LLM classify:
-  - Typed predicates: `extends` / `same_data` / `contains` / `contradicts` / `supplements` / `supersedes`
-  - Mem0 式 consolidation: 矛盾信号共存 (conflict_group)，不强制消解
-  - `classify_relation()` stub 已在 builder.py 中
 
 #### Normal Priority — TOC Field Depth Tracking
 
@@ -193,6 +204,14 @@ sequenceDiagram
 - [x] ~~分词管线简化~~ — `tokenize2stw_remove` 去除 `merge_non_chinese_until_chinese`，直接用 jieba + 有意义 token 过滤，修复英文 token 拼接问题 (completed: 2026-03-17)
 - [x] ~~Schema 统一 (extra→connectto)~~ — 5 个 parser 统一使用 `settings.ALL_DF_COLS.split(',')`，消除所有内联 fallback；部署配置补齐 `page_nums` 列 (completed: 2026-03-17)
 - [x] ~~TOC field 检测修复~~ — `detect_doc_tocs` 修复两个 bug：`PAGEREF _TocXXXX` 中 `toc` 子串误触发 `is_field_start` + `is_field_end` 被 `is_style` 守卫跳过导致 field 永不关闭 (completed: 2026-03-17)
+- [x] ~~ConnectTo 关系构建 Phase 1~~ — 双模块架构完成 (completed: 2026-03-17)
+  - **builder.py**: 倒排索引 + 长度加权评分 `score = Σlen(shared_kw) / min(Σlen(A), Σlen(B))` + SequenceMatcher 字符去重(≥0.8) + 配置: `min_overlap=3, threshold=0.8, cross_file_only=True`，1459→22 高质量 pair
+  - **graph_builder.py**: chunk→file 聚合、TF-IDF top_keywords、`importance = 0.7×usage_heat + 0.3×freshness`(指数衰减 half_life=30d)、增量匹配 `_incremental_connections`
+  - **chunks_redis_service.py**: `safe_split_kws` 单字符关键词过滤 (len≤1)
+- [x] ~~KG Edge chunk_id + SKILL.md 优化~~ — `graph_builder` edge `top_connections` 补 `source_id`/`target_id`; `knowhere_memory/SKILL.md` 重写为 3 层结构引导 (导航→内容→结构) + 零审批检索流程 (completed: 2026-03-18)
+- [x] ~~LLM 文本输出 eval_response 旁路~~ — `txt_parser` summary 和 `image_parser` 文本任务跳过 `eval_response`，消除 JSON 解析 warning；`ask-image` prompt 去 JSON 化 (completed: 2026-03-19)
+- [x] ~~Prompt 防护强化~~ — 4 个文本 prompt (`summary`/`summary-images`/`ocr-image`/`atlas-page-info`) 补 null 边界指令 + anti-preamble 指令，防模型切换格式漂移 (completed: 2026-03-19)
+- [x] ~~Atlas .atlas 扩展名~~ — atlas 解析输出目录从 `.pdf` 改为 `.atlas` 后缀，方便下游过滤 (completed: 2026-03-19)
 
 ### 📋 Code-Level TODOs
 
@@ -238,6 +257,9 @@ sequenceDiagram
 | 2026-03-17 | feature | Token 单字符过滤: `_is_meaningful_token` 过滤 len==1 tokens (数字+汉字+字母) | `text_utils.py` |
 | 2026-03-17 | feature | ConnectTo 长度加权评分: `_compute_keyword_score` 改为字符长度加权 `sum(len(kw))` | `builder.py` |
 | 2026-03-17 | feature | ConnectTo 字符去重: SequenceMatcher ratio≥0.8 过滤近重复 pair，1459→22 高质量关系 | `builder.py` |
+| 2026-03-19 | refactor | LLM 文本输出旁路: `eval_response` 仅对 JSON 任务 (`judge-image-type`/`keywords`) 调用，文本任务直接返回；`ask_image` 内增 null 归一化 | `image_parser.py`, `txt_parser.py`, `prompt_service.py` |
+| 2026-03-19 | fix | Prompt 防护: 4 个文本 prompt 补 null 边界 + anti-preamble，统一 `return exactly: null` 格式 | `prompt_service.py` |
+| 2026-03-19 | feature | Atlas .atlas 扩展名: profiler 检测 atlas 后 output folder 重命名 `.pdf` → `.atlas` | `parse_service.py`, `atlas_parser.py` |
 
 ---
 
@@ -263,6 +285,8 @@ cd packages/shared-python && pytest
 | 脚本 | 用途 |
 |------|------|
 | `debug_parse.py` | 文档解析调试 |
+| `debug_hierarchy_llm.py` | 多模型 hierarchy_llm 效果对比 (GLM/Qwen/DeepSeek/豆包) |
+| `debug_qwen_api.py` | (旧版) Qwen3.5 API 评测，已由 debug_hierarchy_llm.py 替代 |
 | `debug_toc_prompt.py` | TOC 提示词调试 |
 | `debug_toc_detection.py` | TOC 检测调试 |
 | `debug_bfs_refine.py` | BFS 标题优化调试 |

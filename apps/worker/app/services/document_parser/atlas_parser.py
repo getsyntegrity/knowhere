@@ -120,7 +120,7 @@ def _vlm_extract_page_info(output_dir: str, img_name: str) -> str:
             except OSError:
                 pass
 
-        if result and result.strip().lower() != "null":
+        if result:
             return result.strip()
         return ""
     except Exception as e:
