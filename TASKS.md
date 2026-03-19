@@ -16,7 +16,7 @@
 | 2026-03-10 | ~1h | ~3K | ~25K | GLM 集成: 统一 LLM 路由 (glm/qwen/deepseek) + `_get_vision_client()` 消除 4 处硬编码 + MinerU key 修复 |
 | 2026-03-17 | ~4h | ~15K | ~120K | 分词管线简化 + Schema 统一 + TOC field 检测修复 + 停用词集成 (百度词表 frozenset) + ConnectTo 优化 (长度加权评分 + SequenceMatcher 字符去重 + 单字符 token 过滤) |
 | 2026-03-18 | ~1h 40m | ~8K | ~60K | 单字符关键词过滤 (safe_split_kws) + env.example 同步 + KG edge 补 source_id/target_id + knowhere_memory SKILL.md 重写 (3层结构引导+零审批) + FinMemory Insight 分析 + KG Summary/Insight 规划 |
-| 2026-03-18 (夜) | ~35m | ~2K | ~20K | 清理 Qwen 本地测试残留 (debug_local_qwen.py + /tmp/ KMP locks) + Qwen3.5-35b-a3b DashScope API 评测: 思考模式 60题/106s vs 非思考模式 48题/9.2s vs DS baseline 50题/~10s，非思考 97.7% 一致率 |
+| 2026-03-19 | ~57m | ~5K | ~40K | LLM 文本输出 eval_response 旁路 + prompt 防护强化 (null/anti-preamble) + atlas .atlas 扩展名 |
 
 ---
 
@@ -209,6 +209,9 @@ _(无)_
   - **graph_builder.py**: chunk→file 聚合、TF-IDF top_keywords、`importance = 0.7×usage_heat + 0.3×freshness`(指数衰减 half_life=30d)、增量匹配 `_incremental_connections`
   - **chunks_redis_service.py**: `safe_split_kws` 单字符关键词过滤 (len≤1)
 - [x] ~~KG Edge chunk_id + SKILL.md 优化~~ — `graph_builder` edge `top_connections` 补 `source_id`/`target_id`; `knowhere_memory/SKILL.md` 重写为 3 层结构引导 (导航→内容→结构) + 零审批检索流程 (completed: 2026-03-18)
+- [x] ~~LLM 文本输出 eval_response 旁路~~ — `txt_parser` summary 和 `image_parser` 文本任务跳过 `eval_response`，消除 JSON 解析 warning；`ask-image` prompt 去 JSON 化 (completed: 2026-03-19)
+- [x] ~~Prompt 防护强化~~ — 4 个文本 prompt (`summary`/`summary-images`/`ocr-image`/`atlas-page-info`) 补 null 边界指令 + anti-preamble 指令，防模型切换格式漂移 (completed: 2026-03-19)
+- [x] ~~Atlas .atlas 扩展名~~ — atlas 解析输出目录从 `.pdf` 改为 `.atlas` 后缀，方便下游过滤 (completed: 2026-03-19)
 
 ### 📋 Code-Level TODOs
 
@@ -254,6 +257,9 @@ _(无)_
 | 2026-03-17 | feature | Token 单字符过滤: `_is_meaningful_token` 过滤 len==1 tokens (数字+汉字+字母) | `text_utils.py` |
 | 2026-03-17 | feature | ConnectTo 长度加权评分: `_compute_keyword_score` 改为字符长度加权 `sum(len(kw))` | `builder.py` |
 | 2026-03-17 | feature | ConnectTo 字符去重: SequenceMatcher ratio≥0.8 过滤近重复 pair，1459→22 高质量关系 | `builder.py` |
+| 2026-03-19 | refactor | LLM 文本输出旁路: `eval_response` 仅对 JSON 任务 (`judge-image-type`/`keywords`) 调用，文本任务直接返回；`ask_image` 内增 null 归一化 | `image_parser.py`, `txt_parser.py`, `prompt_service.py` |
+| 2026-03-19 | fix | Prompt 防护: 4 个文本 prompt 补 null 边界 + anti-preamble，统一 `return exactly: null` 格式 | `prompt_service.py` |
+| 2026-03-19 | feature | Atlas .atlas 扩展名: profiler 检测 atlas 后 output folder 重命名 `.pdf` → `.atlas` | `parse_service.py`, `atlas_parser.py` |
 
 ---
 
@@ -279,7 +285,8 @@ cd packages/shared-python && pytest
 | 脚本 | 用途 |
 |------|------|
 | `debug_parse.py` | 文档解析调试 |
-| `debug_qwen_api.py` | Qwen3.5 API 效果评测 (DashScope/ModelScope, thinking/non-thinking) |
+| `debug_hierarchy_llm.py` | 多模型 hierarchy_llm 效果对比 (GLM/Qwen/DeepSeek/豆包) |
+| `debug_qwen_api.py` | (旧版) Qwen3.5 API 评测，已由 debug_hierarchy_llm.py 替代 |
 | `debug_toc_prompt.py` | TOC 提示词调试 |
 | `debug_toc_detection.py` | TOC 检测调试 |
 | `debug_bfs_refine.py` | BFS 标题优化调试 |

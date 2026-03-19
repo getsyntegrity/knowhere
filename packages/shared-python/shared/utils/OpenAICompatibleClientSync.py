@@ -92,11 +92,8 @@ class OpenAICompatibleClientSync:
         if "glm" in model_lower:
             resolved_key = api_key or getattr(settings, "GLM_API_KEY", None)
             glm_base = getattr(settings, "GLM_URL", "https://open.bigmodel.cn/api/paas/v4")
-            if glm_base and not glm_base.endswith("/chat/completions"):
-                resolved_url = api_url or f"{glm_base}/chat/completions"
-            else:
-                resolved_url = api_url or glm_base
-            return resolved_key, resolved_url
+            resolved_url = api_url or glm_base
+            return resolved_key, self._strip_chat_completions(resolved_url)
 
         if "doubao" in model_lower or model_lower.startswith("ep-"):
             resolved_key = api_key or getattr(settings, "ARK_API_KEY", None)
@@ -208,6 +205,16 @@ class OpenAICompatibleClientSync:
         for key, value in kwargs.items():
             if key in allowed_api_params:
                 api_kwargs[key] = value
+
+        # ── disable thinking mode ──
+        # Qwen3.5 by default enables thinking mode, which wastes tokens by outputting <think>...</think>
+        # Explicitly disable it in all API calls
+        extra_body = api_kwargs.get("extra_body", {})
+        if isinstance(extra_body, dict):
+            extra_body.setdefault("enable_thinking", False)
+        else:
+            extra_body = {"enable_thinking": False}
+        api_kwargs["extra_body"] = extra_body
 
         effective_model = model or self.default_model
 

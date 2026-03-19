@@ -137,7 +137,13 @@ def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="",
                 top_p=top_p,
             )
             logger.debug(f"Image understanding response: {resp}")
-            resp = eval_response(resp)
+            # Only parse as JSON for tasks that return structured data
+            if task in ("judge-image-type",):
+                resp = eval_response(resp)
+            else:
+                # Text-output tasks: normalize "null" string → Python None
+                if isinstance(resp, str) and resp.strip().lower() in ("null", "none"):
+                    resp = None
             return resp
         except Exception as e:
             logger.error(f"Failed to understand image content: {e}\nResponse: {resp}")

@@ -86,14 +86,14 @@ def extract_summary_keywords(texts, type_="summary", summary_len=None, keywords_
             timeout=90,
             max_tokens=max_tokens
         )
-        resp = eval_response(resp)
 
         if type_ == "keywords":
+            resp = eval_response(resp)
             if isinstance(resp, dict):
                 return resp.get('answer', resp)
             return resp
         else:
-            # Validate summary quality: reject null, HTML echo, or overly long responses
+            # summary: plain text response, no JSON parsing needed
             if resp is None:
                 return ""
             if isinstance(resp, str):

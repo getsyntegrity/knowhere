@@ -37,7 +37,8 @@ def build_prompt(task, texts, query, **kwargs):
         - If the input is an HTML table, summarize its structure and key data points in natural language, do NOT return the HTML code itself
         - If the input content is too short, mostly empty, or lacks meaningful text to summarize, return exactly: null
         - Your response must be in the SAME LANGUAGE as the input text
-        - Do not return any additional explanations beyond the extracted main content
+        - Output the summary content DIRECTLY, do not start with phrases like "Here is the summary"
+        - Do not add any format wrappers, prefixes, or explanations beyond the summary
         """
         
     elif task == 'summary-keywords':
@@ -191,8 +192,10 @@ def build_prompt(task, texts, query, **kwargs):
         Your task is to extract the main content described in the image. Note:
         - Provide a precise and concise summary, using text descriptions only, avoid extracting specific data from the image
         - Your response must be in the SAME LANGUAGE as any text visible in the image (or the context if provided)
+        - If the image is blank, unreadable, or contains no meaningful content, return exactly: null
         {img_context}
-        - Do not output any additional explanations or descriptions beyond the summary
+        - Output the summary DIRECTLY, do not start with phrases like "This image shows"
+        - Do not add any format wrappers, prefixes, or explanations beyond the summary
         '''
 
     elif task == "ocr-image":
@@ -202,7 +205,9 @@ def build_prompt(task, texts, query, **kwargs):
         You will receive an image, which may be a photo, chart, or an image requiring OCR.
         Your task is to perform OCR operation, fully extract and return the image content. Note:
         - Preserve the original language of the text in the image
-        - Do not return any additional explanations or descriptions beyond the image content
+        - If the image contains no readable text, return exactly: null
+        - Output the text content DIRECTLY, do not start with phrases like "The text reads"
+        - Do not add any format wrappers, prefixes, or explanations beyond the text content
         '''
 
     elif task == "ask-image":
@@ -216,10 +221,10 @@ def build_prompt(task, texts, query, **kwargs):
         {texts}
         
         Your task is to answer the user's question based on the image(s) and context (if any). Note:
-        - Your response must be in JSON format with key "answer" and value being the answer
         - Your answer must be in the SAME LANGUAGE as the user's question
         - Provide a complete and accurate answer with some explanation, but not exceeding {max_tokens} characters
-        - If the image content is unrelated to the user's question, the answer should be "null"
+        - If the image content is unrelated to the user's question, return exactly: null
+        - Do not return any additional explanations or descriptions beyond the answer
         '''
 
     elif task == "judge-image-type":
@@ -241,11 +246,12 @@ def build_prompt(task, texts, query, **kwargs):
         
         1. FIRST: Look for an info bar / title block (usually at the bottom-right corner or bottom edge of the page). If found, extract the key fields inside it (title, drawing number, etc.) and return them in a single line.
         2. IF NO info bar is found: Identify the most important content visible on this page and summarize it in no more than 10 words.
-        3. IF the page is completely blank or contains only meaningless noise: return "null"
+        3. IF the page is completely blank or contains only meaningless noise: return exactly: null
         
         Requirements:
         - Return a single concise line, no explanations or prefixes
         - Use the SAME LANGUAGE as the text visible on the page
+        - Output the content DIRECTLY, do not add any format wrappers or explanations
         '''
 
     # ==================== Table Processing Prompts ====================
