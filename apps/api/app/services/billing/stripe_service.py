@@ -65,7 +65,8 @@ class StripeService:
                 mode='subscription',
                 success_url=success_url,
                 cancel_url=cancel_url,
-                metadata={'user_id': user_id, 'plan_id': plan_id, 'type': 'subscription'}
+                metadata={'user_id': user_id, 'plan_id': plan_id, 'type': 'subscription'},
+                allow_promotion_codes=True,
             )
             return str(session.url or "")
         except stripe.StripeError as e:
@@ -168,6 +169,7 @@ class StripeService:
                     "setup_future_usage": "off_session",
                 },
                 # 收集更多客户信息，便于后续关联
+                "allow_promotion_codes": True,
                 "phone_number_collection": {"enabled": True},
                 # 强制收集账单地址，Checkout 在创建 Customer 时会同步到客户记录
                 "billing_address_collection": "required",
@@ -315,15 +317,6 @@ class StripeService:
                     'credits_amount': credits_amount,
                     'product_metadata': price_config.extra_metadata or {}  # 从价格配置获取商品描述等信息
                 }
-                
-                # 验证金额
-                actual_amount = session.get('amount_total', 0) / quantity
-                if not await self.price_config_service.validate_price_amount(db, price_id, actual_amount):
-                    logger.error(f"金额验证失败: price_id={price_id}, expected={actual_amount}")
-                    payment_record.status = 'failed'
-                    payment_record.extra_metadata = {**(payment_record.extra_metadata or {}), 'error': 'Amount validation failed'}
-                    await db.commit()
-                    return {'status': 'error', 'message': 'Amount validation failed'}
                 
                 # 增加Credits
                 await self.credits_service.add_credits(
