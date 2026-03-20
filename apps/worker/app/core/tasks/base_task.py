@@ -7,7 +7,6 @@ from typing import Optional
 from celery import Task
 from loguru import logger
 
-from shared.core.state_machine.states import JobStatus
 from shared.core.logging import LogEvent
 from shared.core.exceptions.domain_exceptions import UnknownException
 from shared.core.exceptions.knowhere_exception import KnowhereException
@@ -74,7 +73,7 @@ class KBBaseTask(Task):
         return None
 
     def on_retry(self, exc, task_id, args, kwargs, einfo):
-        """Task retry callback - publishes retry status to API service."""
+        """Task retry callback - logs retry metadata without changing job state."""
         job_id = self._extract_job_id(args, kwargs)
 
         logger.bind(
@@ -83,21 +82,3 @@ class KBBaseTask(Task):
             job_id=job_id,
             retry_count=self.request.retries,
         ).warning(f"KB task retrying: {exc}")
-
-        if job_id:
-            try:
-                message_publisher = get_sync_message_publisher()
-                message_publisher.publish_status_update(
-                    job_id=job_id,
-                    status=JobStatus.RUNNING.value,
-                    trigger="task_retry",
-                    metadata={
-                        "retry_count": self.request.retries,
-                        "error_message": str(exc),
-                        "task_id": task_id,
-                    },
-                    operator_type="system",
-                )
-                logger.info(f"Retry message published: job_id={job_id}, retry_count={self.request.retries}")
-            except Exception as e:
-                logger.error(f"Failed to publish retry message: {e}")

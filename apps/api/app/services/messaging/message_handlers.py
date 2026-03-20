@@ -21,6 +21,7 @@ from app.services.job_lifecycle_service import JobLifecycleService
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from shared.utils.error_details import normalize_error_details
+from shared.core.state_machine.states import is_valid_transition
 
 
 # Module-level singletons — these services are stateless, no need to
@@ -52,7 +53,7 @@ async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, An
         message_monitoring.record_message_processed(
             message.message_type,
             message.job_id,
-            True,
+            result.get("status") in {"success", "ignored"},
             duration_ms
         )
         
@@ -97,7 +98,45 @@ async def _handle_status_update_async(message: JobStatusUpdateMessage):
                     "reason": "layout_parser_internal_id",
                 }
 
-            # 执行状态转换
+            current_state = await state_machine.get_current_state(
+                db=db,
+                job_id=message.job_id,
+            )
+            if current_state is None:
+                logger.warning(
+                    f"Job {message.job_id} 状态更新失败: 当前状态不存在"
+                )
+                return {
+                    "status": "failed",
+                    "job_id": message.job_id,
+                    "reason": "missing_current_state",
+                }
+
+            if current_state == message.status:
+                logger.info(
+                    f"Job {message.job_id} 已处于状态 {message.status}, 跳过重复状态更新"
+                )
+                return {
+                    "status": "success",
+                    "job_id": message.job_id,
+                    "idempotent": True,
+                }
+
+            if not is_valid_transition(current_state, message.status):
+                logger.warning(
+                    f"忽略过期或非法状态更新: job_id={message.job_id}, "
+                    f"current_state={current_state}, requested_state={message.status}, "
+                    f"trigger={message.trigger}"
+                )
+                return {
+                    "status": "ignored",
+                    "job_id": message.job_id,
+                    "reason": "invalid_transition",
+                    "current_state": current_state,
+                    "requested_state": message.status,
+                    "retryable": False,
+                }
+
             success = await state_machine.transition(
                 db=db,
                 job_id=message.job_id,
@@ -107,13 +146,17 @@ async def _handle_status_update_async(message: JobStatusUpdateMessage):
                 operator_type=message.operator_type,
                 metadata=message.metadata
             )
-            
+
             if success:
-                logger.info(f"Job {message.job_id} 状态更新成功: {message.previous_status} -> {message.status}")
+                logger.info(f"Job {message.job_id} 状态更新成功: {current_state} -> {message.status}")
                 return {"status": "success", "job_id": message.job_id}
-            else:
-                logger.warning(f"Job {message.job_id} 状态更新失败")
-                return {"status": "failed", "job_id": message.job_id, "reason": "状态转换失败"}
+
+            logger.warning(f"Job {message.job_id} 状态更新失败: {current_state} -> {message.status}")
+            return {
+                "status": "failed",
+                "job_id": message.job_id,
+                "reason": "state_transition_failed",
+            }
                 
     except KnowhereException:
         raise
