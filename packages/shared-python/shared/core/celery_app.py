@@ -25,11 +25,10 @@ celery_app = Celery(
     backend=app_config.get_celery_result_backend(),
     include=[
         'shared.core.tasks.celery_tasks',
-        # 以下模块已移除，改为在各自服务启动时动态导入：
-        # 'app.core.tasks.kb_tasks',  # 仅在 Worker 服务中使用
-        # 'app.core.tasks.state_machine_tasks',  # 仅在 API 服务中使用
-        # 'app.core.tasks.webhook_tasks',  # 仅在 API 服务中使用
-        # 注意：message_handlers 不再是 Celery 任务，由 MessageConsumer 直接调用
+        # Dynamic imports: task modules are imported at service startup
+        # 'app.core.tasks.kb_tasks',       # Worker only
+        # 'app.core.tasks.webhook_tasks',   # Worker only
+        # message_handlers are not Celery tasks — called by MessageConsumer
     ]
 )
 
@@ -131,6 +130,10 @@ celery_app.conf.update(
         'recover-orphaned-webhooks': {
             'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
             'schedule': 300.0,  # Every 5 minutes
+        },
+        'expire-stale-waiting-file-jobs': {
+            'task': 'app.core.tasks.waiting_file_sweeper.expire_stale_waiting_file_jobs',
+            'schedule': 900.0,  # Every 15 minutes
         },
     },
 )
