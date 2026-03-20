@@ -31,8 +31,6 @@ class BaseConfig(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=10080, description="访问令牌过期时间（分钟）")
     WEBHOOK_MASTER_KEY: str = Field(default="", description="Webhook encryption master key")
     INTERNAL_DASHBOARD_ENDPOINT: str = Field(default="http://localhost:3000", description="Internal Dashboard endpoint")
-    UPLOAD_EXPIRE_SECONDS: int = Field(default=7200, description="Max seconds a job can stay in waiting-file before auto-failing (default: 2 hours). Also controls presigned upload URL lifetime.")
-    
     # 路径配置
     TMP_PATH: str = Field(..., description="临时文件路径")
     FONT_PATH: str = Field(..., description="字体文件路径")

@@ -131,8 +131,8 @@ celery_app.conf.update(
             'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
             'schedule': 300.0,  # Every 5 minutes
         },
-        'expire-stale-waiting-file-jobs': {
-            'task': 'app.core.tasks.waiting_file_sweeper.expire_stale_waiting_file_jobs',
+        'expire-stale-jobs': {
+            'task': 'app.core.tasks.stale_job_sweeper.expire_stale_jobs',
             'schedule': 1800.0,  # Every 30 minutes
         },
     },

@@ -41,10 +41,9 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
-
 def include_object(object, name, type_, reflected, compare_to):
     """Exclude externally managed tables from Alembic autogenerate output."""
-    if type_ == "table" and name == "user":
+    if type_ == "table" and (name == "user" or name == "verification" or name == "jwks" or name == "account" or name == "emailVerificationToken" or name == "session"):
         return False
     return True
 

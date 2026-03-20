@@ -7,13 +7,14 @@ from .base import BaseConfig
 from .billing import BillingConfig
 from .celery import CeleryConfig
 from .database import DatabaseConfig
+from .job import JobConfig
 from .mineru import MineruConfig
 from .redis import RedisConfig, RedisConfigManager, RedisPoolManager
 from .storage import StorageConfig
 from pydantic_settings import SettingsConfigDict
 
 
-class AppConfig(BaseConfig, DatabaseConfig, RedisConfig, CeleryConfig, StorageConfig, AIConfig, MineruConfig, BillingConfig):
+class AppConfig(BaseConfig, DatabaseConfig, RedisConfig, CeleryConfig, StorageConfig, AIConfig, MineruConfig, BillingConfig, JobConfig):
     """应用配置 - 整合所有配置组件"""
     
     def validate_all(self) -> bool:

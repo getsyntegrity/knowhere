@@ -117,10 +117,10 @@ class FileUploadService:
             # 智能识别Content-Type
             content_type = self.get_content_type(file_extension)
 
-            # 生成预签名URL（过期时间由UPLOAD_EXPIRE_SECONDS控制）
+            # 生成预签名URL（过期时间由JOB_WAITING_EXPIRE_SECONDS控制）
             upload_url = self.adapter.generate_presigned_url(
                 s3_key,
-                expiration=settings.UPLOAD_EXPIRE_SECONDS,
+                expiration=settings.JOB_WAITING_EXPIRE_SECONDS,
                 bucket=self.uploads_bucket,
                 method="PUT",
                 headers={"Content-Type": content_type}
@@ -131,7 +131,7 @@ class FileUploadService:
             return {
                 "upload_url": upload_url,
                 "s3_key": s3_key,
-                "expires_in": settings.UPLOAD_EXPIRE_SECONDS,
+                "expires_in": settings.JOB_WAITING_EXPIRE_SECONDS,
                 "upload_headers": {"Content-Type": content_type},
             }
 
