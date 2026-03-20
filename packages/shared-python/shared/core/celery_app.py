@@ -133,7 +133,7 @@ celery_app.conf.update(
         },
         'expire-stale-waiting-file-jobs': {
             'task': 'app.core.tasks.waiting_file_sweeper.expire_stale_waiting_file_jobs',
-            'schedule': 900.0,  # Every 15 minutes
+            'schedule': 1800.0,  # Every 30 minutes
         },
     },
 )

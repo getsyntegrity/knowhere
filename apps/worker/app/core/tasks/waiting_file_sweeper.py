@@ -30,7 +30,7 @@ UPLOAD_EXPIRED_ERROR_CODE = "UPLOAD_EXPIRED"
 def expire_stale_waiting_file_jobs() -> dict:
     """Expire jobs stuck in 'waiting-file' beyond ``UPLOAD_EXPIRE_SECONDS``.
 
-    Runs every 15 minutes via Celery Beat.  Uses ``SyncStateMachineService``
+    Runs every 30 minutes via Celery Beat.  Uses ``SyncStateMachineService``
     for CAS-protected state transitions and proper audit logging.
     """
     max_age: int = settings.UPLOAD_EXPIRE_SECONDS
