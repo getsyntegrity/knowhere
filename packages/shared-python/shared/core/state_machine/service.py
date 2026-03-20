@@ -16,7 +16,6 @@ from sqlalchemy.orm import load_only
 
 from shared.core.state_machine.states import (
     JobStatus,
-    get_state_timeout,
     is_valid_transition,
 )
 from shared.models.database.job import Job
@@ -77,7 +76,6 @@ class AsyncStateMachineService:
                 )
                 if success:
                     await self._update_redis_cache(job_id, to_state, metadata)
-                    await self._set_state_timeout(job_id, to_state)
 
                     if auto_commit:
                         await db.commit()
@@ -356,11 +354,4 @@ class AsyncStateMachineService:
         except Exception as e:
             logger.error(f"Redis cache update failed for Job {job_id}: {e}")
 
-    async def _set_state_timeout(self, job_id: str, state: str) -> None:
-        try:
-            timeout = get_state_timeout(state)
-            if timeout > 0:
-                timeout_key = f"job_timeout:{job_id}"
-                await self.redis.set(timeout_key, state, ex=timeout)
-        except Exception as e:
-            logger.error(f"State timeout set failed for Job {job_id}: {e}")
+

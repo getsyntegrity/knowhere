@@ -10,7 +10,6 @@ Exports:
 """
 from shared.core.state_machine.states import (
     JobStatus,
-    get_state_timeout,
     is_terminal_state,
     is_valid_transition,
     is_job_expired,
@@ -18,7 +17,6 @@ from shared.core.state_machine.states import (
 
 __all__ = [
     "JobStatus",
-    "get_state_timeout",
     "is_terminal_state",
     "is_valid_transition",
     "is_job_expired",

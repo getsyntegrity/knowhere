@@ -468,8 +468,9 @@ async def process_upload_events(s3_event: S3Event):
                     continue
 
                 # Check if upload window has expired (race-condition safe via optimistic lock)
+                from shared.core.config import settings
                 from shared.core.state_machine.states import is_job_expired
-                if is_job_expired(job.created_at, settings.JOB_WAITING_EXPIRE_SECONDS):
+                if is_job_expired(job.updated_at, settings.JOB_WAITING_EXPIRE_SECONDS):
                     logger.warning(f"Job {job_id} upload expired, marking failed")
                     state_machine = JobStateMachine()
                     await state_machine.mark_failed(

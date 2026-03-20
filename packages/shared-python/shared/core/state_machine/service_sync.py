@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session, load_only
 
 from shared.core.state_machine.states import (
     JobStatus,
-    get_state_timeout,
     is_valid_transition,
 )
 from shared.models.database.job import Job
@@ -71,7 +70,6 @@ class SyncStateMachineService:
                 success = self._cas_update_state(db, job_id, to_state, old_version)
                 if success:
                     self._update_redis_cache(job_id, to_state, metadata)
-                    self._set_state_timeout(job_id, to_state)
                     db.flush()
                     logger.info(f"Job {job_id} state transition: {old_state} → {to_state}")
                     return True
@@ -265,11 +263,4 @@ class SyncStateMachineService:
         except Exception as e:
             logger.error(f"Redis cache update failed for Job {job_id}: {e}")
 
-    def _set_state_timeout(self, job_id: str, state: str) -> None:
-        try:
-            timeout = get_state_timeout(state)
-            if timeout > 0:
-                timeout_key = f"job_timeout:{job_id}"
-                self.redis.set(timeout_key, state, ex=timeout)
-        except Exception as e:
-            logger.error(f"State timeout set failed for Job {job_id}: {e}")
+

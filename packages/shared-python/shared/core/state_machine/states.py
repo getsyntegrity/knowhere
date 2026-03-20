@@ -47,6 +47,8 @@ def is_valid_transition(from_state: str, to_state: str) -> bool:
 
     Transitions to FAILED are always valid from any non-terminal state.
     """
+    if from_state == to_state:
+        return True
     if to_state == JobStatus.FAILED.value:
         return from_state not in TERMINAL_STATES
     allowed = VALID_TRANSITIONS.get(from_state, set())

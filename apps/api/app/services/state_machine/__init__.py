@@ -12,7 +12,6 @@ from .concurrency_control_service import ConcurrencyControlService
 from .manager import JobStateMachine
 from .monitoring_service import StateMachineMonitoringService
 from .state_sync_service import StateSyncService
-from .state_timeout_service import StateTimeoutService
 
 # Backwards-compatible alias
 StateMachineService = AsyncStateMachineService
@@ -22,7 +21,6 @@ __all__ = [
     "AsyncStateMachineService",
     "StateMachineService",
     "StateSyncService",
-    "StateTimeoutService",
     "ConcurrencyControlService",
     "StateMachineMonitoringService",
     "JobStatus",
