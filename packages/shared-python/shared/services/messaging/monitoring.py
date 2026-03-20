@@ -134,7 +134,7 @@ class MessageMonitoring:
         # 统计平均耗时
         try:
             redis = self._get_redis_service()
-            for msg_type in ["job_status_update", "job_progress_update", "job_result", "job_failure"]:
+            for msg_type in ["job_progress_update", "job_result", "job_failure"]:
                 key = f"message_durations:{msg_type}"
                 if hasattr(redis, 'zrange'):
                     durations = redis.zrange(key, 0, -1, withscores=True)

@@ -7,10 +7,11 @@ from typing import Any, Dict
 
 from shared.core.database import get_db_context
 from shared.models.database.knowledge_base import KBPydantic
-from shared.models.schemas.messages import (JobFailureMessage,
-                                         JobProgressUpdateMessage,
-                                         JobResultMessage,
-                                         JobStatusUpdateMessage)
+from shared.models.schemas.messages import (
+    JobFailureMessage,
+    JobProgressUpdateMessage,
+    JobResultMessage,
+)
 from app.repositories.knowledge_base_repository import create_update_kb
 from shared.services.messaging.monitoring import message_monitoring
 from shared.services.redis import RedisServiceFactory
@@ -21,7 +22,6 @@ from app.services.job_lifecycle_service import JobLifecycleService
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from shared.utils.error_details import normalize_error_details
-from shared.core.state_machine.states import is_valid_transition
 
 
 # Module-level singletons — these services are stateless, no need to
@@ -29,143 +29,6 @@ from shared.core.state_machine.states import is_valid_transition
 _state_machine = JobStateMachine()
 _lifecycle_service = JobLifecycleService()
 
-
-async def handle_job_status_update(message_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    处理Job状态更新消息（供MessageConsumer直接调用）
-    
-    Args:
-        message_data: 消息数据字典
-        
-    Returns:
-        Dict: 处理结果
-    """
-    start_time = time.time()
-    try:
-        # 解析消息
-        message = JobStatusUpdateMessage(**message_data)
-        
-        # 执行异步处理
-        result = await _handle_status_update_async(message)
-        
-        # 记录监控指标
-        duration_ms = (time.time() - start_time) * 1000
-        message_monitoring.record_message_processed(
-            message.message_type,
-            message.job_id,
-            result.get("status") in {"success", "ignored"},
-            duration_ms
-        )
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"处理状态更新消息失败: {e}")
-        logger.error(f"消息数据: {message_data}")
-        
-        # 记录监控指标
-        duration_ms = (time.time() - start_time) * 1000
-        job_id = message_data.get('job_id', 'unknown')
-        message_monitoring.record_message_processed(
-            'job_status_update',
-            job_id,
-            False,
-            duration_ms
-        )
-        
-        if isinstance(e, KnowhereException):
-            raise
-        raise WorkerHandlingException(
-            internal_message=f"处理状态更新消息失败: {str(e)}",
-            original_exception=e
-        )
-
-
-async def _handle_status_update_async(message: JobStatusUpdateMessage):
-    """异步处理状态更新"""
-    state_machine = _state_machine
-    
-    try:
-        async with get_db_context() as db:
-            # Only ignore the known poison-message id from parser internals.
-            # TODO need clean,
-            if message.job_id == "layout_parser":
-                logger.warning("Ignore status update for internal parser context id: layout_parser")
-                return {
-                    "status": "success",
-                    "job_id": message.job_id,
-                    "ignored": True,
-                    "reason": "layout_parser_internal_id",
-                }
-
-            current_state = await state_machine.get_current_state(
-                db=db,
-                job_id=message.job_id,
-            )
-            if current_state is None:
-                logger.warning(
-                    f"Job {message.job_id} 状态更新失败: 当前状态不存在"
-                )
-                return {
-                    "status": "failed",
-                    "job_id": message.job_id,
-                    "reason": "missing_current_state",
-                }
-
-            if current_state == message.status:
-                logger.info(
-                    f"Job {message.job_id} 已处于状态 {message.status}, 跳过重复状态更新"
-                )
-                return {
-                    "status": "success",
-                    "job_id": message.job_id,
-                    "idempotent": True,
-                }
-
-            if not is_valid_transition(current_state, message.status):
-                logger.warning(
-                    f"忽略过期或非法状态更新: job_id={message.job_id}, "
-                    f"current_state={current_state}, requested_state={message.status}, "
-                    f"trigger={message.trigger}"
-                )
-                return {
-                    "status": "ignored",
-                    "job_id": message.job_id,
-                    "reason": "invalid_transition",
-                    "current_state": current_state,
-                    "requested_state": message.status,
-                    "retryable": False,
-                }
-
-            success = await state_machine.transition(
-                db=db,
-                job_id=message.job_id,
-                to_state=message.status,
-                transition_reason=message.trigger,
-                operator_id=message.operator_id,
-                operator_type=message.operator_type,
-                metadata=message.metadata
-            )
-
-            if success:
-                logger.info(f"Job {message.job_id} 状态更新成功: {current_state} -> {message.status}")
-                return {"status": "success", "job_id": message.job_id}
-
-            logger.warning(f"Job {message.job_id} 状态更新失败: {current_state} -> {message.status}")
-            return {
-                "status": "failed",
-                "job_id": message.job_id,
-                "reason": "state_transition_failed",
-            }
-                
-    except KnowhereException:
-        raise
-    except Exception as e:
-        logger.error(f"处理状态更新消息时出错: {e}")
-        raise WorkerHandlingException(
-            internal_message=f"处理状态更新消息时出错: {str(e)}",
-            original_exception=e
-        )
 
 
 async def handle_job_progress_update(message_data: Dict[str, Any]) -> Dict[str, Any]:

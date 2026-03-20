@@ -15,13 +15,11 @@ class MessagingConfig(BaseModel):
     EXCHANGE_TYPE: str = Field(default="direct", description="交换器类型: direct/topic/fanout")
     
     # 队列名称
-    QUEUE_STATUS_UPDATES: str = Field(default="job_status_updates", description="状态更新队列")
     QUEUE_PROGRESS_UPDATES: str = Field(default="job_progress_updates", description="进度更新队列")
     QUEUE_RESULTS: str = Field(default="job_results", description="结果数据队列")
     QUEUE_FAILURES: str = Field(default="job_failures", description="失败消息队列")
     
     # 路由键
-    ROUTING_KEY_STATUS_UPDATE: str = Field(default="job.status.update", description="状态更新路由键")
     ROUTING_KEY_PROGRESS_UPDATE: str = Field(default="job.progress.update", description="进度更新路由键")
     ROUTING_KEY_RESULT: str = Field(default="job.result", description="结果数据路由键")
     ROUTING_KEY_FAILURE: str = Field(default="job.failure", description="失败消息路由键")
@@ -47,7 +45,6 @@ class MessagingConfig(BaseModel):
     MESSAGE_PRIORITIES: Dict[str, int] = Field(default={
         'job_failure': 10,  # 最高优先级
         'job_result': 7,
-        'job_status_update': 5,
         'job_progress_update': 3,  # 最低优先级
     }, description="消息类型优先级配置")
     

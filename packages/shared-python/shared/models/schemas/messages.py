@@ -15,16 +15,6 @@ class BaseMessage(BaseModel):
     message_type: str = Field(..., description="消息类型")
 
 
-class JobStatusUpdateMessage(BaseMessage):
-    """Job状态更新消息"""
-    message_type: str = Field(default="job_status_update", description="消息类型")
-    status: str = Field(..., description="新状态")
-    previous_status: Optional[str] = Field(None, description="之前的状态")
-    trigger: str = Field(..., description="状态转换触发原因")
-    operator_id: Optional[str] = Field(None, description="操作者ID")
-    operator_type: str = Field(default="system", description="操作者类型: system/user")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="状态转换元数据")
-
 
 class JobProgressUpdateMessage(BaseMessage):
     """Job进度更新消息"""

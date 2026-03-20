@@ -28,7 +28,6 @@ from app.services.messaging.message_handlers import (
     handle_job_failure,
     handle_job_progress_update,
     handle_job_result,
-    handle_job_status_update,
 )
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
@@ -38,21 +37,18 @@ class MessageConsumer:
     
     # 重试配置
     MAX_RETRIES = {
-        'job_status_update': 3,
         'job_progress_update': 0,  # 不重试
         'job_result': 2,
         'job_failure': 3,
     }
     
     RETRY_DELAYS = {
-        'job_status_update': 60,  # 秒
         'job_result': 120,
         'job_failure': 60,
     }
     
     # 超时配置（秒）
     TIMEOUTS = {
-        'job_status_update': 30 * 60,  # 30分钟
         'job_progress_update': 5 * 60,  # 5分钟
         'job_result': 30 * 60,  # 30分钟
         'job_failure': 10 * 60,  # 10分钟
@@ -81,7 +77,6 @@ class MessageConsumer:
 
             # 创建并启动消费者
             message_handlers = {
-                'job_status_update': handle_job_status_update,
                 'job_progress_update': handle_job_progress_update,
                 'job_result': handle_job_result,
                 'job_failure': handle_job_failure,
