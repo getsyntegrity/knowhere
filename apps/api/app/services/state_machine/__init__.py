@@ -1,27 +1,20 @@
 """
-State machine service module (API-side facade).
+API-side compatibility layer for the shared state machine.
 
-The core state machine logic now lives in ``shared.core.state_machine``.
-This module re-exports the symbols that API code expects so that existing
-``from app.services.state_machine import ...`` statements keep working.
+The canonical implementation now lives under ``shared.core.state_machine``.
+This package keeps stable imports for API callers while avoiding duplicate
+state machine logic inside ``apps/api``.
 """
-from shared.core.state_machine.states import JobStatus
 from shared.core.state_machine.service import AsyncStateMachineService
+from shared.core.state_machine.states import JobStatus
 
-from .concurrency_control_service import ConcurrencyControlService
 from .manager import JobStateMachine
-from .monitoring_service import StateMachineMonitoringService
-from .state_sync_service import StateSyncService
 
-# Backwards-compatible alias
 StateMachineService = AsyncStateMachineService
 
 __all__ = [
-    "JobStateMachine",
     "AsyncStateMachineService",
-    "StateMachineService",
-    "StateSyncService",
-    "ConcurrencyControlService",
-    "StateMachineMonitoringService",
+    "JobStateMachine",
     "JobStatus",
+    "StateMachineService",
 ]

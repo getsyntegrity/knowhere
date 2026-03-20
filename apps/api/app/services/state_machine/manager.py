@@ -1,8 +1,8 @@
 """
-Job state machine manager — thin facade over shared state machine + timeout listener.
+API-side state machine facade.
 
-Callers use ``JobStateMachine`` as the single entry point for state transitions.
-Core logic lives in ``shared.core.state_machine.service.AsyncStateMachineService``.
+Core transition logic lives in ``shared.core.state_machine.service``. This
+module keeps the ``JobStateMachine`` entry point that API code already uses.
 """
 from typing import Any, Dict, Optional
 
@@ -10,16 +10,15 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.state_machine.service import AsyncStateMachineService
+from shared.services.redis import RedisServiceFactory
 
 
 class JobStateMachine:
-    """Thin facade: delegates transitions to shared service, manages timeout listener."""
+    """Compatibility facade over ``AsyncStateMachineService``."""
 
-    def __init__(self, redis_service=None):
+    def __init__(self, redis_service: Optional[Any] = None) -> None:
         self.redis = redis_service or RedisServiceFactory.get_service()
         self.state_machine = AsyncStateMachineService(self.redis)
-
-    # ── State transitions ───────────────────────────────────────────────
 
     async def transition(
         self,
@@ -30,15 +29,22 @@ class JobStateMachine:
         operator_id: Optional[str] = None,
         operator_type: str = "system",
         metadata: Optional[Dict[str, Any]] = None,
+        auto_commit: bool = True,
     ) -> bool:
         """Execute a CAS-protected state transition."""
         try:
             return await self.state_machine.transition(
-                db, job_id, to_state, transition_reason,
-                operator_id, operator_type, metadata,
+                db=db,
+                job_id=job_id,
+                to_state=to_state,
+                transition_reason=transition_reason,
+                operator_id=operator_id,
+                operator_type=operator_type,
+                metadata=metadata,
+                auto_commit=auto_commit,
             )
-        except Exception as e:
-            logger.error(f"Job {job_id} transition failed: {e}")
+        except Exception as err:
+            logger.error(f"Job {job_id} transition failed: {err}")
             return False
 
     async def mark_failed(
@@ -55,12 +61,17 @@ class JobStateMachine:
         """Mark a job as failed."""
         try:
             return await self.state_machine.mark_failed(
-                db, job_id, error_message, error_code,
-                error_details, operator_id, metadata,
+                db=db,
+                job_id=job_id,
+                error_message=error_message,
+                error_code=error_code,
+                error_details=error_details,
+                operator_id=operator_id,
+                metadata=metadata,
                 auto_commit=auto_commit,
             )
-        except Exception as e:
-            logger.error(f"Failed to mark Job {job_id} as failed: {e}")
+        except Exception as err:
+            logger.error(f"Failed to mark Job {job_id} as failed: {err}")
             return False
 
     async def mark_completed(
@@ -74,9 +85,43 @@ class JobStateMachine:
         """Mark a job as completed."""
         try:
             return await self.state_machine.mark_completed(
-                db, job_id, result_metadata, operator_id,
+                db=db,
+                job_id=job_id,
+                result_metadata=result_metadata,
+                operator_id=operator_id,
                 auto_commit=auto_commit,
             )
-        except Exception as e:
-            logger.error(f"Failed to mark Job {job_id} as completed: {e}")
+        except Exception as err:
+            logger.error(f"Failed to mark Job {job_id} as completed: {err}")
             return False
+
+    async def handle_retry(
+        self,
+        db: AsyncSession,
+        job_id: str,
+        retry_metadata: Optional[Dict[str, Any]] = None,
+        operator_id: Optional[str] = None,
+    ) -> bool:
+        """Retry a job through the shared state machine."""
+        try:
+            return await self.state_machine.handle_retry(
+                db=db,
+                job_id=job_id,
+                retry_metadata=retry_metadata,
+                operator_id=operator_id,
+            )
+        except Exception as err:
+            logger.error(f"Failed to retry Job {job_id}: {err}")
+            return False
+
+    async def get_current_state(
+        self,
+        db: AsyncSession,
+        job_id: str,
+    ) -> Optional[str]:
+        """Read the current state through the shared service."""
+        try:
+            return await self.state_machine.get_current_state(db=db, job_id=job_id)
+        except Exception as err:
+            logger.error(f"Failed to read Job {job_id} state: {err}")
+            return None
