@@ -116,6 +116,10 @@ celery_app.conf.update(
     broker_connection_max_retries=10,
     broker_heartbeat=30,
     broker_pool_limit=app_config.BROKER_POOL_LIMIT,
+    # RedBeat 配置
+    redbeat_redis_url=app_config.get_connection_url(),
+    beat_scheduler='redbeat.RedBeatScheduler',
+    redbeat_lock_timeout=120,  # Lock timeout in seconds
     # 任务路由配置
     task_routes={
         # Knowledge base tasks (dynamic routing)
@@ -124,6 +128,9 @@ celery_app.conf.update(
         # Webhook tasks - route to dedicated webhook work queue
         'app.core.tasks.webhook_tasks.dispatch_webhook_task': {'queue': 'webhook_work'},
         'app.core.tasks.webhook_tasks.recover_orphaned_webhooks': {'queue': 'webhook_work'},
+        
+        # Sweeper task
+        'app.core.tasks.stale_job_sweeper.expire_stale_jobs': {'queue': 'default'},
     },
     # Periodic tasks (Celery Beat)
     beat_schedule={
