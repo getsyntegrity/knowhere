@@ -138,7 +138,7 @@ celery_app.conf.update(
     beat_schedule={
         'recover-orphaned-webhooks': {
             'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
-            'schedule': 300.0,  # Every 5 minutes
+            'schedule': 1800.0,  # Every 30 minutes
         },
         'expire-stale-jobs': {
             'task': 'app.core.tasks.stale_job_sweeper.expire_stale_jobs',
