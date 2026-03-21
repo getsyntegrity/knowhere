@@ -219,7 +219,7 @@ def recover_orphaned_webhooks() -> dict:
     from shared.core.database_sync import get_sync_db_context
     from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 
-    logger.info("Starting orphaned webhook recovery job")
+    logger.debug("Starting orphaned webhook recovery job")
 
     age_minutes = 5
     cutoff_time = datetime.utcnow() - timedelta(minutes=age_minutes)
@@ -235,8 +235,6 @@ def recover_orphaned_webhooks() -> dict:
 
             result = db.execute(stmt)
             orphaned_events = result.scalars().all()
-
-            logger.info(f"Found {len(orphaned_events)} orphaned webhook events")
 
             for event in orphaned_events:
                 try:
