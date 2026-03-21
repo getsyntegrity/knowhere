@@ -25,6 +25,10 @@ from shared.utils.json_utils import make_json_safe
 from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
 
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class SyncStateMachineService:
     """Sync state machine service — used by the Worker (gevent + psycopg2)."""
 
@@ -87,6 +91,11 @@ class SyncStateMachineService:
 
             except Exception as e:
                 logger.error(f"Job {job_id} transition failed: {e}")
+                try:
+                    if db.is_active:
+                        db.rollback()
+                except Exception as rollback_err:
+                    logger.warning(f"Job {job_id} rollback failed: {rollback_err}")
                 return False
 
         return False
@@ -160,20 +169,16 @@ class SyncStateMachineService:
         to_state: str,
         old_version: int,
     ) -> bool:
-        try:
-            result = db.execute(
-                update(Job)
-                .where(Job.job_id == job_id, Job.version == old_version)
-                .values(
-                    status=to_state,
-                    version=old_version + 1,
-                    updated_at=datetime.now(timezone.utc),
-                )
+        result = db.execute(
+            update(Job)
+            .where(Job.job_id == job_id, Job.version == old_version)
+            .values(
+                status=to_state,
+                version=old_version + 1,
+                updated_at=_utc_now_naive(),
             )
-            return result.rowcount > 0
-        except Exception as e:
-            logger.error(f"CAS update failed for Job {job_id}: {e}")
-            return False
+        )
+        return result.rowcount > 0
 
     def _record_audit_log(
         self,

@@ -26,6 +26,10 @@ from shared.utils.json_utils import make_json_safe
 from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
 
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class AsyncStateMachineService:
     """Async state machine service — used by the API (FastAPI + asyncpg)."""
 
@@ -244,20 +248,16 @@ class AsyncStateMachineService:
         old_version: int,
     ) -> bool:
         """Atomic compare-and-swap on (job_id, version)."""
-        try:
-            result = await db.execute(
-                update(Job)
-                .where(Job.job_id == job_id, Job.version == old_version)
-                .values(
-                    status=to_state,
-                    version=old_version + 1,
-                    updated_at=datetime.now(timezone.utc),
-                )
+        result = await db.execute(
+            update(Job)
+            .where(Job.job_id == job_id, Job.version == old_version)
+            .values(
+                status=to_state,
+                version=old_version + 1,
+                updated_at=_utc_now_naive(),
             )
-            return result.rowcount > 0
-        except Exception as e:
-            logger.error(f"CAS update failed for Job {job_id}: {e}")
-            return False
+        )
+        return result.rowcount > 0
 
     async def _record_audit_log(
         self,
