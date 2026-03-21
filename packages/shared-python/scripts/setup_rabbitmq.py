@@ -22,10 +22,6 @@ EXCHANGE_NAME = "job_events"
 EXCHANGE_TYPE = "direct"
 
 QUEUES = {
-    "job_status_updates": {
-        "name": "job_status_updates",
-        "routing_key": "job.status.update"
-    },
     "job_progress_updates": {
         "name": "job_progress_updates",
         "routing_key": "job.progress.update"

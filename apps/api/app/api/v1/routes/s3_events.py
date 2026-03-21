@@ -467,6 +467,19 @@ async def process_upload_events(s3_event: S3Event):
                     logger.info(f"Job {job_id} 状态不是waiting-file: {job.status}")
                     continue
 
+                # Check if upload window has expired (race-condition safe via optimistic lock)
+                from shared.core.config import settings
+                from shared.core.state_machine.states import is_job_expired
+                if is_job_expired(job.updated_at, settings.JOB_WAITING_EXPIRE_SECONDS):
+                    logger.warning(f"Job {job_id} upload expired, marking failed")
+                    state_machine = JobStateMachine()
+                    await state_machine.mark_failed(
+                        db, job_id,
+                        "Upload expired: file was not uploaded within the allowed time window",
+                        error_code="UPLOAD_EXPIRED",
+                    )
+                    continue
+
                 # Skip S3 file verification — we are processing the upload
                 # notification itself, so the file is guaranteed to exist.
 

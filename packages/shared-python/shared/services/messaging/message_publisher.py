@@ -21,7 +21,6 @@ from shared.models.schemas.messages import (
     JobFailureMessage,
     JobProgressUpdateMessage,
     JobResultMessage,
-    JobStatusUpdateMessage,
 )
 from shared.services.messaging.async_config import (
     get_exchange_config,
@@ -212,47 +211,6 @@ class MessagePublisher:
             )
             
             return False
-    
-    async def publish_status_update(
-        self,
-        job_id: str,
-        status: str,
-        trigger: str,
-        previous_status: Optional[str] = None,
-        operator_id: Optional[str] = None,
-        operator_type: str = "system",
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> bool:
-        """
-        发布状态更新消息
-        
-        Args:
-            job_id: 任务ID
-            status: 新状态
-            trigger: 触发原因
-            previous_status: 之前的状态
-            operator_id: 操作者ID
-            operator_type: 操作者类型
-            metadata: 元数据
-            
-        Returns:
-            bool: 是否发布成功
-        """
-        message = JobStatusUpdateMessage(
-            job_id=job_id,
-            status=status,
-            previous_status=previous_status,
-            trigger=trigger,
-            operator_id=operator_id,
-            operator_type=operator_type,
-            metadata=metadata
-        )
-        
-        return await self._publish(
-            message,
-            get_routing_key('job_status_update'),
-            get_queue_name('job_status_update')
-        )
     
     async def publish_progress_update(
         self,

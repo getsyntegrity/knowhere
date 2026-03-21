@@ -31,7 +31,6 @@ from shared.models.schemas.messages import (
     JobFailureMessage,
     JobProgressUpdateMessage,
     JobResultMessage,
-    JobStatusUpdateMessage,
 )
 from shared.services.messaging.monitoring import message_monitoring
 
@@ -62,21 +61,25 @@ class SyncMessagePublisher:
 
     def get_routing_key(self, message_type: str) -> str:
         routing_keys = {
-            "job_status_update": messaging_config.ROUTING_KEY_STATUS_UPDATE,
             "job_progress_update": messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
             "job_result": messaging_config.ROUTING_KEY_RESULT,
             "job_failure": messaging_config.ROUTING_KEY_FAILURE,
         }
-        return routing_keys.get(message_type, messaging_config.ROUTING_KEY_STATUS_UPDATE)
+        try:
+            return routing_keys[message_type]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported message type: {message_type}") from exc
 
     def get_queue_name(self, message_type: str) -> str:
         queue_names = {
-            "job_status_update": messaging_config.QUEUE_STATUS_UPDATES,
             "job_progress_update": messaging_config.QUEUE_PROGRESS_UPDATES,
             "job_result": messaging_config.QUEUE_RESULTS,
             "job_failure": messaging_config.QUEUE_FAILURES,
         }
-        return queue_names.get(message_type, messaging_config.QUEUE_STATUS_UPDATES)
+        try:
+            return queue_names[message_type]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported message type: {message_type}") from exc
 
     def _build_queue(self, queue_name: str, routing_key: str) -> Queue:
         queue_config = messaging_config.get_queue_config(queue_name)
@@ -99,7 +102,6 @@ class SyncMessagePublisher:
 
         queues: dict[str, Queue] = {}
         for message_type in (
-            "job_status_update",
             "job_progress_update",
             "job_result",
             "job_failure",
@@ -373,34 +375,6 @@ class ProcessWideSyncMessagePublisher:
                 message.message_type, message.job_id, False
             )
             return False
-
-    def publish_status_update(
-        self,
-        job_id: str,
-        status: str,
-        trigger: str,
-        previous_status: Optional[str] = None,
-        operator_id: Optional[str] = None,
-        operator_type: str = "system",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> bool:
-        message = JobStatusUpdateMessage(
-            job_id=job_id,
-            status=status,
-            previous_status=previous_status,
-            trigger=trigger,
-            operator_id=operator_id,
-            operator_type=operator_type,
-            metadata=metadata,
-        )
-        return self._submit(
-            message,
-            self._publisher.get_routing_key("job_status_update"),
-            self._publisher.get_queue_name("job_status_update"),
-            messaging_config.get_message_priority("job_status_update"),
-            wait_for_confirmation=True,
-            best_effort=False,
-        )
 
     def publish_progress_update(
         self,

@@ -12,7 +12,6 @@ from loguru import logger
 from sqlalchemy import select
 
 from shared.core.celery_app import get_celery_app
-from shared.core.state_machine.states import JobStatus
 from shared.core.config import settings
 from shared.core.logging import log_context, LogEvent
 
@@ -56,6 +55,7 @@ from shared.core.billing import BillingCalculator
 from shared.models.database.job import Job
 from shared.models.schemas.job_metadata import JobMetadataHelper
 from shared.services.storage.zip_result_service import ZipResultService
+from app.services.common.job_start_service import mark_job_running
 from app.services.workload.page_estimator import PageEstimator
 
 # Get Celery application
@@ -100,7 +100,6 @@ def _download_s3_file_to_temp(file_url: str, file_ext: str) -> str:
         ) from exc
 
     return local_temp_path
-
 
 @celery_app.task(
     bind=True,
@@ -372,14 +371,7 @@ def _parse(job_id: str, user_id: str | None):
             original_exception=e,
         )
 
-    # Publish status: start processing
-    message_publisher.publish_status_update(
-        job_id=job_id,
-        status=JobStatus.RUNNING.value,
-        trigger="start_processing",
-        previous_status=None,
-        operator_type="system",
-    )
+    mark_job_running(job_id, redis_service)
 
     # Publish progress: start parsing
     message_publisher.publish_progress_update(

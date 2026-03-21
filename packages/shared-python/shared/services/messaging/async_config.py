@@ -125,21 +125,25 @@ def get_message_properties(priority: int = None, expiration: int = None) -> Dict
 def get_routing_key(message_type: str) -> str:
     """根据消息类型获取路由键"""
     routing_keys = {
-        "job_status_update": messaging_config.ROUTING_KEY_STATUS_UPDATE,
         "job_progress_update": messaging_config.ROUTING_KEY_PROGRESS_UPDATE,
         "job_result": messaging_config.ROUTING_KEY_RESULT,
         "job_failure": messaging_config.ROUTING_KEY_FAILURE,
     }
-    return routing_keys.get(message_type, messaging_config.ROUTING_KEY_STATUS_UPDATE)
+    try:
+        return routing_keys[message_type]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported message type: {message_type}") from exc
 
 
 def get_queue_name(message_type: str) -> str:
     """根据消息类型获取队列名称"""
     queue_names = {
-        "job_status_update": messaging_config.QUEUE_STATUS_UPDATES,
         "job_progress_update": messaging_config.QUEUE_PROGRESS_UPDATES,
         "job_result": messaging_config.QUEUE_RESULTS,
         "job_failure": messaging_config.QUEUE_FAILURES,
     }
-    return queue_names.get(message_type, messaging_config.QUEUE_STATUS_UPDATES)
+    try:
+        return queue_names[message_type]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported message type: {message_type}") from exc
 

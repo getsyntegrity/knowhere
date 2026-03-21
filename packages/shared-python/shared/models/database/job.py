@@ -82,6 +82,14 @@ class Job(Base):
                 "status IN ('waiting-file', 'pending', 'running', 'converting')"
             ),
         ),
+        Index(
+            'idx_job_active_updated_at',
+            'status',
+            'updated_at',
+            postgresql_where=text(
+                "status IN ('waiting-file', 'pending', 'running', 'converting')"
+            ),
+        ),
     )
     
     def __repr__(self):
