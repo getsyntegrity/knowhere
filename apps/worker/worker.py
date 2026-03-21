@@ -87,7 +87,6 @@ if __name__ == "__main__":
 
     celery_args = [
         "worker",
-        "--beat",
         "--pool=gevent",
         f"--concurrency={concurrency}",
         f"--loglevel={log_level}",
@@ -96,5 +95,11 @@ if __name__ == "__main__":
         "--without-gossip",
         "--without-mingle",
     ]
+
+    import subprocess
+    logger.info("Starting standalone Celery Beat process using RedBeat locking")
+    subprocess.Popen([
+        sys.executable, "-m", "celery", "-A", "shared.core.celery_app", "beat", f"--loglevel={log_level}"
+    ])
 
     celery_app.worker_main(celery_args)
