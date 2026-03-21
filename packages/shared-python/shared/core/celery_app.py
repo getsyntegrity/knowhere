@@ -119,6 +119,7 @@ celery_app.conf.update(
     # RedBeat 配置
     redbeat_redis_url=app_config.get_connection_url(),
     beat_scheduler='redbeat.RedBeatScheduler',
+    redbeat_key_prefix='{redbeat}',  # Hash tag for Redis Cluster CROSSSLOT compatibility
     redbeat_lock_timeout=120,  # Lock timeout in seconds
     beat_max_loop_interval=30,  # Wake up at least every 30s to renew lock
     # 任务路由配置
@@ -137,7 +138,7 @@ celery_app.conf.update(
     beat_schedule={
         'recover-orphaned-webhooks': {
             'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
-            'schedule': 300.0,  # Every 5 minutes
+            'schedule': 1800.0,  # Every 30 minutes
         },
         'expire-stale-jobs': {
             'task': 'app.core.tasks.stale_job_sweeper.expire_stale_jobs',
