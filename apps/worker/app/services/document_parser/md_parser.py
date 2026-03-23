@@ -217,6 +217,11 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 chunk_pages = set()  # reset for next chunk
                 if current_pg_num > 0:
                     chunk_pages.add(current_pg_num)  # carry current page into next chunk
+            elif path and path != (relative_root or ""):
+                # Consecutive headings with no body text between them:
+                # Create a placeholder chunk so the previous heading's path
+                chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
+                df_list, content = update_df_list(df_list, "", path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
 
             # update path based on path name and level
             if base_level is None:
