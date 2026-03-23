@@ -1,0 +1,37 @@
+# Agent Hooks — demo hooks for Antigravity soft hook testing
+# These hooks run via CLI and results are printed to agent's terminal
+
+hooks:
+  - id: turn_counter
+    name: "Conversation Turn Counter"
+    trigger:
+      type: always
+    execute:
+      type: inline
+      code: |
+        duration = int(context.session_duration_seconds)
+        mins, secs = divmod(duration, 60)
+        time_str = f"{mins}m{secs}s" if mins else f"{secs}s"
+        result = f"Turn {context.message_count} (session: {time_str})"
+      timeout_ms: 10
+    inject:
+      format: text
+      prefix: "💬 Conversation"
+    metadata:
+      priority: 10
+
+  - id: current_time
+    name: "Current Time"
+    trigger:
+      type: always
+    execute:
+      type: inline
+      code: |
+        from datetime import datetime
+        result = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
+      timeout_ms: 10
+    inject:
+      format: text
+      prefix: "🕐 Time"
+    metadata:
+      priority: 100
