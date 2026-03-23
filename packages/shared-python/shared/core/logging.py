@@ -3,9 +3,12 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 from enum import Enum
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from logfire.types import ExceptionCallbackHelper
 
 _log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
 _DEFAULT_CONSOLE_FORMAT = (
@@ -72,6 +75,36 @@ def log_context(**kwargs):
 def get_log_context() -> Dict[str, Any]:
     """Get current merged log context."""
     return _log_context.get().copy()
+
+
+def _is_expected_client_exception(exception: BaseException) -> bool:
+    """Identify handled 4xx exceptions that should stay warnings in Logfire."""
+    from shared.core.exceptions.knowhere_exception import KnowhereException
+
+    if isinstance(exception, KnowhereException):
+        return 400 <= exception.http_status_code < 500
+
+    try:
+        from fastapi import HTTPException as FastAPIHTTPException
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+    except ImportError:
+        return False
+
+    return isinstance(
+        exception,
+        (FastAPIHTTPException, StarletteHTTPException),
+    ) and 400 <= exception.status_code < 500
+
+
+def _downgrade_expected_logfire_exception(
+    helper: "ExceptionCallbackHelper",
+) -> None:
+    """Prevent handled client errors from creating Logfire exception issues."""
+    if not _is_expected_client_exception(helper.exception):
+        return
+
+    helper.level = "warning"
+    helper.no_record_exception()
 
 
 
@@ -158,6 +191,9 @@ def setup_logging(
                 environment=settings.APP_ENV,
                 console=False,
                 distributed_tracing=True,
+                advanced=logfire.AdvancedOptions(
+                    exception_callback=_downgrade_expected_logfire_exception,
+                ),
             )
 
             # Logfire sink: keep structured fields from bind()/contextualize().

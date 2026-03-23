@@ -25,11 +25,10 @@ celery_app = Celery(
     backend=app_config.get_celery_result_backend(),
     include=[
         'shared.core.tasks.celery_tasks',
-        # 以下模块已移除，改为在各自服务启动时动态导入：
-        # 'app.core.tasks.kb_tasks',  # 仅在 Worker 服务中使用
-        # 'app.core.tasks.state_machine_tasks',  # 仅在 API 服务中使用
-        # 'app.core.tasks.webhook_tasks',  # 仅在 API 服务中使用
-        # 注意：message_handlers 不再是 Celery 任务，由 MessageConsumer 直接调用
+        # Dynamic imports: task modules are imported at service startup
+        # 'app.core.tasks.kb_tasks',       # Worker only
+        # 'app.core.tasks.webhook_tasks',   # Worker only
+        # message_handlers are not Celery tasks — called by MessageConsumer
     ]
 )
 
@@ -117,6 +116,12 @@ celery_app.conf.update(
     broker_connection_max_retries=10,
     broker_heartbeat=30,
     broker_pool_limit=app_config.BROKER_POOL_LIMIT,
+    # RedBeat 配置
+    redbeat_redis_url=app_config.get_connection_url(),
+    beat_scheduler='redbeat.RedBeatScheduler',
+    redbeat_key_prefix='{redbeat}',  # Hash tag for Redis Cluster CROSSSLOT compatibility
+    redbeat_lock_timeout=120,  # Lock timeout in seconds
+    beat_max_loop_interval=30,  # Wake up at least every 30s to renew lock
     # 任务路由配置
     task_routes={
         # Knowledge base tasks (dynamic routing)
@@ -125,12 +130,19 @@ celery_app.conf.update(
         # Webhook tasks - route to dedicated webhook work queue
         'app.core.tasks.webhook_tasks.dispatch_webhook_task': {'queue': 'webhook_work'},
         'app.core.tasks.webhook_tasks.recover_orphaned_webhooks': {'queue': 'webhook_work'},
+        
+        # Sweeper task
+        'app.core.tasks.stale_job_sweeper.expire_stale_jobs': {'queue': 'default'},
     },
     # Periodic tasks (Celery Beat)
     beat_schedule={
         'recover-orphaned-webhooks': {
             'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
-            'schedule': 300.0,  # Every 5 minutes
+            'schedule': 1800.0,  # Every 30 minutes
+        },
+        'expire-stale-jobs': {
+            'task': 'app.core.tasks.stale_job_sweeper.expire_stale_jobs',
+            'schedule': 1800.0,  # Every 30 minutes
         },
     },
 )

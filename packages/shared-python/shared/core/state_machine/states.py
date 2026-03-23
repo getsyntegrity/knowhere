@@ -1,6 +1,8 @@
 """
 状态机状态枚举和转换规则 - 简化版本
 """
+import os
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, Set
 
@@ -19,15 +21,6 @@ class JobStatus(str, Enum):
 # 终态集合
 TERMINAL_STATES: Set[str] = {JobStatus.DONE.value, JobStatus.FAILED.value}
 
-# PRD状态超时配置（秒）
-STATE_TIMEOUTS: Dict[str, int] = {
-    JobStatus.PENDING.value: 300,        # 5分钟
-    JobStatus.WAITING_FILE.value: 600,   # 10分钟
-    JobStatus.RUNNING.value: 1800,       # 30分钟
-    JobStatus.CONVERTING.value: 600,     # 10分钟
-    JobStatus.DONE.value: 0,             # 无超时
-    JobStatus.FAILED.value: 0,           # 无超时
-}
 
 
 
@@ -37,9 +30,50 @@ def is_terminal_state(state: str) -> bool:
     return state in TERMINAL_STATES
 
 
+# Valid state transitions — prevents illegal jumps (e.g. done → running).
+# Any transition to FAILED is always allowed (not listed per-state).
+VALID_TRANSITIONS: Dict[str, Set[str]] = {
+    JobStatus.PENDING.value: {JobStatus.RUNNING.value, JobStatus.WAITING_FILE.value},
+    JobStatus.WAITING_FILE.value: {JobStatus.PENDING.value},
+    JobStatus.RUNNING.value: {JobStatus.CONVERTING.value, JobStatus.DONE.value},
+    JobStatus.CONVERTING.value: {JobStatus.DONE.value},
+    JobStatus.DONE.value: set(),
+    JobStatus.FAILED.value: {JobStatus.PENDING.value},  # retry
+}
 
 
-def get_state_timeout(state: str) -> int:
-    """获取状态超时时间（秒）"""
-    return STATE_TIMEOUTS.get(state, 0)
+def is_valid_transition(from_state: str, to_state: str) -> bool:
+    """Check whether a state transition is allowed.
+
+    Transitions to FAILED are always valid from any non-terminal state.
+    """
+    if from_state == to_state:
+        return True
+    if to_state == JobStatus.FAILED.value:
+        return from_state not in TERMINAL_STATES
+    allowed = VALID_TRANSITIONS.get(from_state, set())
+    return to_state in allowed
+
+
+def is_job_expired(created_at: datetime | None, max_age_seconds: int) -> bool:
+    """Return True if a job has exceeded its maximum allowed life.
+
+    Args:
+        created_at: Job creation timestamp (tz-aware or naive-UTC).
+        max_age_seconds: Maximum allowed age in seconds.
+            If <= 0, expiry checking is disabled.
+
+    Returns:
+        True when the job should be considered expired.
+    """
+    if max_age_seconds <= 0 or created_at is None:
+        return False
+
+    created_utc = (
+        created_at.replace(tzinfo=timezone.utc)
+        if created_at.tzinfo is None
+        else created_at
+    )
+    age = (datetime.now(timezone.utc) - created_utc).total_seconds()
+    return age > max_age_seconds
 

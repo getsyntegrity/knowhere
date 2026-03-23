@@ -92,11 +92,19 @@ class APIKeyService:
         
         if not api_key:
             logger.warning("API密钥不存在")
-            return False
+            raise NotFoundException(
+                resource="APIKey",
+                resource_id=api_key_id,
+                internal_message="API Key not found",
+            )
             
         if str(api_key.user_id) != user_id:
             logger.warning(f"用户ID不匹配: api_key.user_id={api_key.user_id}, user_id={user_id}")
-            return False
+            raise NotFoundException(
+                resource="APIKey",
+                resource_id=api_key_id,
+                internal_message="API Key not found or does not belong to user",
+            )
         
         # 2. 直接删除API Key
         success = await self.repository.delete_by_id(session, api_key_id)
@@ -106,15 +114,27 @@ class APIKeyService:
         if success:
             await session.commit()
             logger.info("事务已提交")
-            # 4. 清理缓存
-            await self._remove_cached_api_key(api_key_id)
-            await identity_cache.invalidate_apikey(
-                redis_pool_manager.get_redis_service(),
-                user_id,
-                api_key.key_hash,
+            await self._invalidate_revoked_api_key_cache_best_effort(
+                user_id=user_id,
+                key_hash=api_key.key_hash,
             )
         
         return success
+
+    async def _invalidate_revoked_api_key_cache_best_effort(
+        self,
+        user_id: str,
+        key_hash: str,
+    ) -> None:
+        """Best-effort cache invalidation after a revoke has already been committed."""
+        try:
+            await identity_cache.invalidate_apikey(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+                key_hash,
+            )
+        except Exception as err:
+            logger.warning(f"Failed to invalidate revoked API key cache (ignored): {err}")
     
     async def list_user_api_keys(self, session: AsyncSession, user_id: str) -> List[dict]:
         """获取用户API Key列表（有效期内的，包含禁用的）"""

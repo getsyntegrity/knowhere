@@ -14,6 +14,7 @@ from .app import (
 from .base import BaseConfig
 from .celery import CeleryConfig
 from .database import DatabaseConfig
+from .job import JobConfig
 from .messaging import MessagingConfig, messaging_config
 from .mineru import MineruConfig
 from .redis import RedisConfig, RedisConfigManager, RedisPoolManager
@@ -27,6 +28,7 @@ __all__ = [
     'RedisPoolManager',
     'CeleryConfig',
     'StorageConfig',
+    'JobConfig',
     'AIConfig',
     'MineruConfig',
     'AppConfig',

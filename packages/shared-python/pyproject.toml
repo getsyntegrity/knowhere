@@ -26,6 +26,7 @@ dependencies = [
     "billiard==4.2.0",
     "vine==5.1.0",
     "amqp==5.3.1",
+    "celery-redbeat==2.2.0",
     
     # 异步RabbitMQ客户端
     "aio-pika==9.3.0",

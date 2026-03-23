@@ -26,6 +26,7 @@ from shared.services.worker_health import (
 
 # Explicitly import task modules to register tasks with Celery
 import app.core.tasks.kb_tasks
+import app.core.tasks.stale_job_sweeper
 import app.core.tasks.webhook_tasks
 
 
@@ -84,7 +85,7 @@ if __name__ == "__main__":
     from shared.core.config import settings
     concurrency = settings.WORKER_CONCURRENCY
 
-    celery_app.worker_main([
+    celery_args = [
         "worker",
         "--pool=gevent",
         f"--concurrency={concurrency}",
@@ -93,4 +94,12 @@ if __name__ == "__main__":
         "-Q", "webhook_work,webhook_dead,kb_high,kb_medium,kb_low,ai_high_priority,default",
         "--without-gossip",
         "--without-mingle",
+    ]
+
+    import subprocess
+    logger.info("Starting standalone Celery Beat process using RedBeat locking")
+    subprocess.Popen([
+        sys.executable, "-m", "celery", "-A", "shared.core.celery_app", "beat", f"--loglevel={log_level}"
     ])
+
+    celery_app.worker_main(celery_args)

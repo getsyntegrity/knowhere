@@ -28,7 +28,6 @@ from app.services.messaging.message_handlers import (
     handle_job_failure,
     handle_job_progress_update,
     handle_job_result,
-    handle_job_status_update,
 )
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
@@ -38,21 +37,18 @@ class MessageConsumer:
     
     # 重试配置
     MAX_RETRIES = {
-        'job_status_update': 3,
         'job_progress_update': 0,  # 不重试
         'job_result': 2,
         'job_failure': 3,
     }
     
     RETRY_DELAYS = {
-        'job_status_update': 60,  # 秒
         'job_result': 120,
         'job_failure': 60,
     }
     
     # 超时配置（秒）
     TIMEOUTS = {
-        'job_status_update': 30 * 60,  # 30分钟
         'job_progress_update': 5 * 60,  # 5分钟
         'job_result': 30 * 60,  # 30分钟
         'job_failure': 10 * 60,  # 10分钟
@@ -81,7 +77,6 @@ class MessageConsumer:
 
             # 创建并启动消费者
             message_handlers = {
-                'job_status_update': handle_job_status_update,
                 'job_progress_update': handle_job_progress_update,
                 'job_result': handle_job_result,
                 'job_failure': handle_job_failure,
@@ -389,26 +384,37 @@ class MessageConsumer:
         logger.debug(f"Received message: {message_type}, job_id={job_id}")
         
         # 处理消息（带重试）
-        result = await self._process_with_retry(
+        outcome = await self._process_with_retry(
             handler_func,
             message_data,
             message_type
         )
-        
-        if result:
+
+        if outcome["success"]:
             logger.debug(f"Message processed successfully: {message_type}, job_id={job_id}")
-        else:
-            logger.warning(f"Message processing failed: {message_type}, job_id={job_id}")
-            raise WorkerHandlingException(
-                internal_message=f"Message processing failed: {message_type}, job_id={job_id}"
+            return
+
+        if not outcome.get("retryable", True):
+            logger.warning(
+                f"Message dropped as non-retryable: {message_type}, "
+                f"job_id={job_id}, reason={outcome.get('reason', 'unknown')}"
             )
+            return
+
+        logger.warning(f"Message processing failed: {message_type}, job_id={job_id}")
+        raise WorkerHandlingException(
+            internal_message=(
+                f"Message processing failed: {message_type}, job_id={job_id}, "
+                f"reason={outcome.get('reason', 'unknown')}"
+            )
+        )
     
     async def _process_with_retry(
         self,
         handler_func,
         message_data: Dict[str, Any],
         message_type: str
-    ) -> bool:
+    ) -> Dict[str, Any]:
         """
         带重试的消息处理
         
@@ -418,7 +424,7 @@ class MessageConsumer:
             message_type: 消息类型
             
         Returns:
-            是否处理成功
+            处理结果，包含 success / retryable / reason 字段
         """
         max_retries = self.MAX_RETRIES.get(message_type, 0)
         retry_delay = self.RETRY_DELAYS.get(message_type, 60)
@@ -431,7 +437,27 @@ class MessageConsumer:
                     handler_func(message_data),
                     timeout=timeout
                 )
-                return result.get('status') == 'success' if result else False
+                
+                if not result:
+                    return {
+                        "success": False,
+                        "retryable": True,
+                        "reason": "empty_result",
+                    }
+
+                status = result.get("status")
+                if status in {"success", "ignored"}:
+                    return {
+                        "success": True,
+                        "retryable": False,
+                        "reason": result.get("reason"),
+                    }
+
+                return {
+                    "success": False,
+                    "retryable": bool(result.get("retryable", True)),
+                    "reason": result.get("reason", "handler_returned_failed"),
+                }
                 
             except asyncio.TimeoutError:
                 logger.error(
@@ -444,7 +470,11 @@ class MessageConsumer:
                     await asyncio.sleep(wait_time)
                 else:
                     logger.error(f"Processing {message_type} timed out, max retries reached")
-                    return False
+                    return {
+                        "success": False,
+                        "retryable": True,
+                        "reason": "timeout",
+                    }
                     
             except Exception as e:
                 logger.error(
@@ -458,9 +488,17 @@ class MessageConsumer:
                     await asyncio.sleep(wait_time)
                 else:
                     logger.error(f"Processing {message_type} failed, max retries reached")
-                    return False
+                    return {
+                        "success": False,
+                        "retryable": True,
+                        "reason": str(e),
+                    }
         
-        return False
+        return {
+            "success": False,
+            "retryable": True,
+            "reason": "retry_limit_exhausted",
+        }
     
     async def _parse_message_body(self, body: bytes) -> Optional[Dict[str, Any]]:
         """解析消息体"""
