@@ -1,8 +1,25 @@
 # Knowhere MCP Server
 
-> Parse documents into structured, RAG-ready data through [MCP](https://modelcontextprotocol.io/) — one tool call, zero integration friction.
+> Parse documents + search your knowledge base through [MCP](https://modelcontextprotocol.io/) — one server, zero integration friction.
 
-Wraps the [Knowhere API](https://knowhereto.ai) so any MCP-compatible AI agent (Claude, Cursor, OpenAI Agents SDK, etc.) can parse PDFs, DOCX, XLSX, PPTX and more.
+A unified MCP server that wraps both the [Knowhere Cloud API](https://knowhereto.ai) and your local knowledge base (`~/.knowhere/`), so AI agents get the complete document intelligence experience.
+
+## Tools
+
+### ☁️ Cloud Tools (require `KNOWHERE_API_KEY`)
+
+| Tool | Description |
+|------|-------------|
+| `parse_document` | Submit a URL → auto-wait → return structured chunks |
+| `get_job_status` | Check status of a running job |
+| `get_parsed_chunks` | Download & extract chunks from a completed job |
+
+### 🏠 Local Tools (read `~/.knowhere/`)
+
+| Tool | Description |
+|------|-------------|
+| `search_knowledge` | Keyword search across all local knowledge bases |
+| `get_knowledge_overview` | View KB structure, stats, and cross-file connections |
 
 ## Quick Start
 
@@ -13,7 +30,7 @@ cd knowhere-mcp
 pip install -e .
 ```
 
-### 2. Set your API key
+### 2. Set your API key (optional, for cloud tools)
 
 ```bash
 export KNOWHERE_API_KEY="sk_live_..."
@@ -26,8 +43,6 @@ Get your key at [knowhereto.ai/login](https://knowhereto.ai/login).
 ```bash
 fastmcp dev server.py
 ```
-
-This opens a web UI where you can test each tool.
 
 ## Connect to Claude Desktop
 
@@ -47,11 +62,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. You'll see a 🔨 icon showing Knowhere tools are available.
-
 ## Connect to Cursor
 
-Add to `.cursor/mcp.json` in your project:
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -67,27 +80,22 @@ Add to `.cursor/mcp.json` in your project:
 }
 ```
 
-## Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `parse_document` | Submit a URL → auto-wait → return structured chunks |
-| `get_job_status` | Check status of a running job |
-| `get_parsed_chunks` | Download & extract chunks from a completed job |
-
-### Example: Parse a PDF
+## Architecture
 
 ```
-Agent: "Parse this paper: https://arxiv.org/pdf/1706.03762.pdf"
-
-→ Knowhere MCP tool call: parse_document(source_url="https://arxiv.org/pdf/1706.03762.pdf")
-
-→ Returns: 42 structured chunks with headings, tables, formulas, and metadata
+knowhere-mcp/
+├── server.py           ← Unified MCP entry point (5 tools)
+├── local_search.py     ← Local KB search + overview logic
+├── stats_tracker.py    ← Chunk hit tracking for importance scoring
+├── pyproject.toml      ← Package metadata
+└── README.md
 ```
+
+The local search tools track which chunks are accessed and update `~/.knowhere/{kb_id}/chunk_stats.json`. These stats feed into the knowledge graph's file importance calculation on next rebuild, creating a feedback loop: **more searched → higher importance**.
 
 ## Pricing
 
-Knowhere API uses pay-as-you-go pricing: **$1.50 per 1,000 pages**. [Details →](https://knowhereto.ai/#pricing)
+Cloud API is pay-as-you-go: **$1.50 per 1,000 pages**. Local tools are free.
 
 ## Links
 

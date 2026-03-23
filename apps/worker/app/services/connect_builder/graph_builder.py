@@ -874,11 +874,18 @@ def _load_all_chunks_from_kb(kb_dir: str) -> List[Dict[str, Any]]:
 # ─── MCP Auto-Registration ───────────────────────────────────────────────────
 
 def _get_mcp_server_path() -> str:
-    """Get the absolute path to the MCP server script."""
-    return os.path.join(
+    """Get the absolute path to the MCP server script.
+
+    Points to the consolidated knowhere-mcp/server.py (unified server
+    with both Cloud API and local search tools).
+    """
+    # Navigate from graph_builder.py → project root → knowhere-mcp/server.py
+    # graph_builder.py is at: apps/worker/app/services/connect_builder/
+    project_root = os.path.normpath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "..", "mcp", "knowhere_mcp_server.py",
-    )
+        "..", "..", "..", "..", "..",
+    ))
+    return os.path.join(project_root, "knowhere-mcp", "server.py")
 
 
 def _auto_register_mcp() -> None:
@@ -896,6 +903,9 @@ def _auto_register_mcp() -> None:
     knowhere_mcp_entry = {
         "command": "python3",
         "args": [mcp_server_path],
+        "env": {
+            "KNOWHERE_API_KEY": os.environ.get("KNOWHERE_API_KEY", ""),
+        },
     }
 
     registered = []
@@ -910,7 +920,8 @@ def _auto_register_mcp() -> None:
                     existing = json.load(f)
 
             servers = existing.get("mcpServers", {})
-            if "knowhere" not in servers:
+            # Update even if "knowhere" exists (to point to new server)
+            if "knowhere" not in servers or "mcp/knowhere_mcp_server" in str(servers.get("knowhere", {}).get("args", [])):
                 servers["knowhere"] = knowhere_mcp_entry
                 existing["mcpServers"] = servers
                 with open(cursor_mcp, "w") as f:
@@ -929,7 +940,7 @@ def _auto_register_mcp() -> None:
                     existing = json.load(f)
 
             servers = existing.get("mcpServers", {})
-            if "knowhere" not in servers:
+            if "knowhere" not in servers or "mcp/knowhere_mcp_server" in str(servers.get("knowhere", {}).get("args", [])):
                 servers["knowhere"] = knowhere_mcp_entry
                 existing["mcpServers"] = servers
                 with open(claude_config, "w") as f:
