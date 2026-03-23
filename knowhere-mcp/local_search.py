@@ -1,9 +1,11 @@
 """
 Local knowledge base search for Knowhere MCP Server.
 
-Reads from ~/.knowhere/ directory to search parsed documents and
-provide knowledge base overviews. Extracted and decoupled from the
-old worker/app/services/mcp/knowhere_mcp_server.py.
+Reads from KNOWHERE_HOME (default: ~/.knowhere/) to search parsed documents
+and provide knowledge base overviews.
+
+On OpenClaw deployments, set KNOWHERE_HOME to point to the shared KB location
+(e.g. ~/.openclaw/.knowhere).
 
 Zero dependencies on worker code or connect_builder.
 """
@@ -207,8 +209,28 @@ def format_files_overview(
 def do_search(query: str, top_k: int = 5) -> dict:
     """Search across all local knowledge bases.
 
+    Auto-detects retrieval tier:
+      Tier 1: knowhere-kb (semantic retrieval, if installed)
+      Tier 2: Built-in keyword + KG search (fallback)
+
     Returns search results and records chunk hits for importance tracking.
     """
+    # ── Tier 1: Try knowhere-kb semantic retrieval ─────────────────────────
+    try:
+        from knowhere_kb import search as kb_search
+        results = kb_search(query, top_k=top_k, knowhere_home=KNOWHERE_HOME)
+        return {
+            "status": "ok",
+            "tier": 1,
+            "engine": "knowhere-kb",
+            "query": query,
+            "results_count": len(results),
+            "results": results,
+        }
+    except ImportError:
+        pass  # knowhere-kb not installed, fall through to Tier 2
+
+    # ── Tier 2: Built-in keyword + KG search ──────────────────────────────
     kbs = discover_knowledge_bases()
     if not kbs:
         return {
@@ -245,6 +267,8 @@ def do_search(query: str, top_k: int = 5) -> dict:
 
     return {
         "status": "ok",
+        "tier": 2,
+        "engine": "keyword+kg",
         "query": query,
         "results_count": len(all_results),
         "results": all_results,
