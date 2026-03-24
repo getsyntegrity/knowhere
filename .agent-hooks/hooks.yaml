@@ -35,3 +35,18 @@ hooks:
       prefix: "🕐 Time"
     metadata:
       priority: 100
+
+  - id: knowhere_retrieval_guide
+    name: "Knowhere Retrieval Guide"
+    trigger:
+      type: always
+    execute:
+      type: inline
+      code: |
+        result = "知识检索优先级：knowhere_get_map → knowhere_get_structure → knowhere_read_chunks。不要直接 read .knowhere 目录。"
+      timeout_ms: 10
+    inject:
+      format: text
+      prefix: "📚 Knowledge"
+    metadata:
+      priority: 50

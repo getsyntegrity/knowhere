@@ -1,18 +1,23 @@
 """
-Knowhere MCP Server — Unified document parsing + knowledge search.
+Knowhere MCP Server — 4-Tier Document Retrieval + Cloud Parsing.
 
 A single MCP server exposing both Cloud API tools (parse documents)
-and Local tools (search knowledge bases), so agents need only one
-MCP configuration for the complete Knowhere experience.
+and Local tools (navigate and search knowledge bases).
+
+4-Tier Retrieval Architecture:
+  Tier 1: knowhere-kb semantic retrieval (when installed)
+  Tier 2: LLM-as-Retriever — agent navigates knowledge graph + hierarchy
+    - get_knowledge_map        → see all files, keywords, importance, edges
+    - get_document_structure   → see document's chapter/section TOC
+    - read_document_chunks     → read specific sections' content
+    - discover_relevant_files  → bottom-up grep to find files by content
+  Tier 3: search_knowledge     → code-level keyword search (fallback)
+  Tier 4: (no tool needed)     → agent reads files directly
 
 Cloud tools (require KNOWHERE_API_KEY):
   - parse_document       — submit a URL for parsing
   - get_job_status       — check job progress
   - get_parsed_chunks    — download structured results
-
-Local tools (read ~/.knowhere/):
-  - search_knowledge     — keyword search across local KBs
-  - get_knowledge_overview — KB structure and stats
 
 Usage:
     export KNOWHERE_API_KEY="sk_live_..."   # optional, for cloud tools
@@ -38,8 +43,10 @@ mcp = FastMCP(
     "Knowhere",
     instructions=(
         "Knowhere: parse documents into structured RAG-ready chunks, and search "
-        "your local knowledge base. Cloud tools require KNOWHERE_API_KEY. "
-        "Local tools read from ~/.knowhere/ directory."
+        "your local knowledge base. Use the LLM-as-Retriever workflow for best results: "
+        "1) get_knowledge_map → 2) get_document_structure → 3) read_document_chunks. "
+        "Use search_knowledge as fallback when navigation is not needed. "
+        "Cloud tools require KNOWHERE_API_KEY."
     ),
 )
 
@@ -252,19 +259,111 @@ def get_parsed_chunks(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  LOCAL TOOLS (read ~/.knowhere/)
+#  TIER 2: LLM-as-Retriever (Agent navigates knowledge base)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def get_knowledge_map(kb_id: str = "") -> dict:
+    """Get a bird's-eye view of your knowledge base.
+
+    Returns all documents with their keywords, importance scores, chunk counts,
+    and cross-file connections. Use this FIRST to understand what's available
+    and decide which documents to explore.
+
+    Recommended workflow:
+    1. get_knowledge_map() → see all files
+    2. get_document_structure(kb_id, doc_name) → see chapter/section TOC
+    3. read_document_chunks(kb_id, doc_name, section_path) → read content
+
+    Args:
+        kb_id: Optional. Specify a KB ID to see only that KB. Leave empty for all.
+
+    Returns:
+        dict with knowledge base overview including files, keywords, and edges.
+    """
+    from local_search import do_get_knowledge_map
+    return do_get_knowledge_map(kb_id or None)
+
+
+@mcp.tool()
+def get_document_structure(kb_id: str, doc_name: str) -> dict:
+    """Get the chapter/section structure (TOC) of a specific document.
+
+    Returns the document's hierarchy tree so you can decide which sections
+    are relevant to the user's question before reading the actual content.
+
+    Args:
+        kb_id: Knowledge base ID (from get_knowledge_map).
+        doc_name: Document name (from get_knowledge_map's files list).
+
+    Returns:
+        dict with document hierarchy/TOC tree.
+    """
+    from local_search import do_get_document_structure
+    return do_get_document_structure(kb_id, doc_name)
+
+
+@mcp.tool()
+def read_document_chunks(
+    kb_id: str,
+    doc_name: str,
+    section_path: str = "",
+    max_chunks: int = 50,
+) -> dict:
+    """Read the actual content chunks from a document.
+
+    If section_path is specified, returns only chunks from that section
+    (e.g. "一、工程概况/1.工程概况和特点"). This reduces token usage
+    by focusing on relevant sections.
+
+    Args:
+        kb_id: Knowledge base ID.
+        doc_name: Document name.
+        section_path: Optional. Section path prefix to filter chunks.
+        max_chunks: Maximum chunks to return (default 50).
+
+    Returns:
+        dict with chunks array containing type, path, content, summary.
+    """
+    from local_search import do_read_chunks
+    return do_read_chunks(kb_id, doc_name, section_path or None, max_chunks)
+
+
+@mcp.tool()
+def discover_relevant_files(query: str, kb_id: str = "") -> dict:
+    """Bottom-up file discovery: find which documents contain query terms.
+
+    Searches ALL chunks across knowledge bases for the query terms and
+    returns file names with hit counts. Use this to complement the top-down
+    approach (get_knowledge_map) — union both results for best coverage.
+
+    This is lightweight: returns only file names and hit counts, NOT content.
+
+    Args:
+        query: Search query (supports Chinese and English).
+        kb_id: Optional. Limit search to specific KB.
+
+    Returns:
+        dict with discovered_files list sorted by hit_count.
+    """
+    from local_search import do_discover_files
+    return do_discover_files(query, kb_id or None)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TIER 3: Code-Level Keyword Search (Fallback)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @mcp.tool()
 def search_knowledge(query: str, top_k: int = 5) -> dict:
-    """Search your local Knowhere knowledge base for relevant document chunks.
+    """Search your local knowledge base using keyword matching (Tier 3 fallback).
 
-    Performs keyword search across all knowledge bases in ~/.knowhere/,
-    returning the most relevant chunks with their metadata and graph relations.
-    Also records chunk access for importance tracking.
-
-    Call this when you need to find information from previously parsed documents.
+    Performs keyword search across all knowledge bases, scoring chunks by
+    content hits, summary relevance, and keyword overlap. Use the Tier 2
+    navigation tools (get_knowledge_map → get_document_structure →
+    read_document_chunks) for better results.
 
     Args:
         query: Search query (supports Chinese and English).
@@ -275,23 +374,6 @@ def search_knowledge(query: str, top_k: int = 5) -> dict:
     """
     from local_search import do_search
     return do_search(query, top_k)
-
-
-@mcp.tool()
-def get_knowledge_overview() -> dict:
-    """Get an overview of all local Knowhere knowledge bases.
-
-    Shows file structure, chunk counts, keywords, importance scores,
-    and cross-file connections for each knowledge base.
-
-    Call this when you need to understand what documents are available
-    or get a bird's-eye view of the knowledge base.
-
-    Returns:
-        dict with knowledge base structure, stats, and file-level details.
-    """
-    from local_search import do_overview
-    return do_overview()
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

@@ -1015,14 +1015,21 @@ def build_and_deploy(
     if parsed_output_dir and os.path.isdir(parsed_output_dir):
         source_file = os.path.basename(parsed_output_dir)
         deploy_target = os.path.join(kb_dir, source_file)
-        if os.path.exists(deploy_target):
-            shutil.rmtree(deploy_target)
-        shutil.copytree(parsed_output_dir, deploy_target)
-        # Delete ZIP files from deployed directory (no longer needed)
-        import glob
-        for zip_file in glob.glob(os.path.join(deploy_target, "*.zip")):
-            os.remove(zip_file)
-        logger.info(f"📂 Parsed output deployed: {deploy_target}")
+
+        # Skip copy if parsed output is already in the target location
+        parsed_abs = os.path.normpath(os.path.abspath(parsed_output_dir))
+        target_abs = os.path.normpath(os.path.abspath(deploy_target))
+        if parsed_abs == target_abs:
+            logger.info(f"📂 Parsed output already at target: {deploy_target} (skip copy)")
+        else:
+            if os.path.exists(deploy_target):
+                shutil.rmtree(deploy_target)
+            shutil.copytree(parsed_output_dir, deploy_target)
+            # Delete ZIP files from deployed directory (no longer needed)
+            import glob
+            for zip_file in glob.glob(os.path.join(deploy_target, "*.zip")):
+                os.remove(zip_file)
+            logger.info(f"📂 Parsed output deployed: {deploy_target}")
 
     # Tag all chunks with source document for correct file-level grouping
     if source_file:

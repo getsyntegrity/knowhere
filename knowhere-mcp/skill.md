@@ -1,145 +1,32 @@
 ---
 name: knowhere_memory
-description: Auto-discover and search knowledge from Knowhere parsed documents. Use when the user asks questions, needs information, or references their knowledge base. Also handles document ingestion when files are uploaded.
+description: Search knowledge from Knowhere parsed documents using 4-tier retrieval.
 user-invocable: false
 ---
 
 # Knowhere Knowledge Memory
 
-This agent has access to a **personal knowledge base** managed by Knowhere. The knowledge base stores parsed documents as structured JSON files under `~/.knowhere/`.
+## 检索策略（按优先级）
 
-## When to Use
+### Tier 2: LLM 自主导航（推荐）
 
-Activate this skill when:
+1. **get_knowledge_map()** → 查看所有文档的关键词、重要性、跨文件关联
+2. **get_document_structure(kb_id, doc_name)** → 查看目标文档的章节目录
+3. **read_document_chunks(kb_id, doc_name, section_path)** → 读取目标章节内容
+4. **discover_relevant_files(query)** → 补充发现：grep 全部内容找出可能遗漏的文件
 
-- The user asks a question that might be answered by their documents
-- The user says "look it up", "help me find", "knowledge base", "my materials", etc.
-- The user asks "what materials do I have" or wants an overview
-- A file is uploaded or attached (trigger ingestion)
+> 将步骤 1 的判断 ∪ 步骤 4 的发现作为最终检索范围
 
-## Part 1: Ingesting New Documents
+### Tier 3: 关键词搜索（降级）
 
-When a file is uploaded or attached (e.g. via Telegram), the agent should parse it into the knowledge base.
+- **search_knowledge(query)** → 自动关键词匹配 + 评分，返回 top_k 结果
 
-### Attachment markers
+### Tier 4: 直接读文件（最后兜底）
 
-When a prompt contains a marker like:
+- 用 read 工具直接读 `~/.knowhere/{kb_id}/{doc_name}/chunks_slim.json`
 
-```text
-[media attached: /absolute/path/to/file.pdf (application/pdf) | handbook.pdf]
-```
+## 回答规范
 
-Use the exact absolute path as `filePath` and the visible filename as `fileName`.
-
-### Ingestion workflow
-
-1. Call `knowhere_ingest_document` with the file path
-2. The plugin handles everything automatically:
-   - Uploads the file to Knowhere API for parsing
-   - Polls until parsing completes
-   - Downloads and extracts the result package
-   - **Automatically** copies parsed data to `~/.knowhere/{kbId}/`
-   - **Automatically** builds/updates `knowledge_graph.json`
-3. After ingest completes, the new document is immediately searchable via the retrieval workflow below
-
-Supported formats: PDF, DOCX, XLSX, PPTX, TXT, MD, images (JPG, PNG)
-
-## Part 2: Retrieving Knowledge
-
-### Data Location
-
-All knowledge data lives under `~/.knowhere/{kb_id}/`:
-
-```text
-~/.knowhere/
-└── {kb_id}/                          # e.g. "telegram"
-    ├── knowledge_graph.json          # File-level overview + cross-file edges
-    ├── chunk_stats.json              # Usage stats per chunk
-    └── {document_name}/              # One subdir per parsed document
-        ├── chunks.json               # All chunks (the actual content)
-        ├── hierarchy.json            # Document structure tree
-        ├── images/                   # Extracted images
-        └── tables/                   # Extracted tables (HTML)
-```
-
-### Strategy: Prefer tools, fall back to files
-
-#### If `knowhere_kg_list` / `knowhere_kg_query` tools are available → use them
-
-These tools provide efficient access to the knowledge graph:
-
-1. `knowhere_kg_list` — list all available knowledge bases
-2. `knowhere_kg_query(kbId)` — returns the full knowledge graph (files, keywords, edges)
-3. Then read individual `chunks.json` files with your file reading tool for detailed content
-
-#### If no KG tools are available → self-navigate using file tools
-
-Follow this pattern — do NOT explore the filesystem blindly:
-
-**Step 0: Resolve kb_id**
-
-- List only the top level of `~/.knowhere/` to discover available KB IDs
-- If exactly one KB → use it. If multiple → ask the user which one
-
-**Step 1: Read knowledge_graph.json**
-
-Read `~/.knowhere/{kb_id}/knowledge_graph.json`:
-
-```json
-{
-  "version": "2.0",
-  "stats": { "total_files": 5, "total_chunks": 327 },
-  "files": {
-    "report.docx": {
-      "chunks_count": 198,
-      "types": { "text": 135, "table": 21, "image": 42 },
-      "top_keywords": ["excavation", "retaining", "construction"],
-      "importance": 0.85
-    }
-  },
-  "edges": [
-    {
-      "source": "file_A.docx",
-      "target": "file_B.pdf",
-      "connection_count": 20,
-      "top_connections": [{ "source_chunk": "Chapter 3", "target_chunk": "Safety Policy", "score": 1.0 }]
-    }
-  ]
-}
-```
-
-Match user query against ALL files' `top_keywords`. Prioritize by `importance`.
-
-**Step 2: Read chunks.json for each candidate file**
-
-Read `~/.knowhere/{kb_id}/{document_name}/chunks.json`:
-
-```json
-{
-  "chunks": [{
-    "chunk_id": "uuid",
-    "type": "text | table | image",
-    "path": "Default_Root/doc.pdf/Chapter 1/1.1",
-    "content": "actual content...",
-    "metadata": {
-      "summary": "LLM-generated summary",
-      "keywords": ["extracted", "keywords"],
-      "length": 1234
-    }
-  }]
-}
-```
-
-Search `content` and `metadata.keywords` against the user's query.
-
-**Step 3: Expand via edges (do not skip)**
-
-Check `edges` from Step 1 for cross-document connections. If related files weren't in your candidate set, read their `chunks.json` too.
-
-## Response Guidelines
-
-- **Cite sources**: include document name and section path
-- **Multi-source**: synthesize from ALL matched files, not just the first hit
-- **Show connections**: mention cross-file relationships from edges
-- **No internal IDs**: never expose `chunk_id` or UUID paths to the user
-- **User's language**: reply in the same language the user is using
+- 引用文件名 + chunk path
+- 跨文档 edges 也要查
+- 用用户的语言回答

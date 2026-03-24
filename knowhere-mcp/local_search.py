@@ -1,21 +1,24 @@
 """
 Local knowledge base search for Knowhere MCP Server.
 
-Reads from KNOWHERE_HOME (default: ~/.knowhere/) to search parsed documents
-and provide knowledge base overviews.
+Reads from KNOWHERE_HOME (default: ~/.knowhere/) to provide:
+  - Tier 2: LLM-as-Retriever tools (get_knowledge_map, get_document_structure,
+            read_document_chunks, discover_relevant_files)
+  - Tier 3: Code-level keyword + KG search (search_knowledge fallback)
 
-On OpenClaw deployments, set KNOWHERE_HOME to point to the shared KB location
-(e.g. ~/.openclaw/.knowhere).
+File-level usage stats (hit_count, last_hit) are stored directly in
+knowledge_graph.json → files.{doc_name}, eliminating the need for a
+separate chunk_stats.json.
 
 Zero dependencies on worker code or connect_builder.
 """
 
 import json
+import math
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-
-from stats_tracker import record_chunk_hits
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -26,7 +29,6 @@ KNOWHERE_HOME = os.path.expanduser(
 
 
 # ── Data Loading ──────────────────────────────────────────────────────────────
-
 
 def discover_knowledge_bases() -> Dict[str, str]:
     """Discover all knowledge bases under KNOWHERE_HOME.
@@ -45,8 +47,8 @@ def discover_knowledge_bases() -> Dict[str, str]:
     return kbs
 
 
-def load_graph(path: str) -> Optional[Dict[str, Any]]:
-    """Load a knowledge graph JSON file."""
+def _load_json(path: str) -> Optional[Any]:
+    """Load a JSON file, returning None on failure."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -54,36 +56,295 @@ def load_graph(path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def load_chunks_for_kb(kb_dir: str) -> List[Dict[str, Any]]:
-    """Load full chunks data for a knowledge base.
+def _save_json(path: str, data: Any) -> None:
+    """Save data to a JSON file."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-    Walks the KB directory and collects all chunks.json files.
+
+def _find_doc_dir(kb_dir: str, doc_name: str) -> Optional[str]:
+    """Find the document subdirectory by name (exact or fuzzy match)."""
+    exact = os.path.join(kb_dir, doc_name)
+    if os.path.isdir(exact):
+        return exact
+    for entry in os.listdir(kb_dir):
+        entry_path = os.path.join(kb_dir, entry)
+        if os.path.isdir(entry_path) and doc_name in entry:
+            return entry_path
+    return None
+
+
+def _load_chunks_for_doc(doc_dir: str) -> List[Dict[str, Any]]:
+    """Load chunks from a document directory, preferring slim version."""
+    slim = os.path.join(doc_dir, "chunks_slim.json")
+    full = os.path.join(doc_dir, "chunks.json")
+
+    chosen = slim if os.path.isfile(slim) else full if os.path.isfile(full) else None
+    if not chosen:
+        return []
+
+    data = _load_json(chosen)
+    if not data:
+        return []
+
+    chunks = data.get("chunks", data) if isinstance(data, dict) else data
+    is_slim = (chosen == slim)
+
+    # If reading full chunks.json, strip to slim fields in memory
+    if not is_slim and isinstance(chunks, list):
+        stripped = []
+        for c in chunks:
+            meta = c.get("metadata", {}) if isinstance(c.get("metadata"), dict) else {}
+            stripped.append({
+                "type": c.get("type", "text"),
+                "path": c.get("path", ""),
+                "content": c.get("content", ""),
+                "summary": meta.get("summary") or c.get("summary", ""),
+            })
+        return stripped
+
+    return chunks if isinstance(chunks, list) else []
+
+
+# ── File-Level Usage Tracking (in knowledge_graph.json) ──────────────────────
+
+
+def _record_file_hit(kb_id: str, doc_name: str) -> None:
+    """Record a file access hit in knowledge_graph.json.
+
+    Updates hit_count, last_hit, and recalculates importance for the file.
     """
-    all_chunks = []
-    for root, dirs, files in os.walk(kb_dir):
-        for fname in files:
-            if fname == "chunks.json":
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if isinstance(data, dict) and "chunks" in data:
-                        all_chunks.extend(data["chunks"])
-                    elif isinstance(data, list):
-                        all_chunks.extend(data)
-                except (json.JSONDecodeError, IOError):
-                    continue
-    return all_chunks
+    kg_path = os.path.join(KNOWHERE_HOME, kb_id, "knowledge_graph.json")
+    graph = _load_json(kg_path)
+    if not graph:
+        return
+
+    files = graph.get("files", {})
+    if doc_name not in files:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    finfo = files[doc_name]
+    finfo["hit_count"] = finfo.get("hit_count", 0) + 1
+    finfo["last_hit"] = now
+
+    # Recalculate importance: α × usage_heat + β × freshness
+    hit_count = finfo["hit_count"]
+    last_hit = finfo["last_hit"]
+    created_at = finfo.get("created_at", now)
+
+    half_life = 30.0
+    alpha, beta = 0.7, 0.3
+
+    usage_heat = _decay_score(hit_count, last_hit, half_life)
+    freshness = _decay_score(1, created_at, half_life)
+    finfo["importance"] = round(alpha * usage_heat + beta * freshness, 4)
+
+    graph["updated_at"] = now
+    _save_json(kg_path, graph)
 
 
-# ── Keyword Search ────────────────────────────────────────────────────────────
+def _decay_score(hit_count: int, iso_time: str, half_life_days: float) -> float:
+    """Exponential decay score: higher hits + more recent → higher score."""
+    try:
+        dt = datetime.fromisoformat(iso_time)
+        days = (datetime.now(timezone.utc) - dt).total_seconds() / 86400
+    except (ValueError, TypeError):
+        days = 0
+    return hit_count * math.exp(-0.693 * days / half_life_days)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TIER 2: LLM-as-Retriever Tools
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def do_get_knowledge_map(kb_id: Optional[str] = None) -> dict:
+    """Return knowledge graph metadata for one or all KBs.
+
+    This is the LLM's "bird's-eye view" — file names, keywords, importance,
+    chunk counts, and cross-file connections. LLM uses this to decide which
+    documents are relevant to the user's query.
+    """
+    kbs = discover_knowledge_bases()
+    if not kbs:
+        return {
+            "status": "no_knowledge_base",
+            "message": f"未找到知识库。数据目录: {KNOWHERE_HOME}",
+        }
+
+    if kb_id:
+        if kb_id not in kbs:
+            return {"status": "not_found", "message": f"知识库 '{kb_id}' 不存在"}
+        kbs = {kb_id: kbs[kb_id]}
+
+    result = {"status": "ok", "knowledge_bases": []}
+    for kid, kg_path in kbs.items():
+        graph = _load_json(kg_path)
+        if not graph:
+            continue
+        result["knowledge_bases"].append({
+            "kb_id": kid,
+            "version": graph.get("version", "1.0"),
+            "updated_at": graph.get("updated_at", ""),
+            "stats": graph.get("stats", {}),
+            "files": graph.get("files", {}),
+            "edges": graph.get("edges", []),
+        })
+
+    return result
+
+
+def do_get_document_structure(kb_id: str, doc_name: str) -> dict:
+    """Return the hierarchy (TOC) of a specific document.
+
+    LLM uses this to understand the document's chapter/section structure
+    and decide which sections to read.
+    """
+    kb_dir = os.path.join(KNOWHERE_HOME, kb_id)
+    if not os.path.isdir(kb_dir):
+        return {"status": "not_found", "message": f"知识库 '{kb_id}' 不存在"}
+
+    doc_dir = _find_doc_dir(kb_dir, doc_name)
+    if not doc_dir:
+        return {"status": "not_found", "message": f"文档 '{doc_name}' 不存在"}
+
+    hierarchy_path = os.path.join(doc_dir, "hierarchy.json")
+    hierarchy = _load_json(hierarchy_path)
+
+    if hierarchy:
+        return {
+            "status": "ok",
+            "kb_id": kb_id,
+            "doc_name": os.path.basename(doc_dir),
+            "hierarchy": hierarchy,
+        }
+
+    # Fallback: build a simple structure from chunk paths
+    chunks = _load_chunks_for_doc(doc_dir)
+    paths = sorted(set(c.get("path", "") for c in chunks if c.get("path")))
+    return {
+        "status": "ok",
+        "kb_id": kb_id,
+        "doc_name": os.path.basename(doc_dir),
+        "hierarchy": None,
+        "chunk_paths": paths,
+        "message": "无 hierarchy.json，已返回所有 chunk 路径供参考",
+    }
+
+
+def do_read_chunks(
+    kb_id: str,
+    doc_name: str,
+    section_path: Optional[str] = None,
+    max_chunks: int = 50,
+) -> dict:
+    """Read chunks from a specific document, optionally filtered by section path.
+
+    If section_path is provided, only chunks whose path contains that string
+    are returned. This allows the LLM to read specific chapters/sections
+    without loading the entire document.
+    """
+    kb_dir = os.path.join(KNOWHERE_HOME, kb_id)
+    if not os.path.isdir(kb_dir):
+        return {"status": "not_found", "message": f"知识库 '{kb_id}' 不存在"}
+
+    doc_dir = _find_doc_dir(kb_dir, doc_name)
+    if not doc_dir:
+        return {"status": "not_found", "message": f"文档 '{doc_name}' 不存在"}
+
+    chunks = _load_chunks_for_doc(doc_dir)
+
+    # Filter by section path if specified
+    if section_path:
+        chunks = [c for c in chunks if section_path in c.get("path", "")]
+
+    total = len(chunks)
+    truncated = total > max_chunks
+    chunks = chunks[:max_chunks]
+
+    # Record file-level access in knowledge_graph.json
+    try:
+        _record_file_hit(kb_id, os.path.basename(doc_dir))
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "kb_id": kb_id,
+        "doc_name": os.path.basename(doc_dir),
+        "section_path": section_path,
+        "total_chunks": total,
+        "returned_chunks": len(chunks),
+        "truncated": truncated,
+        "chunks": chunks,
+    }
+
+
+def do_discover_files(query: str, kb_id: Optional[str] = None) -> dict:
+    """Bottom-up discovery: grep all chunks for query terms, return file hit stats.
+
+    This complements the top-down approach (get_knowledge_map) by finding files
+    that contain the query terms in their actual content, even if the file-level
+    keywords don't match.
+
+    Returns file names + hit counts, NOT chunk content (lightweight).
+    LLM should union this with its top-down selection from get_knowledge_map.
+    """
+    query_terms = _tokenize_query(query)
+    if not query_terms:
+        return {"status": "no_query", "message": "查询为空"}
+
+    kbs = discover_knowledge_bases()
+    if kb_id:
+        kbs = {k: v for k, v in kbs.items() if k == kb_id}
+    if not kbs:
+        return {"status": "no_knowledge_base"}
+
+    file_hits: Dict[str, Dict[str, int]] = {}
+
+    for kid, kg_path in kbs.items():
+        kb_dir = os.path.dirname(kg_path)
+        for entry in os.listdir(kb_dir):
+            entry_path = os.path.join(kb_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            chunks = _load_chunks_for_doc(entry_path)
+            hits = 0
+            for chunk in chunks:
+                content = chunk.get("content", "") + " " + chunk.get("summary", "")
+                hits += sum(1 for t in query_terms if t in content)
+            if hits > 0:
+                if kid not in file_hits:
+                    file_hits[kid] = {}
+                file_hits[kid][entry] = hits
+
+    results = []
+    for kid, files in file_hits.items():
+        for fname, hits in sorted(files.items(), key=lambda x: x[1], reverse=True):
+            results.append({
+                "kb_id": kid,
+                "doc_name": fname,
+                "hit_count": hits,
+            })
+
+    results.sort(key=lambda x: x["hit_count"], reverse=True)
+
+    return {
+        "status": "ok",
+        "query": query,
+        "query_terms": list(query_terms),
+        "discovered_files": results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TIER 3: Code-Level Keyword + KG Search (Fallback)
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 def _tokenize_query(query: str) -> set:
-    """Simple tokenization for search queries.
-
-    Uses jieba if available, otherwise splits on whitespace/punctuation.
-    """
+    """Simple tokenization for search queries."""
     try:
         import jieba
         return set(w for w in jieba.cut(query) if len(w) > 1)
@@ -92,30 +353,31 @@ def _tokenize_query(query: str) -> set:
         return set(t for t in tokens if len(t) > 1)
 
 
+def _load_all_chunks_for_kb(kb_dir: str) -> List[Dict[str, Any]]:
+    """Load all chunks from a KB for Tier 3 search."""
+    all_chunks = []
+    for entry in os.listdir(kb_dir):
+        entry_path = os.path.join(kb_dir, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        chunks = _load_chunks_for_doc(entry_path)
+        for c in chunks:
+            c["_source_file"] = entry
+        all_chunks.extend(chunks)
+    return all_chunks
+
+
 def search_chunks(
     query: str,
     chunks: List[Dict[str, Any]],
     graph: Optional[Dict[str, Any]] = None,
     top_k: int = 5,
 ) -> List[Dict[str, Any]]:
-    """Keyword search over chunks with KG edge context.
-
-    Scoring: query term hits in content + keyword intersection + summary hits.
-
-    Args:
-        query: User's search query.
-        chunks: Full chunks data.
-        graph: Knowledge graph (for retrieving related chunks via edges).
-        top_k: Maximum results to return.
-
-    Returns:
-        List of result dicts with chunk_id, path, score, content_preview, related.
-    """
+    """Keyword search over chunks with KG edge context."""
     query_terms = _tokenize_query(query)
     if not query_terms:
         return []
 
-    # Build edge lookup from graph
     edge_map: Dict[str, List[Dict]] = {}
     if graph:
         for edge in graph.get("edges", []):
@@ -128,13 +390,9 @@ def search_chunks(
     scored = []
     for chunk in chunks:
         content = chunk.get("content", "")
-        metadata = chunk.get("metadata", {})
-        if not isinstance(metadata, dict):
-            metadata = {}
-        keywords = set(metadata.get("keywords", []))
-        summary = metadata.get("summary", "")
+        summary = chunk.get("summary", "")
+        keywords = set(chunk.get("keywords", []))
 
-        # Score: query term hits in content + keyword intersection
         content_hits = sum(1 for t in query_terms if t in content)
         summary_hits = sum(1 for t in query_terms if t in summary)
         keyword_hits = len(query_terms & keywords)
@@ -150,14 +408,14 @@ def search_chunks(
     for score, chunk_id, chunk in scored[:top_k]:
         content = chunk.get("content", "")
         result = {
-            "chunk_id": chunk_id,
+            "type": chunk.get("type", "text"),
             "path": chunk.get("path", ""),
             "score": round(score, 2),
-            "content_preview": content[:500],
-            "keywords": chunk.get("metadata", {}).get("keywords", []),
+            "content_preview": content[:800],
+            "summary": chunk.get("summary", ""),
+            "source_file": chunk.get("_source_file", ""),
         }
 
-        # Attach related chunks from graph edges
         related = edge_map.get(chunk_id, [])
         if related:
             result["related"] = [
@@ -174,47 +432,8 @@ def search_chunks(
     return results
 
 
-# ── Knowledge Overview ────────────────────────────────────────────────────────
-
-
-def format_files_overview(
-    files: Dict[str, Any],
-    edges: Optional[List[Dict]] = None,
-) -> str:
-    """Format v2.0 files dict as human-readable overview."""
-    lines = []
-    for fname, info in files.items():
-        types = info.get("types", {})
-        type_str = ", ".join(f"{t}:{n}" for t, n in types.items())
-        kws = ", ".join(info.get("top_keywords", [])[:6])
-        imp = info.get("importance", 0)
-        lines.append(f"📄 {fname}")
-        lines.append(f"   chunks: {info.get('chunks_count', 0)} ({type_str})")
-        lines.append(f"   keywords: {kws}")
-        lines.append(f"   importance: {imp}")
-    if edges:
-        lines.append("")
-        lines.append("🔗 Cross-file connections:")
-        for e in edges:
-            lines.append(
-                f"   {e['source']} ↔ {e['target']} "
-                f"({e.get('connection_count', 0)} connections)"
-            )
-    return "\n".join(lines)
-
-
-# ── High-Level API (used by MCP tools) ────────────────────────────────────────
-
-
 def do_search(query: str, top_k: int = 5) -> dict:
-    """Search across all local knowledge bases.
-
-    Auto-detects retrieval tier:
-      Tier 1: knowhere-kb (semantic retrieval, if installed)
-      Tier 2: Built-in keyword + KG search (fallback)
-
-    Returns search results and records chunk hits for importance tracking.
-    """
+    """Tier 3: Search across all local knowledge bases using keyword matching."""
     # ── Tier 1: Try knowhere-kb semantic retrieval ─────────────────────────
     try:
         from knowhere_kb import search as kb_search
@@ -228,79 +447,48 @@ def do_search(query: str, top_k: int = 5) -> dict:
             "results": results,
         }
     except ImportError:
-        pass  # knowhere-kb not installed, fall through to Tier 2
+        pass
 
-    # ── Tier 2: Built-in keyword + KG search ──────────────────────────────
+    # ── Tier 3: Built-in keyword + KG search ──────────────────────────────
     kbs = discover_knowledge_bases()
     if not kbs:
         return {
             "status": "no_knowledge_base",
-            "message": (
-                f"未找到知识库。请确保已通过 Knowhere 解析文档。"
-                f"数据目录: {KNOWHERE_HOME}"
-            ),
+            "message": f"未找到知识库。数据目录: {KNOWHERE_HOME}",
         }
 
     all_results = []
     for kb_id, kg_path in kbs.items():
-        graph = load_graph(kg_path)
+        graph = _load_json(kg_path)
         kb_dir = os.path.dirname(kg_path)
-        chunks = load_chunks_for_kb(kb_dir)
+        chunks = _load_all_chunks_for_kb(kb_dir)
         results = search_chunks(query, chunks, graph, top_k)
         for r in results:
             r["kb_id"] = kb_id
         all_results.extend(results)
 
-    # Sort across all KBs, keep top_k
     all_results.sort(key=lambda x: x["score"], reverse=True)
     all_results = all_results[:top_k]
 
-    # Record chunk hits for importance tracking (non-critical)
+    # Record file-level hits in knowledge_graph.json
     try:
-        hits_by_kb: Dict[str, list] = {}
+        hit_files: Dict[str, set] = {}
         for r in all_results:
-            hits_by_kb.setdefault(r["kb_id"], []).append(r["chunk_id"])
-        for kid, cids in hits_by_kb.items():
-            record_chunk_hits(kid, cids)
+            kid = r.get("kb_id", "")
+            sf = r.get("source_file", "")
+            if kid and sf:
+                hit_files.setdefault(kid, set()).add(sf)
+        for kid, doc_names in hit_files.items():
+            for dn in doc_names:
+                _record_file_hit(kid, dn)
     except Exception:
         pass
 
     return {
         "status": "ok",
-        "tier": 2,
+        "tier": 3,
         "engine": "keyword+kg",
         "query": query,
         "results_count": len(all_results),
         "results": all_results,
     }
-
-
-def do_overview() -> dict:
-    """Get structural overview of all local knowledge bases."""
-    kbs = discover_knowledge_bases()
-    if not kbs:
-        return {
-            "status": "no_knowledge_base",
-            "message": (
-                f"未找到知识库。请确保已通过 Knowhere 解析文档。"
-                f"数据目录: {KNOWHERE_HOME}"
-            ),
-        }
-
-    overview = {"status": "ok", "knowledge_bases": []}
-    for kb_id, kg_path in kbs.items():
-        graph = load_graph(kg_path)
-        if not graph:
-            continue
-        files = graph.get("files", {})
-        edges = graph.get("edges", [])
-        overview_text = format_files_overview(files, edges)
-        overview["knowledge_bases"].append({
-            "kb_id": kb_id,
-            "version": graph.get("version", "1.0"),
-            "stats": graph.get("stats", {}),
-            "updated_at": graph.get("updated_at", ""),
-            "files_overview": overview_text,
-        })
-
-    return overview
