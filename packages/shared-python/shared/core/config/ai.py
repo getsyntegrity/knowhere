@@ -30,7 +30,6 @@ class AIConfig(BaseModel):
     DX_KEy: str = Field(default="", description="DX密钥（兼容性字段）")
     ARK_API_KEY: str = Field(default="", description="ARK API密钥（兼容性字段）")
     ARK_URL: str = Field(default="", description="ARK URL（兼容性字段）")
-    ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段，单key回退）")
     ALI_API_KEYS: str = Field(
         default="",
         description="Ali API key pool. Supports JSON array or comma/newline-separated values; entries may use token_id=api_key format.",
