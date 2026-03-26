@@ -137,6 +137,77 @@ def extract_summary_with_title(texts, summary_len=None):
     resp = extract_summary_keywords(texts, type_="summary-titled", summary_len=summary_len)
     return split_title_summary(resp)
 
+
+def extract_title_keywords_summary(texts, max_keywords=3, summary_len=None):
+    """Extract title + keywords + summary in ONE LLM call.
+    
+    Uses the 'summary-full' prompt to get all three fields at once,
+    reducing LLM calls from 2-3 to 1.
+    
+    Args:
+        texts: Input text (may include HTML tables or structured data).
+        max_keywords: Maximum number of keywords to extract (default 3).
+        summary_len: Maximum summary length in characters.
+    
+    Returns:
+        tuple: (title, keywords_str, summary)
+            - title: short title (≤15 chars), or None
+            - keywords_str: semicolon-separated keywords, or ""
+            - summary: summary text, or ""
+    """
+    from shared.core.constants import ProcessingConstants
+    if summary_len is None:
+        summary_len = ProcessingConstants.SUMMARY_LEN
+    try:
+        prompt, temperature, top_p, max_tokens = build_prompt(
+            task='summary-full', texts=texts, query="",
+            paras={'max_tokens': summary_len, 'kw_num': max_keywords}
+        )
+        messages = [
+            {"role": "system", "content": "you are a helpful assistant"},
+            {"role": "user", "content": prompt}
+        ]
+
+        import os
+        if os.getenv("LOCAL_DEBUG", "0") != "1":
+            from shared.services.redis.redis_sync_service import SyncRedisServiceFactory
+            redis_service = SyncRedisServiceFactory.get_service()
+            ctx_task_id = str(uuid.uuid4())
+            redis_service.set(f"task:{ctx_task_id}:status", "processing", ttl=7200)
+
+        resp = get_openai_client().chat_completion(
+            messages=messages,
+            timeout=90,
+            max_tokens=max_tokens
+        )
+
+        # Handle null/none response
+        if resp is None:
+            return None, "", ""
+        if isinstance(resp, str):
+            resp_stripped = resp.strip().lower()
+            if resp_stripped in ("null", "none"):
+                return None, "", ""
+
+        # Parse JSON response
+        parsed = eval_response(resp)
+        if isinstance(parsed, dict):
+            title = parsed.get('title') or None
+            keywords = parsed.get('keywords', '')
+            summary = parsed.get('summary', '')
+            # Normalize title
+            if title and isinstance(title, str):
+                title = title.strip()
+                if title.lower() in ('null', 'none', ''):
+                    title = None
+            return title, keywords if isinstance(keywords, str) else '', summary if isinstance(summary, str) else ''
+        
+        return None, "", ""
+
+    except Exception as e:
+        print(f"❌ failed to extract title/keywords/summary: {e}")
+        return None, "", ""
+
 def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key='content', summary_len=None):
     from shared.core.constants import ProcessingConstants
     if summary_len is None:
@@ -188,8 +259,7 @@ def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key
         summary = ""
 
         if len(contents4summary)>summary_len and llm_paras["summary_txt"] and (not llm_paras['doc_type'] in "templates"):
-            summary = extract_summary_keywords(contents4summary, type_="summary")
-            keywords = extract_summary_keywords(contents4summary, type_="keywords")
+            _title, keywords, summary = extract_title_keywords_summary(contents4summary, max_keywords=3, summary_len=summary_len)
 
         df_with_labels.loc[len(df_with_labels)] = {'path': row['path'],
                                                    'content_lst': row['content_lst'],

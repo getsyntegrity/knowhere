@@ -309,6 +309,9 @@ class ZipResultService:
                         file_path = f"images/{img_name}"
                 
                 metadata["file_path"] = file_path
+                # Unified schema: include keywords and tokens for all chunk types
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
+                metadata["tokens"] = []
                 
             elif chunk_type == "table":
                 # Get table info from existing_metadata or table_files_map
@@ -325,6 +328,9 @@ class ZipResultService:
                         file_path = f"tables/{tbl_name}"
                 
                 metadata["file_path"] = file_path
+                # Unified schema: include keywords and tokens for all chunk types
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
+                metadata["tokens"] = []
 
             formatted_chunk = {
                 "chunk_id": chunk_id,

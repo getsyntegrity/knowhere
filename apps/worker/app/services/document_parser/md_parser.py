@@ -12,11 +12,10 @@ from app.services.document_parser.image_parser import (MD_IMAGE_PATTERN,
 from app.services.document_parser.layout_parser import (md_heading_match,
                                                         pred_titles)
 from app.services.document_parser.table_parser import (extract_tables_by_forms,
-                                                       extract_tb_keywords,
                                                        identify_tables)
 from app.services.document_parser.html_parser import first_cols_rows_html, merge_html_tables
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
-from app.services.document_parser.txt_parser import extract_summary_keywords
+from app.services.document_parser.txt_parser import extract_summary_keywords, extract_title_keywords_summary
 from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
@@ -115,8 +114,7 @@ def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, page_nu
     bottom_tokens = tokenize2stw_remove([bottom_content], llm_paras['stopwords'])
 
     if len(bottom_content)>summary_len and llm_paras['summary_txt']:
-        summary = extract_summary_keywords(bottom_content, type_="summary")
-        keywords = extract_summary_keywords(bottom_content, type_="keywords")
+        _title, keywords, summary = extract_title_keywords_summary(bottom_content, max_keywords=3, summary_len=summary_len)
     else:
         keywords = ''
         summary = ''
@@ -330,26 +328,18 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 else:
                     continue  # Unknown form, skip
 
-                # Extract first row and first column for summary (consistent with docx)
+                # Extract first row and first column for fallback file naming only
                 first_row_text, first_col_text = first_cols_rows_html(tb_str)
-                
-                # Combine first row and first column as keywords for table retrieval (with dedup)
-                row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
-                col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
-                # Cross-dedup: remove col keywords already present in row keywords
-                row_set = set(row_kw.split(';')) if row_kw else set()
-                col_parts = [k for k in col_kw.split(';') if k and k not in row_set]
-                tb_keywords = ';'.join(filter(None, [row_kw] + col_parts))
                 
                 # Table index (always present)
                 table_index = f"table-{table_count}"
                 
-                # LLM title + summary (optional, only when summary_table is enabled)
+                # LLM title + keywords + summary (only when summary_table is enabled)
                 llm_title = None
                 llm_summary = None
+                tb_keywords = ""
                 if base_llm_paras['summary_table']:
-                    from app.services.document_parser.txt_parser import extract_summary_with_title
-                    llm_title, llm_summary = extract_summary_with_title(tb_str)
+                    llm_title, tb_keywords, llm_summary = extract_title_keywords_summary(tb_str, max_keywords=3)
                 
                 # Build tb_summary for df_list: table-n + optional LLM summary
                 if llm_summary:

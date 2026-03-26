@@ -255,17 +255,18 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         )
 
     # Update and save local data
-    img_id = 'IMAGE_' + gen_str_codes(filename + image_content) + '_IMAGE'
+    # Use same temp_uid for both marker and know_id (aligned with md_parser/doc_parser)
+    temp_uid = gen_str_codes(filename + image_content)
+    img_id = 'IMAGE_' + temp_uid + '_IMAGE'
     if type_resp["answer"]=="text":
         match_type = '\n'.join([img_id, 'PTXT'])
     else:
         match_type = img_id
 
     img_bottom_content = f"{img_id}\nImage Content:\n{image_content}"
-    know_id = gen_str_codes(img_bottom_content + str(uuid.uuid4()))
     # Use relative path with relative_root prefix
     relative_img_path = f"{relative_root}{split_char}{final_img_name}" if relative_root else final_img_name
-    df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, know_id, "", "", time_stamp, ""])
+    df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, temp_uid, "", "", time_stamp, ""])
 
     img_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     img_df = process_dup_paths_df(img_df)
