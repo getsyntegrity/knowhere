@@ -50,6 +50,14 @@ class LogEvent(Enum):
 
     S3_WEBHOOK_EVENT = "s3.webhook"
 
+    # iLoveAPI document conversion events
+    ILOVEAPI_REQUEST_START = "iloveapi.request.start"
+    ILOVEAPI_REQUEST_COMPLETE = "iloveapi.request.complete"
+    ILOVEAPI_REQUEST_FAIL = "iloveapi.request.fail"
+    ILOVEAPI_FALLBACK = "iloveapi.fallback"
+    ILOVEAPI_RATE_LIMITED = "iloveapi.rate_limited"
+    ILOVEAPI_CONCURRENCY_EXCEEDED = "iloveapi.concurrency_exceeded"
+
     # Network / AMQP events
     NETWORK_AMQP_CONNECT = "network.amqp.connect"
     NETWORK_AMQP_DISCONNECT = "network.amqp.disconnect"

@@ -17,8 +17,8 @@ import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import fitz  # PyMuPDF
 import pandas as pd
+import pymupdf
 from loguru import logger
 from shared.core.config import settings
 from app.services.common.kb_utils import (
@@ -60,7 +60,7 @@ def _compress_for_vlm(img_path: str, max_side: int = IMG_MAX_SIDE) -> str:
 
 # ─── Helper: extract text from a PyMuPDF page ────────────────────────
 
-def _get_page_text_pymupdf(page: fitz.Page) -> str:
+def _get_page_text_pymupdf(page: pymupdf.Page) -> str:
     """Extract all text from a single PyMuPDF page."""
     return page.get_text("text").strip()
 
@@ -130,7 +130,7 @@ def _vlm_extract_page_info(output_dir: str, img_name: str) -> str:
 
 # ─── Helper: detect TOC pages via text heuristics ─────────────────────
 
-def _detect_toc_pages_from_text(doc: fitz.Document, model_name: str = "deepseek-chat") -> tuple:
+def _detect_toc_pages_from_text(doc: pymupdf.Document, model_name: str = "deepseek-chat") -> tuple:
     """
     Detect TOC pages by extracting text from all pages, assembling into
     md_lines with page markers, then running detect_tocs_in_texts().
@@ -210,7 +210,7 @@ def parse_atlas(
     os.makedirs(img_dir, exist_ok=True)
 
     # ── Open PDF ──
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     total_pages = len(doc)
     logger.info(f"📐 Atlas: {total_pages} pages in PDF")
 

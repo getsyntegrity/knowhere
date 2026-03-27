@@ -88,13 +88,13 @@ def _profile_pdf(file_path: str) -> DocProfile:
       - Image count and area coverage per page
       - Font information
     """
-    import fitz  # PyMuPDF
+    import pymupdf
     
     profile = DocProfile(file_type="pdf")
     reasons = []
     
     try:
-        doc = fitz.open(file_path)
+        doc = pymupdf.open(file_path)
     except Exception as e:
         logger.warning(f"Cannot open PDF: {e}")
         profile.reasoning = f"Cannot open file: {e}"
