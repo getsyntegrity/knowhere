@@ -976,25 +976,6 @@ def parse_headers(df_temp, paras=None, header_window=5, smart_headers=True):
     return df_temp
 
 
-def extract_tb_keywords(tb_str, form="html"):
-    """Extract keywords from table headers.
-    
-    TODO: Current implementation has issues with:
-    1. colspan/rowspan in HTML - causes column count mismatch when converting to DataFrame
-    2. MultiIndex headers - tb_htmlstr_to_df only uses first row as headers, losing hierarchy
-    
-    For now, consider using _first_cols_rows() from doc_parser.py as a simpler alternative
-    that extracts deduplicated first row and first column text.
-    """
-    if form=='html':
-        tb_df = tb_htmlstr_to_df(tb_str)
-    else:
-        tb_lines = html_to_md_lines(tb_str)
-        tb_df = pd.DataFrame(tb_lines)
-    tb_keywords = parse_tb_keywords(tb_df)
-    return tb_keywords
-
-
 def parse_tb_keywords(tb_df, kw_spit=">>>"):  # Extract keywords from headers (can also add LLM extraction)
     def parse_single_level_(cols, keywords):
         cols = [str(c) for c in cols]
@@ -1018,6 +999,10 @@ def parse_tb_keywords(tb_df, kw_spit=">>>"):  # Extract keywords from headers (c
             tb_keywords.extend(level_kws)
     else:
         tb_keywords = parse_single_level_(tb_df.columns, tb_keywords)
+        
+    # Remove duplicates while preserving column order
+    tb_keywords = remove_duplicates_orderkept(tb_keywords)
+    tb_keywords = [k for k in tb_keywords if isinstance(k, str) and k.strip() and k.strip() != 'nan' and 'Unnamed' not in k]
     return ';'.join(tb_keywords)
 
 
@@ -1318,21 +1303,36 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
                 if not precision_mode_active:
                     tb = parse_headers(tb, paras=base_llm_paras)
                 
+                # Drop _src_row column before converting to HTML/keywords
+                # (_src_row is a debug column added by _parse_subtable for cross-referencing)
+                src_row_cols = [c for c in tb.columns
+                                if (isinstance(c, tuple) and c[0] == '_src_row') or c == '_src_row']
+                if src_row_cols:
+                    tb = tb.drop(columns=src_row_cols)
+                
                 # Get row header column count from DataFrame attrs (set in parse_headers_from_excel)
                 row_header_cols = tb.attrs.get('row_header_cols', 0)
                 
                 tb_paths, tb_strs = parse_tb_contents(tb, parent_dic={file_name: {sheet_name: {}}}, file_name=file_name, sheet_name=sheet_name, row_header_cols=row_header_cols)
-                tb_keywords = parse_tb_keywords(tb)
 
+                # Unified LLM extraction: title + keywords + summary in one call
+                # (consistent with doc_parser.py and md_parser.py)
+                llm_title = None
+                llm_summary = None
+                tb_keywords = ""
                 if base_llm_paras['summary_table']:
-                    summary_context = format_tb_scope(tb, window_h)
-                    summary_context = f"Table columns:\n{tb_keywords}\n\nFirst {window_h} rows:\n{summary_context}"
-                    from app.services.document_parser.txt_parser import extract_summary_with_title
-                    llm_title, llm_summary = extract_summary_with_title(summary_context, summary_len=100)
-                    tb_summary = llm_summary if llm_summary else tb_keywords
+                    from app.services.document_parser.txt_parser import extract_title_keywords_summary
+                    llm_title, tb_keywords, llm_summary = extract_title_keywords_summary(tb_strs, max_keywords=3)
+                
+                # Build tb_summary: table index + optional LLM summary
+                table_index = f"table-{sheet_name}"
+                if llm_summary:
+                    tb_summary = f"{table_index}\n{llm_summary}"
                 else:
-                    llm_title = None
-                    tb_summary = tb_keywords
+                    # Fallback: use mechanical column keywords when LLM is off
+                    tb_keywords_fallback = parse_tb_keywords(tb)
+                    tb_summary = table_index
+                    tb_keywords = tb_keywords if tb_keywords else tb_keywords_fallback
 
                 # Use LLM title for filename when available, fallback to sheet_name
                 effective_name = llm_title if llm_title else sheet_name
@@ -1343,16 +1343,17 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
                 with open(tb_path, 'w', encoding='utf-8') as f:
                     f.write(tb_html_str)
 
-                tb_id = 'TABLE_' + gen_str_codes(tb_strs) + '_TABLE'
+                # Use same temp_uid for both marker and know_id (aligned with doc_parser/md_parser)
+                temp_uid = gen_str_codes(tb_strs + str(sheet_name))
+                tb_id = 'TABLE_' + temp_uid + '_TABLE'
                 tb_bottom_content = f"{tb_id}\nTable summary:\n{tb_summary}\nMain columns:\n{tb_keywords}"
                 
-                know_id = gen_str_codes(tb_bottom_content + str(uuid.uuid4()))
                 bottom_tokens = tokenize2stw_remove([tb_bottom_content], base_llm_paras['stopwords'])
 
                 all_tb_paths.extend(tb_paths)
                 # Use relative path for tables: "tables/xxx.html"
                 relative_tb_path = f"tables/{tb_name}"
-                df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, know_id, bottom_tokens, "", time_stamp, ""])
+                df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, temp_uid, bottom_tokens, "", time_stamp, ""])
 
             except KnowhereException:
                 raise

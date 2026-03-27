@@ -256,27 +256,20 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
     # Add table image entries to df_list
     df_list.extend(table_img_entries)
 
-    # Extract first row and first column headers
+    # Extract first row and first column headers (used ONLY for fallback file naming)
     first_row_text, first_col_text = _first_cols_rows(block)
-    
-    # Combine first row and first column as keywords for table retrieval (with dedup)
-    row_kw = first_row_text.replace(' | ', ';') if first_row_text else ''
-    col_kw = first_col_text.replace(' | ', ';') if first_col_text else ''
-    # Cross-dedup: remove col keywords already present in row keywords
-    row_set = set(row_kw.split(';')) if row_kw else set()
-    col_parts = [k for k in col_kw.split(';') if k and k not in row_set]
-    tb_keywords = ';'.join(filter(None, [row_kw] + col_parts))
     raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
     
     # Table index (always present)
     table_index = f"table-{table_count + 1}"
     
-    # LLM title + summary (optional, only when summary_table is enabled)
+    # LLM title + keywords + summary (only when summary_table is enabled)
     llm_title = None
     llm_summary = None
+    tb_keywords = ""
     if summary_table:
-        from app.services.document_parser.txt_parser import extract_summary_with_title
-        llm_title, llm_summary = extract_summary_with_title(tb_html_str)
+        from app.services.document_parser.txt_parser import extract_title_keywords_summary
+        llm_title, tb_keywords, llm_summary = extract_title_keywords_summary(tb_html_str, max_keywords=3)
     
     # Build tb_summary for df_list: table-n + optional LLM summary
     if llm_summary:

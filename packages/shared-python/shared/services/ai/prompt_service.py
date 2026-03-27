@@ -79,6 +79,32 @@ def build_prompt(task, texts, query, **kwargs):
         - Do not output any additional explanations or descriptions besides the keywords
         """
 
+    elif task == 'summary-full':
+        max_tokens = kwargs['paras']['max_tokens']
+        kw_num = kwargs['paras'].get('kw_num', 3)
+
+        example = '''
+         {"title":"核心主题标题","keywords":"关键词1;关键词2;关键词3","summary":"内容摘要文本"}
+        '''
+
+        prompt = f"""
+        You will receive a text passage (which may include HTML tables or structured data):
+        '''
+        {texts}
+        '''
+        Your task is to extract a title, keywords, and summary from this content. Note:
+        - Your response must be in JSON format with exactly three keys: "title", "keywords", "summary"
+        - "title": a short title capturing the core topic, no more than 15 characters
+        - "keywords": the most important thematic keywords, no more than {kw_num}, separated by semicolons ";"
+        - "summary": a concise summary of the main content, not exceeding {max_tokens} characters
+        - If the input is an HTML table, summarize its structure and key data points in natural language
+        - All output must be in the SAME LANGUAGE as the input text
+        - If the input content is too short, mostly empty, or lacks meaningful text, return exactly: null
+        - Example format:
+        {example}
+        - Do not output any additional explanations or descriptions
+        """
+
     # ==================== Heading/Structure Prompts ====================
 
     elif task == 'eval-headings':

@@ -78,9 +78,22 @@ class ZipResultService:
 
             # Create ZIP package
             with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                # 1. Generate chunks.json
+                # 1. Generate chunks.json (full version)
                 chunks_json = json.dumps({"chunks": formatted_chunks}, ensure_ascii=False, indent=2)
                 zip_file.writestr("chunks.json", chunks_json.encode("utf-8"))
+
+                # 1b. Generate chunks_slim.json (LLM-optimized: only type/path/content/summary)
+                slim_chunks = []
+                for fc in formatted_chunks:
+                    slim = {
+                        "type": fc.get("type", "text"),
+                        "path": fc.get("path", ""),
+                        "content": fc.get("content", ""),
+                        "summary": (fc.get("metadata") or {}).get("summary", ""),
+                    }
+                    slim_chunks.append(slim)
+                slim_json = json.dumps({"chunks": slim_chunks}, ensure_ascii=False, indent=2)
+                zip_file.writestr("chunks_slim.json", slim_json.encode("utf-8"))
 
                 # 2. Try to add full.md (if exists)
                 markdown_path = None
@@ -296,6 +309,9 @@ class ZipResultService:
                         file_path = f"images/{img_name}"
                 
                 metadata["file_path"] = file_path
+                # Unified schema: include keywords and tokens for all chunk types
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
+                metadata["tokens"] = []
                 
             elif chunk_type == "table":
                 # Get table info from existing_metadata or table_files_map
@@ -312,6 +328,9 @@ class ZipResultService:
                         file_path = f"tables/{tbl_name}"
                 
                 metadata["file_path"] = file_path
+                # Unified schema: include keywords and tokens for all chunk types
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
+                metadata["tokens"] = []
 
             formatted_chunk = {
                 "chunk_id": chunk_id,

@@ -124,3 +124,5 @@ TODO.md
 
 doc-deploy/
 deploy/aliyun/ack/*.md
+todos/
+*.egg-info/
