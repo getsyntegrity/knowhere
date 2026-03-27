@@ -114,14 +114,14 @@ def _inject_page_markers_pymupdf(pdf_path: str, output_dir: str) -> None:
     We re-read the PDF to count pages and insert markers based on content matching.
     Falls back to _inject_page_markers if layout.json exists.
     """
-    import fitz  # PyMuPDF
+    import pymupdf
     
     md_path = os.path.join(output_dir, "full.md")
     if not os.path.exists(md_path):
         return
     
     try:
-        doc = fitz.open(pdf_path)
+        doc = pymupdf.open(pdf_path)
     except Exception as e:
         logger.warning(f"Failed to open PDF for page marker injection: {e}")
         return
@@ -233,4 +233,3 @@ def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, rel
         base_llm_paras=base_llm_paras,
         relative_root=relative_root,
     )
-

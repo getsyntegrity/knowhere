@@ -70,6 +70,13 @@ class AIConfig(BaseModel):
     ILOVEAPI_SECRET_KEY: str = Field(default="", description="iLoveAPI 密钥 (PPTX转PDF)")
     ILOVEAPI_BASE_URL: str = Field(default="https://api.ilovepdf.com/v1", description="iLoveAPI 基础URL")
     ILOVEAPI_TIMEOUT: int = Field(default=120, description="iLoveAPI 请求超时(秒)")
+    ILOVEAPI_KEYS: str = Field(
+        default="",
+        description="iLoveAPI project pool as a JSON array of objects with public_key and secret_key. Each entry is a separate iLoveAPI project with its own credit quota."
+    )
+    ILOVEAPI_TOKEN_RPM_LIMIT: int = Field(default=25, description="Per-project requests-per-minute burst limit for iLoveAPI. Safety net against 429 throttling.")
+    ILOVEAPI_TOKEN_DAILY_LIMIT: int = Field(default=250, description="Per-project daily file limit for iLoveAPI. Free tier: 2500 credits/month, officepdf costs 10 credits/file = ~250 files.")
+    ILOVEAPI_MAX_CONCURRENT: int = Field(default=5, description="Max concurrent in-flight iLoveAPI conversions across all workers. Fail-open to LibreOffice when exceeded.")
     PROD_URL: str = Field(default="", description="生产URL（兼容性字段）")
     ALL_DF_COLS: str = Field(default="content,path,type,length,keywords,summary,know_id,tokens,connectto,addtime,page_nums", description="所有数据框列（兼容性字段）")
     DEFAULT_FOLDERS: str = Field(default="Supplementary_Files,Temporary_Files,templates,images,fragments", description="默认文件夹（兼容性字段）")

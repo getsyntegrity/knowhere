@@ -8,6 +8,7 @@ import jwt
 
 from loguru import logger
 from shared.core.config import settings
+from shared.core.logging import LogEvent
 from app.services.common.kb_utils import find_images
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
@@ -23,6 +24,12 @@ from pptx2md import ConversionConfig, convert
 def pptx_to_pdf_libreoffice(pptx_path, outdir="."):
     """use LibreOffice to convert PPTX to PDF (local engine, formula rendering may be problematic)"""
     soffice_path = settings.LIBER_OFFICE or "/usr/bin/libreoffice"
+    if not os.path.isfile(soffice_path):
+        raise FileNotFoundError(
+            f"LibreOffice not found at '{soffice_path}'. "
+            f"Install LibreOffice or set LIBER_OFFICE env to the correct path. "
+            f"PPTX parsing requires either iLoveAPI or LibreOffice."
+        )
     from shared.core.constants import ProcessingConstants
     filter_opts = f"Quality={ProcessingConstants.IMG_QUALITY};ReduceImageResolution=false;UseTaggedPDF=true,ExportNotes=true"
     subprocess.run([
@@ -38,12 +45,18 @@ def pptx_to_pdf_libreoffice(pptx_path, outdir="."):
 
 # ==================== iLoveAPI conversion ====================
 
-def _iloveapi_token():
-    """generate iLoveAPI JWT token (self-signed)"""
-    secret_key = settings.ILOVEAPI_SECRET_KEY
-    public_key = settings.ILOVEAPI_PUBLIC_KEY
-    if not secret_key or not public_key:
-        raise ValueError("ILOVEAPI_PUBLIC_KEY and ILOVEAPI_SECRET_KEY must be set in .env")
+def _get_iloveapi_token_lease():
+    """acquire iLoveAPI token lease from the quotas pool and generate a JWT token"""
+    from shared.utils.iloveapi_quota_manager import get_iloveapi_quota_manager
+    quota_manager = get_iloveapi_quota_manager()
+
+    lease = quota_manager.acquire_request("pptx_to_pdf")
+
+    # parse the public_key:secret_key from api_key
+    parts = lease.api_key.split(":", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid ILOVEAPI key format for token {lease.token_id}")
+    public_key, secret_key = parts
 
     now = int(time.time())
     payload = {
@@ -53,7 +66,8 @@ def _iloveapi_token():
         "nbf": now,
         "exp": now + 7200,  # 2 hours
     }
-    return jwt.encode(payload, secret_key, algorithm="HS256")
+    token = jwt.encode(payload, secret_key, algorithm="HS256")
+    return token, lease
 
 
 def pptx_to_pdf_api(pptx_path, outdir="."):
@@ -71,66 +85,174 @@ def pptx_to_pdf_api(pptx_path, outdir="."):
     pdf_path = os.path.join(outdir, pdf_name)
     with open(pdf_path, "wb") as f:
         f.write(pdf_bytes)
-    logger.info(f"[iLoveAPI] PDF saved: {pdf_path} ({len(pdf_bytes) / 1024:.1f} KB)")
+    logger.bind(
+        event=LogEvent.ILOVEAPI_REQUEST_COMPLETE.value,
+        service="iloveapi",
+        filename=pdf_name,
+        output_size_kb=round(len(pdf_bytes) / 1024, 1),
+    ).info(f"[iLoveAPI] PDF saved: {pdf_path}")
     return pdf_path, pdf_name
 
 
 def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
     """
     Convert PPTX bytes → PDF bytes via iLoveAPI. Pure in-memory, no disk I/O.
+
+    Acquires an in-flight slot before starting. Released in finally block
+    to prevent slot leaks even on errors.
     """
-    token = _iloveapi_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    base_url = settings.ILOVEAPI_BASE_URL
-    timeout = settings.ILOVEAPI_TIMEOUT
+    from shared.utils.iloveapi_quota_manager import get_iloveapi_quota_manager
+    quota_manager = get_iloveapi_quota_manager()
 
-    # Step 1: Start task
-    logger.info(f"[iLoveAPI] Starting officepdf task for: {filename}")
-    res = requests.get(f"{base_url}/start/officepdf", headers=headers, timeout=timeout)
-    res.raise_for_status()
-    start_data = res.json()
-    server = start_data["server"]
-    task_id = start_data["task"]
-    server_url = f"https://{server}/v1"
-    logger.info(f"[iLoveAPI] Task started: {task_id} on {server}")
+    # Gate on in-flight concurrency before consuming any token quota
+    if not quota_manager.acquire_inflight():
+        logger.bind(
+            event=LogEvent.ILOVEAPI_CONCURRENCY_EXCEEDED.value,
+            service="iloveapi",
+            filename=filename,
+            current_inflight=quota_manager.get_inflight_count(),
+            max_concurrent=quota_manager.max_concurrent,
+        ).warning(f"[iLoveAPI] Concurrency limit reached, failing open for: {filename}")
+        raise _ILoveApiConcurrencyExceeded(
+            f"iLoveAPI in-flight limit ({quota_manager.max_concurrent}) reached"
+        )
 
-    # Step 2: Upload from memory (BytesIO, no disk write)
-    logger.info(f"[iLoveAPI] Uploading {filename} ({len(pptx_bytes)/1024:.1f} KB)...")
-    upload_res = requests.post(
-        f"{server_url}/upload",
-        headers=headers,
-        data={"task": task_id},
-        files={"file": (filename, io.BytesIO(pptx_bytes))},
-        timeout=timeout,
-    )
-    upload_res.raise_for_status()
-    server_filename = upload_res.json()["server_filename"]
-    logger.info(f"[iLoveAPI] Uploaded: {server_filename}")
+    start_time = time.monotonic()
 
-    # Step 3: Process
-    logger.info(f"[iLoveAPI] Processing officepdf...")
-    process_res = requests.post(
-        f"{server_url}/process",
-        headers=headers,
-        json={
-            "task": task_id,
-            "tool": "officepdf",
-            "files": [{"server_filename": server_filename, "filename": filename}],
-        },
-        timeout=timeout,
-    )
-    process_res.raise_for_status()
-    logger.info(f"[iLoveAPI] Process complete")
+    try:
+        token, lease = _get_iloveapi_token_lease()
+        headers = {"Authorization": f"Bearer {token}"}
+        base_url = settings.ILOVEAPI_BASE_URL
+        timeout = settings.ILOVEAPI_TIMEOUT
 
-    # Step 4: Download PDF to memory
-    logger.info(f"[iLoveAPI] Downloading converted PDF...")
-    download_res = requests.get(
-        f"{server_url}/download/{task_id}", headers=headers, timeout=timeout
-    )
-    download_res.raise_for_status()
-    logger.info(f"[iLoveAPI] PDF downloaded: {len(download_res.content) / 1024:.1f} KB")
+        try:
+            # Step 1: Start task
+            logger.bind(
+                event=LogEvent.ILOVEAPI_REQUEST_START.value,
+                service="iloveapi",
+                step="start_task",
+                token_id=lease.token_id,
+                filename=filename,
+                file_size_kb=round(len(pptx_bytes) / 1024, 1),
+            ).info(f"[iLoveAPI] Starting officepdf task for: {filename}")
+            res = requests.get(f"{base_url}/start/officepdf", headers=headers, timeout=timeout)
+            if res.status_code == 429:
+                retry_after = int(res.headers.get("Retry-After", 60))
+                quota_manager.mark_rate_limited(lease.token_id, retry_after)
+                logger.bind(
+                    event=LogEvent.ILOVEAPI_RATE_LIMITED.value,
+                    service="iloveapi",
+                    token_id=lease.token_id,
+                    retry_after=retry_after,
+                    status_code=429,
+                    step="start_task",
+                ).warning(f"[iLoveAPI] Rate limited on start_task")
+            res.raise_for_status()
+            start_data = res.json()
+            server = start_data["server"]
+            task_id = start_data["task"]
+            server_url = f"https://{server}/v1"
 
-    return download_res.content
+            # Step 2: Upload from memory (BytesIO, no disk write)
+            upload_res = requests.post(
+                f"{server_url}/upload",
+                headers=headers,
+                data={"task": task_id},
+                files={"file": (filename, io.BytesIO(pptx_bytes))},
+                timeout=timeout,
+            )
+            if upload_res.status_code == 429:
+                retry_after = int(upload_res.headers.get("Retry-After", 60))
+                quota_manager.mark_rate_limited(lease.token_id, retry_after)
+                logger.bind(
+                    event=LogEvent.ILOVEAPI_RATE_LIMITED.value,
+                    service="iloveapi",
+                    token_id=lease.token_id,
+                    retry_after=retry_after,
+                    status_code=429,
+                    step="upload",
+                ).warning(f"[iLoveAPI] Rate limited on upload")
+            upload_res.raise_for_status()
+            server_filename = upload_res.json()["server_filename"]
+
+            # Step 3: Process
+            process_res = requests.post(
+                f"{server_url}/process",
+                headers=headers,
+                json={
+                    "task": task_id,
+                    "tool": "officepdf",
+                    "files": [{"server_filename": server_filename, "filename": filename}],
+                },
+                timeout=timeout,
+            )
+            if process_res.status_code == 429:
+                retry_after = int(process_res.headers.get("Retry-After", 60))
+                quota_manager.mark_rate_limited(lease.token_id, retry_after)
+                logger.bind(
+                    event=LogEvent.ILOVEAPI_RATE_LIMITED.value,
+                    service="iloveapi",
+                    token_id=lease.token_id,
+                    retry_after=retry_after,
+                    status_code=429,
+                    step="process",
+                ).warning(f"[iLoveAPI] Rate limited on process")
+            process_res.raise_for_status()
+
+            # Step 4: Download PDF to memory
+            download_res = requests.get(
+                f"{server_url}/download/{task_id}", headers=headers, timeout=timeout
+            )
+            if download_res.status_code == 429:
+                retry_after = int(download_res.headers.get("Retry-After", 60))
+                quota_manager.mark_rate_limited(lease.token_id, retry_after)
+                logger.bind(
+                    event=LogEvent.ILOVEAPI_RATE_LIMITED.value,
+                    service="iloveapi",
+                    token_id=lease.token_id,
+                    retry_after=retry_after,
+                    status_code=429,
+                    step="download",
+                ).warning(f"[iLoveAPI] Rate limited on download")
+            download_res.raise_for_status()
+
+            duration_s = round(time.monotonic() - start_time, 2)
+            logger.bind(
+                event=LogEvent.ILOVEAPI_REQUEST_COMPLETE.value,
+                service="iloveapi",
+                token_id=lease.token_id,
+                filename=filename,
+                duration_s=duration_s,
+                input_size_kb=round(len(pptx_bytes) / 1024, 1),
+                output_size_kb=round(len(download_res.content) / 1024, 1),
+            ).info(f"[iLoveAPI] Conversion complete in {duration_s}s")
+
+            return download_res.content
+
+        except requests.exceptions.HTTPError as e:
+            duration_s = round(time.monotonic() - start_time, 2)
+            status_code = e.response.status_code if e.response is not None else None
+            logger.bind(
+                event=LogEvent.ILOVEAPI_REQUEST_FAIL.value,
+                service="iloveapi",
+                token_id=lease.token_id,
+                filename=filename,
+                duration_s=duration_s,
+                error_type="http_error",
+                status_code=status_code,
+            ).warning(f"[iLoveAPI] HTTP error {status_code} for: {filename}")
+            if e.response is not None and e.response.status_code in (401, 403, 429):
+                retry_after = int(e.response.headers.get("Retry-After", 60))
+                quota_manager.mark_rate_limited(lease.token_id, retry_after)
+            raise
+
+    finally:
+        quota_manager.release_inflight()
+
+
+class _ILoveApiConcurrencyExceeded(Exception):
+    """Internal signal: in-flight concurrency limit reached, caller should fallback."""
+    pass
 
 
 # ==================== image-only PDF rendering ====================
@@ -145,11 +267,11 @@ def _render_pdf_to_image_pdf(pdf_bytes: bytes, scale: int = 3) -> bytes:
     images, MinerU is forced to use its VLM model which correctly OCRs
     formulas into LaTeX.
     """
-    import fitz  # PyMuPDF
+    import pymupdf
 
-    src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    img_doc = fitz.open()
-    mat = fitz.Matrix(scale, scale)
+    src_doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    img_doc = pymupdf.open()
+    mat = pymupdf.Matrix(scale, scale)
 
     for page in src_doc:
         pix = page.get_pixmap(matrix=mat)
@@ -184,10 +306,54 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
     logger.info(f"[parse_pptx] PPTX loaded: {len(pptx_data)/1024:.1f} KB")
 
     if strategy == "to_pdf_api":
-        return _parse_pptx_via_api(pptx_data, filename, output_dir,
-                                         base_llm_paras, relative_root)
+        from shared.core.exceptions.domain_exceptions import UnavailableException
+        try:
+            return _parse_pptx_via_api(pptx_data, filename, output_dir,
+                                             base_llm_paras, relative_root)
+        except ValueError as e:
+            if "iLoveAPI keys configured" in str(e) or "ILOVEAPI" in str(e):
+                logger.bind(
+                    event=LogEvent.ILOVEAPI_FALLBACK.value,
+                    service="iloveapi",
+                    reason="config_missing",
+                    filename=filename,
+                    fallback_strategy="to_pdf",
+                ).warning(f"[parse_pptx] iLoveAPI config missing: {e}. Falling back to 'to_pdf' (LibreOffice).")
+                strategy = "to_pdf"
+            else:
+                raise
+        except _ILoveApiConcurrencyExceeded as e:
+            logger.bind(
+                event=LogEvent.ILOVEAPI_FALLBACK.value,
+                service="iloveapi",
+                reason="concurrency_exceeded",
+                filename=filename,
+                fallback_strategy="to_pdf",
+            ).warning(f"[parse_pptx] iLoveAPI concurrency limit reached: {e}. Falling back to 'to_pdf' (LibreOffice).")
+            strategy = "to_pdf"
+        except UnavailableException as e:
+            logger.bind(
+                event=LogEvent.ILOVEAPI_FALLBACK.value,
+                service="iloveapi",
+                reason="pool_exhausted",
+                filename=filename,
+                fallback_strategy="to_pdf",
+                retry_after=e.retry_after,
+            ).warning(f"[parse_pptx] iLoveAPI token pool exhausted: {e.internal_message}. Falling back to 'to_pdf' (LibreOffice).")
+            strategy = "to_pdf"
+        except requests.exceptions.RequestException as e:
+            error_type = type(e).__name__
+            logger.bind(
+                event=LogEvent.ILOVEAPI_FALLBACK.value,
+                service="iloveapi",
+                reason="request_failed",
+                filename=filename,
+                fallback_strategy="to_pdf",
+                error_type=error_type,
+            ).warning(f"[parse_pptx] iLoveAPI request failed ({error_type}): {e}. Falling back to 'to_pdf' (LibreOffice).")
+            strategy = "to_pdf"
 
-    elif strategy == "to_pdf":
+    if strategy == "to_pdf":
         return _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
                                                   base_llm_paras, relative_root)
 
