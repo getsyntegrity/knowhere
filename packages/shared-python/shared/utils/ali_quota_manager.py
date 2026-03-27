@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from loguru import logger
-
 from shared.core.config import settings
 from shared.services.redis.redis_sync_service import SyncRedisService, SyncRedisServiceFactory
 from shared.utils.quota_manager import BaseQuotaManager, TokenConfig
@@ -25,13 +23,13 @@ class AliQuotaManager(BaseQuotaManager):
     @classmethod
     def from_settings(cls, redis_service: Optional[SyncRedisService] = None) -> "AliQuotaManager":
         """Create an AliQuotaManager from application settings."""
-        tokens = cls._parse_tokens_from_settings()
+        tokens = cls.parse_tokens_from_settings()
         instance = cls(redis_service or SyncRedisServiceFactory.get_service(), tokens)
         instance.default_cooldown_seconds = settings.ALI_TOKEN_COOLDOWN_SECONDS
         return instance
 
     @staticmethod
-    def _parse_tokens_from_settings() -> List[TokenConfig]:
+    def parse_tokens_from_settings() -> List[TokenConfig]:
         default_rpm_limit: int = settings.ALI_TOKEN_RPM_LIMIT
         default_daily_limit: int = settings.ALI_TOKEN_DAILY_LIMIT
         raw_pool: str = (settings.ALI_API_KEYS or "").strip()
@@ -45,20 +43,9 @@ class AliQuotaManager(BaseQuotaManager):
             if parsed:
                 return parsed
 
-        # Fallback: use the single legacy ALI_API_KEY
-        single_key: str = (settings.ALI_API_KEY or "").strip()
-        if single_key:
-            logger.info("ALI_API_KEYS is empty; falling back to single ALI_API_KEY")
-            return [
-                TokenConfig(
-                    token_id="ali-default",
-                    api_key=single_key,
-                    rpm_limit=default_rpm_limit,
-                    daily_limit=default_daily_limit,
-                )
-            ]
-
-        raise ValueError("No Ali API keys configured (set ALI_API_KEYS or ALI_API_KEY)")
+        raise ValueError(
+            "No Ali API keys configured. Set ALI_API_KEYS to a comma/newline-separated list or JSON array."
+        )
 
 
 _ali_quota_manager: Optional[AliQuotaManager] = None

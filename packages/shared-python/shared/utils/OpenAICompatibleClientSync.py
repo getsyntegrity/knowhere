@@ -25,8 +25,6 @@ _client_cache: Dict[tuple, "OpenAICompatibleClientSync"] = {}
 _client_cache_lock = threading.Lock()
 
 
-
-
 def _is_ali_model(model_name: str) -> bool:
     """Check whether a model name routes to Aliyun DashScope."""
     return "qwen" in (model_name or "").lower()
@@ -47,20 +45,38 @@ class OpenAICompatibleClientSync:
         self._explicit_api_key = api_key
         self._explicit_api_url = api_url
         self._max_retries = max_retries
-
-        resolved_key, resolved_url = self._resolve_api_config(
+        self._base_url: Optional[str] = self._resolve_base_url(
             model_name=self.default_model,
-            api_key=api_key,
             api_url=api_url,
         )
+
         self.timeout = (
             getattr(settings, "OPENAI_CLIENT_TIMEOUT", 300)
             if timeout is None
             else timeout
         )
-        self._client = OpenAI(
-            api_key=resolved_key,
-            base_url=resolved_url,
+        self._client: Optional[OpenAI] = None
+        if not self._should_use_ali_pool():
+            resolved_key: Optional[str] = self._resolve_direct_api_key(
+                model_name=self.default_model,
+                api_key=api_key,
+            )
+            self._client = self._build_client(
+                api_key=resolved_key,
+                base_url=self._base_url,
+                max_retries=max_retries,
+            )
+
+    def _build_client(
+        self,
+        api_key: Optional[str],
+        base_url: Optional[str],
+        max_retries: int,
+    ) -> OpenAI:
+        """Build a direct OpenAI-compatible SDK client."""
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
             http_client=get_sync_client(),
             max_retries=max_retries,
             timeout=self.timeout,
@@ -73,36 +89,44 @@ class OpenAICompatibleClientSync:
             return url.rstrip("/").removesuffix("/chat/completions")
         return url
 
-    def _resolve_api_config(
+    def _resolve_base_url(
         self,
         model_name: str,
-        api_key: Optional[str],
         api_url: Optional[str],
-    ) -> tuple[Optional[str], Optional[str]]:
-        if api_key and api_url:
-            return api_key, self._strip_chat_completions(api_url)
+    ) -> Optional[str]:
+        if api_url:
+            return self._strip_chat_completions(api_url)
 
         model_lower = (model_name or "").lower()
         if "qwen" in model_lower:
-            resolved_key = api_key or getattr(settings, "ALI_API_KEY", None)
             ali_base = getattr(settings, "ALI_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            resolved_url = api_url or ali_base
-            return resolved_key, self._strip_chat_completions(resolved_url)
+            return self._strip_chat_completions(ali_base)
 
         if "glm" in model_lower:
-            resolved_key = api_key or getattr(settings, "GLM_API_KEY", None)
             glm_base = getattr(settings, "GLM_URL", "https://open.bigmodel.cn/api/paas/v4")
-            resolved_url = api_url or glm_base
-            return resolved_key, self._strip_chat_completions(resolved_url)
+            return self._strip_chat_completions(glm_base)
 
         if "doubao" in model_lower or model_lower.startswith("ep-"):
-            resolved_key = api_key or getattr(settings, "ARK_API_KEY", None)
-            resolved_url = api_url or getattr(settings, "ARK_URL", None)
-            return resolved_key, self._strip_chat_completions(resolved_url)
+            return self._strip_chat_completions(getattr(settings, "ARK_URL", None))
 
-        resolved_key = api_key or settings.DS_KEY
-        resolved_url = api_url or settings.DS_URL
-        return resolved_key, self._strip_chat_completions(resolved_url)
+        return self._strip_chat_completions(settings.DS_URL)
+
+    def _resolve_direct_api_key(
+        self,
+        model_name: str,
+        api_key: Optional[str],
+    ) -> Optional[str]:
+        if api_key:
+            return api_key
+
+        model_lower = (model_name or "").lower()
+        if "glm" in model_lower:
+            return getattr(settings, "GLM_API_KEY", None)
+
+        if "doubao" in model_lower or model_lower.startswith("ep-"):
+            return getattr(settings, "ARK_API_KEY", None)
+
+        return settings.DS_KEY
 
     # ------------------------------------------------------------------
     # Ali token-pool helpers
@@ -126,6 +150,7 @@ class OpenAICompatibleClientSync:
         from shared.utils.ali_quota_manager import get_ali_quota_manager
 
         quota_manager = get_ali_quota_manager()
+        base_url: Optional[str] = self._base_url
 
         max_retries = settings.ALI_INLINE_MAX_RETRIES
         for attempt in range(max_retries):
@@ -133,12 +158,10 @@ class OpenAICompatibleClientSync:
             try:
                 # Hybrid rate-limit control: SDK handles per-key backoff (exp. backoff + jitter),
                 # outer loop handles token rotation across the pool on persistent 429s.
-                client = OpenAI(
+                client = self._build_client(
                     api_key=lease.api_key,
-                    base_url=str(self._client.base_url),
-                    http_client=get_sync_client(),
+                    base_url=base_url,
                     max_retries=settings.ALI_SDK_MAX_RETRIES,
-                    timeout=self.timeout,
                 )
                 response = client.chat.completions.create(
                     model=model,
@@ -239,8 +262,15 @@ class OpenAICompatibleClientSync:
                 ) from exc
 
         # Non-Ali path: use the single pre-configured client
+        client = self._client
+        if client is None:
+            raise LLMServiceException(
+                internal_message="OpenAI client is not initialized for direct provider requests",
+                provider=self.default_model,
+            )
+
         try:
-            response = self._client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=effective_model,
                 messages=all_messages,
                 temperature=temperature,
@@ -260,7 +290,7 @@ class OpenAICompatibleClientSync:
         except LLMServiceException:
             raise
         except Exception as exc:
-            logger.error(f"LLM request failed: model={effective_model}, base_url={self._client.base_url}, error={exc}")
+            logger.error(f"LLM request failed: model={effective_model}, base_url={client.base_url}, error={exc}")
             raise LLMServiceException(
                 internal_message=f"API request failed: {str(exc)}",
                 provider=self.default_model,

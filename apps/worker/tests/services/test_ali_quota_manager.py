@@ -3,6 +3,7 @@ from typing import cast
 
 import pytest
 
+from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import UnavailableException
 from shared.services.redis.redis_sync_service import SyncRedisService
 from shared.utils.ali_quota_manager import AliQuotaManager
@@ -108,3 +109,22 @@ def test_parse_token_specs_json_array():
     assert len(specs) == 2
     assert specs[0].rpm_limit == 200
     assert specs[1].rpm_limit == 300
+
+
+def test_parse_tokens_from_settings_uses_ali_api_keys(monkeypatch):
+    monkeypatch.setattr(settings, "ALI_API_KEYS", "ali-1=sk-abc,ali-2=sk-def", raising=False)
+    monkeypatch.setattr(settings, "ALI_TOKEN_RPM_LIMIT", 300, raising=False)
+    monkeypatch.setattr(settings, "ALI_TOKEN_DAILY_LIMIT", 10000, raising=False)
+
+    specs = AliQuotaManager.parse_tokens_from_settings()
+
+    assert [spec.api_key for spec in specs] == ["sk-abc", "sk-def"]
+
+
+def test_parse_tokens_from_settings_requires_ali_api_keys(monkeypatch):
+    monkeypatch.setattr(settings, "ALI_API_KEYS", "", raising=False)
+    monkeypatch.setattr(settings, "ALI_TOKEN_RPM_LIMIT", 300, raising=False)
+    monkeypatch.setattr(settings, "ALI_TOKEN_DAILY_LIMIT", 10000, raising=False)
+
+    with pytest.raises(ValueError, match="ALI_API_KEYS"):
+        AliQuotaManager.parse_tokens_from_settings()
