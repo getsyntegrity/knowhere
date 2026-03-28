@@ -4,10 +4,21 @@ import os
 import re
 from typing import Any, cast
 
+import gevent
 from loguru import logger
 
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.mineru_pdf_service import parse_via_full
+
+
+def _run_in_thread(fn, *args, **kwargs):
+    """Run a CPU-bound function in a native OS thread.
+
+    Prevents long-running C extensions (pymupdf, pymupdf4llm) from starving
+    the gevent event loop, which would cause missed AMQP heartbeats and
+    RabbitMQ connection drops.
+    """
+    return gevent.get_hub().threadpool.apply(fn, args, kwargs)
 
 
 def _inject_page_markers(output_dir: str) -> None:
@@ -200,7 +211,8 @@ def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, rel
         image_dir = os.path.join(output_dir, "images")
         os.makedirs(image_dir, exist_ok=True)
 
-        md_text = pymupdf4llm.to_markdown(
+        md_text = _run_in_thread(
+            pymupdf4llm.to_markdown,
             pdf_path,
             write_images=True,
             image_path=image_dir,
