@@ -3,11 +3,15 @@ import os
 import re
 import uuid
 
+import gevent
+from gevent.pool import Pool as GeventPool
 import pandas as pd
 from shared.core.config import settings
 from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
                                           get_str_time, process_dup_paths_df)
 from app.services.document_parser.image_parser import (MD_IMAGE_PATTERN,
+                                                       _get_vision_client,
+                                                       ask_image,
                                                        detect_summary_img_md)
 from app.services.document_parser.layout_parser import (md_heading_match,
                                                         pred_titles)
@@ -15,7 +19,7 @@ from app.services.document_parser.table_parser import (extract_tables_by_forms,
                                                        identify_tables)
 from app.services.document_parser.html_parser import first_cols_rows_html, merge_html_tables
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
-from app.services.document_parser.txt_parser import extract_summary_keywords, extract_title_keywords_summary
+from app.services.document_parser.txt_parser import extract_summary_keywords, extract_title_keywords_summary, split_title_summary
 from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
@@ -108,16 +112,16 @@ def clean_md_table_lines(table_lines, start_line_num):
                 cleaned_lines.append(cleaned_line)
     return cleaned_lines, error_lines
 
-def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, page_nums="", summary_len=1500):
+def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, page_nums="", summary_len=1500, skip_llm=False):
     match_type = find_matches_parsing(bottom_content, path)
     know_id = gen_str_codes(bottom_content + str(uuid.uuid4()))
     bottom_tokens = tokenize2stw_remove([bottom_content], llm_paras['stopwords'])
 
-    if len(bottom_content)>summary_len and llm_paras['summary_txt']:
+    keywords = ''
+    summary = ''
+    needs_llm = (not skip_llm and len(bottom_content) > summary_len and llm_paras['summary_txt'])
+    if needs_llm:
         _title, keywords, summary = extract_title_keywords_summary(bottom_content, max_keywords=3, summary_len=summary_len)
-    else:
-        keywords = ''
-        summary = ''
 
     df_list.append([bottom_content, path, match_type, len(bottom_content), keywords, summary, know_id, bottom_tokens, "", time_stamp, page_nums])
     content = ''
@@ -172,6 +176,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
     table_count = 1
     img_count = 1
     path_counter = {}  # Track path occurrences for deduplication
+    deferred_llm_tasks = []  # Collected during loop, executed in parallel after
 
     # Find layout.json path
     layout_json_path = os.path.join(output_dir, 'layout.json')
@@ -211,7 +216,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
             if not content.strip()=='': # record contents of the last path and reset content
                 # Build page_nums from collected pages during this chunk
                 chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
-                df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
+                df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp, page_nums=chunk_page_str, skip_llm=True)
                 chunk_pages = set()  # reset for next chunk
                 if current_pg_num > 0:
                     chunk_pages.add(current_pg_num)  # carry current page into next chunk
@@ -219,7 +224,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 # Consecutive headings with no body text between them:
                 # Create a placeholder chunk so the previous heading's path
                 chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
-                df_list, content = update_df_list(df_list, "", path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
+                df_list, content = update_df_list(df_list, "", path, base_llm_paras, time_stamp, page_nums=chunk_page_str, skip_llm=True)
 
             # update path based on path name and level
             if base_level is None:
@@ -258,11 +263,11 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
             path = split_char.join(path_parts)  # path with relative root
 
         else: # no path change, remain in the same hierarchy
-            # a. handle lines containing images
+            # a. handle lines containing images (LLM deferred to post-loop parallel batch)
             img_name_context = path_handle(last_context[:10], mode="clean_single")
             img_name = f"image-{str(img_count)}-{img_name_context}"
-            # Pass semantic context (not img_name) to avoid "image-" prefix duplication
-            imgs = detect_summary_img_md(line, last_context, output_dir, mode=base_llm_paras['summary_image'])
+            # Always skip inline LLM — vision calls are deferred to parallel batch
+            imgs = detect_summary_img_md(line, last_context, output_dir, mode=False)
 
             for img_path, img_title, img_summary in imgs:
                 img_suffix = os.path.splitext(img_path)[-1]
@@ -302,6 +307,8 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
 
                 relative_img_path = f"images/{img_name}{img_suffix}"
                 df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary_field, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
+                if base_llm_paras['summary_image']:
+                    deferred_llm_tasks.append(("image", len(df_list) - 1, relative_img_path))
                 img_count += 1
 
             # b. handle lines containing tables
@@ -334,12 +341,10 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 # Table index (always present)
                 table_index = f"table-{table_count}"
                 
-                # LLM title + keywords + summary (only when summary_table is enabled)
+                # LLM title + keywords + summary deferred to post-loop parallel batch
                 llm_title = None
                 llm_summary = None
                 tb_keywords = ""
-                if base_llm_paras['summary_table']:
-                    llm_title, tb_keywords, llm_summary = extract_title_keywords_summary(tb_str, max_keywords=3)
                 
                 # Build tb_summary for df_list: table-n + optional LLM summary
                 if llm_summary:
@@ -367,6 +372,8 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
 
                 relative_tb_path = f"tables/{tb_name}.html"
                 df_list.append([tb_str, relative_tb_path, table_id, len(tb_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
+                if base_llm_paras['summary_table']:
+                    deferred_llm_tasks.append(("table", len(df_list) - 1, tb_str, tb_dir, tb_name, table_count - 1))
                 table_lines = [] # Reset table_lines after storing the DataFrame
                 table_count += 1
 
@@ -378,7 +385,89 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
     
     if not content.strip()=='': # handle the remaining contents, append them to the last section
         chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
-        df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
+        df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp, page_nums=chunk_page_str, skip_llm=True)
+
+    # Collect text chunk deferred tasks (entries needing summary/keywords)
+    summary_len = 1500
+    if base_llm_paras.get('summary_txt'):
+        for idx, entry in enumerate(df_list):
+            marker = entry[2]  # col 2: match_type / img_id / table_id
+            if isinstance(marker, str) and ('IMAGE_' in marker or 'TABLE_' in marker):
+                continue
+            if len(entry[0]) > summary_len and not entry[4] and not entry[5]:
+                deferred_llm_tasks.append(("text", idx, entry[0]))
+
+    # ── Post-loop: execute all deferred LLM calls in parallel via gevent ──
+    if deferred_llm_tasks:
+        logger.info(f"Running {len(deferred_llm_tasks)} deferred summary LLM calls in parallel")
+        max_concurrent = getattr(settings, "SUMMARY_LLM_MAX_CONCURRENT", 8)
+
+        def _run_deferred(task):
+            task_type, idx = task[0], task[1]
+            try:
+                if task_type == "image":
+                    relative_path = task[2]
+                    client = _get_vision_client()
+                    llm_resp = ask_image(client, output_dir, paths_=[relative_path])
+                    if llm_resp:
+                        _, img_summary = split_title_summary(llm_resp)
+                    else:
+                        img_summary = None
+                    return idx, task_type, (img_summary,)
+                elif task_type == "table":
+                    tb_html = task[2]
+                    title, kw, summary = extract_title_keywords_summary(tb_html, max_keywords=3)
+                    return idx, task_type, (title, kw, summary)
+                elif task_type == "text":
+                    text_content = task[2]
+                    _, kw, summary = extract_title_keywords_summary(text_content, max_keywords=3, summary_len=summary_len)
+                    return idx, task_type, (kw, summary)
+            except Exception as e:
+                logger.warning(f"Deferred {task_type} LLM call failed for idx={idx}: {e}")
+                return idx, task_type, None
+
+        pool = GeventPool(size=min(max_concurrent, len(deferred_llm_tasks)))
+        greenlets = [pool.spawn(_run_deferred, task) for task in deferred_llm_tasks]
+        gevent.joinall(greenlets)
+
+        # Build a lookup from deferred task list: idx -> original task tuple
+        deferred_by_idx = {task[1]: task for task in deferred_llm_tasks}
+
+        for g in greenlets:
+            if g.value is None:
+                continue
+            idx, task_type, result = g.value
+            if result is None:
+                continue
+            if task_type == "image":
+                (img_summary,) = result
+                if img_summary:
+                    entry = df_list[idx]
+                    image_index = entry[0].split('\n')[1] if '\n' in entry[0] else "image"
+                    entry[5] = f"{image_index}\n{img_summary}"
+            elif task_type == "table":
+                title, kw, summary = result
+                entry = df_list[idx]
+                entry[4] = kw if isinstance(kw, str) else ""
+                if summary:
+                    table_index = entry[5] if '\n' not in entry[5] else entry[5].split('\n')[0]
+                    entry[5] = f"{table_index}\n{summary}"
+                # Rename table file if LLM provided a better title
+                if title:
+                    orig_task = deferred_by_idx[idx]
+                    t_dir, old_tb_name, t_count = orig_task[3], orig_task[4], orig_task[5]
+                    new_tb_name = path_handle(f"table-{t_count} {title}", mode="clean_single")
+                    old_path = os.path.join(t_dir, f"{old_tb_name}.html")
+                    new_path = os.path.join(t_dir, f"{new_tb_name}.html")
+                    if old_path != new_path and os.path.exists(old_path):
+                        os.rename(old_path, new_path)
+                        entry[1] = f"tables/{new_tb_name}.html"
+            elif task_type == "text":
+                kw, summary = result
+                df_list[idx][4] = kw if isinstance(kw, str) else ""
+                df_list[idx][5] = summary if isinstance(summary, str) else ""
+
+        logger.info(f"Completed {len(deferred_llm_tasks)} deferred summary LLM calls")
 
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     doc_df = process_dup_paths_df(doc_df)
