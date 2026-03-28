@@ -19,14 +19,64 @@ from app.services.common.kb_utils import (flatten_dic2paths, gen_str_codes,
                                           remove_spaces)
 from shared.utils.text_utils import tokenize2stw_remove, remove_duplicates_orderkept
 
-from app.services.document_parser.txt_parser import extract_summary_keywords
-from app.services.document_parser.html_parser import df2html, tb_htmlstr_to_df, html_to_md_lines
+from app.services.document_parser.html_parser import df2html
 from shared.utils.CommonHelperSync import load_file_bytes
 from bs4 import BeautifulSoup
 from loguru import logger
 
 from shared.core.exceptions.domain_exceptions import TableParsingException
 from shared.core.exceptions.knowhere_exception import KnowhereException
+
+
+# ── Table filename sanitizer ────────────────────────────
+# Max byte-safe filename length. Most filesystems cap at 255 bytes; we leave
+# room for the "table-N " prefix (~10 chars) and ".html" suffix (5 chars).
+_MAX_TABLE_NAME_CHARS = 80
+
+
+def sanitize_table_name_from_header(raw_header_text: str) -> str:
+    """Build a concise, filesystem-safe table name from raw first-row header text.
+
+    Pipeline:
+      1. Split by common delimiters (' | ', '_br_'/'__br_', '\\n')
+      2. Strip whitespace, deduplicate (preserve order)
+      3. Drop trivial single-character tokens (single CJK char, single digit,
+         single letter) — reuses ``_is_meaningful_token`` from shared text_utils
+      4. Rejoin with spaces and cap at ``_MAX_TABLE_NAME_CHARS``
+
+    Args:
+        raw_header_text: The raw first-row text, often pipe-separated.
+
+    Returns:
+        A cleaned string suitable for use in a filename (may be empty if all
+        fields were trivial).
+    """
+    from shared.utils.text_utils import _is_meaningful_token
+
+    if not raw_header_text:
+        return ""
+
+    # 1. Split on common header delimiters
+    parts = re.split(r'\s*\|\s*|_+br_|\n', raw_header_text)
+
+    # 2. Strip + deduplicate (order-preserved)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in parts:
+        p = p.strip()
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        unique.append(p)
+
+    # 3. Keep only meaningful fields (drop single-char noise)
+    meaningful = [f for f in unique if _is_meaningful_token(f)]
+
+    # 4. Join and enforce length cap
+    result = " ".join(meaningful)
+    if len(result) > _MAX_TABLE_NAME_CHARS:
+        result = result[:_MAX_TABLE_NAME_CHARS].rstrip()
+    return result
 
 g_tbl_lock = threading.Lock()
 

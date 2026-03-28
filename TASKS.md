@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-03-27 — 实现 KG Bottom-Up File Summary 递归摘要构建 + prompt 防护与图谱集成
+> **Last session**: 2026-03-28 — 修复 PDF/DOCX 表格文件名超长与 KG 增量解析的错误 dedup 问题
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -19,6 +19,7 @@
 | 2026-03-18 | ~1h 40m | ~8K | ~60K | 单字符关键词过滤 (safe_split_kws) + env.example 同步 + KG edge 补 source_id/target_id + knowhere_memory SKILL.md 重写 (3层结构引导+零审批) + FinMemory Insight 分析 + KG Summary/Insight 规划 |
 | 2026-03-19 | ~57m | ~5K | ~40K | LLM 文本输出 eval_response 旁路 + prompt 防护强化 (null/anti-preamble) + atlas .atlas 扩展名 |
 | 2026-03-27 | ~2h | ~8K | ~60K | 实现 KG Bottom-Up File Summary 递归摘要构建 + prompt 防护与图谱集成 |
+| 2026-03-28 | ~1h | ~20K | ~12K | 修复 PDF/DOCX 管线 Errno 36 表格超长文件名问题 (构建 sanitize_table_name_from_header 语义安全提取) + 修复增量 KG Update 的 source_file 错误 dedup 问题 |
 
 ---
 
@@ -262,6 +263,8 @@ _(无)_
 | 2026-03-19 | fix | Prompt 防护: 4 个文本 prompt 补 null 边界 + anti-preamble，统一 `return exactly: null` 格式 | `prompt_service.py` |
 | 2026-03-19 | feature | Atlas .atlas 扩展名: profiler 检测 atlas 后 output folder 重命名 `.pdf` → `.atlas` | `parse_service.py`, `atlas_parser.py` |
 | 2026-03-27 | feature | KG Bottom-Up Recursive Summary: `summary_builder.py` 增量收集子节点 metadata 构建层级摘要；图谱自下而上提取注入 `top_summary` | `summary_builder.py`, `graph_builder.py`, `prompt_service.py` |
+| 2026-03-28 | fix | Errno 36 表格文件名超长: 构建 `sanitize_table_name_from_header` 语义安全拼接表头，过滤单字噪声，并修复正则匹配 MinerU `_br_` / `__br_` 标记 | `table_parser.py`, `doc_parser.py`, `md_parser.py` |
+| 2026-03-28 | fix | 修复增量 KG Update (build_and_deploy) 错误跳过图谱更新的问题: 提前确定 `source_file`，在加载 `existing_chunks` 时排除当前文件，避免 `_dedup_chunks_by_content` 误判为完全重复 | `graph_builder.py` |
 
 ---
 

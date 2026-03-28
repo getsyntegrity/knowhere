@@ -16,10 +16,11 @@ from app.services.document_parser.image_parser import (MD_IMAGE_PATTERN,
 from app.services.document_parser.layout_parser import (md_heading_match,
                                                         pred_titles)
 from app.services.document_parser.table_parser import (extract_tables_by_forms,
-                                                       identify_tables)
+                                                       identify_tables,
+                                                       sanitize_table_name_from_header)
 from app.services.document_parser.html_parser import first_cols_rows_html, merge_html_tables
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
-from app.services.document_parser.txt_parser import extract_summary_keywords, extract_title_keywords_summary, split_title_summary
+from app.services.document_parser.txt_parser import extract_title_keywords_summary, split_title_summary
 from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
@@ -369,8 +370,8 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 else:
                     tb_summary = table_index
                 
-                raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
-                # Use LLM title for filename when available, fallback to raw_tb_name
+                raw_tb_name = sanitize_table_name_from_header(first_row_text) if first_row_text else ""
+                # Use LLM title for filename when available, fallback to sanitized header
                 effective_name = llm_title if llm_title else raw_tb_name
                 tb_name = path_handle(f"table-{str(table_count)} {effective_name}", mode="clean_single")
                 temp_uid = gen_str_codes((tb_str + str(table_count)))
@@ -473,7 +474,8 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 if title:
                     orig_task = deferred_by_idx[idx]
                     t_dir, old_tb_name, t_count = orig_task[3], orig_task[4], orig_task[5]
-                    new_tb_name = path_handle(f"table-{t_count} {title}", mode="clean_single")
+                    safe_title = sanitize_table_name_from_header(title) if title else ""
+                    new_tb_name = path_handle(f"table-{t_count} {safe_title}", mode="clean_single")
                     old_path = os.path.join(t_dir, f"{old_tb_name}.html")
                     new_path = os.path.join(t_dir, f"{new_tb_name}.html")
                     if old_path != new_path and os.path.exists(old_path):

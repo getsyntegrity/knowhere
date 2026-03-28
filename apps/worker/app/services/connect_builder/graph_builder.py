@@ -1051,18 +1051,27 @@ def build_and_deploy(
     os.makedirs(kb_dir, exist_ok=True)
 
     # Load existing state BEFORE deploy (to avoid counting new file's chunks twice)
+    # Determine source_file early so we can exclude it from existing_chunks
+    source_file = os.path.basename(parsed_output_dir) if parsed_output_dir and os.path.isdir(parsed_output_dir) else None
     existing_graph = load_knowledge_graph(kg_path)
     if existing_graph is not None:
-        existing_chunks = _load_all_chunks_from_kb(kb_dir)
-        if not existing_chunks:
+        all_on_disk = _load_all_chunks_from_kb(kb_dir)
+        if not all_on_disk:
             existing_chunks = extract_chunks_from_graph(existing_graph)
+        else:
+            # Exclude chunks from the current source file — they may already
+            # be on disk if parsed_output_dir is inside kb_dir (debug_parse).
+            # Without this filter, _dedup_chunks_by_content would treat them
+            # as "existing" and skip the incremental update entirely.
+            existing_chunks = [
+                c for c in all_on_disk
+                if c.get("_source_file") != source_file
+            ] if source_file else all_on_disk
     else:
         existing_chunks = []
 
     # ── Deploy parsed output (images, tables, hierarchy, etc.) ──
-    source_file = None
     if parsed_output_dir and os.path.isdir(parsed_output_dir):
-        source_file = os.path.basename(parsed_output_dir)
         deploy_target = os.path.join(kb_dir, source_file)
 
         # Skip copy if parsed output is already in the target location
