@@ -10,6 +10,7 @@ from shared.core.config import settings
 from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
                                           get_str_time, process_dup_paths_df)
 from app.services.document_parser.image_parser import (MD_IMAGE_PATTERN,
+                                                       _get_vision_client,
                                                        ask_image,
                                                        detect_summary_img_md)
 from app.services.document_parser.layout_parser import (md_heading_match,
@@ -18,7 +19,7 @@ from app.services.document_parser.table_parser import (extract_tables_by_forms,
                                                        identify_tables)
 from app.services.document_parser.html_parser import first_cols_rows_html, merge_html_tables
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
-from app.services.document_parser.txt_parser import extract_summary_keywords, extract_title_keywords_summary
+from app.services.document_parser.txt_parser import extract_summary_keywords, extract_title_keywords_summary, split_title_summary
 from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
@@ -372,7 +373,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 relative_tb_path = f"tables/{tb_name}.html"
                 df_list.append([tb_str, relative_tb_path, table_id, len(tb_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
                 if base_llm_paras['summary_table']:
-                    deferred_llm_tasks.append(("table", len(df_list) - 1, tb_str))
+                    deferred_llm_tasks.append(("table", len(df_list) - 1, tb_str, tb_dir, tb_name, table_count - 1))
                 table_lines = [] # Reset table_lines after storing the DataFrame
                 table_count += 1
 
@@ -399,29 +400,27 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
     # ── Post-loop: execute all deferred LLM calls in parallel via gevent ──
     if deferred_llm_tasks:
         logger.info(f"Running {len(deferred_llm_tasks)} deferred summary LLM calls in parallel")
-        max_concurrent = getattr(settings, "SUMMARY_LLM_MAX_CONCURRENT", 10)
+        max_concurrent = getattr(settings, "SUMMARY_LLM_MAX_CONCURRENT", 8)
 
         def _run_deferred(task):
             task_type, idx = task[0], task[1]
             try:
                 if task_type == "image":
                     relative_path = task[2]
-                    from app.services.document_parser.image_parser import _get_vision_client
-                    from app.services.document_parser.txt_parser import split_title_summary
                     client = _get_vision_client()
                     llm_resp = ask_image(client, output_dir, paths_=[relative_path])
                     if llm_resp:
-                        img_title, img_summary = split_title_summary(llm_resp)
+                        _, img_summary = split_title_summary(llm_resp)
                     else:
-                        img_title, img_summary = None, None
-                    return idx, task_type, (img_title, img_summary)
+                        img_summary = None
+                    return idx, task_type, (img_summary,)
                 elif task_type == "table":
                     tb_html = task[2]
                     title, kw, summary = extract_title_keywords_summary(tb_html, max_keywords=3)
                     return idx, task_type, (title, kw, summary)
                 elif task_type == "text":
                     text_content = task[2]
-                    _t, kw, summary = extract_title_keywords_summary(text_content, max_keywords=3, summary_len=summary_len)
+                    _, kw, summary = extract_title_keywords_summary(text_content, max_keywords=3, summary_len=summary_len)
                     return idx, task_type, (kw, summary)
             except Exception as e:
                 logger.warning(f"Deferred {task_type} LLM call failed for idx={idx}: {e}")
@@ -431,6 +430,9 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
         greenlets = [pool.spawn(_run_deferred, task) for task in deferred_llm_tasks]
         gevent.joinall(greenlets)
 
+        # Build a lookup from deferred task list: idx -> original task tuple
+        deferred_by_idx = {task[1]: task for task in deferred_llm_tasks}
+
         for g in greenlets:
             if g.value is None:
                 continue
@@ -438,22 +440,32 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
             if result is None:
                 continue
             if task_type == "image":
-                img_title, img_summary = result
+                (img_summary,) = result
                 if img_summary:
                     entry = df_list[idx]
                     image_index = entry[0].split('\n')[1] if '\n' in entry[0] else "image"
-                    entry[5] = f"{image_index}\n{img_summary}"  # update summary col
+                    entry[5] = f"{image_index}\n{img_summary}"
             elif task_type == "table":
                 title, kw, summary = result
                 entry = df_list[idx]
-                entry[4] = kw if isinstance(kw, str) else ""  # keywords col
+                entry[4] = kw if isinstance(kw, str) else ""
                 if summary:
-                    table_index = entry[5] if not '\n' in entry[5] else entry[5].split('\n')[0]
-                    entry[5] = f"{table_index}\n{summary}"  # update summary col
+                    table_index = entry[5] if '\n' not in entry[5] else entry[5].split('\n')[0]
+                    entry[5] = f"{table_index}\n{summary}"
+                # Rename table file if LLM provided a better title
+                if title:
+                    orig_task = deferred_by_idx[idx]
+                    t_dir, old_tb_name, t_count = orig_task[3], orig_task[4], orig_task[5]
+                    new_tb_name = path_handle(f"table-{t_count} {title}", mode="clean_single")
+                    old_path = os.path.join(t_dir, f"{old_tb_name}.html")
+                    new_path = os.path.join(t_dir, f"{new_tb_name}.html")
+                    if old_path != new_path and os.path.exists(old_path):
+                        os.rename(old_path, new_path)
+                        entry[1] = f"tables/{new_tb_name}.html"
             elif task_type == "text":
                 kw, summary = result
-                df_list[idx][4] = kw if isinstance(kw, str) else ""  # keywords col
-                df_list[idx][5] = summary if isinstance(summary, str) else ""  # summary col
+                df_list[idx][4] = kw if isinstance(kw, str) else ""
+                df_list[idx][5] = summary if isinstance(summary, str) else ""
 
         logger.info(f"Completed {len(deferred_llm_tasks)} deferred summary LLM calls")
 

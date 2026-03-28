@@ -1048,7 +1048,7 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
-    max_concurrent = getattr(settings, "HEADING_LLM_MAX_CONCURRENT", 10)
+    max_concurrent = getattr(settings, "HEADING_LLM_MAX_CONCURRENT", 5)
     level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
     logger.info(f"smart parse => {len(level_dfs)} chunks to process via parallel LLM calls")
 
