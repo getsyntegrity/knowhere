@@ -34,11 +34,13 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # 只安装运行时依赖
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \
+    libreoffice-core \
+    libreoffice-impress \
     && rm -rf /var/lib/apt/lists/*
 
 # 从构建阶段复制虚拟环境

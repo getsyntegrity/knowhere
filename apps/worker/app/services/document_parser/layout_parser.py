@@ -1,6 +1,8 @@
 import os
 import re
 import unicodedata
+import gevent
+from gevent.pool import Pool as GeventPool
 import pandas as pd
 from collections import Counter, defaultdict
 from app.services.common.kb_utils import count_cn_en, truncate_text
@@ -1032,8 +1034,8 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
 
 
 def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None):
-    """LLM-based hiearchy detection
-    
+    """LLM-based hiearchy detection — all chunks processed by LLM in parallel via gevent.
+
     Args:
         raw_preds: raw data
         prompt_limt: prompt character limit
@@ -1046,43 +1048,47 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
-    full_preds = []
+    max_concurrent = getattr(settings, "HEADING_LLM_MAX_CONCURRENT", 5)
     level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
+    logger.info(f"smart parse => {len(level_dfs)} chunks to process via parallel LLM calls")
 
-    basic_df = level_dfs[0]
+    def process_chunk(idx, chunk_df):
+        """Send a single chunk to LLM. Returns (idx, result_df) or (idx, None) on failure."""
+        try:
+            df4llm = chunk_df.drop(columns=["reason"])
+            layout_res = hiearchy_llm(df4llm, model_name, max_depth, toc_hierarchies, task="eval-headings")
+            preds = pd.DataFrame(layout_res)
+            preds.insert(1, "heading", chunk_df["heading"].values)
+            preds["reason"] = chunk_df["reason"].values
+            logger.debug(f"chunk {idx}/{len(level_dfs)} completed: {len(preds)} rows")
+            return idx, preds
+        except Exception as e:
+            logger.warning(f"chunk {idx}/{len(level_dfs)} LLM call failed: {e}")
+            return idx, None
+
     try:
-        logger.debug("🚀 smart parse => interpreting hierarchy patterns...")
-        df4llm = basic_df.drop(columns=["reason"])
-        logger.debug(f"DataFrame transformation completed, rows: {len(df4llm)}")
-        
-        layout_res = hiearchy_llm(df4llm, model_name, max_depth, toc_hierarchies, task="eval-headings")
-        
-        base_preds = pd.DataFrame(layout_res)
-        base_preds.insert(1, "heading", basic_df["heading"].values)  # insert original headings back
-        base_preds["reason"] = basic_df["reason"].values
+        pool = GeventPool(size=min(max_concurrent, len(level_dfs)))
+        greenlets = [pool.spawn(process_chunk, i, df) for i, df in enumerate(level_dfs)]
+        gevent.joinall(greenlets)
 
-        base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
-        logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules")
+        results = [g.value for g in greenlets]
+        results.sort(key=lambda r: r[0])
 
-        # Save base_preds as preds_3
-        save_intermediate_csv(base_preds, output_dir, "preds_3_llm_base")
+        chunk_preds = []
+        for idx, preds in results:
+            if preds is not None:
+                chunk_preds.append(preds)
+            else:
+                logger.warning(f"chunk {idx} fell back to naive estimation")
+                chunk_preds.append(est_hierarchies_naive(level_dfs[idx]))
 
-        if len(level_dfs) > 1:
-            logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
-            lvl_mapping = handle_unseen_codes(raw_preds, level_dfs, lvl_mapping, output_dir)
-
-        for l, level_df in enumerate(level_dfs):
-            level_df = execute_level_mapping(level_df, lvl_mapping)
-            full_preds.append(level_df)
-
-        full_preds = pd.concat(full_preds, ignore_index=True)
+        full_preds = pd.concat(chunk_preds, ignore_index=True)
         full_preds['heading'] = raw_headings
-        
-        full_preds.drop("origin_level", axis=1, inplace=True)
+
         save_intermediate_csv(full_preds, output_dir, "preds_4_llm_final")
 
     except Exception as e:
-        logger.warning(f"LLM-based parsing fails due to {e}, using non-llm pipeline...")
+        logger.warning(f"parallel LLM parsing failed: {e}, falling back to non-llm pipeline...")
         full_preds = pd.concat(level_dfs, ignore_index=True)
         full_preds = est_hierarchies_naive(full_preds)
     return full_preds

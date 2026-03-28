@@ -30,7 +30,6 @@ class AIConfig(BaseModel):
     DX_KEy: str = Field(default="", description="DX密钥（兼容性字段）")
     ARK_API_KEY: str = Field(default="", description="ARK API密钥（兼容性字段）")
     ARK_URL: str = Field(default="", description="ARK URL（兼容性字段）")
-    ALI_API_KEY: str = Field(default="sk-test-key", description="阿里云API密钥（兼容性字段，单key回退）")
     ALI_API_KEYS: str = Field(
         default="",
         description="Ali API key pool. Supports JSON array or comma/newline-separated values; entries may use token_id=api_key format.",
@@ -57,6 +56,13 @@ class AIConfig(BaseModel):
         description="OpenAI SDK max_retries per token for transient 429s (exponential backoff + jitter).",
     )
     OPENAI_CLIENT_TIMEOUT: int = Field(default=300, description="OpenAI-compatible client timeout in seconds")
+    # Parallel LLM concurrency limits for gevent workers.
+    # Trade-off: higher values reduce wall-clock time but increase burst RPM against the LLM provider,
+    # risking 429 rate-limit errors — especially when multiple pods/jobs run in parallel.
+    # DeepSeek (headings) has no token-pool rotation, so keep conservative.
+    # Dashscope/Qwen (summaries) has AliQuotaManager with 429 retry + rotation, so can be higher.
+    HEADING_LLM_MAX_CONCURRENT: int = Field(default=5, description="Max concurrent gevent greenlets for parallel heading classification LLM calls (DeepSeek). Conservative due to no token-pool rotation.")
+    SUMMARY_LLM_MAX_CONCURRENT: int = Field(default=8, description="Max concurrent gevent greenlets for parallel post-heading summary LLM calls — image/table/text (Dashscope). Higher is safe due to AliQuotaManager token rotation.")
     IMAGE_MODEL_MAX: str = Field(default="", description="最大图像模型（兼容性字段）")
     REASON_MODEL: str = Field(default="", description="推理模型（兼容性字段）")
     IMG_HEADER: str = Field(default="", description="图像头部（兼容性字段）")
@@ -70,6 +76,13 @@ class AIConfig(BaseModel):
     ILOVEAPI_SECRET_KEY: str = Field(default="", description="iLoveAPI 密钥 (PPTX转PDF)")
     ILOVEAPI_BASE_URL: str = Field(default="https://api.ilovepdf.com/v1", description="iLoveAPI 基础URL")
     ILOVEAPI_TIMEOUT: int = Field(default=120, description="iLoveAPI 请求超时(秒)")
+    ILOVEAPI_KEYS: str = Field(
+        default="",
+        description="iLoveAPI project pool as a JSON array of objects with public_key and secret_key. Each entry is a separate iLoveAPI project with its own credit quota."
+    )
+    ILOVEAPI_TOKEN_RPM_LIMIT: int = Field(default=25, description="Per-project requests-per-minute burst limit for iLoveAPI. Safety net against 429 throttling.")
+    ILOVEAPI_TOKEN_DAILY_LIMIT: int = Field(default=250, description="Per-project daily file limit for iLoveAPI. Free tier: 2500 credits/month, officepdf costs 10 credits/file = ~250 files.")
+    ILOVEAPI_MAX_CONCURRENT: int = Field(default=5, description="Max concurrent in-flight iLoveAPI conversions across all workers. Fail-open to LibreOffice when exceeded.")
     PROD_URL: str = Field(default="", description="生产URL（兼容性字段）")
     ALL_DF_COLS: str = Field(default="content,path,type,length,keywords,summary,know_id,tokens,connectto,addtime,page_nums", description="所有数据框列（兼容性字段）")
     DEFAULT_FOLDERS: str = Field(default="Supplementary_Files,Temporary_Files,templates,images,fragments", description="默认文件夹（兼容性字段）")
