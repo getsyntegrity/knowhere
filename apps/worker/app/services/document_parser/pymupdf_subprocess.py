@@ -20,6 +20,7 @@ import multiprocessing
 import time
 
 from loguru import logger
+from shared.core.exceptions.domain_exceptions import PDFParsingException, TimeoutException
 
 # Default timeout for child processes (seconds)
 DEFAULT_TIMEOUT = 300
@@ -37,6 +38,10 @@ def worker(fn):
         try:
             fn(queue, *args)
         except Exception as e:
+            # Log in child before serializing — child stderr may be the only
+            # trace if the parent loses the queue result.
+            import traceback
+            traceback.print_exc()
             queue.put({
                 "ok": False,
                 "error_type": type(e).__name__,
@@ -84,22 +89,45 @@ def run_in_child_process(
     if proc.is_alive():
         proc.kill()
         proc.join(timeout=5)
-        raise TimeoutError(
-            f"pymupdf child timed out after {timeout}s: "
-            f"fn={worker_fn.__name__}, pid={child_pid}"
+        logger.error(
+            f"[pymupdf-subprocess] TIMEOUT pid={child_pid} fn={worker_fn.__name__} "
+            f"after {timeout}s — child killed"
+        )
+        raise TimeoutException(
+            internal_message=(
+                f"pymupdf child timed out after {timeout}s: "
+                f"fn={worker_fn.__name__}, pid={child_pid}"
+            ),
+            retry_after=30,
         )
 
     if queue.empty():
-        raise RuntimeError(
-            f"pymupdf child exited with code={proc.exitcode} and no result: "
-            f"fn={worker_fn.__name__}, pid={child_pid}"
+        logger.error(
+            f"[pymupdf-subprocess] CRASH pid={child_pid} fn={worker_fn.__name__} "
+            f"exitcode={proc.exitcode} elapsed={elapsed:.1f}s — no result on queue"
+        )
+        raise PDFParsingException(
+            user_message="Failed to process your document. Please try again.",
+            reason="SUBPROCESS_CRASH",
+            internal_message=(
+                f"pymupdf child exited with code={proc.exitcode} and no result: "
+                f"fn={worker_fn.__name__}, pid={child_pid}"
+            ),
         )
 
     result = queue.get_nowait()
     if not result.get("ok"):
-        raise RuntimeError(
-            f"pymupdf child failed: {result.get('error_type')}: "
-            f"{result.get('error_msg')}"
+        logger.error(
+            f"[pymupdf-subprocess] FAILED pid={child_pid} fn={worker_fn.__name__} "
+            f"elapsed={elapsed:.1f}s — {result.get('error_type')}: {result.get('error_msg')}"
+        )
+        raise PDFParsingException(
+            user_message="Failed to process your document. Please try again.",
+            reason="SUBPROCESS_FAILED",
+            internal_message=(
+                f"pymupdf child failed: {result.get('error_type')}: "
+                f"{result.get('error_msg')}"
+            ),
         )
 
     logger.info(

@@ -6,8 +6,9 @@ import types
 
 import pytest
 
-# Provide a fake gevent module so pymupdf_subprocess can be imported
-# and its lazy `import gevent` resolves to our mock.
+# ─── Mock external dependencies not available in test env ─────────
+
+# Fake gevent module
 _fake_gevent = types.ModuleType("gevent")
 
 
@@ -27,6 +28,35 @@ def _get_hub():
 
 _fake_gevent.get_hub = _get_hub
 sys.modules.setdefault("gevent", _fake_gevent)
+
+
+# Fake shared.core.exceptions hierarchy for domain exception imports
+class _FakePDFParsingException(Exception):
+    def __init__(self, user_message="", reason="", internal_message="", **kwargs):
+        super().__init__(internal_message or user_message)
+        self.user_message = user_message
+        self.reason = reason
+        self.internal_message = internal_message
+
+
+class _FakeTimeoutException(Exception):
+    def __init__(self, internal_message="", retry_after=0, **kwargs):
+        super().__init__(internal_message)
+        self.internal_message = internal_message
+        self.retry_after = retry_after
+
+
+_fake_domain = types.ModuleType("shared.core.exceptions.domain_exceptions")
+_fake_domain.PDFParsingException = _FakePDFParsingException
+_fake_domain.TimeoutException = _FakeTimeoutException
+
+# Register the full module path hierarchy
+for mod_name in [
+    "shared", "shared.core", "shared.core.exceptions",
+    "shared.core.exceptions.domain_exceptions",
+]:
+    sys.modules.setdefault(mod_name, types.ModuleType(mod_name))
+sys.modules["shared.core.exceptions.domain_exceptions"] = _fake_domain
 
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 
@@ -86,17 +116,21 @@ class TestRunInChildProcess:
         assert result["ok"] is True
         assert result["result"] == 7
 
-    def test_worker_failure_becomes_runtime_error(self):
-        with pytest.raises(RuntimeError, match="something went wrong"):
+    def test_worker_failure_raises_pdf_parsing_exception(self):
+        with pytest.raises(_FakePDFParsingException) as exc_info:
             run_in_child_process(_failing_worker)
+        assert "something went wrong" in exc_info.value.internal_message
+        assert exc_info.value.reason == "SUBPROCESS_FAILED"
 
-    def test_worker_crash_becomes_runtime_error(self):
-        with pytest.raises(RuntimeError, match="no result"):
+    def test_worker_crash_raises_pdf_parsing_exception(self):
+        with pytest.raises(_FakePDFParsingException) as exc_info:
             run_in_child_process(_crash_worker, timeout=5)
+        assert exc_info.value.reason == "SUBPROCESS_CRASH"
 
-    def test_worker_timeout(self):
-        with pytest.raises(TimeoutError, match="timed out"):
+    def test_worker_timeout_raises_timeout_exception(self):
+        with pytest.raises(_FakeTimeoutException) as exc_info:
             run_in_child_process(_slow_worker, timeout=1)
+        assert exc_info.value.retry_after == 30
 
     def test_file_io_from_child(self, tmp_path):
         output_path = str(tmp_path / "output.txt")
@@ -113,5 +147,6 @@ class TestRunInChildProcess:
         assert result["result"] == 12
 
     def test_worker_decorator_catches_exception(self):
-        with pytest.raises(RuntimeError, match="decorated failure"):
+        with pytest.raises(_FakePDFParsingException) as exc_info:
             run_in_child_process(_decorated_raising_worker)
+        assert "decorated failure" in exc_info.value.internal_message

@@ -296,7 +296,14 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
 def _profile_pdf(file_path: str) -> DocProfile:
     """Profile a PDF by running PyMuPDF analysis in a spawned child process."""
     result = run_in_child_process(_profile_pdf_worker, file_path, timeout=60)
-    return DocProfile(**result["profile"])
+    profile = DocProfile(**result["profile"])
+    logger.info(
+        f"[doc-profiler] route={profile.route} category={profile.doc_category} "
+        f"scan={profile.scan_type} pages={profile.page_count} "
+        f"text_density={profile.avg_text_density:.0f} "
+        f"img_coverage={profile.avg_image_coverage:.1%}"
+    )
+    return profile
 
 
 # ─── General Entry Point ────────────────────────────────
