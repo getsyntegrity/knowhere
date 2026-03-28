@@ -18,6 +18,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import LLMServiceException
 from shared.utils.http_clients import get_sync_client
+from shared.utils.security_utils import mask_api_key
 
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
 
@@ -190,6 +191,25 @@ class OpenAICompatibleClientSync:
                         provider=self.default_model,
                         original_exception=exc,
                     ) from exc
+            except LLMServiceException:
+                raise
+            except Exception as exc:
+                masked_api_key = mask_api_key(lease.api_key)
+                logger.error(
+                    "LLM request failed (Ali pool): model={model}, token_id={token_id}, api_key={api_key}, error={error}",
+                    model=model,
+                    token_id=lease.token_id,
+                    api_key=masked_api_key,
+                    error=exc,
+                )
+                raise LLMServiceException(
+                    internal_message=(
+                        "API request failed "
+                        f"(Ali pool, token_id={lease.token_id}, api_key={masked_api_key}): {exc}"
+                    ),
+                    provider=self.default_model,
+                    original_exception=exc,
+                ) from exc
         # unreachable but satisfies the type checker
         raise LLMServiceException(
             internal_message="Ali token pool retry loop exited unexpectedly",

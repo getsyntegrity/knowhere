@@ -18,8 +18,11 @@ os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 import shared.utils.OpenAICompatibleClientSync as openai_client_sync_module
+import shared.utils.ali_quota_manager as ali_quota_manager_module
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import LLMServiceException
 from shared.utils.OpenAICompatibleClientSync import OpenAICompatibleClientSync
+from shared.utils.security_utils import mask_api_key
 
 
 def test_openai_compatible_client_uses_config_timeout_by_default(monkeypatch):
@@ -89,3 +92,66 @@ def test_openai_compatible_client_builds_direct_qwen_client_for_explicit_key(mon
     assert sync_client._client is not None
     assert captured_api_key == "sk-explicit"
     assert captured_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+def test_ali_pool_errors_include_masked_api_key_in_internal_message(monkeypatch):
+    class FakeAliQuotaManager:
+        def acquire_request(self, operation: str) -> SimpleNamespace:
+            assert operation == "chat_completion"
+            return SimpleNamespace(
+                token_id="ali-2",
+                api_key="dummy-openai-key-for-tests",
+                rpm_limit=300,
+                daily_limit=10000,
+            )
+
+        def mark_rate_limited(self, token_id: str, retry_after: int | None = None) -> None:
+            raise AssertionError("Non-rate-limit errors should not trigger cooldown")
+
+    class FakeCompletions:
+        def create(self, **kwargs: Any) -> None:
+            raise RuntimeError("Error code: 400 - arrearage")
+
+    class FakeOpenAIClient:
+        def __init__(self, base_url: str) -> None:
+            self.base_url = base_url
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(
+        ali_quota_manager_module,
+        "get_ali_quota_manager",
+        lambda: FakeAliQuotaManager(),
+    )
+
+    def fake_build_client(
+        self: OpenAICompatibleClientSync,
+        api_key: str | None,
+        base_url: str | None,
+        max_retries: int,
+    ) -> FakeOpenAIClient:
+        assert api_key == "dummy-openai-key-for-tests"
+        assert max_retries == settings.ALI_SDK_MAX_RETRIES
+        return FakeOpenAIClient(base_url or "")
+
+    monkeypatch.setattr(
+        OpenAICompatibleClientSync,
+        "_build_client",
+        fake_build_client,
+    )
+    monkeypatch.setattr(
+        settings,
+        "ALI_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        raising=False,
+    )
+
+    sync_client = OpenAICompatibleClientSync(default_model="qwen-vl-plus")
+
+    with pytest.raises(LLMServiceException) as exc_info:
+        sync_client.chat_completion("hello")
+
+    internal_message = exc_info.value.internal_message
+    expected_masked_api_key = mask_api_key("dummy-openai-key-for-tests")
+    assert "token_id=ali-2" in internal_message
+    assert f"api_key={expected_masked_api_key}" in internal_message
+    assert "dummy-openai-key-for-tests" not in internal_message

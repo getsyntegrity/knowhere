@@ -2,6 +2,7 @@ import io
 import os
 import re
 import subprocess
+import tempfile
 import time
 import requests
 import jwt
@@ -12,6 +13,7 @@ from shared.core.logging import LogEvent
 from app.services.common.kb_utils import find_images
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
+from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 from shared.utils.CommonHelperSync import load_file_bytes
 from shared.utils.file_utils import path_handle
 from markitdown import MarkItDown
@@ -257,37 +259,58 @@ class _ILoveApiConcurrencyExceeded(Exception):
 
 # ==================== image-only PDF rendering ====================
 
-def _render_pdf_to_image_pdf(pdf_bytes: bytes, scale: int = 3) -> bytes:
-    """
-    Render each page of a PDF as a high-res image and create an image-only PDF.
-    All processing in memory, no disk I/O.
-
-    Why? iLoveAPI/LibreOffice renders math formulas as vector paths in PDF.
-    MinerU cannot extract these as text (produces '????'). By converting to
-    images, MinerU is forced to use its VLM model which correctly OCRs
-    formulas into LaTeX.
-    """
+@worker
+def _render_pdf_worker(queue, src_pdf_path, dst_pdf_path, scale):
+    """Child process: render PDF pages as images into a new image-only PDF."""
     import pymupdf
-
-    src_doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    src_doc = pymupdf.open(src_pdf_path)
     img_doc = pymupdf.open()
     mat = pymupdf.Matrix(scale, scale)
 
     for page in src_doc:
         pix = page.get_pixmap(matrix=mat)
         img_bytes = pix.tobytes("jpeg", jpg_quality=95)
-        rect = page.rect
-        new_page = img_doc.new_page(width=rect.width, height=rect.height)
-        new_page.insert_image(rect, stream=img_bytes)
+        new_page = img_doc.new_page(width=page.rect.width, height=page.rect.height)
+        new_page.insert_image(page.rect, stream=img_bytes)
 
-    result = img_doc.tobytes()
+    img_doc.save(dst_pdf_path)
     page_count = len(src_doc)
-
     img_doc.close()
     src_doc.close()
+    queue.put({"ok": True, "page_count": page_count})
 
-    logger.info(f"[parse_pptx] Image-only PDF rendered: {len(result)/1024:.1f} KB, {page_count} pages")
-    return result
+
+def _render_pdf_to_image_pdf(pdf_bytes: bytes, scale: int = 3) -> bytes:
+    """
+    Render each page of a PDF as a high-res image and create an image-only PDF.
+
+    Why? iLoveAPI/LibreOffice renders math formulas as vector paths in PDF.
+    MinerU cannot extract these as text (produces '????'). By converting to
+    images, MinerU is forced to use its VLM model which correctly OCRs
+    formulas into LaTeX.
+
+    PyMuPDF work runs in a spawned child process for thread safety.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as src:
+        src.write(pdf_bytes)
+        src_path = src.name
+    dst_path = src_path + ".rendered.pdf"
+
+    try:
+        result = run_in_child_process(
+            _render_pdf_worker, src_path, dst_path, scale,
+        )
+        with open(dst_path, "rb") as f:
+            rendered = f.read()
+        logger.info(
+            f"[parse_pptx] Image-only PDF rendered: "
+            f"{len(rendered)/1024:.1f} KB, {result['page_count']} pages"
+        )
+        return rendered
+    finally:
+        os.unlink(src_path)
+        if os.path.exists(dst_path):
+            os.unlink(dst_path)
 
 
 # ==================== main parsing entrance ====================
