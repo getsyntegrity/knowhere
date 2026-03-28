@@ -1,5 +1,7 @@
 import re
 import uuid
+import gevent
+from gevent.pool import Pool as GeventPool
 import pandas as pd
 from shared.core.config import settings
 from shared.utils.OpenAICompatibleClientSync import get_openai_client
@@ -250,21 +252,51 @@ def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key
                 sub_head = head + split_char + head.split(split_char)[-1] + " part " + str(k+1)
                 df_with_divides.loc[len(df_with_divides)] = {'path':sub_head.split(split_char), 'content_lst':sublists[k], 'path_identifier':sub_head}
 
-    # generate summary and keywords for bottom nodes
+    # generate summary and keywords for bottom nodes — parallel via gevent
     df_with_labels = pd.DataFrame(columns=['path', 'content_lst', 'path_identifier', 'keywords', 'local_summary'])
     pattern = re.compile(r'(TABLE_.*?_TABLE|IMAGE_.*?_IMAGE)')
+
+    # Collect rows and identify which need LLM
+    rows_data = []
+    llm_tasks = []  # (row_index, contents4summary)
     for i, row in df_with_divides.iterrows():
         contents4summary = re.sub(pattern, '', '\n'.join(row['content_lst']))
-        keywords = ""
-        summary = ""
+        needs_llm = (len(contents4summary) > summary_len and llm_paras["summary_txt"] and (not llm_paras['doc_type'] in "templates"))
+        rows_data.append((row, contents4summary, needs_llm))
+        if needs_llm:
+            llm_tasks.append((len(rows_data) - 1, contents4summary))
 
-        if len(contents4summary)>summary_len and llm_paras["summary_txt"] and (not llm_paras['doc_type'] in "templates"):
-            _title, keywords, summary = extract_title_keywords_summary(contents4summary, max_keywords=3, summary_len=summary_len)
+    # Run all LLM calls in parallel
+    llm_results = {}
+    if llm_tasks:
+        max_concurrent = getattr(settings, "SUMMARY_LLM_MAX_CONCURRENT", 10)
 
-        df_with_labels.loc[len(df_with_labels)] = {'path': row['path'],
-                                                   'content_lst': row['content_lst'],
-                                                   'path_identifier': row['path_identifier'],
-                                                   'keywords': keywords,
-                                                   'local_summary': summary
-                                                   }
+        def _summarize(task):
+            row_idx, text = task
+            try:
+                _title, kw, summary = extract_title_keywords_summary(text, max_keywords=3, summary_len=summary_len)
+                return row_idx, kw, summary
+            except Exception as e:
+                logger.warning(f"postprocess_leaf_dics LLM failed for row {row_idx}: {e}")
+                return row_idx, "", ""
+
+        pool = GeventPool(size=min(max_concurrent, len(llm_tasks)))
+        greenlets = [pool.spawn(_summarize, task) for task in llm_tasks]
+        gevent.joinall(greenlets)
+
+        for g in greenlets:
+            if g.value is not None:
+                row_idx, kw, summary = g.value
+                llm_results[row_idx] = (kw, summary)
+
+    # Build the labeled DataFrame
+    for row_idx, (row, contents4summary, needs_llm) in enumerate(rows_data):
+        keywords, summary = llm_results.get(row_idx, ("", ""))
+        df_with_labels.loc[len(df_with_labels)] = {
+            'path': row['path'],
+            'content_lst': row['content_lst'],
+            'path_identifier': row['path_identifier'],
+            'keywords': keywords,
+            'local_summary': summary,
+        }
     return df_with_labels
