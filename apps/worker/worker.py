@@ -36,6 +36,25 @@ def init_worker(**kwargs):
     setup_logging(service_name="knowhere-worker")
     start_worker_heartbeat()
 
+    # Patch gevent TaskPool to handle terminate_job gracefully.
+    # Celery calls pool.terminate_job() when the AMQP connection drops
+    # to cancel in-flight tasks, but gevent's pool raises NotImplementedError.
+    # Since we use RedisJobLock to prevent duplicate execution on redelivery,
+    # we can safely make this a no-op warning instead of a crash.
+    try:
+        from celery.concurrency.gevent import TaskPool as GeventTaskPool
+        if not hasattr(GeventTaskPool, '_original_terminate_job'):
+            def _graceful_terminate_job(self, pid, signal=None):
+                logger.warning(
+                    f"gevent pool cannot kill greenlet (pid={pid}), "
+                    f"relying on RedisJobLock for dedup on redelivery"
+                )
+            GeventTaskPool._original_terminate_job = getattr(GeventTaskPool, 'terminate_job', None)
+            GeventTaskPool.terminate_job = _graceful_terminate_job
+            logger.info("Patched gevent TaskPool.terminate_job for graceful AMQP recovery")
+    except Exception as e:
+        logger.warning(f"Could not patch gevent TaskPool: {e}")
+
     # Verify Redis connectivity (lazy init on first use if this fails)
     try:
         from shared.services.redis.redis_sync_service import SyncRedisServiceFactory

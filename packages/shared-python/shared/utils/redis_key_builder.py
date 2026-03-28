@@ -205,6 +205,12 @@ class RedisKeyBuilder:
         """审计日志列表键"""
         return self.build_key(RedisKeyType.LIST, "audit_logs")
     
+    # ==================== 锁相关键 ====================
+
+    def lock_job_processing(self, job_id: str) -> str:
+        """Distributed lock key for exclusive job processing."""
+        return f"lock:job_processing:{job_id}"
+
     # ==================== 工具方法 ====================
     
     def parse_key(self, key: str) -> Dict[str, Any]:
