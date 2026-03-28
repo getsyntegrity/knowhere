@@ -30,6 +30,17 @@ else
 end
 """
 
+# Lua script: atomically check owner token then renew TTL.
+# Prevents extending a lock that expired and was re-acquired
+# by another worker between GET and EXPIRE.
+_RENEW_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("expire", KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
+
 
 class RedisJobLock:
     """Context manager for exclusive job processing via Redis.
@@ -146,19 +157,17 @@ class RedisJobLock:
 
     def _renewal_loop(self) -> None:
         """Periodically reset the lock TTL while we still own it."""
-        client = self._redis._get_client()
-        full_key = self._redis._build_key(self._lock_key)
-
         while not self._stop_event.is_set():
             self._stop_event.wait(timeout=self._renewal_interval)
             if self._stop_event.is_set():
                 break
             try:
-                current = client.get(full_key)
-                current_str = current.decode("utf-8") if isinstance(current, bytes) else current
-                if current_str == self._token:
-                    client.expire(full_key, self._ttl)
-                else:
+                result = self._redis.eval(
+                    _RENEW_SCRIPT,
+                    keys=[self._lock_key],
+                    args=[self._token, self._ttl],
+                )
+                if result != 1:
                     logger.warning(f"Lock lost during renewal: {self._lock_key}")
                     self._acquired = False
                     break
