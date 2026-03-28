@@ -18,12 +18,12 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
-import pymupdf
 from loguru import logger
 from shared.core.config import settings
 from app.services.common.kb_utils import (
     find_matches_parsing, gen_str_codes, get_str_time, process_dup_paths_df
 )
+from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
 from shared.utils.text_utils import tokenize2stw_remove
 
@@ -56,13 +56,6 @@ def _compress_for_vlm(img_path: str, max_side: int = IMG_MAX_SIDE) -> str:
     compressed_path = img_path.replace(".png", "_vlm.jpg")
     img.save(compressed_path, "JPEG", quality=85)
     return compressed_path
-
-
-# ─── Helper: extract text from a PyMuPDF page ────────────────────────
-
-def _get_page_text_pymupdf(page: pymupdf.Page) -> str:
-    """Extract all text from a single PyMuPDF page."""
-    return page.get_text("text").strip()
 
 
 # ─── Helper: derive chunk title from page text ───────────────────────
@@ -128,19 +121,58 @@ def _vlm_extract_page_info(output_dir: str, img_name: str) -> str:
         return ""
 
 
-# ─── Helper: detect TOC pages via text heuristics ─────────────────────
+# ─── Child-process workers (top-level for pickling) ─────────────────
 
-def _detect_toc_pages_from_text(doc: pymupdf.Document, model_name: str = "deepseek-chat") -> tuple:
-    """
-    Detect TOC pages by extracting text from all pages, assembling into
-    md_lines with page markers, then running detect_tocs_in_texts().
-    
-    Returns: (toc_page_set, toc_hierarchies)
-    """
-    md_lines = []
-    for page_idx in range(len(doc)):
+@worker
+def _atlas_extract_texts_worker(queue, pdf_path):
+    """Child: extract text from all pages for TOC detection + total page count."""
+    import pymupdf
+    doc = pymupdf.open(pdf_path)
+    total_pages = len(doc)
+    page_texts = []
+    for page_idx in range(total_pages):
         page = doc[page_idx]
         text = page.get_text("text").strip()
+        page_texts.append(text)
+    doc.close()
+    queue.put({"ok": True, "total_pages": total_pages, "page_texts": page_texts})
+
+
+@worker
+def _atlas_render_pages_worker(queue, pdf_path, img_dir, skip_pages_list, dpi, page_texts_list):
+    """Child: render non-skipped pages to images, reuse pre-extracted text."""
+    import pymupdf
+    skip_pages = set(skip_pages_list)
+    doc = pymupdf.open(pdf_path)
+    page_data = []
+
+    for page_idx in range(len(doc)):
+        page_num = page_idx + 1
+        if page_num in skip_pages:
+            continue
+        page = doc[page_idx]
+        page_text = page_texts_list[page_idx]
+        pix = page.get_pixmap(dpi=dpi)
+        img_name = f"page-{page_num}.png"
+        pix.save(os.path.join(img_dir, img_name))
+        page_data.append((page_num, page_text, img_name))
+
+    doc.close()
+    queue.put({"ok": True, "page_data": page_data})
+
+
+def _detect_toc_pages_from_texts(page_texts: list[str], model_name: str) -> tuple:
+    """Detect TOC pages from pre-extracted page texts (no PyMuPDF needed).
+
+    Args:
+        page_texts: list of text strings, one per page (0-indexed).
+        model_name: LLM model for TOC detection.
+
+    Returns:
+        (toc_page_set, toc_hierarchies)
+    """
+    md_lines = []
+    for page_idx, text in enumerate(page_texts):
         if text:
             md_lines.append(f"<!-- page {page_idx + 1} -->")
             for line in text.split("\n"):
@@ -156,7 +188,6 @@ def _detect_toc_pages_from_text(doc: pymupdf.Document, model_name: str = "deepse
     if not toc_hierarchies:
         return set(), None
 
-    # Map TOC line ranges back to page numbers
     page_marker_re = re.compile(r'<!--\s*page\s+(\d+)\s*-->', re.IGNORECASE)
     line_to_page = {}
     current_page = 0
@@ -209,24 +240,24 @@ def parse_atlas(
     img_dir = os.path.join(output_dir, "images")
     os.makedirs(img_dir, exist_ok=True)
 
-    # ── Open PDF ──
-    doc = pymupdf.open(pdf_path)
-    total_pages = len(doc)
+    # ── Phase 0: Extract all page texts in child process (fast, subsecond) ──
+    text_result = run_in_child_process(
+        _atlas_extract_texts_worker, pdf_path, timeout=120,
+    )
+    total_pages = text_result["total_pages"]
+    page_texts = text_result["page_texts"]
     logger.info(f"📐 Atlas: {total_pages} pages in PDF")
 
     # ── Determine if VLM is needed ──
-    # For atlas, always use VLM to extract page info from rendered images.
-    # TODO: optimize non-scanned atlas — could skip VLM and use PyMuPDF text
-    #       extraction directly for pages with sufficient text density.
     use_vlm = True
     is_scanned = profile and profile.scan_type == "scanned"
     scan_label = "scanned" if is_scanned else "non-scanned"
     logger.info(f"📐 Atlas: {scan_label} document, VLM enabled for info extraction")
 
-    # ── TOC detection ──
+    # ── TOC detection (runs in parent — uses LLM, no PyMuPDF) ──
     model_name = base_llm_paras.get("model_name", "deepseek-chat")
-    toc_page_set, toc_hierarchies = _detect_toc_pages_from_text(doc, model_name)
-    
+    toc_page_set, toc_hierarchies = _detect_toc_pages_from_texts(page_texts, model_name)
+
     if toc_page_set:
         logger.info(f"📐 Atlas: TOC pages detected: {sorted(toc_page_set)}")
 
@@ -240,28 +271,13 @@ def parse_atlas(
     time_stamp = get_str_time()
     split_char = settings.SPLIT_CHAR or "/"
 
-    # ── Phase 1: Render all non-TOC pages ──
-    page_data = []  # list of (page_num, page_text, img_name)
-    
-    for page_idx in range(total_pages):
-        page_num = page_idx + 1
-
-        if page_num in toc_page_set:
-            logger.debug(f"📐 Skipping TOC page {page_num}")
-            continue
-
-        page = doc[page_idx]
-        page_text = _get_page_text_pymupdf(page)
-
-        # Render full page as single image
-        pix = page.get_pixmap(dpi=IMG_RENDER_DPI)
-        img_name = f"page-{page_num}.png"
-        img_save_path = os.path.join(img_dir, img_name)
-        pix.save(img_save_path)
-
-        page_data.append((page_num, page_text, img_name))
-
-    doc.close()
+    # ── Phase 1: Render non-TOC pages in child process (heavy, 73s for 475 pages) ──
+    render_result = run_in_child_process(
+        _atlas_render_pages_worker,
+        pdf_path, img_dir, list(toc_page_set), IMG_RENDER_DPI, page_texts,
+        timeout=600,
+    )
+    page_data = render_result["page_data"]
     logger.info(f"📐 Atlas: rendered {len(page_data)} pages as images")
 
     # ── Phase 2: VLM extraction (concurrent if needed) ──

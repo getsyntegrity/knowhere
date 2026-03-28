@@ -1,13 +1,12 @@
-import importlib
 import json
 import os
 import re
-from typing import Any, cast
 
 from loguru import logger
 
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.mineru_pdf_service import parse_via_full
+from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 
 
 def _inject_page_markers(output_dir: str) -> None:
@@ -109,48 +108,43 @@ def _inject_page_markers(output_dir: str) -> None:
 
 def _inject_page_markers_pymupdf(pdf_path: str, output_dir: str) -> None:
     """Inject <!-- page N --> markers into full.md for pymupdf4llm fast path.
-    
-    pymupdf4llm inserts form-feed characters or page-break markers.
-    We re-read the PDF to count pages and insert markers based on content matching.
-    Falls back to _inject_page_markers if layout.json exists.
+
+    Must run inside the same process that holds the PyMuPDF import.
     """
     import pymupdf
-    
+
     md_path = os.path.join(output_dir, "full.md")
     if not os.path.exists(md_path):
         return
-    
+
     try:
         doc = pymupdf.open(pdf_path)
-    except Exception as e:
-        logger.warning(f"Failed to open PDF for page marker injection: {e}")
+    except Exception:
         return
-    
+
     with open(md_path, "r", encoding="utf-8") as f:
         md_lines = f.readlines()
-    
-    # PyMuPDF: get first text block of each page as anchor
+
     anchors = []
     for page_idx in range(len(doc)):
         page = doc[page_idx]
         page_num = page_idx + 1
-        blocks = page.get_text("blocks")  # list of (x0, y0, x1, y1, text, block_no, block_type)
+        blocks = page.get_text("blocks")
         for block in blocks:
-            if block[6] == 0:  # text block
+            if block[6] == 0:
                 text = block[4].strip().split("\n")[0].strip()
                 if text and len(text) >= 3:
                     anchors.append((text, page_num))
                     break
-    
+
     doc.close()
-    
+
     if not anchors:
         return
-    
-    # Match and insert (same logic as _inject_page_markers)
+
     insertions = []
     used_lines = set()
-    
+
     for anchor_text, page_num in anchors:
         anchor_norm = re.sub(r'\s+', ' ', anchor_text).strip()
         search_key = anchor_norm[:50]
@@ -163,18 +157,44 @@ def _inject_page_markers_pymupdf(pdf_path: str, output_dir: str) -> None:
                 insertions.append((i, page_num))
                 used_lines.add(i)
                 break
-    
+
     if not insertions:
         return
-    
+
     insertions.sort(key=lambda x: x[0], reverse=True)
     for line_idx, page_num in insertions:
         md_lines.insert(line_idx, f"<!-- page {page_num} -->\n")
-    
+
     with open(md_path, "w", encoding="utf-8") as f:
         f.writelines(md_lines)
-    
-    logger.info(f"Injected {len(insertions)} page markers into full.md (pymupdf fast path)")
+
+
+# ─── Child-process workers (top-level for pickling) ─────────────────
+
+@worker
+def _fast_path_worker(queue, pdf_path, output_dir, image_dir):
+    """Child process: pymupdf4llm extraction + page marker injection."""
+    import pymupdf4llm
+
+    md_text = pymupdf4llm.to_markdown(
+        pdf_path,
+        write_images=True,
+        image_path=image_dir,
+        image_format="png",
+    )
+
+    full_md_path = os.path.join(output_dir, "full.md")
+    with open(full_md_path, "w", encoding="utf-8") as f:
+        f.write(md_text)
+
+    _inject_page_markers_pymupdf(pdf_path, output_dir)
+
+    img_count = len([n for n in os.listdir(image_dir) if n.endswith(".png")])
+    queue.put({
+        "ok": True,
+        "md_chars": len(md_text),
+        "image_count": img_count,
+    })
 
 
 def upload_and_parse(pdf_url: str, filename: str, output_dir: str, s3_key: str | None = None) -> None:
@@ -194,30 +214,18 @@ def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, rel
 
     if route == "fast":
         logger.info(f"⚡ Fast path: extracting with pymupdf4llm for {filename}")
-        pymupdf4llm = cast(Any, importlib.import_module("pymupdf4llm"))
 
         os.makedirs(output_dir, exist_ok=True)
         image_dir = os.path.join(output_dir, "images")
         os.makedirs(image_dir, exist_ok=True)
 
-        md_text = pymupdf4llm.to_markdown(
-            pdf_path,
-            write_images=True,
-            image_path=image_dir,
-            image_format="png",
+        result = run_in_child_process(
+            _fast_path_worker, pdf_path, output_dir, image_dir,
         )
-
-        full_md_path = os.path.join(output_dir, "full.md")
-        with open(full_md_path, "w", encoding="utf-8") as file_obj:
-            file_obj.write(md_text)
-
-        img_count = len([name for name in os.listdir(image_dir) if name.endswith(".png")])
         logger.info(
-            f"⚡ Fast path: wrote {len(md_text)} chars to full.md, {img_count} images extracted"
+            f"⚡ Fast path done: {result['md_chars']} chars, "
+            f"{result['image_count']} images"
         )
-        
-        # Inject page markers from PyMuPDF page info
-        _inject_page_markers_pymupdf(pdf_path, output_dir)
     else:
         upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
         
