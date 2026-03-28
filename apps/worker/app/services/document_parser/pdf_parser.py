@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.mineru_pdf_service import parse_via_full
+from shared.core.exceptions.domain_exceptions import PDFParsingException
 
 
 def _inject_page_markers(output_dir: str) -> None:
@@ -200,12 +201,22 @@ def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, rel
         image_dir = os.path.join(output_dir, "images")
         os.makedirs(image_dir, exist_ok=True)
 
-        md_text = pymupdf4llm.to_markdown(
-            pdf_path,
-            write_images=True,
-            image_path=image_dir,
-            image_format="png",
-        )
+        try:
+            md_text = pymupdf4llm.to_markdown(
+                pdf_path,
+                write_images=True,
+                image_path=image_dir,
+                image_format="png",
+            )
+        except Exception as e:
+            # PyMuPDF can throw unpickleable C-level exceptions (e.g. FzErrorSystem)
+            # for corrupted/malformed PDFs. Convert to a proper PDFParsingException.
+            logger.warning(f"⚡ Fast path failed for {filename}: {type(e).__name__}: {e}")
+            raise PDFParsingException(
+                user_message="Failed to parse the PDF file. The file may be corrupted or malformed.",
+                reason="PYMUPDF_ERROR",
+                internal_message=f"pymupdf4llm fast path failed: {type(e).__name__}: {e}",
+            ) from None
 
         full_md_path = os.path.join(output_dir, "full.md")
         with open(full_md_path, "w", encoding="utf-8") as file_obj:

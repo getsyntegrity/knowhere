@@ -1,5 +1,6 @@
 # Knowhere API — Project Tracker
 
+> **Last session**: 2026-03-27 — 实现 KG Bottom-Up File Summary 递归摘要构建 + prompt 防护与图谱集成
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -17,6 +18,7 @@
 | 2026-03-17 | ~4h | ~15K | ~120K | 分词管线简化 + Schema 统一 + TOC field 检测修复 + 停用词集成 (百度词表 frozenset) + ConnectTo 优化 (长度加权评分 + SequenceMatcher 字符去重 + 单字符 token 过滤) |
 | 2026-03-18 | ~1h 40m | ~8K | ~60K | 单字符关键词过滤 (safe_split_kws) + env.example 同步 + KG edge 补 source_id/target_id + knowhere_memory SKILL.md 重写 (3层结构引导+零审批) + FinMemory Insight 分析 + KG Summary/Insight 规划 |
 | 2026-03-19 | ~57m | ~5K | ~40K | LLM 文本输出 eval_response 旁路 + prompt 防护强化 (null/anti-preamble) + atlas .atlas 扩展名 |
+| 2026-03-27 | ~2h | ~8K | ~60K | 实现 KG Bottom-Up File Summary 递归摘要构建 + prompt 防护与图谱集成 |
 
 ---
 
@@ -147,12 +149,6 @@ _(无)_
 
 #### High Priority
 
-- [ ] **KG Bottom-Up File Summary (Phase 1)** — 从 chunk `metadata.summary` 向上聚合为 `files[x].top_summary`
-  - 底层数据源: `extract_summary_keywords()` 已为每个 chunk 生成 summary（文本/表格/Excel 4 条路径）
-  - Prompt 设计借鉴 FinMemory Insight 的"识别"模式: 不只压缩，还提取 `key_findings`（关键结论/数据/判断）
-  - 输出: `{summary: "一句话主题", key_findings: ["发现1", "发现2"]}`
-  - 成本: 每文件 1 次 LLM 调用，build_knowledge_graph 时执行
-
 - [ ] **KG Cross-Doc Edge Insight (Phase 2)** — 对高分 edges 生成跨文件洞察，存入 `edge.insight`
   - 输入: 两端文件的 `top_summary` + `top_connections` chunk 名
   - 输出: `edge.insight` + `edge.relation_type` (supplements/extends/contradicts/same_topic) + `edge.insight_confidence`
@@ -194,6 +190,11 @@ _(无)_
 
 ### ✅ Done
 
+- [x] ~~**KG Bottom-Up File Summary (Phase 1)**~~ — 从 chunk `metadata.summary` 向上聚合为 `files[x].top_summary` (completed: 2026-03-27)
+  - 底层数据源: `extract_summary_keywords()` 已为每个 chunk 生成 summary（文本/表格/Excel 4 条路径）
+  - 叶子片段优化规则: 图片/表格跳过聚合，纯文本依据长度灵活选用 LLM 分析
+  - 模型压缩策略: `file-summary` 限制 100 字符，中间短文本回退“该部分包含以下内容”枚举
+  - 数据注入: 聚合信息沉淀至 hierarchy.json，KG top_summary 自上而下提取
 - [x] ~~PPTX 公式渲染~~ — iLoveAPI + image-only PDF 管线，解决 MinerU 公式识别为 `????` 的问题 (completed: 2026-02-25)
 - [x] ~~DOCX 表格内嵌图片提取~~ — iter_block_items 按 (row,col) 提取单元格图片，table2html 嵌入描述，handle_table 保存+LLM摘要 (completed: 2026-02-27)
 - [x] ~~Summary Prompt 优化~~ — 全局 summary 提示词增加 HTML 表格处理指令 + null 返回值校验 (completed: 2026-02-27)
@@ -260,6 +261,7 @@ _(无)_
 | 2026-03-19 | refactor | LLM 文本输出旁路: `eval_response` 仅对 JSON 任务 (`judge-image-type`/`keywords`) 调用，文本任务直接返回；`ask_image` 内增 null 归一化 | `image_parser.py`, `txt_parser.py`, `prompt_service.py` |
 | 2026-03-19 | fix | Prompt 防护: 4 个文本 prompt 补 null 边界 + anti-preamble，统一 `return exactly: null` 格式 | `prompt_service.py` |
 | 2026-03-19 | feature | Atlas .atlas 扩展名: profiler 检测 atlas 后 output folder 重命名 `.pdf` → `.atlas` | `parse_service.py`, `atlas_parser.py` |
+| 2026-03-27 | feature | KG Bottom-Up Recursive Summary: `summary_builder.py` 增量收集子节点 metadata 构建层级摘要；图谱自下而上提取注入 `top_summary` | `summary_builder.py`, `graph_builder.py`, `prompt_service.py` |
 
 ---
 

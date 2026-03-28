@@ -365,6 +365,23 @@ def build_prompt(task, texts, query, **kwargs):
         Output JSON only, do not output anything else
         """
 
+    # ==================== Hierarchical Summary Prompts ====================
+
+    elif task == "file-summary":
+        max_tokens = kwargs['paras'].get('max_tokens', 100)
+        node_name = kwargs['paras'].get('node_name', '')
+
+        prompt = f"""You will receive summaries of sub-sections from a document section called "{node_name}":
+        '''
+        {texts}
+        '''
+        Your task:
+        - Produce ONE concise sentence summarizing ALL sub-sections, no more than {max_tokens} characters
+        - Your response must be in the SAME LANGUAGE as the input text
+        - Output the summary DIRECTLY, no prefixes, no explanations
+        - If the input lacks meaningful text, return exactly: null
+        """
+
     # ==================== Unknown Task ====================
 
     else:

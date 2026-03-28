@@ -1,7 +1,7 @@
+import hashlib
 import json
 import os
 import re
-import uuid
 
 import pandas as pd
 from shared.core.config import settings
@@ -108,9 +108,22 @@ def clean_md_table_lines(table_lines, start_line_num):
                 cleaned_lines.append(cleaned_line)
     return cleaned_lines, error_lines
 
-def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, page_nums="", summary_len=1500):
+def update_df_list(df_list, content_items, path, llm_paras, time_stamp, page_nums="", summary_len=1500):
+    """Flush accumulated content_items into a chunk row in df_list.
+    
+    Args:
+        content_items: list of content strings. Each item is either pure text
+            or an IMAGE/TABLE ref block. know_id is generated from pure text
+            items only (deterministic), while full content includes all items.
+    """
+    # Separate pure text from IMAGE/TABLE ref blocks for deterministic know_id
+    marker_pattern = re.compile(r'IMAGE_.*?_IMAGE|TABLE_.*?_TABLE')
+    text_items = [item for item in content_items if not marker_pattern.search(str(item))]
+    pure_text = '\n'.join(text_items).strip()
+    bottom_content = '\n'.join(content_items).strip()
+
     match_type = find_matches_parsing(bottom_content, path)
-    know_id = gen_str_codes(bottom_content + str(uuid.uuid4()))
+    know_id = gen_str_codes(pure_text)
     bottom_tokens = tokenize2stw_remove([bottom_content], llm_paras['stopwords'])
 
     if len(bottom_content)>summary_len and llm_paras['summary_txt']:
@@ -120,8 +133,7 @@ def update_df_list(df_list, bottom_content, path, llm_paras, time_stamp, page_nu
         summary = ''
 
     df_list.append([bottom_content, path, match_type, len(bottom_content), keywords, summary, know_id, bottom_tokens, "", time_stamp, page_nums])
-    content = ''
-    return df_list, content
+    return df_list
 
 def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_paras=None, relative_root=None):
     if md_lines is None and file_path is not None:
@@ -166,7 +178,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
     current_pg_num = 0
     chunk_pages = set()  # collect all page numbers seen during current chunk
     base_level = None
-    content = ''
+    content_items = []
     # Use relative_root as initial path (not absolute output_dir)
     path = relative_root if relative_root else ""
     table_count = 1
@@ -208,10 +220,11 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
         current_heading, current_heading_level = md_heading_match(line, as_is=False)
         
         if not current_heading_level==-1: # indicate a new path should be evaluated or added
-            if not content.strip()=='': # record contents of the last path and reset content
+            if content_items: # record contents of the last path and reset content
                 # Build page_nums from collected pages during this chunk
                 chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
-                df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
+                df_list = update_df_list(df_list, content_items, path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
+                content_items = []
                 chunk_pages = set()  # reset for next chunk
                 if current_pg_num > 0:
                     chunk_pages.add(current_pg_num)  # carry current page into next chunk
@@ -219,7 +232,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 # Consecutive headings with no body text between them:
                 # Create a placeholder chunk so the previous heading's path
                 chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
-                df_list, content = update_df_list(df_list, "", path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
+                df_list = update_df_list(df_list, [], path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
 
             # update path based on path name and level
             if base_level is None:
@@ -283,7 +296,10 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 # Fallback: LLM summary -> last_context -> None
                 effective_summary = img_summary or last_context or None
                 
-                temp_uid = gen_str_codes((effective_summary or image_index) + img_path.split(os.sep)[-1] + str(img_count))
+                # Deterministic know_id: use image binary hash
+                with open(update_img_path, 'rb') as img_f:
+                    img_binary_hash = hashlib.md5(img_f.read()).hexdigest()
+                temp_uid = gen_str_codes(img_binary_hash)
                 img_id = 'IMAGE_' + temp_uid + '_IMAGE'
                 
                 # Build img_summary_field for df_list: image-n + optional summary
@@ -298,7 +314,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 else:
                     img_content = f"\n{image_index}\n{img_id}\n"
                 
-                content = content + img_content
+                content_items.append(img_content)
 
                 relative_img_path = f"images/{img_name}{img_suffix}"
                 df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary_field, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
@@ -356,9 +372,9 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
 
                 # Build table_ref for content: table-n + optional LLM summary + table_id
                 if llm_summary:
-                    content = content + f'\n{table_index}\n{llm_summary}\n{table_id}\n'
+                    content_items.append(f'\n{table_index}\n{llm_summary}\n{table_id}\n')
                 else:
-                    content = content + f'\n{table_index}\n{table_id}\n'
+                    content_items.append(f'\n{table_index}\n{table_id}\n')
                 tb_path = os.path.join(tb_dir, f"{tb_name}.html")
                 # Add border to HTML tables for consistent display
                 tb_str_with_border = tb_str.replace('<table>', "<table border='1'>").replace('<table ', "<table border='1' ")
@@ -372,13 +388,13 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
 
             # c. handle plain texts
             if len(imgs)==0 and not tb_bool:
-                content = content + '\n' + line.strip() + '\n'
+                content_items.append(line.strip())
                 if current_pg_num > 0:
                     chunk_pages.add(current_pg_num)  # track page for this content line
     
-    if not content.strip()=='': # handle the remaining contents, append them to the last section
+    if content_items: # handle the remaining contents, append them to the last section
         chunk_page_str = ",".join(str(p) for p in sorted(chunk_pages)) if chunk_pages else ""
-        df_list, content = update_df_list(df_list, content, path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
+        df_list = update_df_list(df_list, content_items, path, base_llm_paras, time_stamp, page_nums=chunk_page_str)
 
     doc_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     doc_df = process_dup_paths_df(doc_df)

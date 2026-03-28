@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import os
 import re
@@ -254,9 +255,8 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
             original_exception=e
         )
 
-    # Update and save local data
-    # Use same temp_uid for both marker and know_id (aligned with md_parser/doc_parser)
-    temp_uid = gen_str_codes(filename + image_content)
+    # Deterministic know_id: use image binary hash
+    temp_uid = gen_str_codes(hashlib.md5(img_bytes).hexdigest())
     img_id = 'IMAGE_' + temp_uid + '_IMAGE'
     if type_resp["answer"]=="text":
         match_type = '\n'.join([img_id, 'PTXT'])

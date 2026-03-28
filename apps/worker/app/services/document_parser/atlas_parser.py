@@ -11,16 +11,17 @@ MinerU is unsuitable for atlas because it fragments each page into multiple
 sub-images (e.g. 700+ images for 135 pages), destroying per-page integrity.
 """
 
+import hashlib
 import json
 import os
 import re
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fitz  # PyMuPDF
 import pandas as pd
 from loguru import logger
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import PDFParsingException
 from app.services.common.kb_utils import (
     find_matches_parsing, gen_str_codes, get_str_time, process_dup_paths_df
 )
@@ -210,7 +211,17 @@ def parse_atlas(
     os.makedirs(img_dir, exist_ok=True)
 
     # ── Open PDF ──
-    doc = fitz.open(pdf_path)
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as e:
+        # PyMuPDF can throw unpickleable C-level exceptions (e.g. FzErrorSystem)
+        # for corrupted/malformed PDFs. Convert to a proper PDFParsingException.
+        logger.warning(f"📐 Atlas: failed to open PDF: {type(e).__name__}: {e}")
+        raise PDFParsingException(
+            user_message="Failed to parse the PDF file. The file may be corrupted or malformed.",
+            reason="PYMUPDF_ERROR",
+            internal_message=f"Atlas fitz.open failed: {type(e).__name__}: {e}",
+        ) from None
     total_pages = len(doc)
     logger.info(f"📐 Atlas: {total_pages} pages in PDF")
 
@@ -323,7 +334,11 @@ def parse_atlas(
 
         # Build chunk content
         img_ref = f"images/{img_name}"
-        know_id = gen_str_codes(f"atlas_page_{page_num}_{uuid.uuid4()}")
+        # Deterministic know_id: use rendered page image binary hash
+        # Read the image file saved in Phase 1 (may have been renamed above)
+        actual_img_path = new_img_path if os.path.exists(new_img_path) else old_img_path
+        with open(actual_img_path, 'rb') as img_f:
+            know_id = gen_str_codes(hashlib.md5(img_f.read()).hexdigest())
         img_marker = f"IMAGE_{know_id}_IMAGE"
 
         content_parts = [f"\n{img_marker}"]

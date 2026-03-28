@@ -1,7 +1,7 @@
+import hashlib
 import io
 import os
 import re
-import uuid
 import zipfile
 
 import pandas as pd
@@ -120,7 +120,7 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     img_path = os.path.join(img_dir, f'{img_name}{img_ext}')
     os.rename(img_raw_path, img_path) # if summary fails, renaming is not applied
 
-    temp_uid = gen_str_codes(img_summary or image_index)
+    temp_uid = gen_str_codes(hashlib.md5(img_file['data']).hexdigest())
     img_id = 'IMAGE_' + temp_uid + '_IMAGE'
 
     # Build img_summary_field for df_list: image-n + optional summary
@@ -230,7 +230,7 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
                 descriptions.append(f"[{effective_desc}]")
                 
                 # Also add as IMAGE entry in df_list for indexing
-                temp_uid = gen_str_codes(effective_desc + str(img_count))
+                temp_uid = gen_str_codes(hashlib.md5(img_data['data']).hexdigest())
                 img_id = 'IMAGE_' + temp_uid + '_IMAGE'
                 img_summary_field = f"{image_index}\n{img_summary}" if img_summary else image_index
                 relative_img_path = f"images/{img_name}{img_ext}"
@@ -602,7 +602,11 @@ def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, rela
         try:
             keywords = row['keywords']
             summary = row['local_summary']
-            know_id = gen_str_codes(bottom_content + str(uuid.uuid4()))
+            # Deterministic know_id: filter out IMAGE/TABLE ref items, hash pure text only
+            marker_pattern = re.compile(r'IMAGE_.*?_IMAGE|TABLE_.*?_TABLE')
+            text_items = [item for item in row['content_lst'] if not marker_pattern.search(str(item))]
+            pure_text = '\n'.join(text_items).strip()
+            know_id = gen_str_codes(pure_text)
             # Use relative_root for path instead of absolute kb_dir
             path_suffix = key if key.strip() else ""
             know_path = split_char.join([relative_root, path_suffix]) if relative_root and path_suffix else (relative_root or path_suffix)
