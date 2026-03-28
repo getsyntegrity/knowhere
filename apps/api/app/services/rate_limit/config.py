@@ -11,6 +11,7 @@ from typing import Optional
 from loguru import logger
 
 from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
+from shared.core.exceptions.redis_exceptions import RedisConfigurationError
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +85,7 @@ class RateLimitConfig:
     ) -> "RateLimitConfig":
         if cls._instance is None:
             if redis_url is None:
-                raise RuntimeError(
+                raise RedisConfigurationError(
                     "RateLimitConfig.get_instance() requires redis_url "
                     "on first call."
                 )

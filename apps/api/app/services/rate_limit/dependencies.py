@@ -403,7 +403,7 @@ async def _acquire_user_concurrency_lock(
         .with_for_update()
     )
     if result.scalar_one_or_none() is None:
-        raise RuntimeError(f"UserBalance row not found for user_id={user_id}")
+        raise RateLimitException(internal_message = f"UserBalance row not found for user_id={user_id}")
 
 
 def _compute_concurrency_retry_after_seconds(
