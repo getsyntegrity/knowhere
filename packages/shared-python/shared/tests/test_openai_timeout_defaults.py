@@ -21,8 +21,15 @@ import shared.utils.OpenAICompatibleClientSync as openai_client_sync_module
 import shared.utils.ali_quota_manager as ali_quota_manager_module
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import LLMServiceException
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
 from shared.utils.OpenAICompatibleClientSync import OpenAICompatibleClientSync
 from shared.utils.security_utils import mask_api_key
+
+
+@pytest.fixture(autouse=True)
+def disable_llm_mock_by_default(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MOCK_ENABLED", False, raising=False)
 
 
 def test_openai_compatible_client_uses_config_timeout_by_default(monkeypatch):
@@ -155,3 +162,74 @@ def test_ali_pool_errors_include_masked_api_key_in_internal_message(monkeypatch)
     assert "token_id=ali-2" in internal_message
     assert f"api_key={expected_masked_api_key}" in internal_message
     assert "dummy-openai-key-for-tests" not in internal_message
+
+
+def test_openai_compatible_client_mock_short_circuits_direct_provider(monkeypatch):
+    def fail_openai(**kwargs: Any) -> None:
+        raise AssertionError("Mock mode should not build a direct OpenAI client")
+
+    monkeypatch.setattr(settings, "LLM_MOCK_ENABLED", True, raising=False)
+    monkeypatch.setattr(openai_client_sync_module, "OpenAI", fail_openai)
+
+    sync_client = OpenAICompatibleClientSync(default_model="deepseek-chat")
+
+    response = sync_client.chat_completion(
+        messages=[{"role": "user", "content": "Generate a concise title. Return ONLY the title."}],
+    )
+
+    assert sync_client._client is None
+    assert response == "Mock Fragment Title"
+
+
+def test_openai_compatible_client_mock_short_circuits_ali_pool(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MOCK_ENABLED", True, raising=False)
+
+    def fail_pool_call(
+        self: OpenAICompatibleClientSync,
+        model: str,
+        all_messages: list[Any],
+        temperature: float,
+        max_tokens: int,
+        api_kwargs: dict[str, Any],
+    ) -> str:
+        raise AssertionError("Mock mode should not call the Ali token pool")
+
+    monkeypatch.setattr(OpenAICompatibleClientSync, "_make_ali_pool_call", fail_pool_call)
+
+    sync_client = OpenAICompatibleClientSync(default_model="qwen-vl-plus")
+    prompt, _, _, _ = build_prompt(
+        task="detect-table-headers",
+        texts="<table><tr><td>header</td></tr></table>",
+        query="",
+        paras={},
+    )
+
+    response = sync_client.chat_completion(
+        messages=[{"role": "user", "content": prompt}],
+        model="qwen-vl-plus",
+    )
+
+    assert eval_response(response) == {"answer": [0]}
+
+
+def test_openai_compatible_client_mock_returns_structured_summary_payload(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MOCK_ENABLED", True, raising=False)
+
+    sync_client = OpenAICompatibleClientSync(default_model="deepseek-chat")
+    prompt, _, _, max_tokens = build_prompt(
+        task="summary-full",
+        texts="Example content",
+        query="",
+        paras={"max_tokens": 120, "kw_num": 3},
+    )
+
+    response = sync_client.chat_completion(
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+    )
+
+    assert eval_response(response) == {
+        "title": "Mock Title",
+        "keywords": "mock",
+        "summary": "Mock summary",
+    }

@@ -18,6 +18,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import LLMServiceException
 from shared.utils.http_clients import get_sync_client
+from shared.utils.llm_mock import build_mock_chat_completion_response
 from shared.utils.security_utils import mask_api_key
 
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
@@ -29,6 +30,11 @@ _client_cache_lock = threading.Lock()
 def _is_ali_model(model_name: str) -> bool:
     """Check whether a model name routes to Aliyun DashScope."""
     return "qwen" in (model_name or "").lower()
+
+
+def _should_mock_llm_calls() -> bool:
+    """Whether all OpenAI-compatible LLM calls should short-circuit to mock responses."""
+    return bool(getattr(settings, "LLM_MOCK_ENABLED", False))
 
 
 class OpenAICompatibleClientSync:
@@ -57,6 +63,8 @@ class OpenAICompatibleClientSync:
             else timeout
         )
         self._client: Optional[OpenAI] = None
+        if _should_mock_llm_calls():
+            return
         if not self._should_use_ali_pool():
             resolved_key: Optional[str] = self._resolve_direct_api_key(
                 model_name=self.default_model,
@@ -260,6 +268,11 @@ class OpenAICompatibleClientSync:
         api_kwargs["extra_body"] = extra_body
 
         effective_model = model or self.default_model
+        if _should_mock_llm_calls():
+            return build_mock_chat_completion_response(
+                messages=all_messages,
+                model_name=effective_model,
+            )
 
         # Route through Ali token pool when applicable
         if self._should_use_ali_pool():

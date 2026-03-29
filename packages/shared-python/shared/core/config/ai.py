@@ -55,6 +55,10 @@ class AIConfig(BaseModel):
         default=3,
         description="OpenAI SDK max_retries per token for transient 429s (exponential backoff + jitter).",
     )
+    LLM_MOCK_ENABLED: bool = Field(
+        default=False,
+        description="Short-circuit all OpenAI-compatible LLM calls and return canned mock responses.",
+    )
     OPENAI_CLIENT_TIMEOUT: int = Field(default=300, description="OpenAI-compatible client timeout in seconds")
     # Parallel LLM concurrency limits for gevent workers.
     # Trade-off: higher values reduce wall-clock time but increase burst RPM against the LLM provider,
