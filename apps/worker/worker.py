@@ -13,6 +13,12 @@ import os
 import socket
 import sys
 
+from app.core.runtime_limits import (
+    apply_native_thread_caps,
+)
+
+apply_native_thread_caps()
+
 from celery.signals import worker_init, worker_shutdown
 from loguru import logger
 

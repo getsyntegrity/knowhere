@@ -3,7 +3,7 @@ Run PyMuPDF work in bounded gevent-managed spawned children.
 
 PyMuPDF's C extension is not safe under gevent's cooperative threading.
 This module provides a single entry point that:
-  1. Schedules work through a shared gevent ThreadPool capped at 2x CPU
+  1. Schedules work through a shared gevent ThreadPool capped per pod
   2. Each scheduled job still gets its own multiprocessing("spawn") child
   3. Queued time is outside the child timeout budget
 
@@ -18,7 +18,6 @@ Worker contract:
 import atexit
 import functools
 import multiprocessing
-import os
 import queue as queue_module
 import time
 from dataclasses import dataclass
@@ -27,6 +26,7 @@ from multiprocessing.process import BaseProcess
 from threading import RLock
 from typing import TYPE_CHECKING
 
+from app.core.runtime_limits import read_pymupdf_max_concurrent
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import PDFParsingException, TimeoutException
 
@@ -39,7 +39,7 @@ QUEUE_POLL_INTERVAL_SECONDS = 0.1
 CHILD_EXIT_GRACE_SECONDS = 5
 POST_RESULT_EXIT_GRACE_SECONDS = 1
 POST_KILL_JOIN_GRACE_SECONDS = 1
-PROCESS_POOL_SIZE = max(1, (os.cpu_count() or 1) - 1)
+PROCESS_POOL_SIZE = read_pymupdf_max_concurrent()
 PROCESS_POOL_CONTEXT = multiprocessing.get_context("spawn")
 
 _PROCESS_POOL_EXECUTOR: "GeventThreadPool | None" = None

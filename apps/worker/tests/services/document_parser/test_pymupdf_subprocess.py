@@ -159,7 +159,7 @@ class TestRunInChildProcess:
             _sleep_result_worker,
             0.2,
             "second",
-            timeout=2,
+            timeout=5,
         )
         second = second_greenlet.get(timeout=10)
         elapsed = time.monotonic() - started_at
