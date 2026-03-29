@@ -175,14 +175,19 @@ def _inject_page_markers_pymupdf(pdf_path: str, output_dir: str) -> None:
 @worker
 def _fast_path_worker(queue, pdf_path, output_dir, image_dir):
     """Child process: pymupdf4llm extraction + page marker injection."""
+    import pymupdf
     import pymupdf4llm
 
-    md_text = pymupdf4llm.to_markdown(
-        pdf_path,
-        write_images=True,
-        image_path=image_dir,
-        image_format="png",
-    )
+    doc = pymupdf.open(pdf_path)
+    try:
+        md_text = pymupdf4llm.to_markdown(
+            doc,
+            write_images=True,
+            image_path=image_dir,
+            image_format="png",
+        )
+    finally:
+        doc.close()
 
     full_md_path = os.path.join(output_dir, "full.md")
     with open(full_md_path, "w", encoding="utf-8") as f:
