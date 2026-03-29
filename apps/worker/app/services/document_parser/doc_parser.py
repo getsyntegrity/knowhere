@@ -1,7 +1,7 @@
+import hashlib
 import io
 import os
 import re
-import uuid
 import zipfile
 
 import pandas as pd
@@ -10,6 +10,8 @@ from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
                                           get_str_time, process_dup_paths_df,
                                           process_path_texts, remove_spaces)
 from shared.utils.text_utils import tokenize2stw_remove
+from shared.utils.file_utils import path_handle
+from app.services.document_parser.table_parser import sanitize_table_name_from_header
 from app.services.document_parser.image_parser import ask_image, _get_vision_client
 from app.services.document_parser.layout_parser import pred_titles
 from app.services.document_parser.html_parser import table2html
@@ -18,7 +20,6 @@ from app.services.document_parser.toc_parser import (detect_doc_tocs,
                                                      get_toc_level)
 from app.services.document_parser.txt_parser import postprocess_leaf_dics
 from shared.utils.CommonHelperSync import load_file_bytes
-from bs4 import BeautifulSoup
 from docx import Document
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
@@ -120,7 +121,7 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     img_path = os.path.join(img_dir, f'{img_name}{img_ext}')
     os.rename(img_raw_path, img_path) # if summary fails, renaming is not applied
 
-    temp_uid = gen_str_codes(img_summary or image_index)
+    temp_uid = gen_str_codes(hashlib.md5(img_file['data']).hexdigest())
     img_id = 'IMAGE_' + temp_uid + '_IMAGE'
 
     # Build img_summary_field for df_list: image-n + optional summary
@@ -230,7 +231,7 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
                 descriptions.append(f"[{effective_desc}]")
                 
                 # Also add as IMAGE entry in df_list for indexing
-                temp_uid = gen_str_codes(effective_desc + str(img_count))
+                temp_uid = gen_str_codes(hashlib.md5(img_data['data']).hexdigest())
                 img_id = 'IMAGE_' + temp_uid + '_IMAGE'
                 img_summary_field = f"{image_index}\n{img_summary}" if img_summary else image_index
                 relative_img_path = f"images/{img_name}{img_ext}"
@@ -258,7 +259,7 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
 
     # Extract first row and first column headers (used ONLY for fallback file naming)
     first_row_text, first_col_text = _first_cols_rows(block)
-    raw_tb_name = first_row_text.replace(' | ', ' ') if first_row_text else ""
+    raw_tb_name = sanitize_table_name_from_header(first_row_text) if first_row_text else ""
     
     # Table index (always present)
     table_index = f"table-{table_count + 1}"
@@ -282,7 +283,7 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
 
     # Use LLM title for filename when available, fallback to raw_tb_name
     effective_name = llm_title if llm_title else raw_tb_name
-    tb_name = process_path_texts(f"table-{str(table_count+1)} {effective_name}", last=30)
+    tb_name = path_handle(f"table-{str(table_count+1)} {effective_name}", mode="clean_single")
     tb_path = os.path.join(tb_dir, f'{tb_name}.html')
 
     with open(tb_path, 'w', encoding='utf-8') as f:
@@ -602,7 +603,11 @@ def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, rela
         try:
             keywords = row['keywords']
             summary = row['local_summary']
-            know_id = gen_str_codes(bottom_content + str(uuid.uuid4()))
+            # Deterministic know_id: filter out IMAGE/TABLE ref items, hash pure text only
+            marker_pattern = re.compile(r'IMAGE_.*?_IMAGE|TABLE_.*?_TABLE')
+            text_items = [item for item in row['content_lst'] if not marker_pattern.search(str(item))]
+            pure_text = '\n'.join(text_items).strip()
+            know_id = gen_str_codes(pure_text)
             # Use relative_root for path instead of absolute kb_dir
             path_suffix = key if key.strip() else ""
             know_path = split_char.join([relative_root, path_suffix]) if relative_root and path_suffix else (relative_root or path_suffix)

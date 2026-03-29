@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import os
 import re
@@ -194,12 +195,19 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         img_obj = Image.open(io.BytesIO(img_bytes))
         img_obj.save(img_path)
 
+        # Early exit: skip images smaller than 10KB
+        from shared.core.constants import ProcessingConstants
+        saved_size = os.path.getsize(img_path)
+        if saved_size < ProcessingConstants.IMG_MIN_SIZE:
+            logger.debug(f"Skipping image {filename} (too small: {saved_size/1024:.1f} KB)")
+            os.remove(img_path)
+            return pd.DataFrame(columns=settings.ALL_DF_COLS.split(','))
+
         # Extract image content
         client = _get_vision_client()
 
         ## Determine image category and task
         img_task = "summary-images"
-        from shared.core.constants import ProcessingConstants
         img_max_tokens = ProcessingConstants.IMG_MAX_TOKENS
         img_context = f"{filename}\n{base_llm_paras['frag_desc']}"
         type_resp = ask_image(client, output_dir, paths_=[filename], title_text=img_context, task="judge-image-type", size_cut=False)
@@ -216,7 +224,7 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
             image_content = filename
 
         if type_resp["answer"]=="text" and base_llm_paras['summary_image']:
-            llm_resp = ask_image(client, output_dir, paths_=[filename], title_text=filename)
+            llm_resp = ask_image(client, output_dir, paths_=[filename], title_text=filename, size_cut=False)
             if llm_resp:
                 from app.services.document_parser.txt_parser import split_title_summary
                 img_title, image_summary = split_title_summary(llm_resp)
@@ -233,13 +241,19 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
                 image_summary = image_content
 
         # 2. Decide whether to rename based on image title and filename
-        img_name = path_handle((img_title or image_summary)[:20], mode="sanitize")
+        img_name = path_handle((img_title or image_summary)[:20], mode="clean_single")
         img_suffix = os.path.splitext(img_path)[-1]
         if auto_rename:
             update_img_path = os.path.join(output_dir, f"{img_name}{img_suffix}")
-            os.rename(img_path, update_img_path)
-            # Store the relative filename for path construction
-            final_img_name = f"{img_name}{img_suffix}"
+            if os.path.exists(img_path):
+                if img_path != update_img_path:
+                    os.rename(img_path, update_img_path)
+                # Store the relative filename for path construction
+                final_img_name = f"{img_name}{img_suffix}"
+            else:
+                logger.warning(f"Image file missing before rename, keeping original name: {filename}")
+                update_img_path = img_path
+                final_img_name = filename
         else:
             update_img_path = img_path
             final_img_name = filename
@@ -254,9 +268,8 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
             original_exception=e
         )
 
-    # Update and save local data
-    # Use same temp_uid for both marker and know_id (aligned with md_parser/doc_parser)
-    temp_uid = gen_str_codes(filename + image_content)
+    # Deterministic know_id: use image binary hash
+    temp_uid = gen_str_codes(hashlib.md5(img_bytes).hexdigest())
     img_id = 'IMAGE_' + temp_uid + '_IMAGE'
     if type_resp["answer"]=="text":
         match_type = '\n'.join([img_id, 'PTXT'])

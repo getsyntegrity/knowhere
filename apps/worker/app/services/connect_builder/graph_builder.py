@@ -21,6 +21,7 @@ Usage:
   graph = update_knowledge_graph(existing_graph, new_chunks, existing_chunks)
 """
 
+import hashlib
 import json
 import math
 import os
@@ -510,6 +511,7 @@ def build_knowledge_graph(
     connections: Dict[str, List[Dict[str, Any]]],
     kb_id: str = "",
     chunk_stats: Optional[Dict[str, Dict[str, Any]]] = None,
+    file_summaries: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Build a file-level knowledge graph (v2.0)."""
     if chunk_stats is None:
@@ -544,7 +546,7 @@ def build_knowledge_graph(
             "chunks_count": len(chunks),
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
-            "top_summary": "",  # Placeholder: bottom-up summary TBD
+            "top_summary": (file_summaries or {}).get(fk, ""),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -578,6 +580,7 @@ def update_knowledge_graph(
     kb_id: str = "",
     connect_config: Optional[Dict[str, Any]] = None,
     chunk_stats: Optional[Dict[str, Dict[str, Any]]] = None,
+    file_summaries: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Incrementally update a file-level knowledge graph with new chunks."""
     if chunk_stats is None:
@@ -652,7 +655,7 @@ def update_knowledge_graph(
             "chunks_count": len(chunks),
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
-            "top_summary": existing_files.get(fk, {}).get("top_summary", ""),
+            "top_summary": existing_files.get(fk, {}).get("top_summary") or (file_summaries or {}).get(fk, ""),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": created_at,
         }
@@ -852,6 +855,46 @@ def extract_chunks_from_graph(graph: Dict[str, Any]) -> List[Dict[str, Any]]:
     return chunks
 
 
+# ─── Chunk ID Dedup ──────────────────────────────────────────────────────────
+
+
+def _dedup_chunks_by_content(
+    new_chunks: List[Dict[str, Any]],
+    existing_chunks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Filter new_chunks: discard any whose chunk_id already exists in existing_chunks.
+
+    Since all parsers now generate deterministic know_id (content-hash based),
+    identical content always produces the same chunk_id. Simple set comparison
+    replaces the old strip+hash pipeline.
+
+    Returns:
+        List of new chunks that have no chunk_id duplicate in existing_chunks.
+    """
+    existing_ids = {
+        str(c.get("chunk_id") or c.get("know_id", ""))
+        for c in existing_chunks
+    }
+    existing_ids.discard("")
+
+    deduped = []
+    skipped = 0
+    for chunk in new_chunks:
+        cid = str(chunk.get("chunk_id") or chunk.get("know_id", ""))
+        if cid and cid in existing_ids:
+            skipped += 1
+        else:
+            deduped.append(chunk)
+
+    if skipped > 0:
+        logger.info(
+            f"📊 chunk dedup: {skipped} duplicate chunks skipped "
+            f"(by chunk_id), {len(deduped)} chunks to add"
+        )
+    return deduped
+
+
 def _load_all_chunks_from_kb(kb_dir: str) -> List[Dict[str, Any]]:
     """
     Load all chunks from per-file chunks.json files under a KB directory.
@@ -962,6 +1005,7 @@ def build_and_deploy(
     kb_id: str,
     parsed_output_dir: Optional[str] = None,
     connect_config: Optional[Dict[str, Any]] = None,
+    rebuild_all: bool = True,
 ) -> Dict[str, Any]:
     """
     One-stop knowledge graph build/update + deploy to ~/.knowhere/ + MCP register.
@@ -972,11 +1016,12 @@ def build_and_deploy(
     Flow:
       1. If parsed_output_dir provided → copy full parsed output to ~/.knowhere/{kb_id}/data/
       2. Check if ~/.knowhere/{kb_id}/knowledge_graph.json exists
-         - No  → build_knowledge_graph() (full build, even for 1 file)
+         - No  → build_knowledge_graph() (full build)
+           - rebuild_all=True  → scan KB dir for existing files, merge with new chunks
+           - rebuild_all=False → only use the new chunks (ignore previous files)
          - Yes → update_knowledge_graph() (incremental)
-      3. Save/append chunks.json to ~/.knowhere/{kb_id}/
-      4. Save knowledge_graph.json to ~/.knowhere/{kb_id}/
-      5. On first-ever deploy → _auto_register_mcp()
+      3. Save knowledge_graph.json to ~/.knowhere/{kb_id}/
+      4. On first-ever deploy → _auto_register_mcp()
 
     Args:
         chunks: Parsed chunks from the current file.
@@ -985,6 +1030,10 @@ def build_and_deploy(
             images, tables, hierarchy.json etc. If provided, its contents are
             copied to ~/.knowhere/{kb_id}/data/{dirname}/.
         connect_config: Optional config overrides for connect_builder.
+        rebuild_all: When knowledge_graph.json is missing, whether to scan the
+            KB directory for existing chunk data and include them in the full
+            rebuild. Defaults to True. Set to False to only process the new
+            chunks (legacy behavior).
 
     Returns:
         The knowledge graph dict.
@@ -1002,18 +1051,27 @@ def build_and_deploy(
     os.makedirs(kb_dir, exist_ok=True)
 
     # Load existing state BEFORE deploy (to avoid counting new file's chunks twice)
+    # Determine source_file early so we can exclude it from existing_chunks
+    source_file = os.path.basename(parsed_output_dir) if parsed_output_dir and os.path.isdir(parsed_output_dir) else None
     existing_graph = load_knowledge_graph(kg_path)
     if existing_graph is not None:
-        existing_chunks = _load_all_chunks_from_kb(kb_dir)
-        if not existing_chunks:
+        all_on_disk = _load_all_chunks_from_kb(kb_dir)
+        if not all_on_disk:
             existing_chunks = extract_chunks_from_graph(existing_graph)
+        else:
+            # Exclude chunks from the current source file — they may already
+            # be on disk if parsed_output_dir is inside kb_dir (debug_parse).
+            # Without this filter, _dedup_chunks_by_content would treat them
+            # as "existing" and skip the incremental update entirely.
+            existing_chunks = [
+                c for c in all_on_disk
+                if c.get("_source_file") != source_file
+            ] if source_file else all_on_disk
     else:
         existing_chunks = []
 
     # ── Deploy parsed output (images, tables, hierarchy, etc.) ──
-    source_file = None
     if parsed_output_dir and os.path.isdir(parsed_output_dir):
-        source_file = os.path.basename(parsed_output_dir)
         deploy_target = os.path.join(kb_dir, source_file)
 
         # Skip copy if parsed output is already in the target location
@@ -1036,30 +1094,83 @@ def build_and_deploy(
         for chunk in chunks:
             chunk["_source_file"] = source_file
 
+    # ── Generate hierarchical summaries ──
+    from app.services.connect_builder.summary_builder import enrich_hierarchy_summaries
+    try:
+        file_summaries = enrich_hierarchy_summaries(
+            kb_dir=kb_dir,
+            source_file=source_file,
+        )
+    except Exception as e:
+        logger.warning(f"Hierarchical summary generation failed: {e}")
+        file_summaries = {}
+
     # Load chunk_stats for importance calculation
     stats = load_chunk_stats(kb_id)
 
     if existing_graph is None:
         # ── First build: full ──
-        logger.info("📊 首次构建 Knowledge Graph ...")
-        connections = build_connections(chunks, connect_config)
+        if rebuild_all:
+            # Scan KB dir for existing chunk data (deploy already happened,
+            # so the new file's chunks are on disk if parsed_output_dir was given).
+            all_on_disk = _load_all_chunks_from_kb(kb_dir)
+            if source_file and all_on_disk:
+                # New file already deployed → all_on_disk includes it, no merge needed
+                all_chunks = all_on_disk
+            else:
+                # New file not deployed to disk (no parsed_output_dir),
+                # or KB dir was empty → merge in-memory chunks with disk data.
+                # Dedup by chunk_id to prevent double-counting.
+                seen_ids = {
+                    str(c.get("chunk_id") or c.get("know_id", ""))
+                    for c in all_on_disk
+                }
+                extra = [
+                    c for c in chunks
+                    if str(c.get("chunk_id") or c.get("know_id", "")) not in seen_ids
+                ]
+                all_chunks = all_on_disk + extra
+            logger.info(
+                f"📊 rebuild Knowledge Graph "
+                f"(rebuild_all=True, {len(all_chunks)} chunks from KB dir) ..."
+            )
+        else:
+            all_chunks = chunks
+            logger.info("📊 rebuild Knowledge Graph (rebuild_all=False, new chunks only) ...")
+
+        connections = build_connections(all_chunks, connect_config)
         graph = build_knowledge_graph(
-            all_chunks=chunks,
+            all_chunks=all_chunks,
             connections=connections,
             kb_id=kb_id,
             chunk_stats=stats,
+            file_summaries=file_summaries,
         )
     else:
         # ── Incremental update ──
-        logger.info("📊 增量更新 Knowledge Graph ...")
-        graph = update_knowledge_graph(
-            existing_graph=existing_graph,
-            new_chunks=chunks,
-            existing_chunks=existing_chunks,
-            kb_id=kb_id,
-            connect_config=connect_config,
-            chunk_stats=stats,
-        )
+        # Content-hash dedup: discard new chunks identical to existing ones
+        # to preserve established graph edges and relationships.
+        deduped_new = _dedup_chunks_by_content(chunks, existing_chunks)
+        if len(deduped_new) == 0:
+            logger.info(
+                "📊 All new chunks are duplicates of existing data, "
+                "skipping incremental update"
+            )
+            graph = existing_graph
+        else:
+            logger.info(
+                f"📊 incremental update Knowledge Graph "
+                f"({len(deduped_new)} new, {len(chunks) - len(deduped_new)} skipped) ..."
+            )
+            graph = update_knowledge_graph(
+                existing_graph=existing_graph,
+                new_chunks=deduped_new,
+                existing_chunks=existing_chunks,
+                kb_id=kb_id,
+                connect_config=connect_config,
+                chunk_stats=stats,
+                file_summaries=file_summaries,
+            )
 
     # Save graph
     save_knowledge_graph(graph, kg_path)
