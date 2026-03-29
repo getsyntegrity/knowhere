@@ -439,7 +439,6 @@ def _upload_file_to_mineru(
         token_id=token_id,
         source_kind="remote_url" if is_remote(pdf_url) else "local_file",
     )
-    upload_logger.info("Starting MinerU file transfer")
 
     if is_remote(pdf_url):
         import tempfile

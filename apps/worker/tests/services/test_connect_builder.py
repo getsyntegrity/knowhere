@@ -64,25 +64,34 @@ class TestExtractFileKey:
 
 class TestComputeKeywordScore:
     def test_full_overlap(self):
-        # 3 shared out of min(3, 5) = 3 → 1.0
-        assert _compute_keyword_score(3, 3, 5) == 1.0
+        # Equal-length tokens keep the weighted score equivalent to count overlap.
+        shared = {"aa", "bb", "cc"}
+        kws_a = {"aa", "bb", "cc"}
+        kws_b = {"aa", "bb", "cc", "dd", "ee"}
+        assert _compute_keyword_score(shared, kws_a, kws_b) == 1.0
 
     def test_partial_overlap(self):
-        # 2 shared out of min(4, 6) = 4 → 0.5
-        assert _compute_keyword_score(2, 4, 6) == 0.5
+        # 2 shared out of min(4, 6) = 4 → 0.5 when token lengths are uniform.
+        shared = {"aa", "bb"}
+        kws_a = {"aa", "bb", "cc", "dd"}
+        kws_b = {"aa", "bb", "ee", "ff", "gg", "hh"}
+        assert _compute_keyword_score(shared, kws_a, kws_b) == 0.5
 
     def test_zero_denominator(self):
-        assert _compute_keyword_score(0, 0, 5) == 0.0
+        assert _compute_keyword_score(set(), set(), {"aa", "bb", "cc", "dd", "ee"}) == 0.0
 
     def test_weight(self):
-        # 2/4 * 2.0 = 1.0
-        assert _compute_keyword_score(2, 4, 6, weight=2.0) == 1.0
+        shared = {"aa", "bb"}
+        kws_a = {"aa", "bb", "cc", "dd"}
+        kws_b = {"aa", "bb", "ee", "ff", "gg", "hh"}
+        assert _compute_keyword_score(shared, kws_a, kws_b, weight=2.0) == 1.0
 
     def test_linear_scaling(self):
-        # 1/3 ≈ 0.333, 2/3 ≈ 0.667, 3/3 = 1.0 → linear
-        s1 = _compute_keyword_score(1, 3, 5)
-        s2 = _compute_keyword_score(2, 3, 5)
-        s3 = _compute_keyword_score(3, 3, 5)
+        kws_a = {"aa", "bb", "cc"}
+        kws_b = {"aa", "bb", "cc", "dd", "ee"}
+        s1 = _compute_keyword_score({"aa"}, kws_a, kws_b)
+        s2 = _compute_keyword_score({"aa", "bb"}, kws_a, kws_b)
+        s3 = _compute_keyword_score({"aa", "bb", "cc"}, kws_a, kws_b)
         assert s1 < s2 < s3
         assert abs(s2 - s1 - (s3 - s2)) < 0.001  # equal increments
 

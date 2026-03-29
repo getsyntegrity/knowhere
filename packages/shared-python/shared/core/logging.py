@@ -229,8 +229,8 @@ def setup_logging(
 
                 # Instrument sync database engine (worker uses psycopg2 via gevent)
                 try:
-                    from shared.core.database_sync import sync_engine
-                    logfire.instrument_sqlalchemy(engine=sync_engine)
+                    from shared.core.database_sync import get_sync_engine
+                    logfire.instrument_sqlalchemy(engine=get_sync_engine())
                 except ImportError:
                     logger.bind(event=LogEvent.LOGGING_CONFIGURED.value).warning(
                         "Sync database engine not available for Logfire instrumentation"

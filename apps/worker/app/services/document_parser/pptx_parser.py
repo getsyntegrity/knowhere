@@ -100,14 +100,15 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
     """
     Convert PPTX bytes → PDF bytes via iLoveAPI. Pure in-memory, no disk I/O.
 
-    Acquires an in-flight slot before starting. Released in finally block
-    to prevent slot leaks even on errors.
+    Acquires an in-flight slot before starting. Slots are released only if
+    the Redis-backed reservation actually succeeded.
     """
     from shared.utils.iloveapi_quota_manager import get_iloveapi_quota_manager
     quota_manager = get_iloveapi_quota_manager()
 
     # Gate on in-flight concurrency before consuming any token quota
-    if not quota_manager.acquire_inflight():
+    inflight_acquired = quota_manager.acquire_inflight()
+    if inflight_acquired is False:
         logger.bind(
             event=LogEvent.ILOVEAPI_CONCURRENCY_EXCEEDED.value,
             service="iloveapi",
@@ -249,7 +250,8 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
             raise
 
     finally:
-        quota_manager.release_inflight()
+        if inflight_acquired is True:
+            quota_manager.release_inflight()
 
 
 class _ILoveApiConcurrencyExceeded(Exception):

@@ -28,6 +28,11 @@ class FakeSyncRedisService:
         return self.client.eval(script, len(keys), *(list(keys) + list(args or [])))
 
 
+class FailingSyncRedisService:
+    def eval(self, script, keys, args=None):
+        raise RuntimeError("redis unavailable")
+
+
 DEFAULT_TOKENS = [
     TokenConfig("iloveapi-1", "pub1:sec1", rpm_limit=25, daily_limit=250),
     TokenConfig("iloveapi-2", "pub2:sec2", rpm_limit=25, daily_limit=250),
@@ -185,3 +190,13 @@ def test_release_inflight_floors_at_zero():
     # Acquire should still work after over-release
     assert manager.acquire_inflight() is True
     assert manager.get_inflight_count() == 1
+
+
+def test_acquire_inflight_fail_open_returns_none():
+    manager = ILoveApiQuotaManager(
+        cast(SyncRedisService, FailingSyncRedisService()),
+        DEFAULT_TOKENS,
+        max_concurrent=5,
+    )
+
+    assert manager.acquire_inflight() is None

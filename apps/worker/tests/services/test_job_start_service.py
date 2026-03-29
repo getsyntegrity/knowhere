@@ -55,3 +55,17 @@ def test_mark_job_running_is_idempotent_for_running_job(monkeypatch):
     job_start_service.mark_job_running("job_123", redis_service=MagicMock())
 
     state_machine.transition.assert_not_called()
+
+
+@pytest.mark.parametrize("terminal_state", [JobStatus.FAILED.value, JobStatus.DONE.value])
+def test_mark_job_running_skips_terminal_job(monkeypatch, terminal_state):
+    monkeypatch.setattr(job_start_service, "get_sync_db_context", lambda: _fake_db_context(terminal_state))
+
+    state_machine = MagicMock()
+    state_machine_cls = MagicMock(return_value=state_machine)
+    monkeypatch.setattr(job_start_service, "SyncStateMachineService", state_machine_cls)
+
+    should_process = job_start_service.mark_job_running("job_123", redis_service=MagicMock())
+
+    assert should_process is False
+    state_machine.transition.assert_not_called()

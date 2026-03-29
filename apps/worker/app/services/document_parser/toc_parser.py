@@ -19,6 +19,7 @@ from app.services.common.kb_utils import normalize_md, truncate_text
 from app.services.document_parser.table_parser import df2md
 from app.services.document_parser.html_parser import df2html
 from app.services.document_parser.layout_parser import hiearchy_llm, judge_by_conditions, remove_by_conditions
+from app.services.document_parser.stage_profiler import stage_timer
 from shared.utils.OpenAICompatibleClientSync import get_openai_client
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
@@ -317,14 +318,19 @@ def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None, u
     ]
     
     try:
-        answer = get_openai_client(model=model_name).chat_completion(
-            messages=messages,
-            model=model_name,
-            max_tokens=max_tokens,
-            temperature=temperature
-        )
-        
-        result = eval_response(answer)
+        with stage_timer(
+            "toc.detect_range_llm",
+            model_name=model_name,
+            total_candidates=total_candidates,
+        ):
+            answer = get_openai_client(model=model_name).chat_completion(
+                messages=messages,
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            result = eval_response(answer)
         toc_start = result.get("toc_start")
         toc_end = result.get("toc_end")
         confidence = result.get("confidence", "low")
@@ -383,7 +389,6 @@ def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -
         ])
         
         md_table = df2md(df, index=False)
-        print(md_table)
         llm_result = llm_judge_toc_range(md_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
         
         if llm_result is not None:
@@ -422,7 +427,18 @@ def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None) -> l
         List of dicts with id, heading, level
     """
     try:
-        toc_hierarchy = hiearchy_llm(toc_df, model_name=model_name, max_depth=max_depth, task="eval-toc-headings")
+        with stage_timer(
+            "toc.parse_hierarchy_llm",
+            model_name=model_name,
+            heading_count=len(toc_df),
+            max_depth=max_depth,
+        ):
+            toc_hierarchy = hiearchy_llm(
+                toc_df,
+                model_name=model_name,
+                max_depth=max_depth,
+                task="eval-toc-headings",
+            )
         id_to_level = {item["id"]: item["level"] for item in toc_hierarchy}
 
         toc_with_level = []

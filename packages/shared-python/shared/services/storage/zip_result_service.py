@@ -378,7 +378,6 @@ class ZipResultService:
     ) -> List[Dict[str, Any]]:
         """Collect image file information"""
         image_files = []
-        
         if not os.path.exists(images_dir):
             return image_files
 
@@ -388,7 +387,6 @@ class ZipResultService:
             file_path = os.path.join(images_dir, filename)
             if os.path.isfile(file_path):
                 image_files_map[filename] = file_path
-
         # Match images from chunks
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
@@ -436,7 +434,9 @@ class ZipResultService:
                         break
 
             if not source_path:
-                logger.warning(f"Cannot find image file: chunk_id={chunk_id}, original_name={original_name}")
+                logger.warning(
+                    f"Cannot find image file: chunk_id={chunk_id}, original_name={original_name}"
+                )
                 continue
 
             # Get image dimensions
@@ -493,7 +493,6 @@ class ZipResultService:
     ) -> List[Dict[str, Any]]:
         """Collect table file information"""
         table_files = []
-        
         if not os.path.exists(tables_dir):
             return table_files
 
@@ -503,7 +502,6 @@ class ZipResultService:
             file_path = os.path.join(tables_dir, filename)
             if os.path.isfile(file_path) and filename.endswith(".html"):
                 table_files_map[filename] = file_path
-
         # Match tables from chunks
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
@@ -542,7 +540,9 @@ class ZipResultService:
                         break
 
             if not source_path:
-                logger.warning(f"Cannot find table file: chunk_id={chunk_id}, original_name={original_name}")
+                logger.warning(
+                    f"Cannot find table file: chunk_id={chunk_id}, original_name={original_name}"
+                )
                 continue
 
             file_size = os.path.getsize(source_path)

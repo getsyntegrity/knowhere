@@ -37,6 +37,12 @@ IMG_MAX_SIDE = 1280          # max pixels on longest side for VLM input
 
 # ─── Helper: compress image for VLM ──────────────────────────────────
 
+def _build_atlas_know_id(page_num: int, image_bytes: bytes) -> str:
+    """Keep atlas chunk IDs deterministic while preserving per-page uniqueness."""
+    image_hash = hashlib.md5(image_bytes).hexdigest()
+    return gen_str_codes(f"{page_num}:{image_hash}")
+
+
 def _compress_for_vlm(img_path: str, max_side: int = IMG_MAX_SIDE) -> str:
     """
     Resize image so the longest side <= max_side, save as JPEG for smaller size.
@@ -340,11 +346,12 @@ def parse_atlas(
 
         # Build chunk content
         img_ref = f"images/{img_name}"
-        # Deterministic know_id: use rendered page image binary hash
+        # Deterministic know_id: include page identity so identical renders
+        # from different atlas pages cannot collapse into the same chunk ID.
         # Read the image file saved in Phase 1 (may have been renamed above)
         actual_img_path = new_img_path if os.path.exists(new_img_path) else old_img_path
         with open(actual_img_path, 'rb') as img_f:
-            know_id = gen_str_codes(hashlib.md5(img_f.read()).hexdigest())
+            know_id = _build_atlas_know_id(page_num, img_f.read())
         img_marker = f"IMAGE_{know_id}_IMAGE"
 
         content_parts = [f"\n{img_marker}"]

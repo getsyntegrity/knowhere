@@ -1,64 +1,26 @@
 """Tests for pymupdf_subprocess — spawn, timeout, error handling."""
 import os
-import sys
 import time
-import types
 
+import gevent
 import pytest
-
-# ─── Mock external dependencies not available in test env ─────────
-
-# Fake gevent module
-_fake_gevent = types.ModuleType("gevent")
-
-
-class _FakeThreadpool:
-    @staticmethod
-    def apply(fn, args):
-        fn(*args)
+from shared.core.exceptions.domain_exceptions import (
+    PDFParsingException,
+    TimeoutException,
+)
 
 
-class _FakeHub:
-    threadpool = _FakeThreadpool()
+import app.services.document_parser.pymupdf_subprocess as pymupdf_subprocess
+
+run_in_child_process = pymupdf_subprocess.run_in_child_process
+worker = pymupdf_subprocess.worker
 
 
-def _get_hub():
-    return _FakeHub()
-
-
-_fake_gevent.get_hub = _get_hub
-sys.modules.setdefault("gevent", _fake_gevent)
-
-
-# Fake shared.core.exceptions hierarchy for domain exception imports
-class _FakePDFParsingException(Exception):
-    def __init__(self, user_message="", reason="", internal_message="", **kwargs):
-        super().__init__(internal_message or user_message)
-        self.user_message = user_message
-        self.reason = reason
-        self.internal_message = internal_message
-
-
-class _FakeTimeoutException(Exception):
-    def __init__(self, internal_message="", retry_after=0, **kwargs):
-        super().__init__(internal_message)
-        self.internal_message = internal_message
-        self.retry_after = retry_after
-
-
-_fake_domain = types.ModuleType("shared.core.exceptions.domain_exceptions")
-_fake_domain.PDFParsingException = _FakePDFParsingException
-_fake_domain.TimeoutException = _FakeTimeoutException
-
-# Register the full module path hierarchy
-for mod_name in [
-    "shared", "shared.core", "shared.core.exceptions",
-    "shared.core.exceptions.domain_exceptions",
-]:
-    sys.modules.setdefault(mod_name, types.ModuleType(mod_name))
-sys.modules["shared.core.exceptions.domain_exceptions"] = _fake_domain
-
-from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
+@pytest.fixture(autouse=True)
+def reset_process_pool():
+    pymupdf_subprocess._shutdown_process_pool()
+    yield
+    pymupdf_subprocess._shutdown_process_pool()
 
 
 # ─── Test workers (top-level for pickling) ────────────────────────
@@ -95,6 +57,23 @@ def _file_writing_worker(queue, output_path):
     queue.put({"ok": True, "bytes_written": 16})
 
 
+def _large_payload_worker(queue, payload_size):
+    """Worker that returns enough data to overflow the Queue pipe buffer."""
+    queue.put({"ok": True, "payload": "x" * payload_size})
+
+
+def _sleep_result_worker(queue, sleep_seconds, value):
+    """Worker that sleeps briefly, then returns a stable value."""
+    time.sleep(sleep_seconds)
+    queue.put({"ok": True, "result": value})
+
+
+def _result_then_sleep_worker(queue, value, sleep_seconds):
+    """Worker that publishes a result, then lingers before exiting."""
+    queue.put({"ok": True, "result": value})
+    time.sleep(sleep_seconds)
+
+
 @worker
 def _decorated_ok_worker(queue, x, y):
     """Worker using @worker decorator — no manual error handling."""
@@ -111,24 +90,29 @@ def _decorated_raising_worker(queue):
 
 class TestRunInChildProcess:
 
+    def test_process_pool_uses_gevent_threadpool(self):
+        executor = pymupdf_subprocess._get_process_pool_executor()
+
+        assert type(executor).__module__ == "gevent.threadpool"
+
     def test_happy_path(self):
         result = run_in_child_process(_ok_worker, 3, 4)
         assert result["ok"] is True
         assert result["result"] == 7
 
     def test_worker_failure_raises_pdf_parsing_exception(self):
-        with pytest.raises(_FakePDFParsingException) as exc_info:
+        with pytest.raises(PDFParsingException) as exc_info:
             run_in_child_process(_failing_worker)
         assert "something went wrong" in exc_info.value.internal_message
-        assert exc_info.value.reason == "SUBPROCESS_FAILED"
+        assert exc_info.value.details["reason"] == "SUBPROCESS_FAILED"
 
     def test_worker_crash_raises_pdf_parsing_exception(self):
-        with pytest.raises(_FakePDFParsingException) as exc_info:
+        with pytest.raises(PDFParsingException) as exc_info:
             run_in_child_process(_crash_worker, timeout=5)
-        assert exc_info.value.reason == "SUBPROCESS_CRASH"
+        assert exc_info.value.details["reason"] == "SUBPROCESS_CRASH"
 
     def test_worker_timeout_raises_timeout_exception(self):
-        with pytest.raises(_FakeTimeoutException) as exc_info:
+        with pytest.raises(TimeoutException) as exc_info:
             run_in_child_process(_slow_worker, timeout=1)
         assert exc_info.value.retry_after == 30
 
@@ -141,12 +125,82 @@ class TestRunInChildProcess:
         with open(output_path) as f:
             assert f.read() == "hello from child"
 
+    def test_large_payload_does_not_false_timeout(self):
+        result = run_in_child_process(_large_payload_worker, 2_000_000, timeout=5)
+
+        assert result["ok"] is True
+        assert len(result["payload"]) == 2_000_000
+
+    def test_slow_teardown_after_valid_result_does_not_fail(self):
+        started_at = time.monotonic()
+        result = run_in_child_process(_result_then_sleep_worker, "done", 10, timeout=5)
+        elapsed = time.monotonic() - started_at
+
+        assert result["ok"] is True
+        assert result["result"] == "done"
+        # The parent should return after the configured exit-grace/kill window,
+        # not wait for the full lingering sleep in the child.
+        max_expected_elapsed = (
+            pymupdf_subprocess.POST_RESULT_EXIT_GRACE_SECONDS
+            + pymupdf_subprocess.POST_KILL_JOIN_GRACE_SECONDS
+            + 3
+        )
+        assert elapsed < max_expected_elapsed
+
+    def test_queue_wait_does_not_consume_child_timeout(self, monkeypatch):
+        monkeypatch.setattr(pymupdf_subprocess, "PROCESS_POOL_SIZE", 1)
+        pymupdf_subprocess._shutdown_process_pool()
+
+        first_greenlet = gevent.spawn(
+            run_in_child_process,
+            _sleep_result_worker,
+            2,
+            "first",
+            timeout=5,
+        )
+        gevent.sleep(0.2)
+
+        started_at = time.monotonic()
+        second_greenlet = gevent.spawn(
+            run_in_child_process,
+            _sleep_result_worker,
+            0.2,
+            "second",
+            timeout=5,
+        )
+        second = second_greenlet.get(timeout=10)
+        elapsed = time.monotonic() - started_at
+
+        first = first_greenlet.get(timeout=10)
+        assert first["result"] == "first"
+        assert second["result"] == "second"
+        assert elapsed >= 2.0
+
+    def test_timeout_does_not_abort_other_inflight_job(self, monkeypatch):
+        monkeypatch.setattr(pymupdf_subprocess, "PROCESS_POOL_SIZE", 2)
+        pymupdf_subprocess._shutdown_process_pool()
+
+        healthy_greenlet = gevent.spawn(
+            run_in_child_process,
+            _sleep_result_worker,
+            2,
+            "healthy",
+            timeout=10,
+        )
+        gevent.sleep(0.2)
+
+        with pytest.raises(TimeoutException):
+            run_in_child_process(_slow_worker, timeout=1)
+
+        payload = healthy_greenlet.get(timeout=10)
+        assert payload["result"] == "healthy"
+
     def test_worker_decorator_happy_path(self):
         result = run_in_child_process(_decorated_ok_worker, 3, 4)
         assert result["ok"] is True
         assert result["result"] == 12
 
     def test_worker_decorator_catches_exception(self):
-        with pytest.raises(_FakePDFParsingException) as exc_info:
+        with pytest.raises(PDFParsingException) as exc_info:
             run_in_child_process(_decorated_raising_worker)
         assert "decorated failure" in exc_info.value.internal_message
