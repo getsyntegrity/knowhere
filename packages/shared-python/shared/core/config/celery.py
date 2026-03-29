@@ -27,7 +27,7 @@ class CeleryConfig(BaseModel):
     KB_TASK_MAX_RETRIES: int = Field(default=2, description="知识库任务最大重试次数")
     KB_TASK_RETRY_COUNTDOWN: int = Field(default=120, description="知识库任务重试等待时间(秒)")
     PYMUPDF_MAX_CONCURRENT: int = Field(
-        default=1,
+        default=2,
         ge=1,
         description="Per-pod PyMuPDF child-process concurrency cap",
     )
