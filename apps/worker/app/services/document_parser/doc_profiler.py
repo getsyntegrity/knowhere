@@ -9,6 +9,7 @@ Usage:
     profile = profile_document("/path/to/file.pdf")
 """
 
+import gc
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Literal, List
@@ -80,10 +81,15 @@ MULTI_COL_GAP_RATIO = 0.15      # min gap between columns as ratio of page width
 MULTI_COL_MIN_BLOCKS = 4        # min text blocks per page to evaluate columns
 
 
+def _publish_profile_result(queue, profile: DocProfile) -> None:
+    """Release Python-side wrappers before publishing the profile result."""
+    gc.collect()
+    queue.put({"ok": True, "profile": asdict(profile)})
+
+
 @worker
 def _profile_pdf_worker(queue, file_path: str) -> None:
     """Child process: analyze PDF features, return profile as dict."""
-    from dataclasses import asdict as _asdict
     import pymupdf
 
     profile = DocProfile(file_type="pdf")
@@ -93,7 +99,7 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         doc = pymupdf.open(file_path)
     except Exception as e:
         profile.reasoning = f"Cannot open file: {e}"
-        queue.put({"ok": True, "profile": _asdict(profile)})
+        _publish_profile_result(queue, profile)
         return
 
     profile.page_count = doc.page_count
@@ -101,7 +107,8 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     if doc.page_count == 0:
         profile.reasoning = "Empty file (0 pages)"
         doc.close()
-        queue.put({"ok": True, "profile": _asdict(profile)})
+        del doc
+        _publish_profile_result(queue, profile)
         return
 
     # ── Page sampling ──
@@ -213,8 +220,15 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
             "font_count": len(fonts),
             "is_scan_page": is_scan_page,
         })
+        del text_blocks
+        del blocks
+        del drawings
+        del fonts
+        del images
+        del page
 
     doc.close()
+    del doc
 
     # ── Aggregate features ──
     n_sampled = len(sample_indices)
@@ -290,7 +304,7 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         reasons.append(f"route=standard: low text density ({profile.avg_text_density:.0f}<{FAST_TEXT_THRESHOLD})")
 
     profile.reasoning = " | ".join(reasons)
-    queue.put({"ok": True, "profile": _asdict(profile)})
+    _publish_profile_result(queue, profile)
 
 
 def _profile_pdf(file_path: str) -> DocProfile:

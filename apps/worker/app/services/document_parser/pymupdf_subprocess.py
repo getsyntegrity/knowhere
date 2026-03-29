@@ -51,6 +51,7 @@ class _ChildWaitResult:
     status: str
     result: dict | None = None
     child_pid: int | None = None
+    received_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,11 @@ def _wait_for_child_result(
 
         try:
             result = result_queue.get(timeout=min(remaining, QUEUE_POLL_INTERVAL_SECONDS))
-            return _ChildWaitResult(status="result", result=result)
+            return _ChildWaitResult(
+                status="result",
+                result=result,
+                received_at=time.monotonic(),
+            )
         except queue_module.Empty:
             if not proc.is_alive():
                 return _ChildWaitResult(status="crash")
@@ -178,14 +183,20 @@ def _run_worker_in_spawned_process(
     _close_result_queue(result_queue)
     proc.join(timeout=POST_RESULT_EXIT_GRACE_SECONDS)
     elapsed = time.monotonic() - t0
+    exit_lag = None
+    if wait_result.received_at is not None:
+        exit_lag = elapsed - (wait_result.received_at - t0)
 
     if proc.is_alive():
         proc.kill()
         proc.join(timeout=POST_KILL_JOIN_GRACE_SECONDS)
         elapsed = time.monotonic() - t0
+        if wait_result.received_at is not None:
+            exit_lag = elapsed - (wait_result.received_at - t0)
         logger.warning(
             f"[pymupdf-subprocess] EXIT_DELAY pid={child_pid} fn={worker_fn.__name__} "
-            f"elapsed={elapsed:.1f}s — result returned before child exited; child killed after grace"
+            f"elapsed={elapsed:.1f}s exit_lag={exit_lag:.1f}s "
+            f"— result returned before child exited; child killed after grace"
         )
 
     result = wait_result.result or {}
