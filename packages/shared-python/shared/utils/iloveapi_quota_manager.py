@@ -136,11 +136,13 @@ return redis.call('DECR', key)
     # In-flight concurrency limiter
     # ------------------------------------------------------------------
 
-    def acquire_inflight(self) -> bool:
-        """Try to acquire an in-flight slot. Returns True if acquired, False if at capacity.
+    def acquire_inflight(self) -> Optional[bool]:
+        """Try to acquire an in-flight slot.
 
-        This is a fail-open mechanism: when the limit is reached, callers
-        should fall back to a local conversion path instead of blocking.
+        Returns:
+            True: reserved a Redis-backed slot and must release it later.
+            False: at capacity; caller should fail open to local conversion.
+            None: Redis failed; caller may proceed, but must not release.
         """
         try:
             result = self.redis.eval(
@@ -165,8 +167,8 @@ return redis.call('DECR', key)
             logger.opt(exception=True).warning(
                 "Failed to check iLoveAPI in-flight counter; failing open to allow request"
             )
-        # Fail open on Redis errors — allow the request through
-        return True
+        # Fail open on Redis errors — allow the request through without a lease.
+        return None
 
     def release_inflight(self) -> None:
         """Release an in-flight slot after conversion completes (success or failure)."""

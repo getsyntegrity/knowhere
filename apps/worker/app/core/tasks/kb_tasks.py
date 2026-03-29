@@ -114,8 +114,6 @@ def _download_s3_file_to_temp(file_url: str, file_ext: str) -> str:
 def upload_url_file_task(self, job_id: str, source_url: str, user_id: str | None = None, job_type: str | None = None):
     """Download file from URL and upload to S3."""
     with log_context(task_id=self.request.id):
-        logger.bind(event=LogEvent.WORKER_TASK_START.value).info("Task started: upload_url_file_task")
-
         if not job_id:
             raise WorkerHandlingException(
                 user_message="An unexpected system error occurred",
@@ -273,8 +271,6 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
 def parse_task(self, job_id: str, user_id: str | None = None, job_type: str = "kb_management"):
     """Parse and vectorize task (file already uploaded to S3)."""
     with log_context(task_id=self.request.id):
-        logger.bind(event=LogEvent.WORKER_TASK_START.value).info("Task started: parse_task")
-
         if not job_id:
             raise WorkerHandlingException(
                 user_message="An unexpected system error occurred",
@@ -373,7 +369,14 @@ def _parse(job_id: str, user_id: str | None):
             original_exception=e,
         )
 
-    mark_job_running(job_id, redis_service)
+    should_process = mark_job_running(job_id, redis_service)
+    if not should_process:
+        logger.warning(f"Skipping parse_task for inactive job: job_id={job_id}")
+        return {
+            "status": "skipped",
+            "job_id": job_id,
+            "reason": "job_already_terminal",
+        }
 
     # Acquire distributed lock to prevent concurrent processing of same job
     # (e.g., RabbitMQ redelivery due to missed heartbeats with acks_late).

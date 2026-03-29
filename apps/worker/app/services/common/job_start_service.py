@@ -18,12 +18,16 @@ from shared.core.exceptions.domain_exceptions import (
     WorkerHandlingException,
 )
 from shared.core.state_machine.service_sync import SyncStateMachineService
-from shared.core.state_machine.states import JobStatus
+from shared.core.state_machine.states import JobStatus, is_terminal_state
 from shared.models.database.job import Job
 
 
-def mark_job_running(job_id: str, redis_service: Any) -> None:
-    """Transition a job from pending to running before parse execution."""
+def mark_job_running(job_id: str, redis_service: Any) -> bool:
+    """Transition a job from pending to running before parse execution.
+
+    Returns ``True`` when parsing should proceed. Returns ``False`` when the
+    job is already terminal and the task should skip quietly.
+    """
     state_machine = SyncStateMachineService(redis_service)
 
     with get_sync_db_context() as db:
@@ -44,7 +48,7 @@ def mark_job_running(job_id: str, redis_service: Any) -> None:
             # processing.  Let the caller proceed to the RedisJobLock
             # acquisition which will gate actual processing.
             logger.info(f"Job already running (likely redelivery), deferring to lock: {job_id}")
-            return
+            return True
 
         if current_state == JobStatus.WAITING_FILE.value:
             raise UnavailableException(
@@ -55,6 +59,13 @@ def mark_job_running(job_id: str, redis_service: Any) -> None:
                 retry_after=settings.KB_TASK_RETRY_COUNTDOWN,
                 user_message="Job is not ready for processing yet. Retrying shortly.",
             )
+
+        if is_terminal_state(current_state):
+            logger.warning(
+                f"Skipping parse_task for terminal job state: job_id={job_id}, "
+                f"current_state={current_state}"
+            )
+            return False
 
         if current_state != JobStatus.PENDING.value:
             raise WorkerHandlingException(
@@ -80,3 +91,5 @@ def mark_job_running(job_id: str, redis_service: Any) -> None:
                 retry_after=settings.KB_TASK_RETRY_COUNTDOWN,
                 user_message="Job state is still settling. Retrying shortly.",
             )
+
+        return True

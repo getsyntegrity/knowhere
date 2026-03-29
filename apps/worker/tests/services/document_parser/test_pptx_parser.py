@@ -227,3 +227,38 @@ def test_parse_pptx_releases_inflight_on_error(monkeypatch):
                     assert result == "parsed_df"
                     # Verify release was called (cleanup in finally block)
                     mock_release.assert_called_once()
+
+
+def test_parse_pptx_fail_open_does_not_release_inflight(monkeypatch):
+    """Fail-open requests must not decrement another request's in-flight slot."""
+    monkeypatch.setattr(settings, "ILOVEAPI_PUBLIC_KEY", "pub", raising=False)
+    monkeypatch.setattr(settings, "ILOVEAPI_SECRET_KEY", "sec", raising=False)
+
+    with patch(
+        "shared.utils.iloveapi_quota_manager.ILoveApiQuotaManager.acquire_inflight",
+        return_value=None,
+    ):
+        with patch(
+            "shared.utils.iloveapi_quota_manager.ILoveApiQuotaManager.release_inflight"
+        ) as mock_release:
+            with patch(
+                "app.services.document_parser.pptx_parser._get_iloveapi_token_lease",
+                return_value=("token", MagicMock(token_id="iloveapi-1")),
+            ):
+                with patch(
+                    "app.services.document_parser.pptx_parser.requests.get",
+                    side_effect=requests.exceptions.ConnectionError("connection refused"),
+                ):
+                    with patch(
+                        "app.services.document_parser.pptx_parser._parse_pptx_via_libreoffice"
+                    ) as mock_fallback:
+                        mock_fallback.return_value = "parsed_df"
+                        result = parse_pptx(
+                            pptx_path="test.pptx",
+                            filename="test.pptx",
+                            output_dir="/tmp",
+                            base_llm_paras={},
+                            strategy="to_pdf_api"
+                        )
+                        assert result == "parsed_df"
+                        mock_release.assert_not_called()
