@@ -138,7 +138,14 @@ class TestRunInChildProcess:
 
         assert result["ok"] is True
         assert result["result"] == "done"
-        assert elapsed < 6
+        # The parent should return after the configured exit-grace/kill window,
+        # not wait for the full lingering sleep in the child.
+        max_expected_elapsed = (
+            pymupdf_subprocess.POST_RESULT_EXIT_GRACE_SECONDS
+            + pymupdf_subprocess.POST_KILL_JOIN_GRACE_SECONDS
+            + 3
+        )
+        assert elapsed < max_expected_elapsed
 
     def test_queue_wait_does_not_consume_child_timeout(self, monkeypatch):
         monkeypatch.setattr(pymupdf_subprocess, "PROCESS_POOL_SIZE", 1)

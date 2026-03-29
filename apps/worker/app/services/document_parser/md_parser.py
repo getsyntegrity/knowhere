@@ -485,11 +485,6 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 elif task_type == "table":
                     title, kw, summary = result
                     entry = df_list[idx]
-                    image_index = entry[0].split('\n')[1] if '\n' in entry[0] else "image"
-                    entry[5] = f"{image_index}\n{img_summary}"
-                elif task_type == "table":
-                    title, kw, summary = result
-                    entry = df_list[idx]
                     entry[4] = kw if isinstance(kw, str) else ""
                     if summary:
                         table_index = entry[5] if '\n' not in entry[5] else entry[5].split('\n')[0]
