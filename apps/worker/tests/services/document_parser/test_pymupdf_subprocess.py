@@ -5,12 +5,12 @@ import time
 import types
 
 import pytest
+from shared.core.exceptions.domain_exceptions import (
+    PDFParsingException,
+    TimeoutException,
+)
 
 # ─── Mock external dependencies not available in test env ─────────
-
-# Fake gevent module
-_fake_gevent = types.ModuleType("gevent")
-
 
 class _FakeThreadpool:
     @staticmethod
@@ -26,39 +26,17 @@ def _get_hub():
     return _FakeHub()
 
 
-_fake_gevent.get_hub = _get_hub
-sys.modules.setdefault("gevent", _fake_gevent)
+import app.services.document_parser.pymupdf_subprocess as pymupdf_subprocess
+
+run_in_child_process = pymupdf_subprocess.run_in_child_process
+worker = pymupdf_subprocess.worker
 
 
-# Fake shared.core.exceptions hierarchy for domain exception imports
-class _FakePDFParsingException(Exception):
-    def __init__(self, user_message="", reason="", internal_message="", **kwargs):
-        super().__init__(internal_message or user_message)
-        self.user_message = user_message
-        self.reason = reason
-        self.internal_message = internal_message
-
-
-class _FakeTimeoutException(Exception):
-    def __init__(self, internal_message="", retry_after=0, **kwargs):
-        super().__init__(internal_message)
-        self.internal_message = internal_message
-        self.retry_after = retry_after
-
-
-_fake_domain = types.ModuleType("shared.core.exceptions.domain_exceptions")
-_fake_domain.PDFParsingException = _FakePDFParsingException
-_fake_domain.TimeoutException = _FakeTimeoutException
-
-# Register the full module path hierarchy
-for mod_name in [
-    "shared", "shared.core", "shared.core.exceptions",
-    "shared.core.exceptions.domain_exceptions",
-]:
-    sys.modules.setdefault(mod_name, types.ModuleType(mod_name))
-sys.modules["shared.core.exceptions.domain_exceptions"] = _fake_domain
-
-from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
+@pytest.fixture(autouse=True)
+def patch_gevent(monkeypatch):
+    fake_gevent = types.ModuleType("gevent")
+    fake_gevent.get_hub = _get_hub
+    monkeypatch.setitem(sys.modules, "gevent", fake_gevent)
 
 
 # ─── Test workers (top-level for pickling) ────────────────────────
@@ -117,18 +95,18 @@ class TestRunInChildProcess:
         assert result["result"] == 7
 
     def test_worker_failure_raises_pdf_parsing_exception(self):
-        with pytest.raises(_FakePDFParsingException) as exc_info:
+        with pytest.raises(PDFParsingException) as exc_info:
             run_in_child_process(_failing_worker)
         assert "something went wrong" in exc_info.value.internal_message
-        assert exc_info.value.reason == "SUBPROCESS_FAILED"
+        assert exc_info.value.details["reason"] == "SUBPROCESS_FAILED"
 
     def test_worker_crash_raises_pdf_parsing_exception(self):
-        with pytest.raises(_FakePDFParsingException) as exc_info:
+        with pytest.raises(PDFParsingException) as exc_info:
             run_in_child_process(_crash_worker, timeout=5)
-        assert exc_info.value.reason == "SUBPROCESS_CRASH"
+        assert exc_info.value.details["reason"] == "SUBPROCESS_CRASH"
 
     def test_worker_timeout_raises_timeout_exception(self):
-        with pytest.raises(_FakeTimeoutException) as exc_info:
+        with pytest.raises(TimeoutException) as exc_info:
             run_in_child_process(_slow_worker, timeout=1)
         assert exc_info.value.retry_after == 30
 
@@ -147,6 +125,6 @@ class TestRunInChildProcess:
         assert result["result"] == 12
 
     def test_worker_decorator_catches_exception(self):
-        with pytest.raises(_FakePDFParsingException) as exc_info:
+        with pytest.raises(PDFParsingException) as exc_info:
             run_in_child_process(_decorated_raising_worker)
         assert "decorated failure" in exc_info.value.internal_message

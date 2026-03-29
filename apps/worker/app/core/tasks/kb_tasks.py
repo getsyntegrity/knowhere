@@ -57,6 +57,7 @@ from shared.models.database.job import Job
 from shared.models.schemas.job_metadata import JobMetadataHelper
 from shared.services.storage.zip_result_service import ZipResultService
 from app.services.common.job_start_service import mark_job_running
+from app.services.document_parser.stage_profiler import stage_timer
 from app.services.workload.page_estimator import PageEstimator
 
 # Get Celery application
@@ -508,19 +509,20 @@ def _parse(job_id: str, user_id: str | None):
         logger.info(f"Start parse: job_id={job_id}, filename={filename}, type={doc_type}")
 
         try:
-            add_dir, add_contents_df = checkerboard_inject_parse(
-                file_full_path=local_temp_path,
-                filename=filename,
-                output_dir=output_dir,
-                kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
-                doc_type=doc_type,
-                smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
-                summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
-                summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
-                summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),
-                add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
-                s3_key=s3_key,
-            )
+            with stage_timer("worker.parse.document", job_id=job_id, filename=filename, doc_type=doc_type):
+                add_dir, add_contents_df = checkerboard_inject_parse(
+                    file_full_path=local_temp_path,
+                    filename=filename,
+                    output_dir=output_dir,
+                    kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
+                    doc_type=doc_type,
+                    smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
+                    summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
+                    summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
+                    summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),
+                    add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
+                    s3_key=s3_key,
+                )
         finally:
             if local_temp_path and os.path.exists(local_temp_path):
                 try:
@@ -551,29 +553,24 @@ def _parse(job_id: str, user_id: str | None):
 
         # Save DataFrame as chunks to Redis (sync)
         chunks_redis_service = SyncChunksRedisService(redis_service)
+        chunks = []
 
         if add_contents_df is not None:
-            success = chunks_redis_service.save_dataframe_as_chunks(job_id, add_contents_df)
+            chunks = chunks_redis_service.dataframe_to_chunks(add_contents_df)
+            success = chunks_redis_service.save_chunks(job_id, chunks)
             if success:
                 logger.info(f"DataFrame saved as chunks to Redis: job_id={job_id}")
             else:
                 logger.error(f"Failed to save DataFrame as chunks: job_id={job_id}")
         else:
-            chunks_redis_service.save_chunks(job_id, [])
+            chunks_redis_service.save_chunks(job_id, chunks)
 
         message_publisher.publish_progress_update(
             job_id=job_id,
             progress=70,
             message_text="Chunks saved, generating zip...",
         )
-
-        # Get chunks data from Redis
-        chunks = chunks_redis_service.get_chunks(job_id)
-        if chunks:
-            logger.info(f"Chunks retrieved: job_id={job_id}, count={len(chunks)}")
-        else:
-            logger.warning(f"No chunks retrieved: job_id={job_id}")
-            chunks = []
+        logger.info(f"Chunks prepared: job_id={job_id}, count={len(chunks)}")
 
         # Get source file name
         source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")

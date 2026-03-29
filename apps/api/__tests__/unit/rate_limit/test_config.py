@@ -3,6 +3,7 @@ from app.services.rate_limit.config import (
     _is_rate_limit_bypassed,
 )
 from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
+from shared.core.exceptions.redis_exceptions import RedisConfigurationError
 
 
 def test_is_rate_limit_bypassed_reads_env(monkeypatch):
@@ -18,7 +19,7 @@ def test_get_instance_requires_redis_url_on_first_call():
         try:
             RateLimitConfig.get_instance()
             assert False, "Expected RuntimeError"
-        except RuntimeError as exc:
+        except RedisConfigurationError as exc:
             assert "requires redis_url on first call" in str(exc)
     finally:
         RateLimitConfig.reset_instance()

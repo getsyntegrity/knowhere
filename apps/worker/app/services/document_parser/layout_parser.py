@@ -6,6 +6,7 @@ from gevent.pool import Pool as GeventPool
 import pandas as pd
 from collections import Counter, defaultdict
 from app.services.common.kb_utils import count_cn_en, truncate_text
+from app.services.document_parser.stage_profiler import stage_timer
 from app.services.document_parser.table_parser import df2md
 from docx.oxml.ns import qn
 
@@ -916,13 +917,19 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
     ]
     
     try:
-        answer = get_openai_client(model=model_name).chat_completion(
-            messages=messages,
-            model=model_name,
-            max_tokens=max_tokens,
-            temperature=temperature
-        )
-        layout_res = eval_response(answer)
+        with stage_timer(
+            "heading.hierarchy_llm_call",
+            model_name=model_name,
+            row_count=len(df),
+            task=task,
+        ):
+            answer = get_openai_client(model=model_name).chat_completion(
+                messages=messages,
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            layout_res = eval_response(answer)
         
         # LLM now only returns heading rows (level > -1)
         # Reconstruct full result: fill missing IDs with level=-1
@@ -1067,25 +1074,31 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
             return idx, None
 
     try:
-        pool = GeventPool(size=min(max_concurrent, len(level_dfs)))
-        greenlets = [pool.spawn(process_chunk, i, df) for i, df in enumerate(level_dfs)]
-        gevent.joinall(greenlets)
+        with stage_timer(
+            "heading.hierarchy_llm_batch",
+            chunk_count=len(level_dfs),
+            max_concurrent=min(max_concurrent, len(level_dfs)),
+            model_name=model_name,
+        ):
+            pool = GeventPool(size=min(max_concurrent, len(level_dfs)))
+            greenlets = [pool.spawn(process_chunk, i, df) for i, df in enumerate(level_dfs)]
+            gevent.joinall(greenlets)
 
-        results = [g.value for g in greenlets]
-        results.sort(key=lambda r: r[0])
+            results = [g.value for g in greenlets]
+            results.sort(key=lambda r: r[0])
 
-        chunk_preds = []
-        for idx, preds in results:
-            if preds is not None:
-                chunk_preds.append(preds)
-            else:
-                logger.warning(f"chunk {idx} fell back to naive estimation")
-                chunk_preds.append(est_hierarchies_naive(level_dfs[idx]))
+            chunk_preds = []
+            for idx, preds in results:
+                if preds is not None:
+                    chunk_preds.append(preds)
+                else:
+                    logger.warning(f"chunk {idx} fell back to naive estimation")
+                    chunk_preds.append(est_hierarchies_naive(level_dfs[idx]))
 
-        full_preds = pd.concat(chunk_preds, ignore_index=True)
-        full_preds['heading'] = raw_headings
+            full_preds = pd.concat(chunk_preds, ignore_index=True)
+            full_preds['heading'] = raw_headings
 
-        save_intermediate_csv(full_preds, output_dir, "preds_4_llm_final")
+            save_intermediate_csv(full_preds, output_dir, "preds_4_llm_final")
 
     except Exception as e:
         logger.warning(f"parallel LLM parsing failed: {e}, falling back to non-llm pipeline...")

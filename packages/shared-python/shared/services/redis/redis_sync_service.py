@@ -337,7 +337,7 @@ class SyncChunksRedisService:
     def __init__(self, redis_service: SyncRedisService):
         self.redis = redis_service
 
-    def _dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
+    def dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
         """Delegate to the existing async version's logic."""
         from shared.services.redis.chunks_redis_service import ChunksRedisService
         # Reuse the static conversion logic
@@ -346,7 +346,7 @@ class SyncChunksRedisService:
 
     def save_dataframe_as_chunks(self, job_id: str, df) -> bool:
         try:
-            chunks = self._dataframe_to_chunks(df)
+            chunks = self.dataframe_to_chunks(df)
             return self.save_chunks(job_id, chunks)
         except Exception as e:
             logger.error(f"Failed to save dataframe as chunks: {e}")

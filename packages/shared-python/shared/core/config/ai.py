@@ -59,10 +59,8 @@ class AIConfig(BaseModel):
     # Parallel LLM concurrency limits for gevent workers.
     # Trade-off: higher values reduce wall-clock time but increase burst RPM against the LLM provider,
     # risking 429 rate-limit errors — especially when multiple pods/jobs run in parallel.
-    # DeepSeek (headings) has no token-pool rotation, so keep conservative.
-    # Dashscope/Qwen (summaries) has AliQuotaManager with 429 retry + rotation, so can be higher.
-    HEADING_LLM_MAX_CONCURRENT: int = Field(default=5, description="Max concurrent gevent greenlets for parallel heading classification LLM calls (DeepSeek). Conservative due to no token-pool rotation.")
-    SUMMARY_LLM_MAX_CONCURRENT: int = Field(default=8, description="Max concurrent gevent greenlets for parallel post-heading summary LLM calls — image/table/text (Dashscope). Higher is safe due to AliQuotaManager token rotation.")
+    HEADING_LLM_MAX_CONCURRENT: int = Field(default=8, description="Max concurrent gevent greenlets for parallel heading classification LLM calls (DeepSeek).")
+    SUMMARY_LLM_MAX_CONCURRENT: int = Field(default=8, description="Max concurrent gevent greenlets for parallel post-heading summary LLM calls — image/table/text (Dashscope).")
     IMAGE_MODEL_MAX: str = Field(default="", description="最大图像模型（兼容性字段）")
     REASON_MODEL: str = Field(default="", description="推理模型（兼容性字段）")
     IMG_HEADER: str = Field(default="", description="图像头部（兼容性字段）")

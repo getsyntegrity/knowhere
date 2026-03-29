@@ -7,6 +7,7 @@ from loguru import logger
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.mineru_pdf_service import parse_via_full
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
+from app.services.document_parser.stage_profiler import stage_timer
 
 
 def _inject_page_markers(output_dir: str) -> None:
@@ -219,25 +220,28 @@ def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, rel
         image_dir = os.path.join(output_dir, "images")
         os.makedirs(image_dir, exist_ok=True)
 
-        result = run_in_child_process(
-            _fast_path_worker, pdf_path, output_dir, image_dir,
-        )
+        with stage_timer("pdf.extract.fast", filename=filename):
+            result = run_in_child_process(
+                _fast_path_worker, pdf_path, output_dir, image_dir,
+            )
         logger.info(
             f"⚡ Fast path done: {result['md_chars']} chars, "
             f"{result['image_count']} images"
         )
     else:
-        upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
-        
-        # Inject page markers from MinerU layout.json
-        _inject_page_markers(output_dir)
+        with stage_timer("pdf.extract.standard", filename=filename):
+            upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
+            
+            # Inject page markers from MinerU layout.json
+            _inject_page_markers(output_dir)
 
     logger.info("✅ PDF parsing step 1 complete: text extracted")
 
-    return parse_md(
-        output_dir,
-        source_type="md",
-        file_path=os.path.join(output_dir, "full.md"),
-        base_llm_paras=base_llm_paras,
-        relative_root=relative_root,
-    )
+    with stage_timer("pdf.parse_md", filename=filename):
+        return parse_md(
+            output_dir,
+            source_type="md",
+            file_path=os.path.join(output_dir, "full.md"),
+            base_llm_paras=base_llm_paras,
+            relative_root=relative_root,
+        )

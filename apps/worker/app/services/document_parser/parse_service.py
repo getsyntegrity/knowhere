@@ -13,6 +13,7 @@ from shared.core.exceptions.domain_exceptions import (
 
 # document_parser imports
 from app.services.document_parser.doc_profiler import profile_document
+from app.services.document_parser.stage_profiler import stage_timer
 
 def cleanup_unreferenced_images(output_dir: str) -> int:
     """
@@ -133,7 +134,8 @@ def checkerboard_inject_parse(
     parsed_df = None
     
     # ── Agentic Profiler: classify document before routing ──
-    profile = profile_document(file_full_path, filename)
+    with stage_timer("document.profile", filename=filename):
+        profile = profile_document(file_full_path, filename)
     logger.info(f"📋 DocProfile: {profile.summary()}")
     logger.debug(f"📋 Reasoning: {profile.reasoning}")
 
@@ -230,6 +232,7 @@ def checkerboard_inject_parse(
     logger.debug(f"full_output_dir: {full_output_dir}")
     
     # Post-processing: clean up unreferenced UUID-named images
-    cleanup_unreferenced_images(full_output_dir)
+    with stage_timer("document.cleanup_unreferenced_images", output_dir=full_output_dir):
+        cleanup_unreferenced_images(full_output_dir)
     
     return full_output_dir, parsed_df
