@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import re
+from pathlib import Path
 
 import gevent
 from gevent.pool import Pool as GeventPool
@@ -26,6 +27,36 @@ from shared.utils.file_utils import path_handle
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
 from loguru import logger
+
+
+def resolve_workspace_image_path(candidate_path: Path, workspace_path: Path) -> Path | None:
+    """Return the candidate only when it exists inside the current job workspace."""
+    resolved_path = candidate_path.resolve(strict=False)
+    try:
+        resolved_path.relative_to(workspace_path)
+    except ValueError:
+        return None
+    return resolved_path if resolved_path.exists() else None
+
+
+def resolve_markdown_image_source_path(output_dir: str, img_path: str) -> Path | None:
+    """Handle local absolute refs and container cwd-relative refs safely."""
+    if not img_path:
+        return None
+
+    workspace_path = Path(output_dir).resolve()
+    raw_path = Path(img_path).expanduser()
+    candidate_paths = [raw_path] if raw_path.is_absolute() else [
+        workspace_path / raw_path,
+        Path.cwd() / raw_path,
+    ]
+
+    for candidate_path in candidate_paths:
+        resolved_path = resolve_workspace_image_path(candidate_path, workspace_path)
+        if resolved_path is not None:
+            return resolved_path
+
+    return None
 
 
 def find_surround_context(md_lines, lid):
@@ -297,9 +328,9 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 update_img_path = os.path.join(img_dir, f"{img_name}{img_suffix}")
 
                 # Check if source image file exists before renaming
-                source_path = os.path.join(output_dir, img_path)
-                if not os.path.exists(source_path):
-                    logger.warning(f"Image file not found, skipping rename: {source_path}")
+                source_path = resolve_markdown_image_source_path(output_dir, img_path)
+                if source_path is None or not source_path.exists():
+                    logger.warning(f"Image file not found, skipping rename: {img_path}")
                     img_count += 1
                     continue
 

@@ -5,6 +5,7 @@ Sync implementation for gevent worker pool.
 All I/O operations use sync services that yield cooperatively under gevent.
 """
 import os
+import shutil
 import tempfile
 
 import requests
@@ -74,6 +75,23 @@ def _cleanup_temp_file(file_path: str | None) -> None:
             os.remove(file_path)
     except OSError as exc:
         logger.warning(f"Failed to cleanup temp file {file_path}: {exc}")
+
+
+def _cleanup_job_workspace(workspace_dir: str | None) -> bool:
+    """Best-effort cleanup for per-job parsed artifacts after successful completion."""
+    if not workspace_dir:
+        return False
+
+    if not os.path.isdir(workspace_dir):
+        return False
+
+    try:
+        shutil.rmtree(workspace_dir)
+        logger.info(f"Job workspace cleaned up: {workspace_dir}")
+        return True
+    except OSError as exc:
+        logger.warning(f"Failed to cleanup job workspace {workspace_dir}: {exc}")
+        return False
 
 
 def _download_s3_file_to_temp(file_url: str, file_ext: str) -> str:
@@ -545,9 +563,6 @@ def _parse(job_id: str, user_id: str | None):
         if add_contents_df.empty:
             logger.warning(f"No content returned from file parsing: job_id={job_id}, filename={filename}")
 
-        # Save add_dir to Redis
-        metadata_service.update_metadata(job_id, {"add_dir": add_dir})
-
         message_publisher.publish_progress_update(
             job_id=job_id,
             progress=30,
@@ -631,15 +646,20 @@ def _parse(job_id: str, user_id: str | None):
             kb_records=kb_records,
             statistics=statistics,
             delivery_mode="url",
-            add_dir=str(add_dir) if add_dir else None,
+            add_dir=None,
         )
+
+        cleanup_add_dir = str(add_dir) if add_dir else None
+        workspace_cleaned = _cleanup_job_workspace(output_dir)
+        if workspace_cleaned:
+            cleanup_add_dir = None
 
         logger.info(f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}")
 
         return {
             "status": "success",
             "job_id": job_id,
-            "add_dir": add_dir,
+            "add_dir": cleanup_add_dir,
             "vectors_count": 0,
             "contents_count": len(add_contents_df) if add_contents_df is not None else 0,
             "stored_count": stored_count,
