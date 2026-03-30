@@ -163,6 +163,7 @@ def _recursive_summarize(
     tree: Dict[str, Any],
     chunk_lookup: Dict[str, str],
     path_prefix: str = "",
+    use_llm: bool = True,
 ) -> str:
     """
     Bottom-up recursive summarization on a hierarchy tree node.
@@ -171,6 +172,10 @@ def _recursive_summarize(
     - If it's a leaf (empty dict) → return chunk snippet from lookup
     - If it has children → recursively summarize children first,
       then aggregate their summaries into this node's summary
+
+    When use_llm=False, always uses title enumeration instead of calling
+    the LLM. This produces a lightweight summary like:
+      "This section covers: 第1章, 第2章, 第3章"
 
     Writes the summary into the tree dict in-place as `_summary`.
 
@@ -200,7 +205,7 @@ def _recursive_summarize(
         if not isinstance(subtree, dict):
             continue
         child_path = f"{path_prefix}/{key}" if path_prefix else key
-        child_summary = _recursive_summarize(subtree, chunk_lookup, child_path)
+        child_summary = _recursive_summarize(subtree, chunk_lookup, child_path, use_llm=use_llm)
         if child_summary:
             child_summaries.append((key, child_summary))
 
@@ -222,19 +227,24 @@ def _recursive_summarize(
         # Single child — just propagate its summary
         result = child_summaries[0][1][:SUMMARY_MAX_LEN]
     else:
-        # Multiple children — check if total length warrants an LLM call
-        total_len = sum(len(s) for _, s in child_summaries)
-        
-        if total_len > SUMMARY_MAX_LEN:
-            # Call LLM to produce a coherent summary
-            result = _llm_summarize(aggregated_text, node_name)
-            if not result:
-                # LLM failed — fallback to truncated concat
-                result = aggregated_text[:SUMMARY_MAX_LEN]
+        # Title enumeration (no LLM) — always used when use_llm=False,
+        # and also used when total child summary length is short enough
+        titles = [name for name, _ in child_summaries]
+        title_enum = "This section covers: " + ", ".join(titles)
+
+        if not use_llm:
+            # No LLM mode — always use title enumeration
+            result = title_enum
         else:
-            # Total length is short enough — no need for LLM, use title enumeration
-            titles = [name for name, _ in child_summaries]
-            result = "This section covers the following:\n" + ", ".join(titles)
+            # LLM mode — only call LLM when content is long enough
+            total_len = sum(len(s) for _, s in child_summaries)
+            if total_len > SUMMARY_MAX_LEN:
+                result = _llm_summarize(aggregated_text, node_name)
+                if not result:
+                    # LLM failed — fallback to title enumeration
+                    result = title_enum
+            else:
+                result = title_enum
 
     tree[SUMMARY_KEY] = result
     return result
@@ -247,6 +257,7 @@ def enrich_hierarchy_summaries(
     kb_dir: str,
     source_file: Optional[str] = None,
     force: bool = False,
+    use_llm: bool = True,
 ) -> Dict[str, str]:
     """
     Enrich hierarchy.json with bottom-up recursive summaries for file(s).
@@ -255,11 +266,15 @@ def enrich_hierarchy_summaries(
         kb_dir: Absolute path to the KB directory (e.g. ~/.knowhere/my_kb).
         source_file: If given, only process this file. Otherwise process all.
         force: If True, regenerate summaries even if _summary already exists.
+        use_llm: If True, use LLM to generate coherent summaries for long
+            content. If False, always use lightweight title enumeration
+            (e.g. "This section covers: 第1章, 第2章"). Defaults to True.
 
     Returns:
         Dict mapping file_name → top-level summary string.
     """
     results: Dict[str, str] = {}
+    mode_label = "LLM" if use_llm else "title-concat"
 
     # Determine which files to process
     if source_file:
@@ -306,7 +321,7 @@ def enrich_hierarchy_summaries(
         chunk_lookup = _build_chunk_lookup(chunks)
         logger.info(
             f"📝 Generating hierarchical summaries for {file_name} "
-            f"({len(chunk_lookup)} leaf snippets)"
+            f"({len(chunk_lookup)} leaf snippets, mode={mode_label})"
         )
 
         # Find the content tree root (skip 'images' and 'tables')
@@ -315,7 +330,7 @@ def enrich_hierarchy_summaries(
         for root_key in content_keys:
             subtree = hierarchy[root_key]
             if isinstance(subtree, dict):
-                _recursive_summarize(subtree, chunk_lookup, root_key)
+                _recursive_summarize(subtree, chunk_lookup, root_key, use_llm=use_llm)
 
         # Write enriched hierarchy back
         with open(hierarchy_path, "w", encoding="utf-8") as f:

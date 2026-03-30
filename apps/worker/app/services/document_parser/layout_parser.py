@@ -959,7 +959,7 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
         raise
 
 
-def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None):
+def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None, first_toc_ele_num=None):
     """
     predict title hierarchy
     
@@ -973,6 +973,7 @@ def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_
         model_name: LLM model name
         output_dir: output directory for saving intermediate CSV results
         layout_json_path: path to layout.json for META features (optional)
+        first_toc_ele_num: ele_num of the first TOC block in DOCX (for pre-TOC exclusion)
     """
     logger.info(f"Start to predict title hierarchy: doc_type={doc_type}, smart_parse={smart_parse}, candidate titles={len(infos)}")
     
@@ -984,6 +985,32 @@ def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_
         raw_preds = filter_doc_headings(infos, enable_regx)
     else:
         raw_preds = pd.DataFrame(columns=["id", "heading", "level", "reason"])
+
+    # ── Exclude pre-TOC lines from heading prediction ──
+    # When TOC is detected, lines/blocks before the first TOC area are typically
+    # cover/metadata (company name, version, classification marks), not real
+    # headings.  Remove them before LLM judging to avoid misjudgment, then
+    # splice back with level=-1 after all processing is done.
+    pre_toc_rows = None
+    if toc_hierarchies and doc_type == "md":
+        first_toc_start = toc_hierarchies[0].get("toc_range", (0, 0))[0]
+        if first_toc_start > 0:
+            pre_toc_mask = raw_preds['id'] < first_toc_start
+            if pre_toc_mask.any():
+                pre_toc_rows = raw_preds[pre_toc_mask].copy()
+                pre_toc_rows['level'] = -1
+                raw_preds = raw_preds[~pre_toc_mask].reset_index(drop=True)
+                logger.info(f"📌 Excluded {len(pre_toc_rows)} pre-TOC lines "
+                            f"(id < {first_toc_start}) from heading prediction")
+    elif first_toc_ele_num is not None and doc_type == "docx":
+        if first_toc_ele_num > 0:
+            pre_toc_mask = raw_preds['id'] < first_toc_ele_num
+            if pre_toc_mask.any():
+                pre_toc_rows = raw_preds[pre_toc_mask].copy()
+                pre_toc_rows['level'] = -1
+                raw_preds = raw_preds[~pre_toc_mask].reset_index(drop=True)
+                logger.info(f"📌 Excluded {len(pre_toc_rows)} pre-TOC blocks "
+                            f"(ele_num < {first_toc_ele_num}) from heading prediction")
 
     # 2. parse smart/not smart
     # Save raw_preds as preds_1
@@ -1019,6 +1046,14 @@ def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_
         
         logger.info(f"✅ Heading parsing completed, final {len(heading_preds[heading_preds['level'] > 0])} valid headings")
     
+    # ── Splice pre-TOC rows back ──
+    if pre_toc_rows is not None and not heading_preds.empty:
+        heading_preds = pd.concat(
+            [pre_toc_rows[['id', 'heading', 'level', 'reason']], heading_preds],
+            ignore_index=True
+        ).sort_values('id').reset_index(drop=True)
+        logger.debug(f"📌 Spliced {len(pre_toc_rows)} pre-TOC lines back into predictions")
+
     # Save heading_preds as preds_5
     save_intermediate_csv(heading_preds, output_dir, "preds_5_final_output")
     return heading_preds

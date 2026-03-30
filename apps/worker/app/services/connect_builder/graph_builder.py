@@ -1006,6 +1006,7 @@ def build_and_deploy(
     parsed_output_dir: Optional[str] = None,
     connect_config: Optional[Dict[str, Any]] = None,
     rebuild_all: bool = True,
+    summary_use_llm: bool = False,
 ) -> Dict[str, Any]:
     """
     One-stop knowledge graph build/update + deploy to ~/.knowhere/ + MCP register.
@@ -1034,6 +1035,10 @@ def build_and_deploy(
             KB directory for existing chunk data and include them in the full
             rebuild. Defaults to True. Set to False to only process the new
             chunks (legacy behavior).
+        summary_use_llm: If True, use LLM to generate coherent hierarchical
+            summaries (slow, costs API tokens). If False (default), use
+            lightweight title enumeration (e.g. "This section covers: 第1章,
+            第2章"). Only affects `top_summary` and `_summary` fields.
 
     Returns:
         The knowledge graph dict.
@@ -1100,6 +1105,7 @@ def build_and_deploy(
         file_summaries = enrich_hierarchy_summaries(
             kb_dir=kb_dir,
             source_file=source_file,
+            use_llm=summary_use_llm,
         )
     except Exception as e:
         logger.warning(f"Hierarchical summary generation failed: {e}")

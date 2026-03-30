@@ -467,8 +467,10 @@ def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", 
     os.makedirs(img_dir, exist_ok=True)
 
     block_tuples = list(iter_block_items(doc_data))
-    # tocs = [b for b in block_tuples if "TOC" in b[2]]
-    block_tuples = [b for b in block_tuples if not "TOC" in b[2]] #TODO temporary remove toc area
+    # Record first TOC block position before filtering, for pre-TOC exclusion in pred_titles
+    toc_blocks = [b for b in block_tuples if "TOC" in b[2]]
+    first_toc_ele_num = toc_blocks[0][0] if toc_blocks else None
+    block_tuples = [b for b in block_tuples if not "TOC" in b[2]]  # remove toc area
 
     heading_infos = []
     for block_tuple in block_tuples:
@@ -483,7 +485,7 @@ def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", 
     smart_title_parse = llm_paras['smart_title_parse']
     if not llm_paras['doc_type'] in "templates":
         model_name = llm_paras.get("model_name", "deepseek-chat") if llm_paras else "deepseek-chat"
-        heading_candidates = pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name, output_dir=output_dir)
+        heading_candidates = pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name, output_dir=output_dir, first_toc_ele_num=first_toc_ele_num)
 
     if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique
