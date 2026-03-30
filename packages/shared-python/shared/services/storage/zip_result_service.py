@@ -35,6 +35,7 @@ class ZipResultService:
         data_id: Optional[str],
         job_metadata: Dict[str, Any],
         parsed_df: Optional["pd.DataFrame"] = None,
+        temp_dir: Optional[str] = None,
     ) -> Tuple[str, Dict[str, str], Dict[str, Any], int]:
         """
         Generate ZIP result package
@@ -47,6 +48,7 @@ class ZipResultService:
             data_id: User-defined ID
             job_metadata: Job metadata
             parsed_df: Optional, parsed DataFrame for generating kb.csv and hierarchy.json
+            temp_dir: Optional directory for the generated ZIP file
 
         Returns:
             Tuple[zip_file_path, checksum, statistics, zip_size]:
@@ -57,8 +59,9 @@ class ZipResultService:
         """
         try:
             # Create temporary ZIP file
-            temp_dir = tempfile.gettempdir()
-            zip_file_path = os.path.join(temp_dir, f"result_{job_id}.zip")
+            effective_temp_dir = temp_dir or tempfile.gettempdir()
+            os.makedirs(effective_temp_dir, exist_ok=True)
+            zip_file_path = os.path.join(effective_temp_dir, f"result_{job_id}.zip")
 
             # Calculate chunks statistics
             statistics = self._calculate_statistics(chunks)

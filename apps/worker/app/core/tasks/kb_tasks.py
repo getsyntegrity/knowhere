@@ -12,12 +12,15 @@ import requests
 from loguru import logger
 from sqlalchemy import select
 
+from shared.core.billing import BillingCalculator
 from shared.core.celery_app import get_celery_app
 from shared.core.config import settings
+from shared.core.database_sync import get_sync_db_context
 from shared.core.logging import log_context, LogEvent
+from shared.models.database.job import Job
+from shared.services.billing.credits_sync_service import SyncCreditsService
 
 # Sync services for gevent worker
-from shared.core.database_sync import get_sync_db_context
 from shared.services.redis.redis_sync_service import (
     SyncRedisServiceFactory,
     SyncJobInfoRedisService,
@@ -34,9 +37,9 @@ from shared.core.exceptions.domain_exceptions import (
     NotFoundException,
     StorageServiceException,
     WorkerHandlingException,
+    InsufficientCreditsException,
     SystemSettingMissingException,
     SystemSettingInvalidException,
-    InsufficientCreditsException,
 )
 from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 
@@ -53,8 +56,6 @@ from app.services.storage.sync_storage_service import (
 from app.core.tasks.base_task import KBBaseTask
 
 # Domain services
-from shared.core.billing import BillingCalculator
-from shared.models.database.job import Job
 from shared.models.schemas.job_metadata import JobMetadataHelper
 from shared.services.storage.zip_result_service import ZipResultService
 from app.services.common.job_start_service import mark_job_running
@@ -77,8 +78,8 @@ def _cleanup_temp_file(file_path: str | None) -> None:
         logger.warning(f"Failed to cleanup temp file {file_path}: {exc}")
 
 
-def _cleanup_job_workspace(workspace_dir: str | None) -> bool:
-    """Best-effort cleanup for per-job parsed artifacts after successful completion."""
+def _cleanup_task_workspace(workspace_dir: str | None) -> bool:
+    """Best-effort cleanup for a task-scoped temporary workspace."""
     if not workspace_dir:
         return False
 
@@ -87,19 +88,47 @@ def _cleanup_job_workspace(workspace_dir: str | None) -> bool:
 
     try:
         shutil.rmtree(workspace_dir)
-        logger.info(f"Job workspace cleaned up: {workspace_dir}")
+        logger.info(f"Task workspace cleaned up: {workspace_dir}")
         return True
     except OSError as exc:
-        logger.warning(f"Failed to cleanup job workspace {workspace_dir}: {exc}")
+        logger.warning(f"Failed to cleanup task workspace {workspace_dir}: {exc}")
         return False
 
 
-def _download_s3_file_to_temp(file_url: str, file_ext: str) -> str:
-    """Download the source file from object storage into a temp file."""
+def _create_task_workspace(job_id: str) -> str:
+    """Create a temporary workspace for a single parse task."""
+    temp_root = getattr(settings, "TMP_PATH", "/tmp")
+    if not temp_root:
+        raise SystemSettingMissingException(
+            user_message="System configuration error",
+            internal_message="TMP_PATH not configured",
+        )
+
+    if not os.path.isabs(temp_root):
+        raise SystemSettingInvalidException(
+            user_message="System configuration error",
+            internal_message=f"TMP_PATH must be absolute path, current value: {temp_root}",
+        )
+
+    try:
+        os.makedirs(temp_root, exist_ok=True)
+        return tempfile.mkdtemp(prefix=f"kb_task_{job_id}_", dir=temp_root)
+    except (OSError, PermissionError) as exc:
+        raise FileSystemException(
+            user_message="System error preparing temporary storage",
+            operation="create_temp_workspace",
+            internal_message=f"Failed to create task workspace in {temp_root}",
+            original_exception=exc,
+        ) from exc
+
+
+def _download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+    """Download the source file from object storage into a task workspace file."""
     local_temp_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+        os.makedirs(temp_dir, exist_ok=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=temp_dir) as tmp_file:
             local_temp_path = tmp_file.name
             with requests.get(
                 file_url,
@@ -360,33 +389,6 @@ def _parse(job_id: str, user_id: str | None):
             internal_message=f"Job metadata not found for job_id={job_id}",
         )
 
-    # Validate output directory
-    parent_path = settings.USERS_DATA_PATH
-    if not parent_path:
-        raise SystemSettingMissingException(
-            user_message="System configuration error",
-            internal_message="USERS_DATA_PATH not configured",
-        )
-
-    if not os.path.isabs(parent_path):
-        raise SystemSettingInvalidException(
-            user_message="System configuration error",
-            internal_message=f"USERS_DATA_PATH must be absolute path, current value: {parent_path}",
-        )
-
-    output_dir = os.path.join(parent_path, f"kb_{job_user_id}", job_id)
-
-    try:
-        os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"Output directory ready: {output_dir}")
-    except (OSError, PermissionError) as e:
-        raise FileSystemException(
-            user_message="System error preparing storage",
-            operation="create_directory",
-            internal_message=f"Failed to create directory: {output_dir}",
-            original_exception=e,
-        )
-
     should_process = mark_job_running(job_id, redis_service)
     if not should_process:
         logger.warning(f"Skipping parse_task for inactive job: job_id={job_id}")
@@ -401,140 +403,129 @@ def _parse(job_id: str, user_id: str | None):
     # If another worker already holds the lock, UnavailableException is raised
     # and Celery auto-retries after KB_TASK_RETRY_COUNTDOWN seconds.
     with RedisJobLock(redis_service, job_id):
+        task_workspace_dir = _create_task_workspace(job_id)
+        input_dir = os.path.join(task_workspace_dir, "input")
+        output_dir = os.path.join(task_workspace_dir, "output")
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Task workspace ready: job_id={job_id}, workspace={task_workspace_dir}")
 
-        # Publish progress: start parsing
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=10,
-            message_text="Parsing document...",
-        )
-
-        # Generate download URL and download file (sync)
-        file_url_response = generate_download_url(s3_key, settings.S3_BUCKET_NAME)
-        file_url = file_url_response["download_url"]
-
-        filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
-
-        # Download file to temp location
-        page_count = 1
-
-        # Derive file extension from s3_key (always has the correct extension)
-        # rather than filename, which may not have a real extension for URLs
-        # like arxiv.org/pdf/1706.03762
-        file_ext = os.path.splitext(s3_key)[1].lower() if s3_key else ""
-        local_temp_path = _download_s3_file_to_temp(file_url, file_ext)
-
-        logger.info(f"File downloaded: job_id={job_id}, local_path={local_temp_path}")
-
-        # Estimate workload
-        page_count = PageEstimator.estimate(local_temp_path)
-        logger.info(f"Workload estimation: job_id={job_id}, page_count={page_count}")
-
-        # Synchronous billing - deduct credits before processing
-        with get_sync_db_context() as db:
-            job_result = db.execute(
-                select(Job).where(Job.job_id == job_id).with_for_update()
+        try:
+            # Publish progress: start parsing
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=10,
+                message_text="Parsing document...",
             )
-            job = job_result.scalar_one_or_none()
 
-            if job and getattr(job, "billing_status", "") == "charged":
-                logger.info(f"Job already charged: {job_id}")
-            else:
-                billing_calc = BillingCalculator()
-                micro_dollar_required = billing_calc.calculate_page_cost(page_count)
+            # Generate download URL and download file (sync)
+            file_url_response = generate_download_url(s3_key, settings.S3_BUCKET_NAME)
+            file_url = file_url_response["download_url"]
 
-                try:
-                    # Inline sync billing using the ledger pattern:
-                    # 1. Check balance, 2. Insert transaction, 3. Recalculate, 4. Update balance
-                    from sqlalchemy import func as sa_func
-                    from shared.models.database.credits_transaction import CreditsTransaction
-                    from shared.models.database.user_balance import UserBalance
+            filename = JobMetadataHelper.get_field(job_metadata, "source_file_name")
 
-                    # Check current balance
-                    balance_result = db.execute(
-                        select(UserBalance.credits_balance).where(UserBalance.user_id == job_user_id)
-                    )
-                    current_balance = balance_result.scalar() or 0
+            # Download file to the task workspace
+            page_count = 1
 
-                    if current_balance < micro_dollar_required.amount:
-                        raise InsufficientCreditsException(
-                            user_message=f"Insufficient credits. Required: {micro_dollar_required.amount}, Available: {current_balance}",
-                            required_credits=micro_dollar_required.amount,
-                            internal_message=f"User {job_user_id} has insufficient credits",
+            # Derive file extension from s3_key (always has the correct extension)
+            # rather than filename, which may not have a real extension for URLs
+            # like arxiv.org/pdf/1706.03762
+            file_ext = os.path.splitext(s3_key)[1].lower() if s3_key else ""
+            local_temp_path = _download_s3_file_to_temp(file_url, file_ext, input_dir)
+
+            logger.info(f"File downloaded: job_id={job_id}, local_path={local_temp_path}")
+
+            from app.services.document_parser.parse_service import (
+                checkerboard_inject_parse,
+            )
+            from app.services.document_parser.internal_parse_name import (
+                prepare_internal_parse_input,
+            )
+
+            prepared_parse_input = prepare_internal_parse_input(
+                local_temp_path,
+                filename,
+                fallback_ext=file_ext,
+                prefer_fallback_ext=True,
+            )
+            internal_parse_name = prepared_parse_input.internal_filename
+            local_temp_path = prepared_parse_input.file_path
+            logger.info(
+                f"File prepared for parsing: job_id={job_id}, "
+                f"internal_filename={internal_parse_name}, local_path={local_temp_path}"
+            )
+
+            # Estimate workload
+            page_count = PageEstimator.estimate(local_temp_path)
+            logger.info(f"Workload estimation: job_id={job_id}, page_count={page_count}")
+
+            billing_calculator = BillingCalculator()
+            credits_service = SyncCreditsService()
+            billing_amount = billing_calculator.calculate_page_cost(page_count)
+            billing_reason = billing_calculator.format_description(page_count, filename)
+
+            with get_sync_db_context() as db:
+                job_result = db.execute(
+                    select(Job).where(Job.job_id == job_id).with_for_update()
+                )
+                job = job_result.scalar_one_or_none()
+
+                if job and getattr(job, "billing_status", "") == "charged":
+                    logger.info(f"Job already charged: {job_id}")
+                else:
+                    try:
+                        credits_service.deduct_credits(
+                            session=db,
+                            user_id=job_user_id,
+                            amount=billing_amount.amount,
+                            reason=billing_reason,
                         )
+                    except InsufficientCreditsException:
+                        logger.error(
+                            f"Billing failed: job_id={job_id}, user_id={job_user_id}"
+                        )
+                        if job:
+                            job.page_count = page_count
+                            job.credits_charged = billing_amount.amount
+                            job.billing_status = "billing_failed"
+                            db.commit()
 
-                    # Insert transaction record (ledger entry)
-                    transaction = CreditsTransaction(
-                        user_id=job_user_id,
-                        credits_amount=-micro_dollar_required.amount,
-                        transaction_type="usage",
-                        description=billing_calc.format_description(page_count, filename),
-                    )
-                    db.add(transaction)
-                    db.flush()
-
-                    # Recalculate balance from ledger
-                    agg_result = db.execute(
-                        select(sa_func.coalesce(sa_func.sum(CreditsTransaction.credits_amount), 0))
-                        .where(CreditsTransaction.user_id == job_user_id)
-                    )
-                    new_balance = int(agg_result.scalar() or 0)
-
-                    # Update materialized view
-                    from sqlalchemy import update as sa_update
-                    db.execute(
-                        sa_update(UserBalance)
-                        .where(UserBalance.user_id == job_user_id)
-                        .values(credits_balance=new_balance)
-                    )
+                        raise InsufficientCreditsException(
+                            user_message=(
+                                "Insufficient credits to process this document "
+                                f"({page_count} pages required, cost: "
+                                f"{billing_amount.to_credit()})."
+                            ),
+                            required_credits=billing_amount.to_credit(),
+                            internal_message=(
+                                f"job_id={job_id}, user_id={job_user_id}, "
+                                f"page_count={page_count}"
+                            ),
+                        )
 
                     if job:
                         job.page_count = page_count
-                        job.credits_charged = micro_dollar_required.amount
+                        job.credits_charged = billing_amount.amount
                         job.billing_status = "charged"
 
-                    db.commit()
-                    logger.bind(
-                        operation_cost=micro_dollar_required.amount,
-                        operation_cost_unit="micro_dollar",
-                        credits_charged=micro_dollar_required.to_credit(),
-                        new_balance=new_balance,
-                        user_id=job_user_id,
-                    ).info("Billing successful")
+            # Store billing info in Redis
+            metadata_service.update_metadata(job_id, {
+                "page_count": page_count,
+                "billing_status": "charged",
+            })
 
-                except InsufficientCreditsException as e:
-                    logger.error(f"Billing failed: job_id={job_id}, user_id={job_user_id}")
-                    if local_temp_path and os.path.exists(local_temp_path):
-                        os.unlink(local_temp_path)
+            doc_type = JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto")
+            logger.info(
+                f"Start parse: job_id={job_id}, filename={filename}, "
+                f"internal_filename={internal_parse_name}, type={doc_type}"
+            )
 
-                    if job:
-                        job.billing_status = "billing_failed"
-                        db.commit()
-
-                    raise InsufficientCreditsException(
-                        user_message=f"Insufficient credits to process this document ({page_count} pages required, cost: {micro_dollar_required.to_credit()}).",
-                        required_credits=micro_dollar_required.to_credit(),
-                        internal_message=f"job_id={job_id}, user_id={job_user_id}, page_count={page_count}",
-                    )
-
-        # Store billing info in Redis
-        metadata_service.update_metadata(job_id, {
-            "page_count": page_count,
-            "billing_status": "charged",
-        })
-
-        # Call parsing service
-        from app.services.document_parser.parse_service import checkerboard_inject_parse
-
-        doc_type = JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto")
-        logger.info(f"Start parse: job_id={job_id}, filename={filename}, type={doc_type}")
-
-        try:
             with stage_timer("worker.parse.document", job_id=job_id, filename=filename, doc_type=doc_type):
                 add_dir, add_contents_df = checkerboard_inject_parse(
                     file_full_path=local_temp_path,
                     filename=filename,
                     output_dir=output_dir,
+                    internal_output_filename=internal_parse_name,
                     kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
                     doc_type=doc_type,
                     smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
@@ -544,125 +535,116 @@ def _parse(job_id: str, user_id: str | None):
                     add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
                     s3_key=s3_key,
                 )
-        finally:
-            if local_temp_path and os.path.exists(local_temp_path):
-                try:
-                    os.unlink(local_temp_path)
-                    logger.info(f"Temp file cleaned up: {local_temp_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
 
-        logger.info(f"File parsing completed: job_id={job_id}, add_dir={add_dir}, chunks={len(add_contents_df) if add_contents_df is not None else 0}")
+            logger.info(f"File parsing completed: job_id={job_id}, add_dir={add_dir}, chunks={len(add_contents_df) if add_contents_df is not None else 0}")
 
-        if add_contents_df is None:
-            raise WorkerHandlingException(
-                user_message="We could not extract content from your file",
-                internal_message="File parsing failed, no content returned from parser",
+            if add_contents_df is None:
+                raise WorkerHandlingException(
+                    user_message="We could not extract content from your file",
+                    internal_message="File parsing failed, no content returned from parser",
+                )
+
+            if add_contents_df.empty:
+                logger.warning(f"No content returned from file parsing: job_id={job_id}, filename={filename}")
+
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=30,
+                message_text="Parse completed, saving chunks...",
             )
 
-        if add_contents_df.empty:
-            logger.warning(f"No content returned from file parsing: job_id={job_id}, filename={filename}")
+            # Save DataFrame as chunks to Redis (sync)
+            chunks_redis_service = SyncChunksRedisService(redis_service)
+            chunks = []
 
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=30,
-            message_text="Parse completed, saving chunks...",
-        )
-
-        # Save DataFrame as chunks to Redis (sync)
-        chunks_redis_service = SyncChunksRedisService(redis_service)
-        chunks = []
-
-        if add_contents_df is not None:
-            chunks = chunks_redis_service.dataframe_to_chunks(add_contents_df)
-            success = chunks_redis_service.save_chunks(job_id, chunks)
-            if success:
-                logger.info(f"DataFrame saved as chunks to Redis: job_id={job_id}")
+            if add_contents_df is not None:
+                chunks = chunks_redis_service.dataframe_to_chunks(add_contents_df)
+                success = chunks_redis_service.save_chunks(job_id, chunks)
+                if success:
+                    logger.info(f"DataFrame saved as chunks to Redis: job_id={job_id}")
+                else:
+                    logger.error(f"Failed to save DataFrame as chunks: job_id={job_id}")
             else:
-                logger.error(f"Failed to save DataFrame as chunks: job_id={job_id}")
-        else:
-            chunks_redis_service.save_chunks(job_id, chunks)
+                chunks_redis_service.save_chunks(job_id, chunks)
 
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=70,
-            message_text="Chunks saved, generating zip...",
-        )
-        logger.info(f"Chunks prepared: job_id={job_id}, count={len(chunks)}")
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=70,
+                message_text="Chunks saved, generating zip...",
+            )
+            logger.info(f"Chunks prepared: job_id={job_id}, count={len(chunks)}")
 
-        # Get source file name
-        source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")
-        if isinstance(source_file_name, str) and "/" in source_file_name:
-            source_file_name = os.path.basename(source_file_name)
+            # Get source file name
+            source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")
+            if isinstance(source_file_name, str) and "/" in source_file_name:
+                source_file_name = os.path.basename(source_file_name)
 
-        data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
+            data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=80,
-            message_text="Generating ZIP package...",
-        )
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=80,
+                message_text="Generating ZIP package...",
+            )
 
-        # Generate ZIP package
-        zip_service = ZipResultService()
-        zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(
-            job_id=job_id,
-            chunks=chunks,
-            add_dir=str(add_dir) if add_dir else "",
-            source_file_name=source_file_name,
-            data_id=data_id,
-            job_metadata=job_metadata,
-            parsed_df=add_contents_df,
-        )
+            # Generate ZIP package
+            zip_service = ZipResultService()
+            zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(
+                job_id=job_id,
+                chunks=chunks,
+                add_dir=str(add_dir) if add_dir else "",
+                source_file_name=source_file_name,
+                data_id=data_id,
+                job_metadata=job_metadata,
+                parsed_df=add_contents_df,
+                temp_dir=task_workspace_dir,
+            )
 
-        checksum_value = checksum.get("value", "") if isinstance(checksum, dict) else (checksum or "")
+            checksum_value = checksum.get("value", "") if isinstance(checksum, dict) else (checksum or "")
 
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=90,
-            message_text="Uploading results to S3...",
-        )
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=90,
+                message_text="Uploading results to S3...",
+            )
 
-        # Upload ZIP to S3 (sync)
-        result_s3_key = upload_zip_result(job_id, zip_file_path)
+            # Upload ZIP to S3 (sync)
+            result_s3_key = upload_zip_result(job_id, zip_file_path)
 
-        stored_count = 0
-        kb_records = []
+            stored_count = 0
+            kb_records = []
 
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=100,
-            message_text="Task complete!",
-        )
+            message_publisher.publish_progress_update(
+                job_id=job_id,
+                progress=100,
+                message_text="Task complete!",
+            )
 
-        # Publish result message
-        message_publisher.publish_result(
-            job_id=job_id,
-            chunks_job_id=job_id,
-            result_s3_key=result_s3_key,
-            checksum=checksum_value,
-            zip_size=zip_size,
-            stored_count=stored_count,
-            kb_records=kb_records,
-            statistics=statistics,
-            delivery_mode="url",
-            add_dir=None,
-        )
+            # Publish result message
+            message_publisher.publish_result(
+                job_id=job_id,
+                chunks_job_id=job_id,
+                result_s3_key=result_s3_key,
+                checksum=checksum_value,
+                zip_size=zip_size,
+                stored_count=stored_count,
+                kb_records=kb_records,
+                statistics=statistics,
+                delivery_mode="url",
+                add_dir=None,
+            )
 
-        cleanup_add_dir = str(add_dir) if add_dir else None
-        workspace_cleaned = _cleanup_job_workspace(output_dir)
-        if workspace_cleaned:
-            cleanup_add_dir = None
+            logger.info(f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}")
 
-        logger.info(f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}")
-
-        return {
-            "status": "success",
-            "job_id": job_id,
-            "add_dir": cleanup_add_dir,
-            "vectors_count": 0,
-            "contents_count": len(add_contents_df) if add_contents_df is not None else 0,
-            "stored_count": stored_count,
-            "delivery_mode": "url",
-            "result_s3_key": result_s3_key,
-        }
+            return {
+                "status": "success",
+                "job_id": job_id,
+                "add_dir": None,
+                "vectors_count": 0,
+                "contents_count": len(add_contents_df) if add_contents_df is not None else 0,
+                "stored_count": stored_count,
+                "delivery_mode": "url",
+                "result_s3_key": result_s3_key,
+            }
+        finally:
+            _cleanup_task_workspace(task_workspace_dir)

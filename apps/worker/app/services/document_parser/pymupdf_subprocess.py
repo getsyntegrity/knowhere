@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from gevent.threadpool import ThreadPool as GeventThreadPool
 
 # Default timeout for child processes (seconds)
-DEFAULT_TIMEOUT = 300
+DEFAULT_TIMEOUT = 3000
 QUEUE_POLL_INTERVAL_SECONDS = 0.1
 CHILD_EXIT_GRACE_SECONDS = 5
 POST_RESULT_EXIT_GRACE_SECONDS = 5

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.billing import MicroDollar
@@ -21,6 +22,8 @@ from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user_balance import UserBalance
 from shared.repositories.credits_repository import CreditsRepository
+
+NON_EXPIRING_CREDIT_TRANSACTION_TYPES: tuple[str, ...] = ("refund",)
 
 
 class CreditsService:
@@ -92,35 +95,43 @@ class CreditsService:
         initial_dollars = getattr(settings, "FREE_PLAN_INITIAL_CREDITS", 5)
         initial_amount = MicroDollar.from_dollars(initial_dollars).amount
         
-        # Create balance record
-        balance_entry = UserBalance(
-            user_id=user_id, 
-            credits_balance=initial_amount
-        )
-        session.add(balance_entry)
-        
-        # Create initial transaction record
-        transaction = CreditsTransaction(
-            user_id=user_id,
-            credits_amount=initial_amount,
-            description="New user registration bonus",
-            transaction_type="initial_grant"
-        )
-        session.add(transaction)
-        
-        # Create payment record for tracking
-        payment = PaymentRecord(
-            user_id=user_id,
-            payment_type="system_grant",
-            amount_cents=0,
-            currency="USD",
-            status="succeeded",
-            credits_amount=initial_amount,
-            extra_metadata={"reason": "initial_grant"},
-            processed_at=datetime.utcnow()
-        )
-        session.add(payment)
-        await session.flush()
+        try:
+            async with session.begin_nested():
+                # Create balance record
+                balance_entry = UserBalance(
+                    user_id=user_id, 
+                    credits_balance=initial_amount
+                )
+                session.add(balance_entry)
+                
+                # Create initial transaction record
+                transaction = CreditsTransaction(
+                    user_id=user_id,
+                    credits_amount=initial_amount,
+                    description="New user registration bonus",
+                    transaction_type="initial_grant"
+                )
+                session.add(transaction)
+                
+                # Create payment record for tracking
+                payment = PaymentRecord(
+                    user_id=user_id,
+                    payment_type="system_grant",
+                    amount_cents=0,
+                    currency="USD",
+                    status="succeeded",
+                    credits_amount=initial_amount,
+                    extra_metadata={"reason": "initial_grant"},
+                    processed_at=datetime.utcnow()
+                )
+                session.add(payment)
+                await session.flush()
+        except IntegrityError:
+            existing_balance = await self.repository.get_user_balance(session, user_id)
+            if existing_balance:
+                logger.info(f"User already initialized by concurrent session: user_id={user_id}")
+                return
+            raise
         
         logger.info(f"User initialized: user_id={user_id}, credits={initial_amount}")
     
@@ -219,9 +230,15 @@ class CreditsService:
         recent_credits = await self.repository.get_recent_payment_credits(
             session, user_id, valid_days
         )
+        non_expiring_credits = await self.repository.get_positive_credit_total_by_transaction_types(
+            session,
+            user_id,
+            NON_EXPIRING_CREDIT_TRANSACTION_TYPES,
+        )
+        expirable_balance = max(current_balance - non_expiring_credits, 0)
 
-        if recent_credits < current_balance:
-            expired_amount = current_balance - recent_credits
+        if recent_credits < expirable_balance:
+            expired_amount = expirable_balance - recent_credits
             
             # Use ledger pattern to record expiration
             await self._apply_transaction_and_update_balance(
@@ -234,7 +251,7 @@ class CreditsService:
             
             logger.info(
                 f"Credits expired: user_id={user_id}, amount={expired_amount}, "
-                f"remaining={recent_credits}"
+                f"remaining={current_balance - expired_amount}"
             )
             
             return expired_amount

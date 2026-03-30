@@ -15,6 +15,7 @@ from shared.core.exceptions.domain_exceptions import (
 from app.services.document_parser.doc_profiler import profile_document
 from app.services.document_parser.stage_profiler import stage_timer
 
+
 def cleanup_unreferenced_images(output_dir: str) -> int:
     """
     Clean up unreferenced UUID-named images from the images directory.
@@ -54,28 +55,24 @@ def cleanup_unreferenced_images(output_dir: str) -> int:
     
     return removed_count
 
-
-def checkerboard_inject_parse_sync(
-    file_full_path: str,
-    filename: str,
-    output_dir: str,
-    **kwargs,
-):
-    """Backward-compatible sync alias for parser entrypoint."""
-    return checkerboard_inject_parse(
-        file_full_path=file_full_path,
-        filename=filename,
-        output_dir=output_dir,
-        **kwargs,
-    )
-
-
 def checkerboard_inject_parse(
     file_full_path: str, 
     filename: str, 
     output_dir: str,
-    **kwargs
-):
+    internal_output_filename: str,
+    kb_dir: str = "Default_Root",
+    llm_histories: int = 5,
+    smart_title_parse: bool = True,
+    summary_image: bool = True,
+    summary_table: bool = True,
+    summary_txt: bool = True,
+    stopwords: list[str] | None = None,
+    doc_type: str = "auto",
+    add_frag_desc: str = "",
+    base_url: str = "",
+    fragment_content: str = "",
+    s3_key: str | None = None,
+) -> tuple[str, object]:
     """
     main parsing function
     
@@ -83,37 +80,44 @@ def checkerboard_inject_parse(
         file_full_path: source file path (local or URL)
         filename: file name
         output_dir: output directory (absolute path, caller provides)
-        **kwargs: parsing parameters
-            - kb_dir: sub-directory name (default: "默认目录")
-            - smart_title_parse, summary_image, summary_table, summary_txt
-            - stopwords, doc_type, add_frag_desc, base_url
+        kb_dir: sub-directory name
+        llm_histories: retained for downstream LLM settings
+        smart_title_parse: enable smart heading parsing
+        summary_image: enable image summaries
+        summary_table: enable table summaries
+        summary_txt: enable text summaries
+        stopwords: optional stopword list
+        doc_type: parser document type hint
+        add_frag_desc: extra fragment description
+        base_url: optional source base URL
+        fragment_content: raw fragment content
+        internal_output_filename: normalized internal folder name for on-disk output
+        s3_key: optional S3 key for downstream parsers
     
     Returns:
         tuple: (output_dir, parsed_df)
             - output_dir: directory path after parsing
             - parsed_df: parsed content DataFrame
     """
-    # 构建 base_llm_paras（从 kwargs 获取）
+    # 构建 base_llm_paras（从显式参数获取）
     base_llm_paras = {
-        "llm_histories": kwargs.get('llm_histories', 5),
-        "smart_title_parse": kwargs.get('smart_title_parse', True),
-        "summary_image": kwargs.get('summary_image', True),
-        "summary_table": kwargs.get('summary_table', True),
-        "summary_txt": kwargs.get('summary_txt', True),
-        "stopwords": kwargs.get('stopwords', None),
-        "doc_type": kwargs.get('doc_type', 'auto'),
-        "frag_desc": kwargs.get('add_frag_desc', ''),
+        "llm_histories": llm_histories,
+        "smart_title_parse": smart_title_parse,
+        "summary_image": summary_image,
+        "summary_table": summary_table,
+        "summary_txt": summary_txt,
+        "stopwords": stopwords,
+        "doc_type": doc_type,
+        "frag_desc": add_frag_desc,
     }
     
-    baseurl = kwargs.get('base_url', '')
+    baseurl = base_url
         
     logger.debug(f"baseurl: {baseurl}")
     logger.debug(f"file_full_path: {file_full_path}")
     
     # ========== Path handling ==========
     split_char = settings.SPLIT_CHAR or "/"
-    kb_dir = kwargs.get('kb_dir', 'Default_Root')
-    filename = path_handle(filename, mode="clean_single")
     
     # Develop relative root path for chunk path field
     kb_dir_parts = kb_dir.split(split_char)
@@ -121,13 +125,19 @@ def checkerboard_inject_parse(
         relative_root = "/".join(kb_dir_parts + [filename])
     else:
         relative_root = "/".join(kb_dir_parts)
+
+    if internal_output_filename and "images" not in kb_dir_parts:
+        internal_relative_root = "/".join(kb_dir_parts + [internal_output_filename])
+    else:
+        internal_relative_root = "/".join(kb_dir_parts)
     
     # Develop full output directory (output_dir + relative_root)
-    full_output_dir = os.path.join(output_dir, relative_root.replace("/", os.sep))
+    full_output_dir = os.path.join(output_dir, internal_relative_root.replace("/", os.sep))
     full_output_dir = path_handle(full_output_dir, mode="sanitize")
     os.makedirs(full_output_dir, exist_ok=True)
     
     logger.debug(f"relative_root: {relative_root}")
+    logger.debug(f"internal_relative_root: {internal_relative_root}")
     logger.debug(f"full_output_dir: {full_output_dir}")
 
     file_path_lower = file_full_path.lower()
@@ -135,16 +145,19 @@ def checkerboard_inject_parse(
     
     # ── Agentic Profiler: classify document before routing ──
     with stage_timer("document.profile", filename=filename):
-        profile = profile_document(file_full_path, filename)
+        profile = profile_document(file_full_path, internal_output_filename)
     logger.info(f"📋 DocProfile: {profile.summary()}")
     logger.debug(f"📋 Reasoning: {profile.reasoning}")
 
     # Atlas routing: rename output folder from .pdf → .atlas for easy filtering
     if profile and profile.doc_category == "atlas":
         name_base, _ = os.path.splitext(filename)
+        internal_name_base, _ = os.path.splitext(internal_output_filename)
         filename = name_base + ".atlas"
+        internal_output_filename = internal_name_base + ".atlas"
         relative_root = "/".join(kb_dir_parts + [filename])
-        full_output_dir = os.path.join(output_dir, relative_root.replace("/", os.sep))
+        internal_relative_root = "/".join(kb_dir_parts + [internal_output_filename])
+        full_output_dir = os.path.join(output_dir, internal_relative_root.replace("/", os.sep))
         full_output_dir = path_handle(full_output_dir, mode="sanitize")
         os.makedirs(full_output_dir, exist_ok=True)
         logger.info(f"📐 Atlas output renamed: {filename}")
@@ -153,7 +166,6 @@ def checkerboard_inject_parse(
         logger.debug("file type is fragment")
         from app.services.document_parser.fragment_parser import parse_fragment
 
-        fragment_content = kwargs.get('fragment_content', '')
         full_output_dir, relative_root, parsed_df = parse_fragment(fragment_content, filename=filename, output_dir=output_dir, kb_dir=kb_dir, base_llm_paras=base_llm_paras)
 
     elif '.txt' in file_path_lower:
@@ -175,7 +187,7 @@ def checkerboard_inject_parse(
         from app.services.document_parser.pdf_parser import parse_pdfs
 
         if filename and file_full_path:
-            parsed_df = parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root, s3_key=kwargs.get('s3_key'))
+            parsed_df = parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root, s3_key=s3_key)
 
     elif '.docx' in file_path_lower:
         logger.debug(f"file type is docx")
