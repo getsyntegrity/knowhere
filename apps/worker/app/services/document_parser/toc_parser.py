@@ -11,6 +11,8 @@ Provides functionality for:
 """
 
 import re
+import gevent
+from gevent.pool import Pool as GeventPool
 import pandas as pd
 from loguru import logger
 from lxml import etree
@@ -154,6 +156,10 @@ def is_content_line(line: str) -> bool:
     """
     stripped = line.strip().lower()
     
+    # Filter out page markers (e.g. <!-- page 10 -->)
+    if re.match(r'^<!--\s*page\s+\d+\s*-->', stripped):
+        return False
+    
     # Filter out html lines
     # TODO if table extract it as lines but keep the id span as 1
     if stripped.startswith("<table>"):
@@ -242,12 +248,19 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
     invalid_ids_by_area = []
     area_ranges = []
     
+    other_toc_starts = set(start_indices)  # for quick lookup
+
     for start_idx in start_indices:
         candidate_lines_with_indices = []
         invalid_ids = []
         current_idx = start_idx
         
         while len(candidate_lines_with_indices) < limit_ and current_idx < len(md_lines):
+            # Stop if we've reached another TOC keyword's start
+            if current_idx != start_idx and current_idx in other_toc_starts:
+                logger.debug(f"Scan for area starting at {start_idx} stopped at {current_idx} (another TOC keyword)")
+                break
+
             line = md_lines[current_idx]
             
             if line.strip():
@@ -353,7 +366,8 @@ def llm_judge_toc_range(html_table: str, lines_: list, model_name: str = None, u
 
 def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -> list:
     """
-    Use LLM to detect TOC, support multiple TOC areas
+    Use LLM to detect TOC, support multiple TOC areas.
+    When multiple candidate areas exist, LLM calls are parallelized via gevent.
     
     Args:
         md_lines: markdown lines list
@@ -361,7 +375,7 @@ def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -
         limit_: max lines to consider for each candidate area
     
     Returns:
-        List[(start_idx, end_idx, toc_lines)] or empty list
+        List[(start_idx, end_idx, toc_lines, area_end)] or empty list
         - toc_lines only contains valid content lines (table/LaTeX/images filtered out)
         may return multiple TOC areas
     """
@@ -371,46 +385,64 @@ def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -
         logger.info("No TOC candidates detected")
         return []
     
-    # Step 2: evaluate each candidate area with LLM
-    toc_ranges = []
+    # Step 2: evaluate each candidate area with LLM (parallel when multiple)
+    def _judge_single_area(idx, lines_, invalid_ids, area_start, area_end):
+        """Judge a single candidate area. Returns (idx, result_tuple) or (idx, None)."""
+        try:
+            reindex_to_original = {i: abs_idx for i, (abs_idx, _) in enumerate(lines_)}
+            
+            df = pd.DataFrame([
+                {"id": i, "content": truncate_text(
+                    re.sub(r'^#+\s*', '', line.strip()), 30, 10
+                )}
+                for i, (_, line) in enumerate(lines_)
+            ])
+            
+            md_table = df2md(df, index=False)
+            llm_result = llm_judge_toc_range(md_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
+            
+            if llm_result is not None:
+                reindex_start, reindex_end = llm_result
+                toc_start = reindex_to_original.get(reindex_start)
+                toc_end = reindex_to_original.get(reindex_end)
+                
+                if toc_start is not None and toc_end is not None:
+                    toc_lines = [
+                        line for i, line in enumerate(md_lines[toc_start : toc_end+1], start=toc_start)
+                        if i not in invalid_ids and line.strip()
+                    ]
+                    return idx, (toc_start, toc_end, toc_lines, area_end)
+                else:
+                    logger.warning(f"TOC area #{idx+1}: failed to map reindex back to original")
+                    return idx, None
+            else:
+                logger.info(f"TOC area #{idx+1} not detected")
+                return idx, None
+        except Exception as e:
+            logger.error(f"TOC area #{idx+1} LLM judge failed: {e}")
+            return idx, None
     
+    if len(candidates) == 1:
+        # Single candidate: no need for parallel overhead
+        (_, lines_), invalid_ids, (area_start, area_end) = candidates[0], invalid_ids_by_area[0], area_ranges[0]
+        _, result = _judge_single_area(0, lines_, invalid_ids, area_start, area_end)
+        return [result] if result else []
+    
+    # Multiple candidates: parallel LLM calls
+    logger.info(f"Parallelizing TOC range detection for {len(candidates)} candidate areas")
+    pool = GeventPool(size=len(candidates))
+    greenlets = []
     for idx, ((_, lines_), invalid_ids, (area_start, area_end)) in enumerate(
         zip(candidates, invalid_ids_by_area, area_ranges)
     ):
-        # Build mapping: re-index to 0-based consecutive ids for LLM
-        # This avoids LLM hallucination on non-existent line numbers
-        reindex_to_original = {i: abs_idx for i, (abs_idx, _) in enumerate(lines_)}
-        # original_to_reindex = {abs_idx: i for i, (abs_idx, _) in enumerate(lines_)}
-        
-        # Create DataFrame with re-indexed ids (0, 1, 2, ...)
-        df = pd.DataFrame([
-            {"id": i, "content": truncate_text(line.strip(), 30, 10)}
-            for i, (_, line) in enumerate(lines_)
-        ])
-        
-        md_table = df2md(df, index=False)
-        llm_result = llm_judge_toc_range(md_table, lines_, model_name, use_reindex=True, total_lines=len(lines_))
-        
-        if llm_result is not None:
-            reindex_start, reindex_end = llm_result
-            # Map back to original absolute indices
-            toc_start = reindex_to_original.get(reindex_start)
-            toc_end = reindex_to_original.get(reindex_end)
-            
-            if toc_start is not None and toc_end is not None:
-                # 使用 area_end 作为过滤范围的结束点（包含所有扫描过的行）
-                # toc_start/toc_end 是 LLM 识别的精确 TOC 边界
-                # 但 invalid_ids 的范围是 [area_start, area_end]
-                toc_lines = [
-                    line for i, line in enumerate(md_lines[toc_start : toc_end+1], start=toc_start)
-                    if i not in invalid_ids and line.strip()
-                ]
-                # 返回 area_end 作为实际过滤范围
-                toc_ranges.append((toc_start, toc_end, toc_lines, area_end))
-            else:
-                logger.warning(f"TOC area #{idx+1}: failed to map reindex back to original")
-        else:
-            logger.info(f"TOC area #{idx+1} not detected")
+        greenlets.append(pool.spawn(_judge_single_area, idx, lines_, invalid_ids, area_start, area_end))
+    gevent.joinall(greenlets)
+    
+    # Collect results, sorted by original index to maintain order
+    results = [g.value for g in greenlets if g.value is not None]
+    results.sort(key=lambda r: r[0])
+    
+    toc_ranges = [result for _, result in results if result is not None]
     return toc_ranges
 
 
@@ -642,17 +674,44 @@ def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "
     toc_hierarchies = []
     ranges_to_remove = []
     
-    for idx, (toc_start, toc_end, toc_lines, area_end) in enumerate(toc_area):
+    def _analyze_single_toc(idx, toc_start, toc_end, toc_lines, area_end):
+        """Analyze hierarchy for a single TOC area. Returns (idx, result_dict)."""
         logger.info(f"Analyzing TOC area #{idx+1}: TOC range [{toc_start}, {toc_end}], scan range ends at {area_end}")
+        try:
+            toc_with_level, toc_tree = eval_toc_levels(toc_lines, model_name, max_depth=6)
+            return idx, {
+                "toc_range": (toc_start, toc_end),
+                "scan_range": (toc_start, area_end),
+                "toc_with_level": toc_with_level,
+                "toc_tree": toc_tree
+            }
+        except Exception as e:
+            logger.error(f"TOC area #{idx+1} hierarchy analysis failed: {e}")
+            return idx, None
+    
+    if len(toc_area) == 1:
+        # Single TOC: no parallel overhead
+        toc_start, toc_end, toc_lines, area_end = toc_area[0]
+        _, result = _analyze_single_toc(0, toc_start, toc_end, toc_lines, area_end)
+        if result:
+            toc_hierarchies.append(result)
+            ranges_to_remove.append((toc_start, toc_end))
+    else:
+        # Multiple TOCs: parallel hierarchy analysis
+        logger.info(f"Parallelizing TOC hierarchy analysis for {len(toc_area)} areas")
+        pool = GeventPool(size=len(toc_area))
+        greenlets = [
+            pool.spawn(_analyze_single_toc, idx, toc_start, toc_end, toc_lines, area_end)
+            for idx, (toc_start, toc_end, toc_lines, area_end) in enumerate(toc_area)
+        ]
+        gevent.joinall(greenlets)
         
-        toc_with_level, toc_tree = eval_toc_levels(toc_lines, model_name, max_depth=6)
-        toc_hierarchies.append({
-            "toc_range": (toc_start, toc_end),
-            "scan_range": (toc_start, area_end),
-            "toc_with_level": toc_with_level,
-            "toc_tree": toc_tree
-        })
-        ranges_to_remove.append((toc_start, toc_end))
+        # Collect results sorted by index to maintain document order
+        results = sorted([g.value for g in greenlets if g.value is not None], key=lambda r: r[0])
+        for _, result in results:
+            if result:
+                toc_hierarchies.append(result)
+                ranges_to_remove.append(result["toc_range"])
     
     # Step 3: Remove TOC lines from md_lines (process in reverse order to correct indices)
     # Sort ranges by start index descending just to be safe
