@@ -1,6 +1,6 @@
 # Knowhere API — Project Tracker
 
-> **Last session**: 2026-03-28 — 修复 PDF/DOCX 表格文件名超长与 KG 增量解析的错误 dedup 问题
+> **Last session**: 2026-03-30 — 审计并修复 `53e3b4b` 并发优化提交引入的回归：图片文件未按 LLM Title 重命名 + `img_title` 被丢弃
 > **Current branch**: feat/eric/parsing-update
 
 ---
@@ -20,6 +20,7 @@
 | 2026-03-19 | ~57m | ~5K | ~40K | LLM 文本输出 eval_response 旁路 + prompt 防护强化 (null/anti-preamble) + atlas .atlas 扩展名 |
 | 2026-03-27 | ~2h | ~8K | ~60K | 实现 KG Bottom-Up File Summary 递归摘要构建 + prompt 防护与图谱集成 |
 | 2026-03-28 | ~1h | ~20K | ~12K | 修复 PDF/DOCX 管线 Errno 36 表格超长文件名问题 (构建 sanitize_table_name_from_header 语义安全提取) + 修复增量 KG Update 的 source_file 错误 dedup 问题 |
+| 2026-03-30 | ~1.5h | ~25K | ~15K | 审计 53e3b4b 并发优化提交：修复图片 img_title 丢弃/rename 回归，完整 diff 审计（3条路径 keywords 状态、_br_ 处理、fallback 并发数不一致） |
 
 ---
 
@@ -146,6 +147,10 @@ sequenceDiagram
 
 _(无)_
 
+### 🟠 Recently Resolved (2026-03-30)
+
+- [x] **图片文件未按 LLM Title 重命名** — `53e3b4b` 并发重构时，`img_title` 被 `_` 丢弃导致 deferred 阶段无法 rename，与表格的 title-based naming 不一致。已修复：恢复 `split_title_summary` 返回值解包，deferred 结果写回 `df_list[idx][1]`
+
 ### 🟡 TODO
 
 #### High Priority
@@ -176,6 +181,12 @@ _(无)_
 - [ ] **LLM 层级判断** — `layout_parser.py:552` 使用 LLM 基于窗口数据分配 heading level
 - [ ] **LaTeX 支持** — `doc_parser.py:489` 处理 LaTeX 等格式
 - [ ] **table_parser 已知问题** — `table_parser.py:863` 当前实现有问题 (见 docstring)
+
+- [ ] **MD/PDF + DOCX 表格 keywords fallback** — `summary_table=False` 或 LLM 失败时，`md_parser` 和 `doc_parser` 的表格 keywords 字段为空 `""`。
+  - **根因**: `39b70d4` 中将 row/col 首行首列 cross-dedup keywords 改为纯 LLM 提取，去掉了 mechanical fallback
+  - **Excel 路径已有 fallback** (`table_parser.py:1383` `parse_tb_keywords`)，MD/PDF 和 DOCX 路径缺失
+  - **现状**: `sanitize_table_name_from_header` 已处理 `_br_`/`__br__` 噪声（用于文件名），keywords 路径未复用此逻辑
+  - **方案**: 将 `first_cols_rows_html` / `_first_cols_rows` 返回的首行首列文本，经 `_br_`/`\n`/`' | '` 拆分 + cross-dedup 处理后写入 `tb_keywords`，作为 LLM 失败时的保底
 - [ ] **智能分块** — `txt_parser.py:124` 当前粗略分割，需更智能策略
 - [ ] **OCR 分支** — `toc_parser.py:609` 实现 OCR → 直接生成 toc-tree
 
@@ -265,6 +276,8 @@ _(无)_
 | 2026-03-27 | feature | KG Bottom-Up Recursive Summary: `summary_builder.py` 增量收集子节点 metadata 构建层级摘要；图谱自下而上提取注入 `top_summary` | `summary_builder.py`, `graph_builder.py`, `prompt_service.py` |
 | 2026-03-28 | fix | Errno 36 表格文件名超长: 构建 `sanitize_table_name_from_header` 语义安全拼接表头，过滤单字噪声，并修复正则匹配 MinerU `_br_` / `__br_` 标记 | `table_parser.py`, `doc_parser.py`, `md_parser.py` |
 | 2026-03-28 | fix | 修复增量 KG Update (build_and_deploy) 错误跳过图谱更新的问题: 提前确定 `source_file`，在加载 `existing_chunks` 时排除当前文件，避免 `_dedup_chunks_by_content` 误判为完全重复 | `graph_builder.py` |
+| 2026-03-30 | fix | 修复 `53e3b4b` 并发优化回归：`img_title` 在 `_run_deferred` 中被 `_` 丢弃，图片文件未按 LLM title rename（与表格路径不一致）。恢复 `split_title_summary` 解包 + deferred 阶段 `os.rename` + `df_list[idx][1]` 更新 | `md_parser.py` |
+| 2026-03-30 | audit | 审计 `53e3b4b`+`19c3977` 两次并发提交：确认 `est_hierarchies_llm` 已还原原始 chunk-0 + mapping 策略；发现 `txt_parser.py` fallback 并发数 `10` 与 config 默认 `8` 不一致（已记录 TODO） | `layout_parser.py`, `txt_parser.py`, `md_parser.py` |
 
 ---
 

@@ -16,6 +16,7 @@ Requires-Dist: kombu==5.4.0
 Requires-Dist: billiard==4.2.0
 Requires-Dist: vine==5.1.0
 Requires-Dist: amqp==5.3.1
+Requires-Dist: celery-redbeat==2.2.0
 Requires-Dist: aio-pika==9.3.0
 Requires-Dist: pydantic==2.11.7
 Requires-Dist: pydantic-settings==2.10.1

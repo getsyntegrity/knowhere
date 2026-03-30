@@ -40,6 +40,7 @@ class DocProfile:
     has_tables: bool = False
     has_embedded_fonts: bool = False
     is_multi_column: bool = False      # multi-column layout detected
+    is_degraded_electronic: bool = False  # electronic text but structure as bitmaps
     sample_text: str = ""                 # first 500 characters
     
     # ── Page details for debug ──
@@ -57,12 +58,15 @@ class DocProfile:
     
     def summary(self) -> str:
         """One-line summary"""
-        return (
+        parts = (
             f"[{self.file_type.upper()}] route={self.route}, "
             f"scan={self.scan_type}, category={self.doc_category}, "
             f"pages={self.page_count}, text_density={self.avg_text_density:.0f}, "
             f"img_coverage={self.avg_image_coverage:.1%}"
         )
+        if self.is_degraded_electronic:
+            parts += ", degraded=True"
+        return parts
 
 
 # ─── PDF Profiling ──────────────────────────────────────
@@ -79,6 +83,11 @@ FAST_TEXT_THRESHOLD = 100        # fast: minimum text density to confirm extract
 
 MULTI_COL_GAP_RATIO = 0.15      # min gap between columns as ratio of page width
 MULTI_COL_MIN_BLOCKS = 4        # min text blocks per page to evaluate columns
+
+DEGRADED_SKINNY_ASPECT = 50     # w:h ratio above this → skinny strip
+DEGRADED_SKINNY_MAX_H = 30      # max height (px) for a skinny strip
+DEGRADED_SKINNY_MIN_PER_PAGE = 50  # min skinny images per page to flag
+DEGRADED_PAGE_RATIO = 0.5       # ratio of pages with skinny strips to flag
 
 
 def _publish_profile_result(queue, profile: DocProfile) -> None:
@@ -133,6 +142,7 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     has_any_tables = False
     multi_col_pages = 0
     landscape_pages = 0
+    degraded_pages = 0
     doc_page_sizes = []
 
     for idx in sample_indices:
@@ -154,14 +164,22 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
 
         images = page.get_images(full=True)
         img_total_area = 0.0
+        skinny_count = 0
         for img in images:
             xref = img[0]
+            img_w, img_h = img[2], img[3]  # pixel dimensions
+            if (img_h > 0 and img_w / img_h > DEGRADED_SKINNY_ASPECT
+                    and img_h < DEGRADED_SKINNY_MAX_H):
+                skinny_count += 1
             try:
                 rects = page.get_image_rects(xref)
                 for rect in rects:
                     img_total_area += rect.width * rect.height
             except Exception:
                 pass
+
+        if skinny_count >= DEGRADED_SKINNY_MIN_PER_PAGE:
+            degraded_pages += 1
 
         img_coverage = img_total_area / page_area if page_area > 0 else 0
         img_coverage = min(img_coverage, 1.0)
@@ -237,6 +255,7 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     profile.has_embedded_fonts = has_any_fonts
     profile.has_tables = has_any_tables
     profile.is_multi_column = multi_col_pages > (n_sampled * 0.3)
+    profile.is_degraded_electronic = degraded_pages > (n_sampled * DEGRADED_PAGE_RATIO)
     profile.sample_text = " ".join(all_text_parts)[:500]
     profile.page_details = page_details
 
@@ -292,13 +311,17 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     elif profile.is_multi_column:
         profile.route = "standard"
         reasons.append(f"route=standard: multi-column layout")
+    elif profile.is_degraded_electronic:
+        profile.route = "standard"
+        reasons.append(
+            f"route=standard: degraded electronic PDF "
+            f"(bitmap table lines detected on {degraded_pages}/{n_sampled} pages)")
     elif profile.avg_text_density >= FAST_TEXT_THRESHOLD:
         profile.route = "fast"
         reasons.append(
             f"route=fast: single-column electronic PDF "
             f"(text={profile.avg_text_density:.0f}>={FAST_TEXT_THRESHOLD}, "
-            f"tables={profile.has_tables}, multi_col={profile.is_multi_column})"
-        )
+            f"tables={profile.has_tables}, multi_col={profile.is_multi_column})")
     else:
         profile.route = "standard"
         reasons.append(f"route=standard: low text density ({profile.avg_text_density:.0f}<{FAST_TEXT_THRESHOLD})")
