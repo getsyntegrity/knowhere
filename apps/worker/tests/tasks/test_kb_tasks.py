@@ -1,6 +1,8 @@
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 
 from app.core.tasks import kb_tasks
 from app.services.document_parser import parse_service
@@ -40,7 +42,7 @@ def test_parse_skips_when_job_is_already_terminal(monkeypatch, tmp_path):
         "verify_s3_file_exists",
         lambda s3_key: {"exists": True, "size": 1024},
     )
-    monkeypatch.setattr(kb_tasks.settings, "USERS_DATA_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
     monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: False)
     monkeypatch.setattr(kb_tasks, "RedisJobLock", redis_lock_cls)
 
@@ -122,11 +124,22 @@ class _FakeDbContext:
         return _FakeDbResult(self.job)
 
 
-def test_parse_cleans_workspace_only_after_success(monkeypatch, tmp_path):
+def _find_task_workspaces(root: Path, job_id: str) -> list[Path]:
+    return sorted(
+        path
+        for path in root.iterdir()
+        if path.is_dir() and path.name.startswith(f"kb_task_{job_id}_")
+    )
+
+
+def test_parse_cleans_task_workspace_after_success(monkeypatch, tmp_path):
     redis_service = MagicMock()
     job = type("JobRow", (), {"billing_status": "charged"})()
     metadata_service = _FakeSuccessMetadataService(redis_service)
     publish_result_calls = []
+    source_file_name = "GB 50243-2016 通风与空调工程施工质量验收规范.pdf"
+    normalized_file_name = "GB_50243-2016_通风与空调工程施工质量验收规范.pdf"
+    parse_call = {}
 
     class _FakeMessagePublisher:
         def publish_progress_update(self, **kwargs):
@@ -134,8 +147,8 @@ def test_parse_cleans_workspace_only_after_success(monkeypatch, tmp_path):
 
         def publish_result(self, **kwargs):
             publish_result_calls.append(kwargs)
-            workspace_dir = tmp_path / "kb_user_123" / "job_123"
-            assert workspace_dir.exists()
+            workspace_dirs = _find_task_workspaces(tmp_path, "job_123")
+            assert len(workspace_dirs) == 1
             return True
 
     def fake_generate_zip_package(
@@ -147,13 +160,24 @@ def test_parse_cleans_workspace_only_after_success(monkeypatch, tmp_path):
         data_id,
         job_metadata,
         parsed_df=None,
+        temp_dir: str | None = None,
     ):
-        zip_path = tmp_path / "result_job_123.zip"
+        assert temp_dir is not None
+        zip_path = Path(temp_dir) / f"result_{job_id}.zip"
         zip_path.write_bytes(b"zip")
         return str(zip_path), {"value": "checksum"}, {"total_chunks": 1}, 3
 
     def fake_checkerboard_inject_parse(**kwargs):
-        output_dir = tmp_path / "kb_user_123" / "job_123" / "Default_Root" / "test.pdf"
+        parse_call.update(kwargs)
+        assert kwargs["filename"] == source_file_name
+        assert kwargs["internal_output_filename"] == normalized_file_name
+        assert kwargs["file_full_path"].endswith(f"/{normalized_file_name}")
+        assert "/input/" in kwargs["file_full_path"]
+        assert kwargs["kb_dir"] == "Default_Root"
+        assert str(tmp_path) in kwargs["output_dir"]
+        assert kwargs["output_dir"].endswith("/output")
+
+        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "full.md").write_text("body", encoding="utf-8")
         dataframe = pd.DataFrame(
@@ -185,11 +209,18 @@ def test_parse_cleans_workspace_only_after_success(monkeypatch, tmp_path):
     monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
     monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FakeChunksRedisService)
     monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
-    monkeypatch.setattr(kb_tasks.settings, "USERS_DATA_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
     monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
     monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
     monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
-    monkeypatch.setattr(kb_tasks, "_download_s3_file_to_temp", lambda file_url, file_ext: str(tmp_path / "source.pdf"))
+    metadata_service.metadata["source_file_name"] = source_file_name
+
+    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+        source_path = Path(temp_dir) / f"downloaded{file_ext}"
+        source_path.write_bytes(b"pdf")
+        return str(source_path)
+
+    monkeypatch.setattr(kb_tasks, "_download_s3_file_to_temp", fake_download_s3_file_to_temp)
     monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
     monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
@@ -198,9 +229,138 @@ def test_parse_cleans_workspace_only_after_success(monkeypatch, tmp_path):
 
     result = kb_tasks._parse("job_123", "user_123")
 
-    workspace_dir = tmp_path / "kb_user_123" / "job_123"
-    assert not workspace_dir.exists()
+    assert _find_task_workspaces(tmp_path, "job_123") == []
+    assert parse_call["filename"] == source_file_name
+    assert parse_call["internal_output_filename"] == normalized_file_name
+    assert parse_call["file_full_path"].endswith(f"/{normalized_file_name}")
     assert publish_result_calls[0]["add_dir"] is None
     assert result["add_dir"] is None
     assert "add_dir" not in metadata_service.metadata
     assert "workspace_cleaned" not in metadata_service.metadata
+
+
+def test_parse_uses_s3_extension_for_internal_parse_name(monkeypatch, tmp_path):
+    redis_service = MagicMock()
+    job = type("JobRow", (), {"billing_status": "charged"})()
+    metadata_service = _FakeSuccessMetadataService(redis_service)
+    parse_call = {}
+    estimated_paths = []
+
+    metadata_service.metadata["source_file_name"] = "legacy-upload.txt"
+
+    class _FakeMessagePublisher:
+        def publish_progress_update(self, **kwargs):
+            return True
+
+        def publish_result(self, **kwargs):
+            return True
+
+    def fake_checkerboard_inject_parse(**kwargs):
+        parse_call.update(kwargs)
+        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "full.md").write_text("body", encoding="utf-8")
+        return str(output_dir), pd.DataFrame(
+            [
+                {
+                    "content": "hello",
+                    "path": "doc/test",
+                    "type": "text",
+                    "length": 5,
+                    "keywords": "",
+                    "summary": "",
+                    "know_id": "kid",
+                    "tokens": "",
+                    "connectto": "",
+                    "addtime": "now",
+                    "page_nums": "1",
+                }
+            ]
+        )
+
+    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+        source_path = Path(temp_dir) / f"downloaded{file_ext}"
+        source_path.write_bytes(b"pdf")
+        return str(source_path)
+
+    def fake_estimate(path: str) -> int:
+        estimated_paths.append(path)
+        return 1
+
+    monkeypatch.setattr(kb_tasks, "get_sync_message_publisher", lambda: _FakeMessagePublisher())
+    monkeypatch.setattr(
+        kb_tasks.SyncRedisServiceFactory,
+        "get_service",
+        staticmethod(lambda: redis_service),
+    )
+    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
+    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FakeChunksRedisService)
+    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
+    monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
+    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
+    monkeypatch.setattr(kb_tasks, "_download_s3_file_to_temp", fake_download_s3_file_to_temp)
+    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(fake_estimate))
+    monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
+    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+    monkeypatch.setattr(
+        kb_tasks.ZipResultService,
+        "generate_zip_package",
+        lambda self, **kwargs: (str(Path(kwargs["temp_dir"]) / "result.zip"), {"value": "checksum"}, {"total_chunks": 1}, 3),
+    )
+    monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
+
+    kb_tasks._parse("job_123", "user_123")
+
+    assert estimated_paths[0].endswith("/legacy-upload.pdf")
+    assert parse_call["file_full_path"].endswith("/legacy-upload.pdf")
+    assert parse_call["filename"] == "legacy-upload.txt"
+    assert parse_call["internal_output_filename"] == "legacy-upload.pdf"
+    assert _find_task_workspaces(tmp_path, "job_123") == []
+
+
+def test_parse_cleans_task_workspace_after_failure(monkeypatch, tmp_path):
+    redis_service = MagicMock()
+    job = type("JobRow", (), {"billing_status": "charged"})()
+    metadata_service = _FakeSuccessMetadataService(redis_service)
+
+    class _FakeMessagePublisher:
+        def publish_progress_update(self, **kwargs):
+            return True
+
+        def publish_result(self, **kwargs):
+            raise AssertionError("publish_result should not be called")
+
+    def fake_checkerboard_inject_parse(**kwargs):
+        raise RuntimeError("parse failed")
+
+    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+        source_path = Path(temp_dir) / f"downloaded{file_ext}"
+        source_path.write_bytes(b"pdf")
+        return str(source_path)
+
+    monkeypatch.setattr(kb_tasks, "get_sync_message_publisher", lambda: _FakeMessagePublisher())
+    monkeypatch.setattr(
+        kb_tasks.SyncRedisServiceFactory,
+        "get_service",
+        staticmethod(lambda: redis_service),
+    )
+    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
+    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FakeChunksRedisService)
+    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
+    monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
+    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
+    monkeypatch.setattr(kb_tasks, "_download_s3_file_to_temp", fake_download_s3_file_to_temp)
+    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
+    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+
+    with pytest.raises(RuntimeError, match="parse failed"):
+        kb_tasks._parse("job_123", "user_123")
+
+    assert _find_task_workspaces(tmp_path, "job_123") == []
