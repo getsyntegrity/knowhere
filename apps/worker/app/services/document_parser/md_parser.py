@@ -365,7 +365,8 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 relative_img_path = f"images/{img_name}{img_suffix}"
                 df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary_field, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
                 if base_llm_paras['summary_image']:
-                    deferred_llm_tasks.append(("image", len(df_list) - 1, relative_img_path))
+                    # Store img_dir, img_name, img_suffix for post-loop rename (mirrors table deferred task)
+                    deferred_llm_tasks.append(("image", len(df_list) - 1, relative_img_path, img_dir, img_name, img_suffix))
                 img_count += 1
 
             # b. handle lines containing tables
@@ -478,10 +479,10 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                         client = _get_vision_client()
                         llm_resp = ask_image(client, output_dir, paths_=[relative_path])
                         if llm_resp:
-                            _, img_summary = split_title_summary(llm_resp)
+                            img_title, img_summary = split_title_summary(llm_resp)
                         else:
-                            img_summary = None
-                        return idx, task_type, (img_summary,)
+                            img_title, img_summary = None, None
+                        return idx, task_type, (img_title, img_summary)
                     elif task_type == "table":
                         tb_html = task[2]
                         title, kw, summary = extract_title_keywords_summary(tb_html, max_keywords=3)
@@ -508,11 +509,25 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 if result is None:
                     continue
                 if task_type == "image":
-                    (img_summary,) = result
+                    img_title, img_summary = result
+                    entry = df_list[idx]
                     if img_summary:
-                        entry = df_list[idx]
                         image_index = entry[0].split('\n')[1] if '\n' in entry[0] else "image"
                         entry[5] = f"{image_index}\n{img_summary}"
+                    # Rename image file if LLM provided a better title (mirrors table rename logic)
+                    if img_title:
+                        orig_task = deferred_by_idx[idx]
+                        i_dir, old_img_name, i_suffix = orig_task[3], orig_task[4], orig_task[5]
+                        safe_title = path_handle(img_title, mode="clean_single")
+                        # Derive image index number from old_img_name (e.g. "image-3-xxx" -> "3")
+                        img_num_match = re.match(r'image-(\d+)', old_img_name)
+                        img_num = img_num_match.group(1) if img_num_match else old_img_name.split('-')[1] if '-' in old_img_name else "0"
+                        new_img_name = path_handle(f"image-{img_num}-{safe_title}", mode="clean_single")
+                        old_path = os.path.join(i_dir, f"{old_img_name}{i_suffix}")
+                        new_path = os.path.join(i_dir, f"{new_img_name}{i_suffix}")
+                        if old_path != new_path and os.path.exists(old_path):
+                            os.rename(old_path, new_path)
+                            entry[1] = f"images/{new_img_name}{i_suffix}"
                 elif task_type == "table":
                     title, kw, summary = result
                     entry = df_list[idx]
