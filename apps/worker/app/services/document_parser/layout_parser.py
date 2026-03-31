@@ -2,6 +2,9 @@ import os
 import re
 import unicodedata
 
+import gevent
+from gevent.pool import Pool as GeventPool
+
 import pandas as pd
 from collections import Counter, defaultdict
 from app.services.common.kb_utils import count_cn_en, truncate_text
@@ -276,16 +279,20 @@ def execute_level_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
 
 def extract_non_neg_code(reason_str: str) -> str:
     """
-    Extract the non-NEG code from reason_str (i.e., the POS code part before NEG)
+    Extract the non-NEG code from reason_str (strip only NEG part, preserve META)
     
-    Example: "POS [1, 0, 0] NEG [0, 0, 0]" -> "POS [1, 0, 0]"
+    Example: "POS [1, 0, 0] NEG [0, 0, 0] META [1, 2, 1]" -> "POS [1, 0, 0] META [1, 2, 1]"
     Example: "3# AND POS [1, 0] NEG [0, 0]" -> "3# AND POS [1, 0]"
+    Example: "3# AND POS [1, 0] NEG [0, 0] META [1, 1, 0]" -> "3# AND POS [1, 0] META [1, 1, 0]"
     """
     if not reason_str or not isinstance(reason_str, str):
         return ""
-    neg_match = re.search(r'\s*NEG\s*\[', reason_str)
+    neg_match = re.search(r'\s*NEG\s*\[[^\]]*\]', reason_str)
     if neg_match:
-        return reason_str[:neg_match.start()].strip()
+        # Remove only the NEG [...] part, keep everything before and after
+        before_neg = reason_str[:neg_match.start()]
+        after_neg = reason_str[neg_match.end():]
+        return (before_neg + after_neg).strip()
     return reason_str.strip()
 
 
@@ -760,12 +767,18 @@ def filter_md_headings(md_lines, num_pos=17, num_neg=6, layout_json_path=None):
             zero_neg_code = [0] * num_neg
             str_lvl = f"POS {zero_pos_code} NEG {zero_neg_code}"
             if meta_ctx:
-                str_lvl += " META [0, 0]"
+                str_lvl += " META [0, 0, 0]"
             line = "resource or annotation"
         else:
             line_clean, hash_lvl = md_heading_match(line, as_is=False)  # detect "#" in .md lines
-            pos_code, detail_info = judge_by_conditions(line_clean, return_detail=True)
-            neg_code = remove_by_conditions(line_clean)
+            
+            # NEW: detect and strip full-line bold markers (e.g. **3.4 Title** -> 3.4 Title)
+            from .metadata_extractor import detect_and_strip_md_bold
+            line_clean_stripped, is_full_bold = detect_and_strip_md_bold(line_clean)
+            
+            # Use stripped text for POS/NEG analysis (fixes '**3.4' -> '3.4' issue)
+            pos_code, detail_info = judge_by_conditions(line_clean_stripped, return_detail=True)
+            neg_code = remove_by_conditions(line_clean_stripped)
 
             if any(x>0 for x in neg_code):
                 code_lvl = -1
@@ -779,10 +792,15 @@ def filter_md_headings(md_lines, num_pos=17, num_neg=6, layout_json_path=None):
                 code_lvl = -1
                 code_str = f"POS {pos_code} NEG {neg_code}"
 
-            # Add META suffix if MetadataContext is available
+            # Add META suffix with bold dimension
             if meta_ctx:
                 size_rank, occurrence = meta_ctx.get_meta_for_line(line_clean)
-                code_str += meta_ctx.format_meta_suffix(size_rank, occurrence)
+                is_bold_int = 1 if is_full_bold else 0
+                code_str += meta_ctx.format_meta_suffix(size_rank, occurrence, is_bold_int)
+            else:
+                # Even without layout.json, output bold info in META
+                if is_full_bold:
+                    code_str += f" META [0, 0, 1]"
 
             if hash_lvl<=0:
                 est_lvl = code_lvl
@@ -852,12 +870,8 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
             est_lvl = setting_lvl
             str_lvl = f"outline-{setting_lvl}"
 
-        # 3. check bold style existence
-        if enable_style_check:
-            bold_lvl = find_bold(para)
-            if bold_lvl is not None and est_lvl is None:
-                est_lvl = "Not Sure"
-                str_lvl = f"bold-{bold_lvl}"
+        # 3. detect bold (unconditionally, encode as META dimension)
+        is_bold = 1 if find_bold(para) else 0
 
         # 4. proceed condition judge
         if enable_regx:
@@ -873,6 +887,10 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
             else:
                 code_lvl = -1
                 code_str = f"POS {pos_code} NEG {neg_code}"
+
+            # Append bold as META dimension (DOCX has no layout.json, so only bold)
+            if is_bold:
+                code_str += f" META [0, 0, {is_bold}]"
 
             if est_lvl is None:
                 est_lvl = code_lvl
@@ -959,6 +977,47 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
         raise
 
 
+def _compute_zone_boundaries(toc_hierarchies):
+    """Compute content zone boundaries in post-TOC-removal coordinates.
+
+    When multiple TOCs exist, they divide the document into zones.
+    Each zone starts right after a TOC area and extends to just before
+    the next TOC area (or end of document).
+
+    Args:
+        toc_hierarchies: List of toc hierarchy dicts (sorted by toc_range start)
+
+    Returns:
+        List of (zone_start_post, zone_end_post_or_None, toc_hierarchy_dict)
+        zone_end_post is None for the last zone (extends to end of document)
+    """
+    sorted_tocs = sorted(toc_hierarchies, key=lambda t: t["toc_range"][0])
+
+    zones = []
+    cumulative_removed = 0
+
+    for i, toc in enumerate(sorted_tocs):
+        toc_start, toc_end = toc["toc_range"]
+        toc_size = toc_end - toc_start + 1
+        cumulative_removed += toc_size
+
+        # Zone starts right after this TOC in post-removal coords
+        zone_start_orig = toc_end + 1
+        zone_start_post = zone_start_orig - cumulative_removed
+
+        # Zone ends right before next TOC (or end of file)
+        if i + 1 < len(sorted_tocs):
+            next_toc_start = sorted_tocs[i + 1]["toc_range"][0]
+            zone_end_orig = next_toc_start - 1
+            zone_end_post = zone_end_orig - cumulative_removed
+        else:
+            zone_end_post = None  # to end of document
+
+        zones.append((zone_start_post, zone_end_post, toc))
+
+    return zones
+
+
 def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None, first_toc_ele_num=None):
     """
     predict title hierarchy
@@ -1012,16 +1071,72 @@ def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_
                 logger.info(f"📌 Excluded {len(pre_toc_rows)} pre-TOC blocks "
                             f"(ele_num < {first_toc_ele_num}) from heading prediction")
 
-    # 2. parse smart/not smart
-    # Save raw_preds as preds_1
-    save_intermediate_csv(raw_preds, output_dir, "preds_1_raw_filtered")
-    heading_preds = est_hierarchies_naive(raw_preds, smart_parse, output_dir=output_dir)
-    # Save heading_preds as preds_2
-    save_intermediate_csv(heading_preds, output_dir, "preds_2_naive_processed")
+    # 2. Zone-based prediction when multiple TOCs exist
+    if toc_hierarchies and len(toc_hierarchies) > 1 and doc_type == "md" and smart_parse:
+        # Multiple TOCs divide the document into independent zones.
+        # Each zone gets its own naive + LLM pipeline with zone-specific TOC context.
+        zones = _compute_zone_boundaries(toc_hierarchies)
+        logger.info(f"🗂️ Zone-based prediction: {len(zones)} zones from {len(toc_hierarchies)} TOCs")
 
-    if smart_parse:
-        heading_preds = est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name, output_dir=output_dir)
-        logger.info("✅ LLM hierarchy parsing completed")
+        def _process_single_zone(zone_idx, zone_start, zone_end, zone_toc):
+            """Process a single zone independently. Returns (zone_idx, zone_heading_df)."""
+            # Extract rows belonging to this zone
+            if zone_end is not None:
+                zone_mask = (raw_preds['id'] >= zone_start) & (raw_preds['id'] <= zone_end)
+            else:
+                zone_mask = raw_preds['id'] >= zone_start
+            zone_preds = raw_preds[zone_mask].copy().reset_index(drop=True)
+
+            if zone_preds.empty:
+                logger.warning(f"  Zone {zone_idx}: empty, skipping")
+                return zone_idx, None
+
+            zone_range_str = f"[{zone_start}, {zone_end or 'end'}]"
+            logger.info(f"  Zone {zone_idx}: {len(zone_preds)} rows, post-removal range {zone_range_str}")
+
+            # Independent naive + LLM prediction for this zone
+            zone_heading = est_hierarchies_naive(zone_preds, smart_parse, output_dir=output_dir)
+            zone_heading = est_hierarchies_llm(
+                zone_heading, prompt_limt,
+                toc_hierarchies=[zone_toc],  # Single TOC for this zone
+                model_name=model_name,
+                output_dir=output_dir,
+                csv_suffix=f"_zone_{zone_idx}"
+            )
+            valid_count = len(zone_heading[zone_heading['level'] > 0]) if not zone_heading.empty else 0
+            logger.info(f"  Zone {zone_idx}: ✅ {valid_count} valid headings")
+            return zone_idx, zone_heading
+
+        if len(zones) == 1:
+            # Single zone: no parallel overhead
+            zone_start, zone_end, zone_toc = zones[0]
+            _, zone_heading = _process_single_zone(0, zone_start, zone_end, zone_toc)
+            zone_results = [zone_heading] if zone_heading is not None else []
+        else:
+            # Multiple zones: parallel hierarchy prediction via gevent
+            logger.info(f"Parallelizing zone hierarchy prediction for {len(zones)} zones")
+            pool = GeventPool(size=len(zones))
+            greenlets = [
+                pool.spawn(_process_single_zone, zone_idx, zone_start, zone_end, zone_toc)
+                for zone_idx, (zone_start, zone_end, zone_toc) in enumerate(zones)
+            ]
+            gevent.joinall(greenlets)
+
+            # Collect results sorted by zone index to maintain document order
+            results = sorted([g.value for g in greenlets if g.value is not None], key=lambda r: r[0])
+            zone_results = [heading_df for _, heading_df in results if heading_df is not None]
+
+        if zone_results:
+            heading_preds = pd.concat(zone_results, ignore_index=True).sort_values('id').reset_index(drop=True)
+        else:
+            heading_preds = pd.DataFrame(columns=["id", "heading", "level", "reason"])
+        logger.info("✅ Zone-based LLM hierarchy parsing completed")
+    else:
+        # Single-zone: current behavior
+        heading_preds = est_hierarchies_naive(raw_preds, smart_parse, output_dir=output_dir)
+        if smart_parse:
+            heading_preds = est_hierarchies_llm(heading_preds, prompt_limt, toc_hierarchies, model_name=model_name, output_dir=output_dir)
+            logger.info("✅ LLM hierarchy parsing completed")
 
     # 3. final polishing for certain types
     if doc_type in ["docx"]:
@@ -1088,7 +1203,7 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
     return heading_preds
 
 
-def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None):
+def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None, csv_suffix=""):
     """LLM-based hierarchy detection — first chunk via LLM, remaining chunks via reason-code mapping.
 
     Strategy:
@@ -1135,7 +1250,7 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
             logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules")
 
             # Save base_preds as preds_3
-            save_intermediate_csv(base_preds, output_dir, "preds_3_llm_base")
+            save_intermediate_csv(base_preds, output_dir, f"preds_3_llm_base{csv_suffix}")
 
             if len(level_dfs) > 1:
                 logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
@@ -1149,7 +1264,7 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
             full_preds['heading'] = raw_headings
 
             full_preds.drop("origin_level", axis=1, inplace=True)
-            save_intermediate_csv(full_preds, output_dir, "preds_4_llm_final")
+            save_intermediate_csv(full_preds, output_dir, f"preds_4_llm_final{csv_suffix}")
 
     except Exception as e:
         logger.warning(f"LLM-based parsing fails due to {e}, using non-llm pipeline...")
