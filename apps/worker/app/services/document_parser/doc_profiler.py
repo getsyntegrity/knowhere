@@ -305,26 +305,17 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
                 )
 
     # ── Determine route ──
-    if profile.scan_type == "scanned" or profile.doc_category in ("atlas", "ppt_converted"):
-        profile.route = "standard"
-        reasons.append(f"route=standard: requires VLM visual understanding")
-    elif profile.is_multi_column:
-        profile.route = "standard"
-        reasons.append(f"route=standard: multi-column layout")
-    elif profile.is_degraded_electronic:
-        profile.route = "standard"
-        reasons.append(
-            f"route=standard: degraded electronic PDF "
-            f"(bitmap table lines detected on {degraded_pages}/{n_sampled} pages)")
-    elif profile.avg_text_density >= FAST_TEXT_THRESHOLD:
-        profile.route = "fast"
-        reasons.append(
-            f"route=fast: single-column electronic PDF "
-            f"(text={profile.avg_text_density:.0f}>={FAST_TEXT_THRESHOLD}, "
-            f"tables={profile.has_tables}, multi_col={profile.is_multi_column})")
-    else:
-        profile.route = "standard"
-        reasons.append(f"route=standard: low text density ({profile.avg_text_density:.0f}<{FAST_TEXT_THRESHOLD})")
+    # NOTE: pymupdf4llm fast path is TEMPORARILY DISABLED (2026-04-01).
+    # All PDFs now go through MinerU (standard) for stability.
+    # Atlas routing is handled separately in pdf_parser.py before this check.
+    # TODO: Re-enable fast path with a proper no-image-no-table classifier.
+    profile.route = "standard"
+    reasons.append(
+        f"route=standard: fast path disabled — "
+        f"all PDFs use MinerU (scan={profile.scan_type}, "
+        f"category={profile.doc_category}, "
+        f"text_density={profile.avg_text_density:.0f})"
+    )
 
     profile.reasoning = " | ".join(reasons)
     _publish_profile_result(queue, profile)
