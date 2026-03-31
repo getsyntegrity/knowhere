@@ -668,6 +668,44 @@ def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "
         logger.warning("TOC detection failed, no TOC area detected")
         return None, md_lines
     
+    # ── Step 1.5: Merge consecutive TOC areas ──
+    # Adjacent TOCs with ≤ CONSECUTIVE_TOC_GAP non-empty lines between them
+    # are treated as one (e.g. Chinese TOC + English translation).
+    # Only the first TOC in each merged group will get a hierarchy LLM call.
+    CONSECUTIVE_TOC_GAP = 5  # max non-empty lines between consecutive TOCs
+
+    if len(toc_area) > 1:
+        merged_toc_area = [toc_area[0]]
+        for current in toc_area[1:]:
+            prev = merged_toc_area[-1]
+            prev_end = prev[1]      # toc_end of previous
+            curr_start = current[0]  # toc_start of current
+
+            # Count non-empty lines in the gap (prev_end+1 .. curr_start-1)
+            gap_non_empty = sum(
+                1 for i in range(prev_end + 1, curr_start)
+                if i < len(md_lines) and md_lines[i].strip()
+            )
+
+            if gap_non_empty <= CONSECUTIVE_TOC_GAP:
+                # Merge: extend range, keep first TOC's toc_lines, extend area_end
+                merged_toc_area[-1] = (
+                    prev[0],            # toc_start: keep first
+                    current[1],         # toc_end: extend to current's end
+                    prev[2],            # toc_lines: keep first's content for LLM
+                    max(prev[3], current[3]),  # area_end: take the larger
+                )
+                logger.info(
+                    f"📎 Merged consecutive TOC: [{prev[0]},{prev[1]}] + [{current[0]},{current[1]}] "
+                    f"(gap={gap_non_empty} non-empty lines) → [{prev[0]},{current[1]}]"
+                )
+            else:
+                merged_toc_area.append(current)
+
+        if len(merged_toc_area) < len(toc_area):
+            logger.info(f"TOC merge: {len(toc_area)} → {len(merged_toc_area)} areas")
+        toc_area = merged_toc_area
+    
     logger.info("Step 2: analyze TOC hierarchy")
     logger.info(f"{len(toc_area)} TOC areas detected")
     

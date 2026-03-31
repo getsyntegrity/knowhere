@@ -37,6 +37,33 @@ def normalize_content(text: str) -> str:
     return text
 
 
+def detect_and_strip_md_bold(line_clean: str) -> tuple:
+    """Detect and strip markdown full-line bold markers.
+    
+    Criteria for "full-line bold":
+    - line_clean (with '#' prefix stripped) is entirely wrapped by **...**, __...__, or ***...***
+    - Partial bolding (e.g. "- **Object Detection:** Anchor-free") is not counted.
+    
+    Args:
+        line_clean: Line text with '#' prefix stripped
+    
+    Returns:
+        (stripped_text, is_full_bold)
+        - stripped_text: If full-line bold, returns plain text without markers; otherwise returns as-is
+        - is_full_bold: Whether it is a full-line bold
+    """
+    if not line_clean:
+        return line_clean, False
+    
+    # Match bold/bold-italic markers wrapping the entire line
+    # Supports **text**, __text__, ***text***, ___text___
+    m = re.match(r'^(\*{2,3}|_{2,3})(.+)\1\s*$', line_clean)
+    if m and m.group(1) in ('**', '***', '__', '___'):
+        return m.group(2).strip(), True
+    
+    return line_clean, False
+
+
 def extract_md_headings(md_lines: List[str]) -> List[dict]:
     """Extract all headings (lines starting with #) from MD
     
@@ -327,9 +354,9 @@ class MetadataContext:
         """Get META features for a single MD line
         
         Returns:
-            Tuple of (size_level, occurrence)
+            Tuple of (size_level, total_occurrences)
             - size_level: 1-5 (1=largest heading), 0 if not a # heading
-            - occurrence: Which occurrence of this text, 0 if not tracked
+            - total_occurrences: total times this text appears in the document, 0 if not tracked
         """
         if not line:
             return (0, 0)
@@ -341,24 +368,25 @@ class MetadataContext:
         
         # Check if this is a tracked heading
         if line_key in self.lookup_map:
+            total_occ = len(self.lookup_map[line_key])
             self.occurrence_tracker[line_key] += 1
             current_occ = self.occurrence_tracker[line_key]
             
-            # Find matching occurrence
+            # Find matching occurrence to get correct size_level for this position
             for item in self.lookup_map[line_key]:
                 if item['occurrence'] == current_occ:
-                    return (item['size_level'], current_occ)
+                    return (item['size_level'], total_occ)
             
             # If more occurrences in processing than in MD headings
             if self.lookup_map[line_key]:
                 last_item = self.lookup_map[line_key][-1]
-                return (last_item['size_level'], current_occ)
+                return (last_item['size_level'], total_occ)
         
         return (0, 0)
     
-    def format_meta_suffix(self, size_level: int, occurrence: int) -> str:
+    def format_meta_suffix(self, size_level: int, occurrence: int, is_bold: int = 0) -> str:
         """Format META suffix for reason code"""
-        return f" META [{size_level}, {occurrence}]"
+        return f" META [{size_level}, {occurrence}, {is_bold}]"
     
     def get_stats(self) -> dict:
         """Get statistics about the headings"""
@@ -370,6 +398,6 @@ class MetadataContext:
 
 
 # Convenience function
-def format_meta_suffix(size_rank: int, occurrence: int = 0) -> str:
+def format_meta_suffix(size_rank: int, occurrence: int = 0, is_bold: int = 0) -> str:
     """Format META suffix for reason code"""
-    return f" META [{size_rank}, {occurrence}]"
+    return f" META [{size_rank}, {occurrence}, {is_bold}]"

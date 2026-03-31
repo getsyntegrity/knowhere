@@ -99,7 +99,7 @@ def checkerboard_inject_parse(
             - output_dir: directory path after parsing
             - parsed_df: parsed content DataFrame
     """
-    # 构建 base_llm_paras（从显式参数获取）
+    # Build base_llm_paras from explicit parameters
     base_llm_paras = {
         "llm_histories": llm_histories,
         "smart_title_parse": smart_title_parse,
@@ -148,6 +148,20 @@ def checkerboard_inject_parse(
         profile = profile_document(file_full_path, internal_output_filename)
     logger.info(f"📋 DocProfile: {profile.summary()}")
     logger.debug(f"📋 Reasoning: {profile.reasoning}")
+
+    # ── Page count guard: reject oversized PDFs before routing ──
+    PDF_PAGE_LIMIT = 600
+    if profile and profile.file_type == "pdf" and profile.page_count > PDF_PAGE_LIMIT:
+        raise ValidationException(
+            user_message=(
+                f"Document too large: {profile.page_count} pages exceeds the {PDF_PAGE_LIMIT}-page limit. "
+                f"Please split the document and upload in smaller batches."
+            ),
+            violations=[{
+                "field": "page_count",
+                "description": f"PDF has {profile.page_count} pages, limit is {PDF_PAGE_LIMIT}",
+            }],
+        )
 
     # Atlas routing: rename output folder from .pdf → .atlas for easy filtering
     if profile and profile.doc_category == "atlas":
