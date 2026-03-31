@@ -127,6 +127,34 @@ class CreditsRepository:
             .where(PaymentRecord.created_at >= cutoff)
         )
         return int(result.scalar() or 0)
+
+    async def get_positive_credit_total_by_transaction_types(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        transaction_types: tuple[str, ...],
+    ) -> int:
+        """
+        Get total positive credits from specific transaction types.
+
+        Args:
+            session: Database session
+            user_id: User ID
+            transaction_types: Transaction types to include
+
+        Returns:
+            Total positive credits for the requested transaction types
+        """
+        if not transaction_types:
+            return 0
+
+        result = await session.execute(
+            select(func.coalesce(func.sum(CreditsTransaction.credits_amount), 0))
+            .where(CreditsTransaction.user_id == user_id)
+            .where(CreditsTransaction.credits_amount > 0)
+            .where(CreditsTransaction.transaction_type.in_(transaction_types))
+        )
+        return int(result.scalar() or 0)
     
     async def create_transaction(
         self,

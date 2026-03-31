@@ -1,6 +1,6 @@
 """
 Billing services for the worker.
 """
-from .credits import deduct_credits
+from shared.services.billing.credits_sync_service import SyncCreditsService
 
-__all__ = ["deduct_credits"]
+__all__ = ["SyncCreditsService"]
