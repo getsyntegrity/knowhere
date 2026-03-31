@@ -12,6 +12,7 @@ from loguru import logger
 
 from shared.core.celery_app import get_celery_app
 from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
+from shared.services.redis.periodic_task_lock import periodic_task_lock
 from shared.core.logging import (
     log_context,
     LogEvent,
@@ -21,6 +22,9 @@ from app.services.webhook.sync_dispatcher import get_sync_webhook_dispatcher
 
 # Retry configuration
 MAX_ATTEMPTS = 6
+
+# Matches the beat_schedule period in celery_app.py
+_WEBHOOK_RECOVERY_PERIOD_SECONDS = 1800
 
 celery_app = get_celery_app()
 
@@ -213,47 +217,57 @@ def recover_orphaned_webhooks() -> dict:
 
     This handles the edge case where the DB commit succeeds but the
     subsequent Celery apply_async call fails (e.g., broker down).
+
+    A ``periodic_task_lock`` guards against duplicate execution when multiple
+    Beat processes fire this task in the same scheduling window.
     """
     from datetime import datetime, timedelta
     from sqlalchemy import select as sa_select
     from shared.core.database_sync import get_sync_db_context
     from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 
-    logger.debug("Starting orphaned webhook recovery job")
+    with periodic_task_lock(
+        "app.core.tasks.webhook_tasks.recover_orphaned_webhooks",
+        period_seconds=_WEBHOOK_RECOVERY_PERIOD_SECONDS,
+    ) as acquired:
+        if not acquired:
+            return {"status": "skipped", "reason": "duplicate Beat firing"}
 
-    age_minutes = 5
-    cutoff_time = datetime.utcnow() - timedelta(minutes=age_minutes)
-    recovered = 0
+        logger.debug("Starting orphaned webhook recovery job")
 
-    try:
-        with get_sync_db_context() as db:
-            stmt = sa_select(WebhookEvent).where(
-                WebhookEvent.status == WebhookEventStatus.PENDING,
-                WebhookEvent.attempts == 0,
-                WebhookEvent.created_at < cutoff_time,
-            ).limit(100)
+        age_minutes = 5
+        cutoff_time = datetime.utcnow() - timedelta(minutes=age_minutes)
+        recovered = 0
 
-            result = db.execute(stmt)
-            orphaned_events = result.scalars().all()
+        try:
+            with get_sync_db_context() as db:
+                stmt = sa_select(WebhookEvent).where(
+                    WebhookEvent.status == WebhookEventStatus.PENDING,
+                    WebhookEvent.attempts == 0,
+                    WebhookEvent.created_at < cutoff_time,
+                ).limit(100)
 
-            for event in orphaned_events:
-                try:
-                    dispatch_webhook_task.apply_async(
-                        args=[event.id],
-                        queue="webhook_work",
-                    )
-                    recovered += 1
-                    logger.info(f"Recovered orphaned webhook event: {event.id}")
-                except Exception as e:
-                    logger.error(f"Error recovering webhook event {event.id}: {e}")
+                result = db.execute(stmt)
+                orphaned_events = result.scalars().all()
 
-        if recovered > 0:
-            logger.info(f"Successfully recovered {recovered} orphaned webhook events")
-        else:
-            logger.debug("No orphaned webhook events found")
+                for event in orphaned_events:
+                    try:
+                        dispatch_webhook_task.apply_async(
+                            args=[event.id],
+                            queue="webhook_work",
+                        )
+                        recovered += 1
+                        logger.info(f"Recovered orphaned webhook event: {event.id}")
+                    except Exception as e:
+                        logger.error(f"Error recovering webhook event {event.id}: {e}")
 
-        return {"status": "success", "recovered": recovered}
+            if recovered > 0:
+                logger.info(f"Successfully recovered {recovered} orphaned webhook events")
+            else:
+                logger.debug("No orphaned webhook events found")
 
-    except Exception as e:
-        logger.error(f"Orphaned webhook recovery job failed: {e}", exc_info=True)
-        return {"status": "error", "error": str(e)}
+            return {"status": "success", "recovered": recovered}
+
+        except Exception as e:
+            logger.error(f"Orphaned webhook recovery job failed: {e}", exc_info=True)
+            return {"status": "error", "error": str(e)}

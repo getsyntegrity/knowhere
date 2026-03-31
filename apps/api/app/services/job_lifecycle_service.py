@@ -13,6 +13,7 @@ from app.repositories.knowledge_base_repository import create_update_kb
 from app.services.state_machine.manager import JobStateMachine
 from app.services.webhook_service import get_webhook_service
 from shared.services.billing import CreditsService
+from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 from shared.models.schemas.messages import JobResultMessage
 from shared.models.database.knowledge_base import KBPydantic
@@ -152,7 +153,7 @@ class JobLifecycleService:
         
         try:
             # 1. Mark Failed (No Commit)
-            await self.state_machine.mark_failed(
+            transition_succeeded = await self.state_machine.mark_failed(
                 db,
                 job_id,
                 error_message,
@@ -160,6 +161,14 @@ class JobLifecycleService:
                 error_details=error_details,
                 auto_commit=False
             )
+
+            if not transition_succeeded:
+                raise WorkerHandlingException(
+                    internal_message=(
+                        f"Job {job_id} mark_failed returned False — "
+                        "state transition failed or CAS exhausted; aborting commit"
+                    )
+                )
 
             # 2. Refund Credits (No Commit logic)
             job = await self.job_repo.get_job_by_id(db, job_id)

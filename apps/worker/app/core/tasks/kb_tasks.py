@@ -341,21 +341,38 @@ def _parse(job_id: str, user_id: str | None):
     job_info = job_info_service.get_job_info(job_id)
 
     if not job_info:
-        raise NotFoundException(
-            resource="JobInfo",
-            resource_id=job_id,
-            internal_message="job info not found in Redis",
+        # Redis JobInfo has expired or been flushed — fall back to the DB, which is
+        # the durable source of truth for s3_key and user_id written at job creation.
+        logger.warning(
+            f"JobInfo not found in Redis for job_id={job_id}; falling back to database"
         )
+        with get_sync_db_context() as fallback_db:
+            job_row = fallback_db.execute(
+                select(Job).where(Job.job_id == job_id)
+            ).scalar_one_or_none()
 
-    s3_key = job_info.get("s3_key")
-    if not s3_key:
-        raise NotFoundException(
-            resource="JobInfo",
-            resource_id="s3_key",
-            internal_message="Missing s3_key in job_info",
+        if not job_row or not job_row.s3_key:
+            raise NotFoundException(
+                resource="JobInfo",
+                resource_id=job_id,
+                internal_message="job info not found in Redis or database",
+            )
+
+        s3_key: str = job_row.s3_key
+        job_user_id: str | None = str(job_row.user_id) if job_row.user_id else user_id
+        logger.info(
+            f"Recovered JobInfo from database: job_id={job_id}, s3_key={s3_key}"
         )
+    else:
+        s3_key = job_info.get("s3_key")
+        if not s3_key:
+            raise NotFoundException(
+                resource="JobInfo",
+                resource_id="s3_key",
+                internal_message="Missing s3_key in job_info",
+            )
 
-    job_user_id = job_info.get("user_id") or user_id
+        job_user_id = job_info.get("user_id") or user_id
 
     # Verify S3 file exists (sync)
     file_info = verify_s3_file_exists(s3_key)

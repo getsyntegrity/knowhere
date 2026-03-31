@@ -84,7 +84,20 @@ def shutdown_worker(**kwargs) -> None:
 
 
 def run_worker() -> None:
-    """Start the gevent Celery worker and its colocated beat process."""
+    """Start the gevent Celery worker and its colocated Beat process.
+
+    Every worker replica unconditionally spawns a Celery Beat subprocess.
+    RedBeat's own distributed lock (``redbeat_lock_timeout`` /
+    ``beat_max_loop_interval``) ensures that only one Beat instance actually
+    drives the scheduler tick loop — all other instances block on lock
+    acquisition and remain idle.
+
+    Even if the RedBeat startup-burst window allows multiple Beat instances
+    to enqueue the same periodic task simultaneously, each task body is
+    guarded by a ``periodic_task_lock`` (Redis ``SET NX EX``) keyed on the
+    task name.  Only the first invocation within each scheduling window
+    executes; all subsequent duplicates log a skip and return immediately.
+    """
     from shared.core.config import settings
 
     _register_task_modules()
@@ -107,8 +120,7 @@ def run_worker() -> None:
         "--without-mingle",
     ]
 
-    logger.info("Starting standalone Celery Beat process using RedBeat locking")
-    subprocess.Popen([
+    beat_cmd = [
         sys.executable,
         "-m",
         "celery",
@@ -116,6 +128,9 @@ def run_worker() -> None:
         "shared.core.celery_app",
         "beat",
         f"--loglevel={log_level}",
-    ])
+    ]
+
+    logger.info("Starting Celery Beat subprocess")
+    subprocess.Popen(beat_cmd)
 
     celery_app.worker_main(celery_args)
