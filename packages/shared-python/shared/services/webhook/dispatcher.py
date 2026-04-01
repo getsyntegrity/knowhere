@@ -52,7 +52,7 @@ class WebhookDispatcher:
     2. Checks if terminal or max attempts exceeded
     3. Signs payload and sends HTTP request
     4. Logs delivery attempt
-    5. On failure, schedules retry via DLX
+    5. On failure, signals the caller to schedule retry
     """
     
     async def dispatch(self, event_id: str) -> bool:
@@ -505,4 +505,3 @@ def get_webhook_dispatcher() -> WebhookDispatcher:
             if _dispatcher is None:
                 _dispatcher = WebhookDispatcher()
     return _dispatcher
-

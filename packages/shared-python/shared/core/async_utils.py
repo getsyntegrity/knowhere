@@ -10,7 +10,7 @@ def run_async_task(coro: Coroutine[Any, Any, T]) -> T:
     
     This function attempts to get the current event loop. If it's closed or missing,
     it creates a new one but DOES NOT close it after execution (unlike asyncio.run).
-    This allows connection pools (like RabbitMQ) to persist across tasks.
+    This allows long-lived async resources to persist across tasks.
     
     Args:
         coro: The coroutine to run.

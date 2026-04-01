@@ -1,11 +1,11 @@
 """
 Unit tests for FernetService.
 """
-import pytest
-import os
-import base64
 from unittest.mock import patch
+
+import pytest
 from cryptography.fernet import Fernet
+
 from shared.services.encryption.fernet_service import FernetService, get_fernet_service
 from shared.core.exceptions.domain_exceptions import (
     SystemSettingMissingException,
@@ -52,7 +52,7 @@ class TestFernetService:
     def test_factory_function_loads_env(self):
         """Test get_fernet_service loads from env."""
         key = generate_key()
-        with patch.dict(os.environ, {"WEBHOOK_MASTER_KEY": key}):
+        with patch("shared.services.encryption.fernet_service.settings.WEBHOOK_MASTER_KEY", key):
             # Reset singleton if exists
             import shared.services.encryption.fernet_service as module
             old_instance = module._fernet_service

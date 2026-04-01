@@ -58,13 +58,6 @@ class LogEvent(Enum):
     ILOVEAPI_RATE_LIMITED = "iloveapi.rate_limited"
     ILOVEAPI_CONCURRENCY_EXCEEDED = "iloveapi.concurrency_exceeded"
 
-    # Network / AMQP events
-    NETWORK_AMQP_CONNECT = "network.amqp.connect"
-    NETWORK_AMQP_DISCONNECT = "network.amqp.disconnect"
-    NETWORK_AMQP_PUBLISH_ERROR = "network.amqp.publish_error"
-    NETWORK_AMQP_CONSUME_ERROR = "network.amqp.consume_error"
-
-
 @contextmanager
 def log_context(**kwargs):
     """
@@ -261,8 +254,6 @@ def _configure_noisy_third_party_loggers() -> None:
         "urllib3",
         "httpcore",
         "httpx",
-        "aio_pika",
-        "aiormq",
         "sqlalchemy.engine",
         "sqlalchemy.pool",
     )

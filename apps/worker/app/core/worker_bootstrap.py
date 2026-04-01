@@ -9,7 +9,6 @@ from loguru import logger
 
 from shared.core.celery_app import celery_app
 from shared.core.logging import setup_logging
-from shared.services.messaging.sync_publisher import close_sync_message_publisher
 from shared.services.worker_health import start_worker_heartbeat, stop_worker_heartbeat
 
 
@@ -43,7 +42,7 @@ def init_worker(**kwargs) -> None:
                 None,
             )
             GeventTaskPool.terminate_job = _graceful_terminate_job
-            logger.info("Patched gevent TaskPool.terminate_job for graceful AMQP recovery")
+            logger.info("Patched gevent TaskPool.terminate_job for graceful recovery")
     except Exception as exc:
         logger.warning(f"Could not patch gevent TaskPool: {exc}")
 
@@ -63,12 +62,6 @@ def init_worker(**kwargs) -> None:
 def shutdown_worker(**kwargs) -> None:
     """Clean up shared resources on worker shutdown."""
     try:
-        close_sync_message_publisher()
-        logger.info("Worker sync message publisher closed")
-    except Exception as exc:
-        logger.warning(f"Worker sync message publisher cleanup failed: {exc}")
-
-    try:
         stop_worker_heartbeat()
         logger.info("Worker heartbeat stopped")
     except Exception as exc:
@@ -84,7 +77,20 @@ def shutdown_worker(**kwargs) -> None:
 
 
 def run_worker() -> None:
-    """Start the gevent Celery worker and its colocated beat process."""
+    """Start the gevent Celery worker and its colocated Beat process.
+
+    Every worker replica unconditionally spawns a Celery Beat subprocess.
+    RedBeat's own distributed lock (``redbeat_lock_timeout`` /
+    ``beat_max_loop_interval``) ensures that only one Beat instance actually
+    drives the scheduler tick loop — all other instances block on lock
+    acquisition and remain idle.
+
+    Even if the RedBeat startup-burst window allows multiple Beat instances
+    to enqueue the same periodic task simultaneously, each task body is
+    guarded by a ``periodic_task_lock`` (Redis ``SET NX EX``) keyed on the
+    task name.  Only the first invocation within each scheduling window
+    executes; all subsequent duplicates log a skip and return immediately.
+    """
     from shared.core.config import settings
 
     _register_task_modules()
@@ -102,13 +108,12 @@ def run_worker() -> None:
         f"--loglevel={log_level}",
         f"--hostname={node_name}",
         "-Q",
-        "webhook_work,webhook_dead,kb_high,kb_medium,kb_low,ai_high_priority,default",
+        "kb_high,kb_medium,kb_low,ai_high_priority,default",
         "--without-gossip",
         "--without-mingle",
     ]
 
-    logger.info("Starting standalone Celery Beat process using RedBeat locking")
-    subprocess.Popen([
+    beat_cmd = [
         sys.executable,
         "-m",
         "celery",
@@ -116,6 +121,9 @@ def run_worker() -> None:
         "shared.core.celery_app",
         "beat",
         f"--loglevel={log_level}",
-    ])
+    ]
+
+    logger.info("Starting Celery Beat subprocess")
+    subprocess.Popen(beat_cmd)
 
     celery_app.worker_main(celery_args)

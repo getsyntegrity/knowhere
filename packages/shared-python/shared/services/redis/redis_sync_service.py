@@ -73,6 +73,24 @@ class SyncRedisService:
             logger.error(f"Redis SET failed: key={key}, error={e}")
             raise
 
+    def set_nx(self, key: str, value: str, ex: int) -> bool:
+        """Atomic SET NX EX — acquire an idempotency or advisory lock.
+
+        Sets ``key`` to ``value`` with TTL ``ex`` seconds only if the key does
+        not already exist (``NX``).  Returns ``True`` if the key was written
+        (this caller owns the lock), ``False`` if it already existed.
+
+        Unlike ``set()``, this method does **not** JSON-encode the value and
+        does **not** fall back to a default TTL — both are intentional so that
+        callers get exactly the semantics they declare.
+        """
+        try:
+            full_key = self._build_key(key)
+            return bool(self._get_client().set(full_key, value, nx=True, ex=ex))
+        except Exception as e:
+            logger.error(f"Redis SET NX failed: key={key}, error={e}")
+            raise
+
     def get(self, key: str, default: Any = None) -> Any:
         try:
             client = self._get_client()
@@ -243,7 +261,7 @@ class SyncRedisServiceFactory:
 
 class SyncJobInfoRedisService:
     """Sync Job info Redis service."""
-    JOB_INFO_TTL = 7200
+    JOB_INFO_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
 
     def __init__(self, redis_service: SyncRedisService):
         self.redis = redis_service
@@ -288,7 +306,7 @@ class SyncJobInfoRedisService:
 
 class SyncJobMetadataService:
     """Sync Job metadata Redis service."""
-    METADATA_TTL = 7200
+    METADATA_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
 
     def __init__(self, redis_service: SyncRedisService):
         self.redis = redis_service

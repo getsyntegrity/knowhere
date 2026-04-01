@@ -82,34 +82,21 @@ SIMPLE_GUIDE.md
 *_GUIDE.md
 USAGE_*.md
 
-# Deploy files (contain sensitive information)
-# AWS Terraform
-deploy/aws/terraform/terraform.tfstate
-deploy/aws/terraform/terraform.tfstate.backup
-deploy/aws/terraform/terraform.tfvars
-deploy/aws/terraform/terraform.tfvars.dev
-deploy/aws/terraform/terraform.tfvars.test
-deploy/aws/terraform/terraform.tfvars.prod
-deploy/aws/terraform/backend.tf
-deploy/aws/terraform/backend-config.dev
-deploy/aws/terraform/backend-config.test
-deploy/aws/terraform/backend-config.prod
-
-# 阿里云 Terraform
-deploy/aliyun/ack/terraform/terraform.tfvars.dev
-deploy/aliyun/ack/terraform/terraform.tfvars.test
-deploy/aliyun/ack/terraform/terraform.tfvars.prod
-deploy/aliyun/ack/terraform/backend-config.dev
-deploy/aliyun/ack/terraform/backend-config.test
-deploy/aliyun/ack/terraform/backend-config.prod
-deploy/aliyun/ack/terraform/backend.tf
-deploy/aliyun/ack/terraform/terraform.tfstate
-deploy/aliyun/ack/terraform/terraform.tfstate.backup
-deploy/aliyun/ack/terraform/.terraform/
-deploy/aliyun/ack/terraform/.terraform.lock.hcl
-
-# 阿里云 ECS 部署配置
-deploy/aliyun/deploy-config.sh
+# Deployment artifacts and secrets
+deploy/**/deploy-config.sh
+deploy/**/tfplan*
+deploy/**/.terraform/
+deploy/**/.terraform.lock.hcl
+deploy/**/terraform.tfstate
+deploy/**/terraform.tfstate.backup
+deploy/**/terraform.tfvars
+deploy/**/terraform.tfvars.*
+deploy/**/backend.tf
+deploy/**/backend-config
+deploy/**/backend-config.*
+deploy/**/id_rsa
+deploy/**/id_rsa.pub
+deploy/**/*.pem
 
 # Terraform common
 .terraform.lock.hcl
@@ -123,6 +110,5 @@ TABLE_PARSER_OPTIMIZATION.md
 TODO.md
 
 doc-deploy/
-deploy/aliyun/ack/*.md
 todos/
 *.egg-info/

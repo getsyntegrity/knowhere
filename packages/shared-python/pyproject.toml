@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "knowhere-shared"
 version = "0.1.0"
-description = "Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Messaging, Storage Adapters, and Utils"
+description = "Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Storage Adapters, and Utils"
 requires-python = ">=3.11"
 dependencies = [
     # 数据库相关
@@ -25,12 +25,8 @@ dependencies = [
     "kombu==5.4.0",
     "billiard==4.2.0",
     "vine==5.1.0",
-    "amqp==5.3.1",
     "celery-redbeat==2.2.0",
-    
-    # 异步RabbitMQ客户端
-    "aio-pika==9.3.0",
-    
+
     # 数据验证
     "pydantic==2.11.7",
     "pydantic-settings==2.10.1",
@@ -46,6 +42,7 @@ dependencies = [
     "httpx==0.28.1",
     "requests==2.32.4",
     "aiohttp==3.12.15",
+    "qstash==3.2.0",
 
     # OpenAI SDK
     "openai>=1.0.0",
@@ -87,4 +84,3 @@ target-version = ['py311']
 [tool.isort]
 profile = "black"
 line_length = 88
-

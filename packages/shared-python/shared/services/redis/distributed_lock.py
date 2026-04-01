@@ -1,8 +1,8 @@
 """
 Distributed Redis lock for exclusive job processing.
 
-Prevents concurrent processing of the same job when RabbitMQ redelivers
-messages (e.g., due to missed heartbeats with ``task_acks_late=True``).
+Prevents concurrent processing of the same job when the broker redelivers
+tasks while ``task_acks_late=True`` is enabled.
 
 Uses ``SET NX EX`` for atomic acquisition, a Lua script for owner-only
 release, and a gevent greenlet for periodic TTL renewal.
