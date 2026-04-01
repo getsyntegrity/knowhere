@@ -66,89 +66,12 @@ from app.services.workload.page_estimator import PageEstimator
 celery_app = get_celery_app()
 
 
-def _cleanup_temp_file(file_path: str | None) -> None:
-    """Best-effort cleanup for temp files created during parsing."""
-    if not file_path:
-        return
-
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except OSError as exc:
-        logger.warning(f"Failed to cleanup temp file {file_path}: {exc}")
-
-
-def _cleanup_task_workspace(workspace_dir: str | None) -> bool:
-    """Best-effort cleanup for a task-scoped temporary workspace."""
-    if not workspace_dir:
-        return False
-
-    if not os.path.isdir(workspace_dir):
-        return False
-
-    try:
-        shutil.rmtree(workspace_dir)
-        logger.info(f"Task workspace cleaned up: {workspace_dir}")
-        return True
-    except OSError as exc:
-        logger.warning(f"Failed to cleanup task workspace {workspace_dir}: {exc}")
-        return False
-
-
-def _create_task_workspace(job_id: str) -> str:
-    """Create a temporary workspace for a single parse task."""
-    temp_root = getattr(settings, "TMP_PATH", "/tmp")
-    if not temp_root:
-        raise SystemSettingMissingException(
-            user_message="System configuration error",
-            internal_message="TMP_PATH not configured",
-        )
-
-    if not os.path.isabs(temp_root):
-        raise SystemSettingInvalidException(
-            user_message="System configuration error",
-            internal_message=f"TMP_PATH must be absolute path, current value: {temp_root}",
-        )
-
-    try:
-        os.makedirs(temp_root, exist_ok=True)
-        return tempfile.mkdtemp(prefix=f"kb_task_{job_id}_", dir=temp_root)
-    except (OSError, PermissionError) as exc:
-        raise FileSystemException(
-            user_message="System error preparing temporary storage",
-            operation="create_temp_workspace",
-            internal_message=f"Failed to create task workspace in {temp_root}",
-            original_exception=exc,
-        ) from exc
-
-
-def _download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
-    """Download the source file from object storage into a task workspace file."""
-    local_temp_path = None
-
-    try:
-        os.makedirs(temp_dir, exist_ok=True)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=temp_dir) as tmp_file:
-            local_temp_path = tmp_file.name
-            with requests.get(
-                file_url,
-                timeout=120,
-                stream=True,
-                headers={"User-Agent": "Knowhere-Worker/1.0"},
-            ) as response:
-                response.raise_for_status()
-                for chunk in response.iter_content(chunk_size=65536):
-                    if chunk:
-                        tmp_file.write(chunk)
-    except requests.RequestException as exc:
-        _cleanup_temp_file(local_temp_path)
-        raise StorageServiceException(
-            internal_message=f"Failed to download source file from object storage: {exc}",
-            operation="download_source_file",
-            original_exception=exc,
-        ) from exc
-
-    return local_temp_path
+from app.core.tasks.task_utils import (
+    cleanup_temp_file,
+    cleanup_task_workspace,
+    create_task_workspace,
+    download_s3_file_to_temp,
+)
 
 @celery_app.task(
     bind=True,
@@ -420,7 +343,7 @@ def _parse(job_id: str, user_id: str | None):
     # If another worker already holds the lock, UnavailableException is raised
     # and Celery auto-retries after KB_TASK_RETRY_COUNTDOWN seconds.
     with RedisJobLock(redis_service, job_id):
-        task_workspace_dir = _create_task_workspace(job_id)
+        task_workspace_dir = create_task_workspace(job_id)
         input_dir = os.path.join(task_workspace_dir, "input")
         output_dir = os.path.join(task_workspace_dir, "output")
         os.makedirs(input_dir, exist_ok=True)
@@ -448,7 +371,7 @@ def _parse(job_id: str, user_id: str | None):
             # rather than filename, which may not have a real extension for URLs
             # like arxiv.org/pdf/1706.03762
             file_ext = os.path.splitext(s3_key)[1].lower() if s3_key else ""
-            local_temp_path = _download_s3_file_to_temp(file_url, file_ext, input_dir)
+            local_temp_path = download_s3_file_to_temp(file_url, file_ext, input_dir)
 
             logger.info(f"File downloaded: job_id={job_id}, local_path={local_temp_path}")
 
@@ -664,4 +587,4 @@ def _parse(job_id: str, user_id: str | None):
                 "result_s3_key": result_s3_key,
             }
         finally:
-            _cleanup_task_workspace(task_workspace_dir)
+            cleanup_task_workspace(task_workspace_dir)
