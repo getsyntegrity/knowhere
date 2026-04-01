@@ -27,7 +27,7 @@ from shared.services.redis.redis_sync_service import (
     SyncJobMetadataService,
     SyncChunksRedisService,
 )
-from shared.services.messaging.sync_publisher import get_sync_message_publisher
+from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
 from shared.services.redis.distributed_lock import RedisJobLock
 
 # Exception handling
@@ -98,7 +98,7 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str | None
 
 def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type: str | None = None):
     """Sync URL file download and upload to S3."""
-    message_publisher = get_sync_message_publisher()
+    lifecycle_service = get_sync_job_lifecycle_service()
 
     # Get job info from Redis
     redis_service = SyncRedisServiceFactory.get_service()
@@ -127,11 +127,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: validating file type
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=3,
-        message_text="Validating URL file type...",
-    )
+    lifecycle_service.update_progress(job_id, progress=3, message="Validating URL file type...")
 
     # Step 1: Validate URL file type (path first, then Content-Type header)
     from shared.utils.url_file_type import resolve_file_extension_sync
@@ -147,11 +143,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: downloading
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=10,
-        message_text="Downloading file from URL...",
-    )
+    lifecycle_service.update_progress(job_id, progress=10, message="Downloading file from URL...")
 
     # Step 2: Download file to temp directory
     try:
@@ -165,11 +157,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
 
     try:
         # Publish progress: validating file size
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=30,
-            message_text="Validating file size...",
-        )
+        lifecycle_service.update_progress(job_id, progress=30, message="Validating file size...")
 
         # Step 3: Validate file size
         file_size = os.path.getsize(temp_file_path)
@@ -182,11 +170,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
             )
 
         # Publish progress: uploading to S3
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=50,
-            message_text="Uploading file to S3...",
-        )
+        lifecycle_service.update_progress(job_id, progress=50, message="Uploading file to S3...")
 
         # Step 4: Upload to S3
         uploads_bucket = settings.S3_BUCKET_NAME
@@ -199,11 +183,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
             logger.debug(f"Temp file cleaned up: {temp_file_path}")
 
     # Publish progress: verifying upload
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=80,
-        message_text="Verifying upload result...",
-    )
+    lifecycle_service.update_progress(job_id, progress=80, message="Verifying upload result...")
 
     # Step 5: Verify S3 file exists
     file_info = verify_s3_file_exists(s3_key)
@@ -214,11 +194,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: complete
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=100,
-        message_text="URL file upload complete, waiting for processing...",
-    )
+    lifecycle_service.update_progress(job_id, progress=100, message="URL file upload complete, waiting for processing...")
 
     logger.info(f"URL file upload complete, waiting for S3 webhook: {job_id} -> {s3_key}")
 
@@ -256,7 +232,7 @@ def parse_task(self, job_id: str, user_id: str | None = None, job_type: str = "k
 def _parse(job_id: str, user_id: str | None):
     """Sync parse and vectorize (file already uploaded to S3)."""
     logger.info(f"Parse started: job_id={job_id}, user_id={user_id}")
-    message_publisher = get_sync_message_publisher()
+    lifecycle_service = get_sync_job_lifecycle_service()
 
     # Get job info from Redis (sync)
     redis_service = SyncRedisServiceFactory.get_service()
@@ -352,11 +328,7 @@ def _parse(job_id: str, user_id: str | None):
 
         try:
             # Publish progress: start parsing
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=10,
-                message_text="Parsing document...",
-            )
+            lifecycle_service.update_progress(job_id, progress=10, message="Parsing document...")
 
             # Generate download URL and download file (sync)
             file_url_response = generate_download_url(s3_key, settings.S3_BUCKET_NAME)
@@ -487,11 +459,7 @@ def _parse(job_id: str, user_id: str | None):
             if add_contents_df.empty:
                 logger.warning(f"No content returned from file parsing: job_id={job_id}, filename={filename}")
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=30,
-                message_text="Parse completed, saving chunks...",
-            )
+            lifecycle_service.update_progress(job_id, progress=30, message="Parse completed, saving chunks...")
 
             # Save DataFrame as chunks to Redis (sync)
             chunks_redis_service = SyncChunksRedisService(redis_service)
@@ -507,11 +475,7 @@ def _parse(job_id: str, user_id: str | None):
             else:
                 chunks_redis_service.save_chunks(job_id, chunks)
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=70,
-                message_text="Chunks saved, generating zip...",
-            )
+            lifecycle_service.update_progress(job_id, progress=70, message="Chunks saved, generating zip...")
             logger.info(f"Chunks prepared: job_id={job_id}, count={len(chunks)}")
 
             # Get source file name
@@ -521,11 +485,7 @@ def _parse(job_id: str, user_id: str | None):
 
             data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=80,
-                message_text="Generating ZIP package...",
-            )
+            lifecycle_service.update_progress(job_id, progress=80, message="Generating ZIP package...")
 
             # Generate ZIP package
             zip_service = ZipResultService()
@@ -542,11 +502,7 @@ def _parse(job_id: str, user_id: str | None):
 
             checksum_value = checksum.get("value", "") if isinstance(checksum, dict) else (checksum or "")
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=90,
-                message_text="Uploading results to S3...",
-            )
+            lifecycle_service.update_progress(job_id, progress=90, message="Uploading results to S3...")
 
             # Upload ZIP to S3 (sync)
             result_s3_key = upload_zip_result(job_id, zip_file_path)
@@ -554,14 +510,10 @@ def _parse(job_id: str, user_id: str | None):
             stored_count = 0
             kb_records = []
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=100,
-                message_text="Task complete!",
-            )
+            lifecycle_service.update_progress(job_id, progress=100, message="Task complete!")
 
-            # Publish result message
-            message_publisher.publish_result(
+            # Finalize job success directly to the database
+            lifecycle_service.finalize_job_success(
                 job_id=job_id,
                 chunks_job_id=job_id,
                 result_s3_key=result_s3_key,
@@ -569,9 +521,7 @@ def _parse(job_id: str, user_id: str | None):
                 zip_size=zip_size,
                 stored_count=stored_count,
                 kb_records=kb_records,
-                statistics=statistics,
                 delivery_mode="url",
-                add_dir=None,
             )
 
             logger.info(f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}")

@@ -1,6 +1,5 @@
 """
-应用配置
-整合所有配置组件
+Application configuration — assembles all config components.
 """
 from .ai import AIConfig
 from .base import BaseConfig
@@ -9,13 +8,14 @@ from .celery import CeleryConfig
 from .database import DatabaseConfig
 from .job import JobConfig
 from .mineru import MineruConfig
+from .qstash import QStashConfig
 from .redis import RedisConfig, RedisConfigManager, RedisPoolManager
 from .storage import StorageConfig
 from pydantic_settings import SettingsConfigDict
 
 
-class AppConfig(BaseConfig, DatabaseConfig, RedisConfig, CeleryConfig, StorageConfig, AIConfig, MineruConfig, BillingConfig, JobConfig):
-    """应用配置 - 整合所有配置组件"""
+class AppConfig(BaseConfig, DatabaseConfig, RedisConfig, CeleryConfig, QStashConfig, StorageConfig, AIConfig, MineruConfig, BillingConfig, JobConfig):
+    """Application configuration — all config components merged."""
     
     def validate_all(self) -> bool:
         """验证所有配置"""

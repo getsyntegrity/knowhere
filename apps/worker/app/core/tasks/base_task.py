@@ -1,6 +1,6 @@
 """
 Base Celery task class for KB worker tasks.
-Provides centralized exception handling, failure/retry messaging.
+Provides centralized exception handling with direct DB writes for failure finalization.
 """
 from typing import Optional
 
@@ -10,7 +10,6 @@ from loguru import logger
 from shared.core.logging import LogEvent
 from shared.core.exceptions.domain_exceptions import UnknownException
 from shared.core.exceptions.knowhere_exception import KnowhereException
-from shared.services.messaging.sync_publisher import get_sync_message_publisher
 
 
 class KBBaseTask(Task):
@@ -24,7 +23,7 @@ class KBBaseTask(Task):
         ).info("KB task completed successfully")
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
-        """Task failure callback - Centralized exception handling."""
+        """Task failure callback — finalize failure directly to the database."""
         job_id = self._extract_job_id(args, kwargs)
 
         # Normalize to KnowhereException
@@ -37,29 +36,22 @@ class KBBaseTask(Task):
         client_response = knowhere_exc.to_client(job_id or "Null")
         error_info = client_response["error"]
 
-        # Publish failure message using sync publisher
+        # Finalize failure directly to the database (replaces RabbitMQ publish_failure)
         if job_id:
             try:
-                message_publisher = get_sync_message_publisher()
+                from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
 
-                # Include stack trace only for wrapped exceptions
-                stack_trace = str(einfo) if knowhere_exc.original_exception else None
-
-                message_publisher.publish_failure(
+                lifecycle_service = get_sync_job_lifecycle_service()
+                lifecycle_service.finalize_job_failure(
                     job_id=job_id,
                     error_message=error_info["message"],
                     error_code=error_info["code"],
-                    error_type=type(exc).__name__,
-                    stack_trace=stack_trace,
-                    metadata={
-                        "refund_credits": True,
-                        "details": error_info.get("details"),
-                        "task_id": task_id,
-                    },
+                    error_details=error_info.get("details"),
+                    should_refund=True,
                 )
-                logger.info(f"Failure message published: job_id={job_id}, error_code={error_info['code']}")
+                logger.info(f"Job failure finalized: job_id={job_id}, error_code={error_info['code']}")
             except Exception as e:
-                logger.error(f"Failed to publish failure message: job_id={job_id}, error={e}")
+                logger.error(f"Failed to finalize job failure: job_id={job_id}, error={e}")
 
     def _extract_job_id(self, args, kwargs) -> Optional[str]:
         """Extract job_id from args or kwargs."""

@@ -112,32 +112,47 @@ class WebhookService:
         return event
     
     async def publish_to_queue(self, event_id: str) -> bool:
+        """Publish webhook event for async delivery.
+
+        Routes to QStash or Celery based on the WEBHOOK_DELIVERY_PROVIDER
+        feature flag.  Should be called AFTER transaction commit.
         """
-        Publish webhook event to message queue for async delivery.
-        
-        Should be called AFTER transaction commit.
-        
-        Args:
-            event_id: WebhookEvent ID
-            
-        Returns:
-            True if published successfully
-        """
+        from shared.core.config import app_config
+
+        if app_config.is_qstash_enabled:
+            return await self._publish_via_qstash(event_id)
+        return await self._publish_via_celery(event_id)
+
+    async def _publish_via_celery(self, event_id: str) -> bool:
+        """Legacy path: dispatch via Celery task."""
         try:
             from shared.core.celery_app import get_celery_app
-            
+
             celery_app = get_celery_app()
             task = celery_app.send_task(
                 "app.core.tasks.webhook_tasks.dispatch_webhook_task",
                 args=[event_id],
-                # Queue auto-routed via static task_routes in celery_app.py
             )
-            
             logger.info(f"Webhook dispatch task scheduled: event_id={event_id}, task_id={task.id}")
             return True
-            
-        except Exception as e:
-            logger.error(f"Failed to schedule webhook dispatch task: event_id={event_id}, error={e}")
+        except Exception as exc:
+            logger.error(f"Failed to schedule webhook dispatch task: event_id={event_id}, error={exc}")
+            return False
+
+    async def _publish_via_qstash(self, event_id: str) -> bool:
+        """New path: publish via QStash for managed delivery + retry."""
+        try:
+            from shared.services.webhook.qstash_publisher import get_qstash_webhook_publisher
+
+            publisher = get_qstash_webhook_publisher()
+            message_id = publisher.publish_event(event_id)
+            if message_id:
+                logger.info(f"Webhook published via QStash: event_id={event_id}, message_id={message_id}")
+                return True
+            logger.warning(f"QStash publish returned no message_id: event_id={event_id}")
+            return False
+        except Exception as exc:
+            logger.error(f"QStash publish failed: event_id={event_id}, error={exc}")
             return False
 
     async def _create_event(

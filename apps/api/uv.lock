@@ -1178,6 +1178,7 @@ dependencies = [
     { name = "moesifapi" },
     { name = "pydantic" },
     { name = "pyjwt" },
+    { name = "qstash" },
     { name = "redis" },
     { name = "sqlalchemy" },
     { name = "starlette" },
@@ -1209,6 +1210,7 @@ requires-dist = [
     { name = "moesifapi", specifier = "==1.5.5" },
     { name = "pydantic", specifier = "==2.11.7" },
     { name = "pyjwt", specifier = "==2.10.1" },
+    { name = "qstash", specifier = "==3.2.0" },
     { name = "redis", specifier = "==5.3.1" },
     { name = "sqlalchemy", specifier = "==2.0.42" },
     { name = "starlette", specifier = "==0.46.2" },
@@ -1261,6 +1263,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pytz" },
     { name = "pyyaml" },
+    { name = "qstash" },
     { name = "redis" },
     { name = "requests" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -1303,6 +1306,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = "==1.1.1" },
     { name = "pytz", specifier = "==2025.2" },
     { name = "pyyaml", specifier = "==6.0.2" },
+    { name = "qstash", specifier = "==3.2.0" },
     { name = "redis", specifier = "==5.3.1" },
     { name = "requests", specifier = "==2.32.4" },
     { name = "sqlalchemy", specifier = "==2.0.42" },
@@ -2487,6 +2491,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/0f/25911a9f080464c59fab9027482f822b86bf0608957a5fcc6eaac85aa515/PyYAML-6.0.2-cp313-cp313-musllinux_1_1_x86_64.whl", hash = "sha256:68ccc6023a3400877818152ad9a1033e3db8625d899c72eacb5a668902e4d652", size = 751597, upload-time = "2024-08-06T20:32:56.985Z" },
     { url = "https://files.pythonhosted.org/packages/14/0d/e2c3b43bbce3cf6bd97c840b46088a3031085179e596d4929729d8d68270/PyYAML-6.0.2-cp313-cp313-win32.whl", hash = "sha256:bc2fa7c6b47d6bc618dd7fb02ef6fdedb1090ec036abab80d4681424b84c1183", size = 140527, upload-time = "2024-08-06T20:33:03.001Z" },
     { url = "https://files.pythonhosted.org/packages/fa/de/02b54f42487e3d3c6efb3f89428677074ca7bf43aae402517bc7cca949f3/PyYAML-6.0.2-cp313-cp313-win_amd64.whl", hash = "sha256:8388ee1976c416731879ac16da0aff3f63b286ffdd57cdeb95f3f2e085687563", size = 156446, upload-time = "2024-08-06T20:33:04.33Z" },
+]
+
+[[package]]
+name = "qstash"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pyjwt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2f/e0/ffe901e104fc34186b25a61734c21d17bef38780ae30b20bf96a6585a499/qstash-3.2.0.tar.gz", hash = "sha256:3519d4cefb956703022a790531ccc31d13e68ad0d9e7d6ffe95459ae304210e9", size = 26666, upload-time = "2025-09-18T09:28:13.42Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/89/e2929b953d4a145b4487be4fe051ea7926557e454a3cbbf961fd10a62937/qstash-3.2.0-py3-none-any.whl", hash = "sha256:c5cb3f4521dc57108232dc80c3bf178a85b6787dc919087cef133073e764f0b4", size = 37196, upload-time = "2025-09-18T09:28:12.201Z" },
 ]
 
 [[package]]

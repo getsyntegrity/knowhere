@@ -44,7 +44,11 @@ class WebhookLog(Base):
     response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # Request duration in milliseconds
-    
+
+    # Delivery provider tracking
+    delivery_provider: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, server_default="self")
+    qstash_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     

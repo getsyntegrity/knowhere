@@ -35,8 +35,10 @@ from typing import Generator
 
 from loguru import logger
 
-# Key prefix that namespaces all periodic task locks in Redis.
-_KEY_PREFIX = "knowhere:periodic-lock:"
+# Key prefix for periodic task locks.
+# SyncRedisService._build_key() already prepends "knowhere-api:" so the final
+# Redis key will be "knowhere-api:periodic-lock:{safe_task_name}".
+_KEY_PREFIX = "periodic-lock:"
 
 # Subtract this from the period to give the next firing a grace window even
 # if clocks drift slightly between the lock writer and the reader.

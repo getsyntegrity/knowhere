@@ -16,6 +16,7 @@ dependencies = [
     "stripe==13.0.1",
     "pydantic==2.11.7",
     "PyJWT==2.10.1",
+    "qstash==3.2.0",
     "httpx==0.28.1",
     "aiohttp==3.12.15",
     "loguru==0.7.3",
