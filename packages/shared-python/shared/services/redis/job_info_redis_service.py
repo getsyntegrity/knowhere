@@ -7,21 +7,21 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from shared.services.redis.redis_service import RedisService
-from shared.utils.redis_key_builder import redis_key_builder
+from shared.utils.redis_key_builder import redis_key_builder, RedisKeyType
 
 
 class JobInfoRedisService:
     """Job基本信息Redis服务"""
     
-    # 缓存过期时间：2小时（与job_metadata一致）
-    JOB_INFO_TTL = 7200
+    # 缓存过期时间：与Job同步过期时间
+    JOB_INFO_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
     
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
     
     async def save_job_info(self, job_id: str, job_info: Dict[str, Any]) -> bool:
         """
-        保存Job基本信息到Redis（2小时过期）
+        保存Job基本信息到Redis（与Job同步过期时间）
         
         Args:
             job_id: 任务ID

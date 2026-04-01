@@ -261,7 +261,7 @@ class SyncRedisServiceFactory:
 
 class SyncJobInfoRedisService:
     """Sync Job info Redis service."""
-    JOB_INFO_TTL = 7200
+    JOB_INFO_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
 
     def __init__(self, redis_service: SyncRedisService):
         self.redis = redis_service
@@ -306,7 +306,7 @@ class SyncJobInfoRedisService:
 
 class SyncJobMetadataService:
     """Sync Job metadata Redis service."""
-    METADATA_TTL = 7200
+    METADATA_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
 
     def __init__(self, redis_service: SyncRedisService):
         self.redis = redis_service
