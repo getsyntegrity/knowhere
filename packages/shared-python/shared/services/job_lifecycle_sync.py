@@ -18,6 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from shared.core.database_sync import get_sync_db_context
+from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobChunk, JobResult
@@ -28,6 +29,7 @@ from shared.services.redis.redis_sync_service import (
     SyncChunksRedisService,
     SyncRedisServiceFactory,
 )
+from shared.utils.error_details import normalize_error_details
 from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
 
@@ -156,13 +158,16 @@ class SyncJobLifecycleService:
                 if should_refund:
                     self._try_refund_credits(db, job_id)
 
+                normalized_error_details = normalize_error_details(error_details)
                 webhook_event = self._maybe_create_webhook_event(
                     db, job_id, event_type="job.failed",
                     extra_payload={
-                        "error": {
-                            "code": error_code,
-                            "message": error_message,
-                        },
+                        "error": build_standard_error_response(
+                            code=error_code,
+                            message=error_message,
+                            request_id=job_id,
+                            details=normalized_error_details,
+                        ),
                     },
                 )
 

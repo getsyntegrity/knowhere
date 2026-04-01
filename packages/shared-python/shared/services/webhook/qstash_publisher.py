@@ -155,6 +155,11 @@ class QStashWebhookPublisher:
 
         callback_url = app_config.qstash_callback_url
         failure_callback_url = app_config.qstash_failure_callback_url
+        if not callback_url or not failure_callback_url:
+            raise RuntimeError(
+                "QSTASH_CALLBACK_BASE_URL must be configured when "
+                "WEBHOOK_DELIVERY_PROVIDER=qstash"
+            )
 
         publish_kwargs: Dict[str, Any] = {
             "url": target_url,
@@ -163,12 +168,9 @@ class QStashWebhookPublisher:
             "retries": app_config.QSTASH_MAX_RETRIES,
             "content_type": "application/json",
             "retry_delay": retry_delay_expression,
+            "callback": callback_url,
+            "failure_callback": failure_callback_url,
         }
-
-        if callback_url:
-            publish_kwargs["callback"] = callback_url
-        if failure_callback_url:
-            publish_kwargs["failure_callback"] = failure_callback_url
 
         response = client.message.publish(**publish_kwargs)
 
