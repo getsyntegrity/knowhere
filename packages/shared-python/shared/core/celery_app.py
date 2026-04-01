@@ -27,7 +27,7 @@ celery_app = Celery(
     ]
 )
 
-# Task queues — plain Redis lists, no AMQP-specific arguments.
+# Task queues — plain Redis transport queues.
 # Priority is handled via Celery's Redis transport priority support
 # (task_queue_max_priority + task_default_priority).
 celery_app.conf.task_queues = (

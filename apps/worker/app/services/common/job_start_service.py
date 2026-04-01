@@ -44,9 +44,9 @@ def mark_job_running(job_id: str, redis_service: Any) -> bool:
         current_state = job.status
 
         if current_state == JobStatus.RUNNING.value:
-            # Likely a RabbitMQ redelivery — the original worker is still
-            # processing.  Let the caller proceed to the RedisJobLock
-            # acquisition which will gate actual processing.
+            # Likely a broker redelivery while the original worker is still
+            # processing. Let the caller proceed to RedisJobLock, which gates
+            # actual execution.
             logger.info(f"Job already running (likely redelivery), deferring to lock: {job_id}")
             return True
 

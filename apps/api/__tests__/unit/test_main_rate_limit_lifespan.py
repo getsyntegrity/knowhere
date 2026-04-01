@@ -1,5 +1,5 @@
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-import sys
 
 import pytest
 from fastapi import FastAPI
@@ -8,32 +8,36 @@ import main as app_main
 
 
 class _SessionContext:
-    async def __aenter__(self):
+    async def __aenter__(self) -> object:
         return object()
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
         return False
 
 
-class _FakeMessagingService:
+class _LifespanTracker:
     def __init__(self) -> None:
-        self.start_calls = 0
-        self.stop_calls = 0
+        self.close_async_client_calls: int = 0
+        self.dispose_engine_calls: int = 0
 
-    async def start(self) -> None:
-        self.start_calls += 1
+    async def close_async_client(self) -> None:
+        self.close_async_client_calls += 1
 
-    async def stop(self) -> None:
-        self.stop_calls += 1
+    async def dispose_engine(self, *_args: object, **_kwargs: object) -> None:
+        self.dispose_engine_calls += 1
 
 
-async def _noop_async(*_args, **_kwargs):
+async def _noop_async(*_args: object, **_kwargs: object) -> None:
     return None
 
 
-def _patch_lifespan_dependencies(monkeypatch, load_rules_impl):
+def _patch_lifespan_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    load_rules_impl: Callable[[object], Awaitable[None]],
+) -> _LifespanTracker:
     import app.services.rate_limit.config as rate_limit_config_module
     import shared.core.database as database_module
+    import shared.utils.http_clients as http_clients_module
 
     monkeypatch.setattr(
         "subprocess.run",
@@ -54,46 +58,51 @@ def _patch_lifespan_dependencies(monkeypatch, load_rules_impl):
     )
     monkeypatch.setattr(app_main, "load_rules", load_rules_impl)
     monkeypatch.setattr(app_main.httpx, "AsyncClient", lambda **_kwargs: object())
-    monkeypatch.setattr(app_main, "safe_dispose_engine", _noop_async)
-
-    messaging = _FakeMessagingService()
-    fake_messaging_module = SimpleNamespace(messaging_service=messaging)
-    monkeypatch.setitem(
-        sys.modules,
-        "app.services.messaging_service",
-        fake_messaging_module,
+    tracker = _LifespanTracker()
+    monkeypatch.setattr(app_main, "safe_dispose_engine", tracker.dispose_engine)
+    monkeypatch.setattr(
+        http_clients_module,
+        "close_async_client",
+        tracker.close_async_client,
     )
 
-    return messaging
+    return tracker
 
 
 @pytest.mark.asyncio
-async def test_lifespan_initializes_and_tears_down_rate_limit_components(monkeypatch):
+async def test_lifespan_initializes_and_tears_down_rate_limit_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     load_calls: list[object] = []
 
-    async def _fake_load_rules(db):
+    async def _fake_load_rules(db: object) -> None:
         load_calls.append(db)
 
-    messaging = _patch_lifespan_dependencies(monkeypatch, _fake_load_rules)
+    tracker = _patch_lifespan_dependencies(monkeypatch, _fake_load_rules)
 
     test_app = FastAPI()
     async with app_main.lifespan(test_app):
         assert hasattr(test_app.state, "rate_limit_rule_sync_task") is False
         assert len(load_calls) == 1
-        assert messaging.start_calls == 1
+        assert tracker.close_async_client_calls == 0
+        assert tracker.dispose_engine_calls == 0
 
-    assert messaging.stop_calls == 1
+    assert tracker.close_async_client_calls == 1
+    assert tracker.dispose_engine_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_lifespan_fails_fast_when_initial_rule_load_fails(monkeypatch):
-    async def _boom_load_rules(_db):
+async def test_lifespan_fails_fast_when_initial_rule_load_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _boom_load_rules(_db: object) -> None:
         raise RuntimeError("initial load failed")
 
-    messaging = _patch_lifespan_dependencies(monkeypatch, _boom_load_rules)
+    tracker = _patch_lifespan_dependencies(monkeypatch, _boom_load_rules)
 
     with pytest.raises(RuntimeError, match="initial load failed"):
         async with app_main.lifespan(FastAPI()):
             pass
 
-    assert messaging.start_calls == 0
+    assert tracker.close_async_client_calls == 0
+    assert tracker.dispose_engine_calls == 0

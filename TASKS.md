@@ -32,7 +32,7 @@
 |------|------|
 | **构型** | pnpm workspace + Turborepo monorepo |
 | **语言** | Python (FastAPI / Celery) + TypeScript (Next.js) |
-| **基础设施** | MySQL · Redis · RabbitMQ · MinIO (S3) |
+| **基础设施** | MySQL · Redis · MinIO (S3) |
 | **部署** | Docker Compose (dev) / Aliyun & AWS (prod) |
 
 ### Directory Structure
@@ -60,7 +60,7 @@ knowhere/
 ```mermaid
 graph TD
     Client[前端/SDK] -->|REST API| API[apps/api<br/>FastAPI]
-    API -->|RabbitMQ| Worker[apps/worker<br/>Celery]
+    API -->|Redis broker| Worker[apps/worker<br/>Celery]
     API --> DB[(MySQL)]
     API --> Redis[(Redis)]
     Worker --> S3[MinIO/S3]
@@ -81,7 +81,7 @@ graph TD
 
 **API 层** (`apps/api/`): FastAPI 入口、路由 (`jobs`, `knowledge_base`, `billing`, `webhook`, `api_key`, `s3_events`)、Job 状态机、计费 (Stripe)
 
-**Worker 层** (`apps/worker/`): Celery 消费 RabbitMQ — `upload_url_file_task` (URL→S3) + `parse_task` (解析+向量化)
+**Worker 层** (`apps/worker/`): Celery 消费 Redis broker — `upload_url_file_task` (URL→S3) + `parse_task` (解析+向量化)
 
 **共享包** (`packages/shared-python/`): ORM 模型、AI/Redis/S3/Webhook 服务、工具函数
 
@@ -286,7 +286,7 @@ _(无)_
 ### Dev Commands
 
 ```bash
-pnpm dev:services    # 启动基础设施 (MySQL, Redis, RabbitMQ, MinIO)
+pnpm dev:services    # 启动基础设施 (MySQL, Redis, MinIO)
 pnpm dev:api         # 启动 API (FastAPI, port 5005)
 pnpm dev:worker      # 启动 Worker (Celery)
 pnpm dev:web         # 启动前端 (Next.js, port 3000)

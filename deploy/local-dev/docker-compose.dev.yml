@@ -1,27 +1,6 @@
 version: '3.8'
 
 services:
-  # RabbitMQ 消息队列
-  rabbitmq:
-    image: rabbitmq:3.12-management
-    container_name: knowhere_rabbitmq
-    ports:
-      - "5672:5672"    # AMQP端口
-      - "15672:15672"  # 管理界面端口
-    environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: admin123
-      RABBITMQ_DEFAULT_VHOST: /
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - knowhere_network
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
   # Redis 缓存
   redis:
     image: redis:7-alpine
@@ -99,7 +78,6 @@ services:
       retries: 5
 
 volumes:
-  rabbitmq_data:
   redis_data:
   postgres_data:
   localstack_data:

@@ -2,8 +2,8 @@
 Sync Job Lifecycle Service for Celery worker (gevent pool).
 
 Encapsulates the complete job success/failure finalization that previously
-required a RabbitMQ round-trip through the API MessageConsumer.  Now the
-worker writes directly to the database in a single atomic transaction,
+used an API-side broker consumer. The worker now writes directly to the
+database in a single atomic transaction,
 using the same transactional outbox pattern for webhook events.
 """
 from __future__ import annotations
@@ -38,8 +38,7 @@ def _utc_now_naive() -> datetime:
 class SyncJobLifecycleService:
     """Manages job lifecycle transitions in the worker process (sync/gevent).
 
-    Replaces the old publish_result → RabbitMQ → API consumer → finalize flow
-    with a direct worker → DB write path.
+    Implements the direct worker → DB write path for job completion and failure.
     """
 
     def __init__(self) -> None:

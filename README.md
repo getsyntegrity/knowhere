@@ -87,7 +87,6 @@ Common local endpoints:
 - API docs: `http://localhost:5005/docs`
 - Web: `http://localhost:3000`
 - Docs: `http://localhost:3001`
-- RabbitMQ management: `http://localhost:15672`
 - LocalStack: `http://localhost:4566`
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`

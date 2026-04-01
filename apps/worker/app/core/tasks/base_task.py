@@ -36,7 +36,7 @@ class KBBaseTask(Task):
         client_response = knowhere_exc.to_client(job_id or "Null")
         error_info = client_response["error"]
 
-        # Finalize failure directly to the database (replaces RabbitMQ publish_failure)
+        # Finalize failure directly to the database.
         if job_id:
             try:
                 from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service

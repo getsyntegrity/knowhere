@@ -4,8 +4,10 @@ from app.services.document_parser import parse_service
 
 
 class _FakeProfile:
+    file_type = "txt"
     route = "standard"
     doc_category = "generic"
+    page_count = 1
     reasoning = ""
 
     def summary(self) -> str:

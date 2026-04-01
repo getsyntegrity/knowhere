@@ -1,10 +1,9 @@
 """
 Webhook Celery Tasks.
 
-After the RabbitMQ → Redis + QStash migration:
 - dispatch_webhook_task is kept as a legacy fallback (WEBHOOK_DELIVERY_PROVIDER=celery)
 - recover_orphaned_webhooks routes to QStash or Celery based on the feature flag
-- DLX wait queues have been removed; retry is handled by QStash or Celery countdown
+- Retry is handled by QStash or Celery countdown
 """
 
 from celery import Task
@@ -21,7 +20,7 @@ from shared.core.logging import (
 # Retry configuration (legacy Celery path)
 MAX_ATTEMPTS = 6
 
-# Retry delays in seconds for Celery countdown-based retry (replaces DLX)
+# Retry delays in seconds for Celery countdown-based retry
 RETRY_DELAYS = [60, 600, 1800, 7200, 21600]  # 1m, 10m, 30m, 2h, 6h
 
 # Matches the beat_schedule period in celery_app.py
@@ -68,7 +67,7 @@ class WebhookDispatchTask(Task):
 def dispatch_webhook_task(self, event_id: str, attempt: int = 1) -> bool:
     """Dispatch a webhook event (legacy Celery path).
 
-    Uses countdown-based retry instead of DLX wait queues.
+    Uses countdown-based retry.
     Only active when WEBHOOK_DELIVERY_PROVIDER=celery.
     """
     with log_context(task_id=self.request.id, event_id=event_id):
@@ -94,7 +93,7 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1) -> bool:
                 )
                 return False
 
-            # Retry via Celery countdown (replaces DLX)
+            # Retry via Celery countdown.
             _schedule_retry(self, event_id, attempt)
             return False
 
@@ -103,7 +102,7 @@ def dispatch_webhook_task(self, event_id: str, attempt: int = 1) -> bool:
 
 
 def _schedule_retry(task_instance: Task, event_id: str, current_attempt: int) -> None:
-    """Schedule retry via Celery countdown (replaces DLX wait queues)."""
+    """Schedule retry via Celery countdown."""
     next_attempt = current_attempt + 1
 
     if next_attempt > MAX_ATTEMPTS:

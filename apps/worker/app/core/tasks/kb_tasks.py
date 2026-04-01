@@ -314,8 +314,8 @@ def _parse(job_id: str, user_id: str | None):
             "reason": "job_already_terminal",
         }
 
-    # Acquire distributed lock to prevent concurrent processing of same job
-    # (e.g., RabbitMQ redelivery due to missed heartbeats with acks_late).
+    # Acquire distributed lock to prevent concurrent processing of the same
+    # job when the broker redelivers a task before the original worker acks.
     # If another worker already holds the lock, UnavailableException is raised
     # and Celery auto-retries after KB_TASK_RETRY_COUNTDOWN seconds.
     with RedisJobLock(redis_service, job_id):

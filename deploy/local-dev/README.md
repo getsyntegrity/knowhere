@@ -4,7 +4,6 @@ This directory contains the Docker Compose stack used for local development.
 
 ## Services
 
-- RabbitMQ
 - Redis
 - PostgreSQL
 - LocalStack
@@ -41,7 +40,6 @@ docker-compose -f docker-compose.dev.yml down
 
 ## Service Endpoints
 
-- RabbitMQ management: `http://localhost:15672`
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`
 - LocalStack: `http://localhost:4566`

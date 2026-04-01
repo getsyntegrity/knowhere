@@ -1,8 +1,7 @@
 """
 QStash webhook publisher — delivers outbound webhooks via Upstash QStash.
 
-Replaces the RabbitMQ DLX retry topology with QStash's managed retry
-and callback infrastructure.  Every publish includes:
+Uses QStash's managed retry and callback infrastructure. Every publish includes:
 
 - Our own HMAC-SHA256 signature (X-Knowhere-Signature) in the forwarded headers
 - QStash callback + failure_callback pointing to our API
