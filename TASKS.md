@@ -318,7 +318,7 @@ cd packages/shared-python && pytest
 | `apps/api/.env` | API 环境变量 (含 ILOVEAPI_* 配置) |
 | `apps/worker/.env` | Worker 环境变量 (含 ILOVEAPI_* 配置) |
 | `packages/shared-python/shared/core/config/` | Python 配置类 (AIConfig) |
-| `deploy/docker-compose.prod.yml` | 生产 Docker Compose |
+| `deploy/docker/` | Docker build assets for CI images |
 | `deploy/local-dev/` | 本地开发 Docker Compose |
 
 ### Quick Locate Guide
