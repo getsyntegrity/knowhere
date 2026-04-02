@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import APIRouter, Request, Response
 from loguru import logger
@@ -108,6 +109,23 @@ def _find_event_id(data: Dict[str, Any]) -> Optional[str]:
     return event_id
 
 
+def _build_callback_log_idempotency_key(
+    qstash_message_id: Optional[str],
+    event_id: str,
+) -> str:
+    """Build a fixed-width idempotency key for webhook_logs.
+
+    ``webhook_logs.idempotency_key`` is limited to 36 characters. QStash
+    ``sourceMessageId`` is longer, so store the raw value in
+    ``qstash_message_id`` and derive a stable UUID from it for the
+    idempotency key column.
+    """
+    if qstash_message_id:
+        return str(uuid5(NAMESPACE_URL, qstash_message_id))
+
+    return event_id
+
+
 def _process_qstash_callback(
     data: Dict[str, Any],
     event_id: str,
@@ -145,11 +163,12 @@ def _process_qstash_callback(
             attempt_number=retried + 1,
             request_payload=event.payload,
             signature="",
-            idempotency_key=qstash_message_id or "",
+            idempotency_key=_build_callback_log_idempotency_key(qstash_message_id, event.id),
             response_status_code=int(response_status) if response_status else None,
             response_body=response_body[:4096] if response_body else None,
             error_message=str(error_message)[:4096] if error_message else None,
             duration_ms=0,
+            qstash_message_id=qstash_message_id,
         )
         db.add(log)
         db.commit()
