@@ -305,6 +305,13 @@ jobs:
             "${container_name}=${image_uri}" \
             --namespace "${namespace}"
 
+          if [ "${{ matrix.service }}" = "worker" ]; then
+            kubectl patch "deployment/${deployment_name}" \
+              --namespace "${namespace}" \
+              --type='strategic' \
+              -p='{"spec":{"template":{"spec":{"containers":[{"name":"worker","readinessProbe":{"exec":{"command":["python","-c","from shared.services.worker_health import assert_worker_healthy; assert_worker_healthy()"]}},"livenessProbe":{"exec":{"command":["python","-c","from shared.services.worker_health import assert_worker_healthy; assert_worker_healthy()"]}}}]}}}}'
+          fi
+
           kubectl rollout status "deployment/${deployment_name}" \
             --namespace "${namespace}" \
             --timeout=300s

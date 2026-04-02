@@ -53,6 +53,7 @@ def test_sets_cluster_safe_global_keyprefix() -> None:
 
     transport_options = module.celery_app.conf.broker_transport_options
 
+    assert module.celery_app.conf.worker_enable_remote_control is False
     assert transport_options["visibility_timeout"] == 43200
     assert transport_options["retry_on_timeout"] is True
     assert transport_options["global_keyprefix"] == "{celery}"
