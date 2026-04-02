@@ -218,27 +218,38 @@ def parse_pdfs(pdf_path, filename, output_dir, base_llm_paras, profile=None, rel
         from app.services.document_parser.atlas_parser import parse_atlas
         return parse_atlas(pdf_path, output_dir, base_llm_paras, relative_root, profile=profile)
 
-    if route == "fast":
-        logger.info(f"⚡ Fast path: extracting with pymupdf4llm for {filename}")
+    # TODO: Re-enable fast path after thorough debugging.
+    # Conservative strategy: until the fast path (pymupdf4llm) is fully validated,
+    # all non-atlas PDFs are forced to MinerU (standard route) regardless of what
+    # DocProfiler recommends. The routing logic below is intentionally bypassed.
+    #
+    # Original fast-path block (keep for reference, do NOT delete):
+    # if route == "fast":
+    #     logger.info(f"⚡ Fast path: extracting with pymupdf4llm for {filename}")
+    #
+    #     os.makedirs(output_dir, exist_ok=True)
+    #     image_dir = os.path.join(output_dir, "images")
+    #     os.makedirs(image_dir, exist_ok=True)
+    #
+    #     with stage_timer("pdf.extract.fast", filename=filename):
+    #         result = run_in_child_process(
+    #             _fast_path_worker, pdf_path, output_dir, image_dir,
+    #         )
+    #     logger.info(
+    #         f"⚡ Fast path done: {result['md_chars']} chars, "
+    #         f"{result['image_count']} images"
+    #     )
+    # else:
+    #     with stage_timer("pdf.extract.standard", filename=filename):
+    #         upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
+    #         _inject_page_markers(output_dir)
 
-        os.makedirs(output_dir, exist_ok=True)
-        image_dir = os.path.join(output_dir, "images")
-        os.makedirs(image_dir, exist_ok=True)
+    logger.info(f"🛡️ Conservative mode: forcing MinerU (standard) for {filename} [route={route}]")
+    with stage_timer("pdf.extract.standard", filename=filename):
+        upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
 
-        with stage_timer("pdf.extract.fast", filename=filename):
-            result = run_in_child_process(
-                _fast_path_worker, pdf_path, output_dir, image_dir,
-            )
-        logger.info(
-            f"⚡ Fast path done: {result['md_chars']} chars, "
-            f"{result['image_count']} images"
-        )
-    else:
-        with stage_timer("pdf.extract.standard", filename=filename):
-            upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
-            
-            # Inject page markers from MinerU layout.json
-            _inject_page_markers(output_dir)
+        # Inject page markers from MinerU layout.json
+        _inject_page_markers(output_dir)
 
     logger.info("✅ PDF parsing step 1 complete: text extracted")
 

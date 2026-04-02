@@ -104,6 +104,8 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     llm_summary = None
     if smart_summary:
         from app.services.document_parser.txt_parser import split_title_summary
+        # TODO: Risk of missing text content if the image is a screenshot of pure text.
+        # Consider adding judge-image-type and OCR fallback as done in image_parser.parse_image.
         llm_resp = ask_image(client, img_dir, [f'{raw_img_name}{img_ext}'], title_text=last_context)
         if llm_resp:
             llm_title, llm_summary = split_title_summary(llm_resp)

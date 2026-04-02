@@ -477,6 +477,8 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                     if task_type == "image":
                         relative_path = task[2]
                         client = _get_vision_client()
+                        # TODO: Risk of missing text content if MinerU outputted a pure text image.
+                        # Consider adding judge-image-type and OCR fallback as done in image_parser.parse_image.
                         llm_resp = ask_image(client, output_dir, paths_=[relative_path])
                         if llm_resp:
                             img_title, img_summary = split_title_summary(llm_resp)
