@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from shared.core.config import app_config
+from shared.core.exceptions.domain_exceptions import QStashServiceException
 from shared.models.database.webhook import WebhookEventStatus
 from shared.services.webhook.validator import validate_webhook_url
 
@@ -35,14 +36,21 @@ class QStashWebhookPublisher:
             try:
                 from qstash import QStash
             except ImportError as exc:
-                raise RuntimeError(
-                    "qstash package is required for QStash webhook delivery. "
-                    "Install it with: pip install qstash"
+                raise QStashServiceException(
+                    internal_message=(
+                        "qstash package is required for QStash webhook delivery. "
+                        "Install it with: pip install qstash"
+                    ),
+                    operation="initialize_client",
+                    original_exception=exc,
                 ) from exc
 
             token = app_config.QSTASH_TOKEN
             if not token:
-                raise RuntimeError("QSTASH_TOKEN is not configured")
+                raise QStashServiceException(
+                    internal_message="QSTASH_TOKEN is not configured",
+                    operation="initialize_client",
+                )
 
             self._client = QStash(token)
         return self._client
@@ -140,8 +148,6 @@ class QStashWebhookPublisher:
         event_id: str,
     ) -> Optional[str]:
         """Call the QStash publish API."""
-        client = self._get_client()
-
         headers = {
             "Content-Type": "application/json",
             "X-Knowhere-Signature": signature,
@@ -156,10 +162,15 @@ class QStashWebhookPublisher:
         callback_url = app_config.qstash_callback_url
         failure_callback_url = app_config.qstash_failure_callback_url
         if not callback_url or not failure_callback_url:
-            raise RuntimeError(
-                "QSTASH_CALLBACK_BASE_URL must be configured when "
-                "WEBHOOK_DELIVERY_PROVIDER=qstash"
+            raise QStashServiceException(
+                internal_message=(
+                    "QSTASH_CALLBACK_BASE_URL must be configured for QStash "
+                    "webhook delivery"
+                ),
+                operation="publish_webhook",
             )
+
+        client = self._get_client()
 
         publish_kwargs: Dict[str, Any] = {
             "url": target_url,

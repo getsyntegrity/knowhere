@@ -98,9 +98,6 @@ celery_app.conf.update(
         # Knowledge base tasks (default medium priority)
         'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},
 
-        # Legacy Celery webhook dispatch path still consumed by the worker.
-        'app.core.tasks.webhook_tasks.dispatch_webhook_task': {'queue': 'default'},
-
         # Webhook orphan recovery
         'app.core.tasks.webhook_tasks.recover_orphaned_webhooks': {'queue': 'default'},
 

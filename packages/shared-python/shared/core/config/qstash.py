@@ -23,21 +23,8 @@ class QStashConfig(BaseModel):
         default=None, description="Public API base URL for QStash callback endpoints"
     )
 
-    # Feature flag for gradual rollout: "celery" (legacy) or "qstash" (new)
-    WEBHOOK_DELIVERY_PROVIDER: str = Field(
-        default="celery", description="Webhook delivery provider: 'celery' or 'qstash'"
-    )
-
     # QStash retry configuration (approximate exponential backoff)
     QSTASH_MAX_RETRIES: int = Field(default=5, description="QStash max delivery retries")
-
-    @property
-    def is_qstash_enabled(self) -> bool:
-        """Check if QStash is configured and selected as the delivery provider."""
-        return (
-            self.WEBHOOK_DELIVERY_PROVIDER == "qstash"
-            and self.QSTASH_TOKEN is not None
-        )
 
     @property
     def qstash_callback_url(self) -> Optional[str]:

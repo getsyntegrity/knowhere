@@ -383,32 +383,27 @@ class SyncJobLifecycleService:
     def _post_commit_enqueue_webhook(
         self, webhook_event: Optional[WebhookEvent],
     ) -> None:
-        """Enqueue webhook for async delivery after commit (best-effort)."""
+        """Publish a persisted webhook via QStash after commit (best-effort)."""
         if not webhook_event:
             return
 
         try:
-            from shared.core.config import app_config
+            from shared.services.webhook.qstash_publisher import get_qstash_webhook_publisher
 
-            if app_config.is_qstash_enabled:
-                # QStash path — publish via QStash API (Phase 3)
-                from shared.services.webhook.qstash_publisher import (
-                    get_qstash_webhook_publisher,
+            publisher = get_qstash_webhook_publisher()
+            message_id = publisher.publish_event(webhook_event.id)
+            if not message_id:
+                logger.warning(
+                    f"Webhook publish failed after commit: event_id={webhook_event.id}"
                 )
-                publisher = get_qstash_webhook_publisher()
-                publisher.publish_event(webhook_event.id)
-            else:
-                # Celery path — dispatch via Celery task
-                from shared.core.celery_app import get_celery_app
-                celery_app = get_celery_app()
-                celery_app.send_task(
-                    "app.core.tasks.webhook_tasks.dispatch_webhook_task",
-                    args=[webhook_event.id],
-                )
-            logger.info(f"Webhook enqueued: event_id={webhook_event.id}")
+                return
+            logger.info(
+                f"Webhook published after commit: event_id={webhook_event.id}, "
+                f"message_id={message_id}"
+            )
         except Exception as exc:
             logger.error(
-                f"Failed to enqueue webhook (event persisted): "
+                f"Failed to publish webhook after commit (event persisted): "
                 f"event_id={webhook_event.id}, error={exc}"
             )
 
