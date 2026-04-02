@@ -17,13 +17,7 @@ docker run --rm -p 5005:5005 \
   -e REDIS_PORT=6379 \
   -e REDIS_PASSWORD= \
   -e REDIS_DATABASE=0 \
-  -e RABBITMQ_HOST=knowhere_rabbitmq \
-  -e RABBITMQ_PORT=5672 \
-  -e RABBITMQ_USER=admin \
-  -e RABBITMQ_PASSWORD=admin123 \
-  -e RABBITMQ_VHOST=/ \
-  -e CELERY_BROKER_URL=amqp://admin:admin123@knowhere_rabbitmq:5672// \
-  -e MESSAGE_BROKER_TYPE=rabbitmq \
+  -e CELERY_REDIS_URL=redis://knowhere_redis:6379/0 \
   -e SECRET_KEY=test-secret-key-for-development-only \
   -e TMP_PATH=/tmp/aismart_bid \
   -e FONT_PATH=/usr/share/fonts \

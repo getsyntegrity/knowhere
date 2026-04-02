@@ -6,20 +6,20 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from shared.services.redis.redis_service import RedisService
-from shared.utils.redis_key_builder import redis_key_builder
+from shared.utils.redis_key_builder import redis_key_builder, RedisKeyType
 
 
 class JobMetadataService:
     """Job元数据Redis服务"""
     
-    # 缓存过期时间：2小时
-    METADATA_TTL = 7200
+    # 缓存过期时间：与Job同步过期时间
+    METADATA_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
     
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
     
     async def save_metadata(self, job_id: str, metadata: Dict[str, Any]) -> bool:
-        """保存job_metadata到Redis（2小时过期）"""
+        """保存job_metadata到Redis（与Job同步过期时间）"""
         try:
             key = redis_key_builder.task_metadata(job_id)
             await self.redis.set(key, metadata, ttl=self.METADATA_TTL)

@@ -325,6 +325,12 @@ class AsyncStateMachineService:
             )
         except Exception as e:
             logger.error(f"Failed to update Job {job_id} error info: {e}")
+            try:
+                await db.rollback()
+            except Exception as rollback_err:
+                logger.warning(
+                    f"Rollback failed after error-update failure for Job {job_id}: {rollback_err}"
+                )
 
     async def _update_redis_cache(
         self, job_id: str, status: str, metadata: Optional[Dict[str, Any]],

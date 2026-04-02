@@ -7,7 +7,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from uuid import uuid4
 
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
-from shared.tests.fakes import FakeAsyncSession, FakeCeleryApp
+from shared.tests.fakes import FakeAsyncSession
 from app.services.webhook_service import WebhookService
 from shared.services.webhook.dispatcher import WebhookDispatcher
 
@@ -15,10 +15,6 @@ from shared.services.webhook.dispatcher import WebhookDispatcher
 @pytest.fixture
 def fake_db():
     return FakeAsyncSession()
-
-@pytest.fixture
-def fake_celery():
-    return FakeCeleryApp()
 
 @pytest.fixture
 def webhook_service():
@@ -50,23 +46,24 @@ async def test_fr01_event_trigger_creates_pending_event(fake_db, webhook_service
     assert event.attempts == 0
 
 @pytest.mark.asyncio
-async def test_fr01_event_trigger_sends_celery_task(fake_db, fake_celery, webhook_service):
+async def test_fr01_event_trigger_publishes_to_qstash(fake_db, webhook_service):
     """
-    FR-01: After event creation, a Celery task is dispatched.
-    Verify: Task sent to broker with correct event_id.
+    FR-01: After event creation, the webhook is published via QStash.
+    Verify: Publisher invoked with the correct event_id.
     """
-    job_id = str(uuid4())
     event_id = str(uuid4())
-    
-    with patch("shared.core.celery_app.get_celery_app", return_value=fake_celery):
+
+    mock_publisher = MagicMock()
+    mock_publisher.publish_event.return_value = "msg_123"
+
+    with patch(
+        "shared.services.webhook.qstash_publisher.get_qstash_webhook_publisher",
+        return_value=mock_publisher,
+    ):
         success = await webhook_service.publish_to_queue(event_id=event_id)
-    
-    # Verify MQ Side Effect
+
     assert success is True
-    assert len(fake_celery.tasks) == 1
-    task = fake_celery.tasks[0]
-    assert task["name"] == "app.core.tasks.webhook_tasks.dispatch_webhook_task"
-    assert task["args"][0] == event_id
+    mock_publisher.publish_event.assert_called_once_with(event_id)
 
 
 @pytest.mark.asyncio

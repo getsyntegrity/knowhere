@@ -27,7 +27,7 @@ from shared.services.redis.redis_sync_service import (
     SyncJobMetadataService,
     SyncChunksRedisService,
 )
-from shared.services.messaging.sync_publisher import get_sync_message_publisher
+from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
 from shared.services.redis.distributed_lock import RedisJobLock
 
 # Exception handling
@@ -66,89 +66,12 @@ from app.services.workload.page_estimator import PageEstimator
 celery_app = get_celery_app()
 
 
-def _cleanup_temp_file(file_path: str | None) -> None:
-    """Best-effort cleanup for temp files created during parsing."""
-    if not file_path:
-        return
-
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except OSError as exc:
-        logger.warning(f"Failed to cleanup temp file {file_path}: {exc}")
-
-
-def _cleanup_task_workspace(workspace_dir: str | None) -> bool:
-    """Best-effort cleanup for a task-scoped temporary workspace."""
-    if not workspace_dir:
-        return False
-
-    if not os.path.isdir(workspace_dir):
-        return False
-
-    try:
-        shutil.rmtree(workspace_dir)
-        logger.info(f"Task workspace cleaned up: {workspace_dir}")
-        return True
-    except OSError as exc:
-        logger.warning(f"Failed to cleanup task workspace {workspace_dir}: {exc}")
-        return False
-
-
-def _create_task_workspace(job_id: str) -> str:
-    """Create a temporary workspace for a single parse task."""
-    temp_root = getattr(settings, "TMP_PATH", "/tmp")
-    if not temp_root:
-        raise SystemSettingMissingException(
-            user_message="System configuration error",
-            internal_message="TMP_PATH not configured",
-        )
-
-    if not os.path.isabs(temp_root):
-        raise SystemSettingInvalidException(
-            user_message="System configuration error",
-            internal_message=f"TMP_PATH must be absolute path, current value: {temp_root}",
-        )
-
-    try:
-        os.makedirs(temp_root, exist_ok=True)
-        return tempfile.mkdtemp(prefix=f"kb_task_{job_id}_", dir=temp_root)
-    except (OSError, PermissionError) as exc:
-        raise FileSystemException(
-            user_message="System error preparing temporary storage",
-            operation="create_temp_workspace",
-            internal_message=f"Failed to create task workspace in {temp_root}",
-            original_exception=exc,
-        ) from exc
-
-
-def _download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
-    """Download the source file from object storage into a task workspace file."""
-    local_temp_path = None
-
-    try:
-        os.makedirs(temp_dir, exist_ok=True)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=temp_dir) as tmp_file:
-            local_temp_path = tmp_file.name
-            with requests.get(
-                file_url,
-                timeout=120,
-                stream=True,
-                headers={"User-Agent": "Knowhere-Worker/1.0"},
-            ) as response:
-                response.raise_for_status()
-                for chunk in response.iter_content(chunk_size=65536):
-                    if chunk:
-                        tmp_file.write(chunk)
-    except requests.RequestException as exc:
-        _cleanup_temp_file(local_temp_path)
-        raise StorageServiceException(
-            internal_message=f"Failed to download source file from object storage: {exc}",
-            operation="download_source_file",
-            original_exception=exc,
-        ) from exc
-
-    return local_temp_path
+from app.core.tasks.task_utils import (
+    cleanup_temp_file,
+    cleanup_task_workspace,
+    create_task_workspace,
+    download_s3_file_to_temp,
+)
 
 @celery_app.task(
     bind=True,
@@ -175,7 +98,7 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str | None
 
 def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type: str | None = None):
     """Sync URL file download and upload to S3."""
-    message_publisher = get_sync_message_publisher()
+    lifecycle_service = get_sync_job_lifecycle_service()
 
     # Get job info from Redis
     redis_service = SyncRedisServiceFactory.get_service()
@@ -204,11 +127,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: validating file type
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=3,
-        message_text="Validating URL file type...",
-    )
+    lifecycle_service.update_progress(job_id, progress=3, message="Validating URL file type...")
 
     # Step 1: Validate URL file type (path first, then Content-Type header)
     from shared.utils.url_file_type import resolve_file_extension_sync
@@ -224,11 +143,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: downloading
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=10,
-        message_text="Downloading file from URL...",
-    )
+    lifecycle_service.update_progress(job_id, progress=10, message="Downloading file from URL...")
 
     # Step 2: Download file to temp directory
     try:
@@ -242,11 +157,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
 
     try:
         # Publish progress: validating file size
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=30,
-            message_text="Validating file size...",
-        )
+        lifecycle_service.update_progress(job_id, progress=30, message="Validating file size...")
 
         # Step 3: Validate file size
         file_size = os.path.getsize(temp_file_path)
@@ -259,11 +170,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
             )
 
         # Publish progress: uploading to S3
-        message_publisher.publish_progress_update(
-            job_id=job_id,
-            progress=50,
-            message_text="Uploading file to S3...",
-        )
+        lifecycle_service.update_progress(job_id, progress=50, message="Uploading file to S3...")
 
         # Step 4: Upload to S3
         uploads_bucket = settings.S3_BUCKET_NAME
@@ -276,11 +183,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
             logger.debug(f"Temp file cleaned up: {temp_file_path}")
 
     # Publish progress: verifying upload
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=80,
-        message_text="Verifying upload result...",
-    )
+    lifecycle_service.update_progress(job_id, progress=80, message="Verifying upload result...")
 
     # Step 5: Verify S3 file exists
     file_info = verify_s3_file_exists(s3_key)
@@ -291,11 +194,7 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: complete
-    message_publisher.publish_progress_update(
-        job_id=job_id,
-        progress=100,
-        message_text="URL file upload complete, waiting for processing...",
-    )
+    lifecycle_service.update_progress(job_id, progress=100, message="URL file upload complete, waiting for processing...")
 
     logger.info(f"URL file upload complete, waiting for S3 webhook: {job_id} -> {s3_key}")
 
@@ -333,7 +232,7 @@ def parse_task(self, job_id: str, user_id: str | None = None, job_type: str = "k
 def _parse(job_id: str, user_id: str | None):
     """Sync parse and vectorize (file already uploaded to S3)."""
     logger.info(f"Parse started: job_id={job_id}, user_id={user_id}")
-    message_publisher = get_sync_message_publisher()
+    lifecycle_service = get_sync_job_lifecycle_service()
 
     # Get job info from Redis (sync)
     redis_service = SyncRedisServiceFactory.get_service()
@@ -341,21 +240,38 @@ def _parse(job_id: str, user_id: str | None):
     job_info = job_info_service.get_job_info(job_id)
 
     if not job_info:
-        raise NotFoundException(
-            resource="JobInfo",
-            resource_id=job_id,
-            internal_message="job info not found in Redis",
+        # Redis JobInfo has expired or been flushed — fall back to the DB, which is
+        # the durable source of truth for s3_key and user_id written at job creation.
+        logger.warning(
+            f"JobInfo not found in Redis for job_id={job_id}; falling back to database"
         )
+        with get_sync_db_context() as fallback_db:
+            job_row = fallback_db.execute(
+                select(Job).where(Job.job_id == job_id)
+            ).scalar_one_or_none()
 
-    s3_key = job_info.get("s3_key")
-    if not s3_key:
-        raise NotFoundException(
-            resource="JobInfo",
-            resource_id="s3_key",
-            internal_message="Missing s3_key in job_info",
+        if not job_row or not job_row.s3_key:
+            raise NotFoundException(
+                resource="JobInfo",
+                resource_id=job_id,
+                internal_message="job info not found in Redis or database",
+            )
+
+        s3_key: str = job_row.s3_key
+        job_user_id: str | None = str(job_row.user_id) if job_row.user_id else user_id
+        logger.info(
+            f"Recovered JobInfo from database: job_id={job_id}, s3_key={s3_key}"
         )
+    else:
+        s3_key = job_info.get("s3_key")
+        if not s3_key:
+            raise NotFoundException(
+                resource="JobInfo",
+                resource_id="s3_key",
+                internal_message="Missing s3_key in job_info",
+            )
 
-    job_user_id = job_info.get("user_id") or user_id
+        job_user_id = job_info.get("user_id") or user_id
 
     # Verify S3 file exists (sync)
     file_info = verify_s3_file_exists(s3_key)
@@ -398,12 +314,12 @@ def _parse(job_id: str, user_id: str | None):
             "reason": "job_already_terminal",
         }
 
-    # Acquire distributed lock to prevent concurrent processing of same job
-    # (e.g., RabbitMQ redelivery due to missed heartbeats with acks_late).
+    # Acquire distributed lock to prevent concurrent processing of the same
+    # job when the broker redelivers a task before the original worker acks.
     # If another worker already holds the lock, UnavailableException is raised
     # and Celery auto-retries after KB_TASK_RETRY_COUNTDOWN seconds.
     with RedisJobLock(redis_service, job_id):
-        task_workspace_dir = _create_task_workspace(job_id)
+        task_workspace_dir = create_task_workspace(job_id)
         input_dir = os.path.join(task_workspace_dir, "input")
         output_dir = os.path.join(task_workspace_dir, "output")
         os.makedirs(input_dir, exist_ok=True)
@@ -412,11 +328,7 @@ def _parse(job_id: str, user_id: str | None):
 
         try:
             # Publish progress: start parsing
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=10,
-                message_text="Parsing document...",
-            )
+            lifecycle_service.update_progress(job_id, progress=10, message="Parsing document...")
 
             # Generate download URL and download file (sync)
             file_url_response = generate_download_url(s3_key, settings.S3_BUCKET_NAME)
@@ -431,7 +343,7 @@ def _parse(job_id: str, user_id: str | None):
             # rather than filename, which may not have a real extension for URLs
             # like arxiv.org/pdf/1706.03762
             file_ext = os.path.splitext(s3_key)[1].lower() if s3_key else ""
-            local_temp_path = _download_s3_file_to_temp(file_url, file_ext, input_dir)
+            local_temp_path = download_s3_file_to_temp(file_url, file_ext, input_dir)
 
             logger.info(f"File downloaded: job_id={job_id}, local_path={local_temp_path}")
 
@@ -547,11 +459,7 @@ def _parse(job_id: str, user_id: str | None):
             if add_contents_df.empty:
                 logger.warning(f"No content returned from file parsing: job_id={job_id}, filename={filename}")
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=30,
-                message_text="Parse completed, saving chunks...",
-            )
+            lifecycle_service.update_progress(job_id, progress=30, message="Parse completed, saving chunks...")
 
             # Save DataFrame as chunks to Redis (sync)
             chunks_redis_service = SyncChunksRedisService(redis_service)
@@ -567,11 +475,7 @@ def _parse(job_id: str, user_id: str | None):
             else:
                 chunks_redis_service.save_chunks(job_id, chunks)
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=70,
-                message_text="Chunks saved, generating zip...",
-            )
+            lifecycle_service.update_progress(job_id, progress=70, message="Chunks saved, generating zip...")
             logger.info(f"Chunks prepared: job_id={job_id}, count={len(chunks)}")
 
             # Get source file name
@@ -581,11 +485,7 @@ def _parse(job_id: str, user_id: str | None):
 
             data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=80,
-                message_text="Generating ZIP package...",
-            )
+            lifecycle_service.update_progress(job_id, progress=80, message="Generating ZIP package...")
 
             # Generate ZIP package
             zip_service = ZipResultService()
@@ -602,11 +502,7 @@ def _parse(job_id: str, user_id: str | None):
 
             checksum_value = checksum.get("value", "") if isinstance(checksum, dict) else (checksum or "")
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=90,
-                message_text="Uploading results to S3...",
-            )
+            lifecycle_service.update_progress(job_id, progress=90, message="Uploading results to S3...")
 
             # Upload ZIP to S3 (sync)
             result_s3_key = upload_zip_result(job_id, zip_file_path)
@@ -614,14 +510,10 @@ def _parse(job_id: str, user_id: str | None):
             stored_count = 0
             kb_records = []
 
-            message_publisher.publish_progress_update(
-                job_id=job_id,
-                progress=100,
-                message_text="Task complete!",
-            )
+            lifecycle_service.update_progress(job_id, progress=100, message="Task complete!")
 
-            # Publish result message
-            message_publisher.publish_result(
+            # Finalize job success directly to the database
+            lifecycle_service.finalize_job_success(
                 job_id=job_id,
                 chunks_job_id=job_id,
                 result_s3_key=result_s3_key,
@@ -629,9 +521,7 @@ def _parse(job_id: str, user_id: str | None):
                 zip_size=zip_size,
                 stored_count=stored_count,
                 kb_records=kb_records,
-                statistics=statistics,
                 delivery_mode="url",
-                add_dir=None,
             )
 
             logger.info(f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}")
@@ -647,4 +537,4 @@ def _parse(job_id: str, user_id: str | None):
                 "result_s3_key": result_s3_key,
             }
         finally:
-            _cleanup_task_workspace(task_workspace_dir)
+            cleanup_task_workspace(task_workspace_dir)

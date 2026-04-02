@@ -13,6 +13,7 @@ from shared.core.exceptions.domain_exceptions import (
     UnavailableException,
 )
 from shared.services.redis.redis_sync_service import SyncRedisService
+import shared.utils.quota_manager as quota_manager_module
 
 fakeredis = pytest.importorskip("fakeredis")
 
@@ -71,10 +72,7 @@ def test_parse_token_specs_supports_json_entries():
 
 def test_acquire_request_skips_exhausted_token(monkeypatch):
     fixed_now = 1_700_000_000
-    monkeypatch.setattr(
-        "shared.utils.quota_manager.time.time",
-        lambda: fixed_now,
-    )
+    monkeypatch.setattr(quota_manager_module.time, "time", lambda: fixed_now)
     manager, redis_client = build_manager()
     primary_minute_key = manager._minute_key("primary", fixed_now)
     redis_client.set(primary_minute_key, 300, ex=12)
@@ -87,10 +85,7 @@ def test_acquire_request_skips_exhausted_token(monkeypatch):
 
 def test_acquire_request_reports_shortest_retry_window(monkeypatch):
     fixed_now = 1_700_000_000
-    monkeypatch.setattr(
-        "shared.utils.quota_manager.time.time",
-        lambda: fixed_now,
-    )
+    monkeypatch.setattr(quota_manager_module.time, "time", lambda: fixed_now)
     manager, redis_client = build_manager()
 
     primary_day_key = manager._day_key("primary", fixed_now)
@@ -140,10 +135,7 @@ def test_lua_reservation_enforces_rpm_limit():
 
 def test_lua_reservation_respects_daily_limit(monkeypatch):
     fixed_now = 1_700_000_000
-    monkeypatch.setattr(
-        "shared.utils.quota_manager.time.time",
-        lambda: fixed_now,
-    )
+    monkeypatch.setattr(quota_manager_module.time, "time", lambda: fixed_now)
 
     redis_service = cast(
         SyncRedisService,
@@ -210,10 +202,7 @@ def test_quota_keys_share_cluster_hash_slot():
 
 def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_path):
     fixed_now = 1_700_000_000
-    monkeypatch.setattr(
-        "shared.utils.quota_manager.time.time",
-        lambda: fixed_now,
-    )
+    monkeypatch.setattr(quota_manager_module.time, "time", lambda: fixed_now)
 
     redis_client = fakeredis.FakeRedis(decode_responses=True)
     redis_service = cast(SyncRedisService, FakeSyncRedisService(redis_client))

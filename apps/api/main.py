@@ -69,20 +69,8 @@ async def lifespan(app: FastAPI):
         await load_rules(session)
     logger.info("rate limit rules loaded at startup; restart the pod to apply changes")
 
-    try:
-        from app.services.messaging_service import messaging_service
-        await messaging_service.start()
-    except Exception as e:
-        logger.error(f"message consumer start failed: {e}")
-    
     logger.info("knowledge library API service started!")
     yield
-
-    try:
-        from app.services.messaging_service import messaging_service
-        await messaging_service.stop()
-    except Exception as e:
-        logger.error(f"message consumer stop failed: {e}")
 
     try:
         from shared.utils.http_clients import close_async_client

@@ -18,6 +18,7 @@ from shared.core.state_machine.states import (
     JobStatus, 
 )
 from shared.models.database.job import Job
+from shared.services.redis.periodic_task_lock import periodic_task_lock
 
 celery_app = get_celery_app()
 
@@ -26,6 +27,9 @@ JOB_EXPIRED_ERROR_MESSAGE = (
 )
 JOB_EXPIRED_ERROR_CODE = "JOB_EXPIRED"
 
+# Matches the beat_schedule period in celery_app.py
+_TASK_PERIOD_SECONDS = 1800
+
 
 @celery_app.task(name="app.core.tasks.stale_job_sweeper.expire_stale_jobs")
 def expire_stale_jobs() -> dict:
@@ -33,71 +37,82 @@ def expire_stale_jobs() -> dict:
 
     Runs every 30 minutes via Celery Beat. Uses ``SyncStateMachineService``
     for CAS-protected state transitions and proper audit logging.
+
+    A ``periodic_task_lock`` guards against duplicate execution when multiple
+    Beat processes fire this task in the same scheduling window.
     """
-    waiting_max_age: int = settings.JOB_WAITING_EXPIRE_SECONDS
-    processing_max_age: int = settings.JOB_PROCESSING_EXPIRE_SECONDS
-    
-    if waiting_max_age <= 0 or processing_max_age <= 0:
-        return {"status": "skipped", "reason": "Expiration config <= 0"}
+    with periodic_task_lock(
+        "app.core.tasks.stale_job_sweeper.expire_stale_jobs",
+        period_seconds=_TASK_PERIOD_SECONDS,
+    ) as acquired:
+        if not acquired:
+            return {"status": "skipped", "reason": "duplicate Beat firing"}
 
-    # Timeouts: 4 hours (default) for processing, 2 hours (default) for waiting
-    now = datetime.now(timezone.utc)
-    long_cutoff = now - timedelta(seconds=processing_max_age)
-    default_cutoff = now - timedelta(seconds=waiting_max_age)
+        waiting_max_age: int = settings.JOB_WAITING_EXPIRE_SECONDS
+        processing_max_age: int = settings.JOB_PROCESSING_EXPIRE_SECONDS
+        
+        if waiting_max_age <= 0 or processing_max_age <= 0:
+            return {"status": "skipped", "reason": "Expiration config <= 0"}
 
-    expired_count = 0
-    skipped_count = 0
+        # Timeouts: 4 hours (default) for processing, 2 hours (default) for waiting
+        now = datetime.now(timezone.utc)
+        long_cutoff = now - timedelta(seconds=processing_max_age)
+        default_cutoff = now - timedelta(seconds=waiting_max_age)
 
-    try:
-        state_machine = SyncStateMachineService()
+        expired_count = 0
+        skipped_count = 0
 
-        with get_sync_db_context() as db:
-            stmt = (
-                sa_select(Job)
-                .where(
-                    Job.status.notin_(TERMINAL_STATES),
-                    or_(
-                        and_(
-                            Job.status.in_([JobStatus.RUNNING.value, JobStatus.CONVERTING.value]),
-                            Job.updated_at < long_cutoff
-                        ),
-                        and_(
-                            Job.status.notin_([JobStatus.RUNNING.value, JobStatus.CONVERTING.value]),
-                            Job.updated_at < default_cutoff
+        try:
+            state_machine = SyncStateMachineService()
+
+            with get_sync_db_context() as db:
+                stmt = (
+                    sa_select(Job)
+                    .where(
+                        Job.status.notin_(TERMINAL_STATES),
+                        or_(
+                            and_(
+                                Job.status.in_([JobStatus.RUNNING.value, JobStatus.CONVERTING.value]),
+                                Job.updated_at < long_cutoff
+                            ),
+                            and_(
+                                Job.status.notin_([JobStatus.RUNNING.value, JobStatus.CONVERTING.value]),
+                                Job.updated_at < default_cutoff
+                            )
                         )
                     )
+                    .order_by(Job.updated_at)
+                    .limit(200)
                 )
-                .order_by(Job.updated_at)
-                .limit(200)
-            )
-            expired_jobs = db.execute(stmt).scalars().all()
+                expired_jobs = db.execute(stmt).scalars().all()
 
-            if not expired_jobs:
-                logger.debug("Stale job sweeper: no expired jobs found")
-                return {"status": "success", "expired": 0, "skipped": 0}
+                if not expired_jobs:
+                    logger.debug("Stale job sweeper: no expired jobs found")
+                    return {"status": "success", "expired": 0, "skipped": 0}
 
-            for job in expired_jobs:
-                success = state_machine.mark_failed(
-                    db,
-                    job.job_id,
-                    error_message=JOB_EXPIRED_ERROR_MESSAGE,
-                    error_code=JOB_EXPIRED_ERROR_CODE,
-                    metadata={"sweeper": True, "stale_status": job.status},
+                for job in expired_jobs:
+                    success = state_machine.mark_failed(
+                        db,
+                        job.job_id,
+                        error_message=JOB_EXPIRED_ERROR_MESSAGE,
+                        error_code=JOB_EXPIRED_ERROR_CODE,
+                        metadata={"sweeper": True, "stale_status": job.status},
+                    )
+                    if success:
+                        expired_count += 1
+                        logger.info(f"Expired stale job {job.job_id} (was {job.status})")
+                    else:
+                        skipped_count += 1
+                        logger.debug(f"Job {job.job_id} already transitioned (CAS miss)")
+
+            if expired_count > 0:
+                logger.info(
+                    f"Stale job sweeper completed: expired={expired_count}, "
+                    f"skipped={skipped_count}"
                 )
-                if success:
-                    expired_count += 1
-                    logger.info(f"Expired stale job {job.job_id} (was {job.status})")
-                else:
-                    skipped_count += 1
-                    logger.debug(f"Job {job.job_id} already transitioned (CAS miss)")
+            return {"status": "success", "expired": expired_count, "skipped": skipped_count}
 
-        if expired_count > 0:
-            logger.info(
-                f"Stale job sweeper completed: expired={expired_count}, "
-                f"skipped={skipped_count}"
-            )
-        return {"status": "success", "expired": expired_count, "skipped": skipped_count}
+        except Exception as e:
+            logger.error(f"Stale job sweeper failed: {e}", exc_info=True)
+            return {"status": "error", "error": str(e)}
 
-    except Exception as e:
-        logger.error(f"Stale job sweeper failed: {e}", exc_info=True)
-        return {"status": "error", "error": str(e)}

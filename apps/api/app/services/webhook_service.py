@@ -1,8 +1,7 @@
 """
 Consolidated Webhook Service
 
-Single responsibility: Create WebhookEvents and publish to message queue.
-HTTP delivery is handled by shared.services.webhook.dispatcher.
+Single responsibility: create WebhookEvents and publish them for async delivery.
 """
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -10,18 +9,16 @@ from typing import Any, Dict, Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.core.response import build_standard_error_response
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.core.exceptions.webhook_exceptions import WebhookConfigException
-from shared.services.redis import JobMetadataService, RedisServiceFactory
-from shared.models.schemas.job_metadata import JobMetadataHelper
+from shared.core.response import build_standard_error_response
 
 
 class WebhookService:
     """
-    Webhook Service - Transactional Outbox Pattern
-    
-    Creates WebhookEvent records and publishes to MQ for async delivery.
+    Webhook Service - Transactional Outbox Pattern.
+
+    Creates WebhookEvent records and publishes them via QStash for async delivery.
     """
     
     async def create_job_completion_event(
@@ -112,32 +109,23 @@ class WebhookService:
         return event
     
     async def publish_to_queue(self, event_id: str) -> bool:
-        """
-        Publish webhook event to message queue for async delivery.
-        
-        Should be called AFTER transaction commit.
-        
-        Args:
-            event_id: WebhookEvent ID
-            
-        Returns:
-            True if published successfully
-        """
+        """Publish a webhook event for async delivery via QStash after commit."""
+        return await self._publish_via_qstash(event_id)
+
+    async def _publish_via_qstash(self, event_id: str) -> bool:
+        """Publish via QStash for managed delivery and retry."""
         try:
-            from shared.core.celery_app import get_celery_app
-            
-            celery_app = get_celery_app()
-            task = celery_app.send_task(
-                "app.core.tasks.webhook_tasks.dispatch_webhook_task",
-                args=[event_id],
-                # Queue auto-routed via static task_routes in celery_app.py
-            )
-            
-            logger.info(f"Webhook dispatch task scheduled: event_id={event_id}, task_id={task.id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to schedule webhook dispatch task: event_id={event_id}, error={e}")
+            from shared.services.webhook.qstash_publisher import get_qstash_webhook_publisher
+
+            publisher = get_qstash_webhook_publisher()
+            message_id = publisher.publish_event(event_id)
+            if message_id:
+                logger.info(f"Webhook published via QStash: event_id={event_id}, message_id={message_id}")
+                return True
+            logger.warning(f"QStash publish returned no message_id: event_id={event_id}")
+            return False
+        except Exception as exc:
+            logger.error(f"QStash publish failed: event_id={event_id}, error={exc}")
             return False
 
     async def _create_event(
@@ -148,19 +136,7 @@ class WebhookService:
         payload: Dict[str, Any]
     ) -> WebhookEvent:
         """
-        Create WebhookEvent record.
-        
-        Args:
-            db: Database session
-            job_id: Job ID
-            target_url: Webhook URL
-            payload: JSON payload
-            
-        Returns:
-            Created WebhookEvent
-            
-        Raises:
-            WebhookConfigException: If validation fails
+        Create a WebhookEvent record.
         """
         # Validate
         if not target_url:

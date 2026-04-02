@@ -13,6 +13,7 @@ from shared.core.exceptions.domain_exceptions import (
     UnavailableException,
 )
 from shared.services.redis.redis_sync_service import SyncRedisService
+from shared.core.config import settings
 
 fakeredis = pytest.importorskip("fakeredis")
 
@@ -147,9 +148,7 @@ def test_submit_url_task_rate_limit_raises(monkeypatch):
 
 def test_parse_via_full_uses_url_mode_in_staging(monkeypatch, tmp_path):
     """In non-development env with s3_key, uses URL mode (no upload)."""
-    monkeypatch.setattr(
-        "shared.core.config.settings.ENVIRONMENT", "staging"
-    )
+    monkeypatch.setattr(settings, "ENVIRONMENT", "staging", raising=False)
     manager, _ = _build_manager()
     monkeypatch.setattr(
         mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
@@ -204,9 +203,7 @@ def test_parse_via_full_uses_direct_upload_in_development(
     monkeypatch, tmp_path
 ):
     """In development env, falls back to direct upload even with s3_key."""
-    monkeypatch.setattr(
-        "shared.core.config.settings.ENVIRONMENT", "development"
-    )
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development", raising=False)
     manager, _ = _build_manager()
     monkeypatch.setattr(
         mineru_pdf_service, "get_mineru_quota_manager", lambda: manager

@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: knowhere-shared
 Version: 0.1.0
-Summary: Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Messaging, Storage Adapters, and Utils
+Summary: Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Storage Adapters, and Utils
 Requires-Python: >=3.11
 Requires-Dist: sqlalchemy==2.0.42
 Requires-Dist: sqlalchemy[asyncio]
@@ -15,9 +15,7 @@ Requires-Dist: celery==5.4.0
 Requires-Dist: kombu==5.4.0
 Requires-Dist: billiard==4.2.0
 Requires-Dist: vine==5.1.0
-Requires-Dist: amqp==5.3.1
 Requires-Dist: celery-redbeat==2.2.0
-Requires-Dist: aio-pika==9.3.0
 Requires-Dist: pydantic==2.11.7
 Requires-Dist: pydantic-settings==2.10.1
 Requires-Dist: python-dotenv==1.1.1
@@ -28,6 +26,7 @@ Requires-Dist: email-validator==2.2.0
 Requires-Dist: httpx==0.28.1
 Requires-Dist: requests==2.32.4
 Requires-Dist: aiohttp==3.12.15
+Requires-Dist: qstash==3.2.0
 Requires-Dist: openai>=1.0.0
 Requires-Dist: boto3==1.38.46
 Requires-Dist: botocore==1.38.46
