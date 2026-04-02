@@ -87,3 +87,27 @@ def test_verify_qstash_signature_uses_single_derived_url(
 
     assert is_valid is True
     assert verify_calls == ["https://api.example.com/api/v1/webhooks/qstash/callback"]
+
+
+def test_find_event_id_normalizes_list_header_value() -> None:
+    event_id = qstash_callbacks._find_event_id(
+        {
+            "sourceHeader": {
+                "X-Knowhere-Event-Id": ["0e835222-858d-4185-84cb-818552b1b8a5"],
+            }
+        }
+    )
+
+    assert event_id == "0e835222-858d-4185-84cb-818552b1b8a5"
+
+
+def test_find_event_id_uses_case_insensitive_fallback_for_list_header_value() -> None:
+    event_id = qstash_callbacks._find_event_id(
+        {
+            "sourceHeader": {
+                "X-KNOWHERE-EVENT-ID": ["0e835222-858d-4185-84cb-818552b1b8a5"],
+            }
+        }
+    )
+
+    assert event_id == "0e835222-858d-4185-84cb-818552b1b8a5"

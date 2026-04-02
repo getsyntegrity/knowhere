@@ -77,14 +77,33 @@ def _extract_callback_data(body: bytes) -> Dict[str, Any]:
         return {"raw": body.decode("utf-8", errors="replace")}
 
 
+def _normalize_header_value(value: Any) -> Optional[str]:
+    """Normalize a callback header value to a single string."""
+    if isinstance(value, list):
+        if not value:
+            return None
+        first_value = value[0]
+        return first_value if isinstance(first_value, str) else str(first_value)
+
+    if isinstance(value, str):
+        return value
+
+    if value is None:
+        return None
+
+    return str(value)
+
+
 def _find_event_id(data: Dict[str, Any]) -> Optional[str]:
     """Extract the Knowhere event ID from QStash sourceHeader."""
     source_header = data.get("sourceHeader", {}) or {}
-    event_id = source_header.get("X-Knowhere-Event-Id") or source_header.get("x-knowhere-event-id")
+    event_id = _normalize_header_value(
+        source_header.get("X-Knowhere-Event-Id") or source_header.get("x-knowhere-event-id")
+    )
     if not event_id:
         for key, value in source_header.items():
             if key.lower() == "x-knowhere-event-id":
-                event_id = value[0] if isinstance(value, list) else value
+                event_id = _normalize_header_value(value)
                 break
     return event_id
 
