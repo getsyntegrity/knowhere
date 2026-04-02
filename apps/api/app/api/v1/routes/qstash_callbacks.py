@@ -24,6 +24,20 @@ from shared.models.database.webhook_log import WebhookLog
 router = APIRouter(tags=["QStash Callbacks"])
 
 
+def _get_qstash_verification_url(callback_path: str, request_url: str) -> str:
+    """Build the URL used for QStash signature verification.
+
+    Prefer the configured public callback URL because ingress/TLS termination
+    can make ``request.url`` appear as an internal ``http://`` URL.
+    """
+    callback_base_url = app_config.QSTASH_CALLBACK_BASE_URL
+
+    if callback_base_url:
+        return f"{callback_base_url.rstrip('/')}{callback_path}"
+
+    return request_url
+
+
 def _verify_qstash_signature(raw_body: bytes, signature: str, url: str) -> bool:
     """Verify the QStash JWT signature on an inbound callback."""
     current_key = app_config.QSTASH_CURRENT_SIGNING_KEY
@@ -47,7 +61,11 @@ def _verify_qstash_signature(raw_body: bytes, signature: str, url: str) -> bool:
         )
         return True
     except Exception as exc:
-        logger.warning(f"QStash signature verification failed: {type(exc).__name__}")
+        logger.warning(
+            "QStash signature verification failed: error_type={error_type}, url={url}",
+            error_type=type(exc).__name__,
+            url=url,
+        )
         return False
 
 
@@ -125,8 +143,12 @@ async def handle_qstash_callback(request: Request) -> Response:
     """Handle QStash success callback after webhook delivery."""
     raw_body = await request.body()
     signature = request.headers.get("upstash-signature", "")
+    verification_url = _get_qstash_verification_url(
+        "/webhooks/qstash/callback",
+        str(request.url),
+    )
 
-    if not _verify_qstash_signature(raw_body, signature, str(request.url)):
+    if not _verify_qstash_signature(raw_body, signature, verification_url):
         return Response(status_code=401, content="Invalid signature")
 
     data = _extract_callback_data(raw_body)
@@ -150,8 +172,12 @@ async def handle_qstash_failure(request: Request) -> Response:
     """Handle QStash failure callback after all retries exhausted."""
     raw_body = await request.body()
     signature = request.headers.get("upstash-signature", "")
+    verification_url = _get_qstash_verification_url(
+        "/webhooks/qstash/failure",
+        str(request.url),
+    )
 
-    if not _verify_qstash_signature(raw_body, signature, str(request.url)):
+    if not _verify_qstash_signature(raw_body, signature, verification_url):
         return Response(status_code=401, content="Invalid signature")
 
     data = _extract_callback_data(raw_body)
