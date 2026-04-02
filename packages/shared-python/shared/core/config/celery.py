@@ -67,7 +67,16 @@ class CeleryConfig(BaseModel):
         """Build the Redis URL for Celery broker, result backend, and RedBeat."""
         protocol = "rediss" if self.CELERY_REDIS_SSL else "redis"
         password_part = f":{self.CELERY_REDIS_PASSWORD}@" if self.CELERY_REDIS_PASSWORD else ""
-        return f"{protocol}://{password_part}{self.CELERY_REDIS_HOST}:{self.CELERY_REDIS_PORT}/{self.CELERY_REDIS_DATABASE}"
+        base_url = (
+            f"{protocol}://{password_part}{self.CELERY_REDIS_HOST}:"
+            f"{self.CELERY_REDIS_PORT}/{self.CELERY_REDIS_DATABASE}"
+        )
+
+        # Celery requires an explicit verification mode for rediss:// result backends.
+        if self.CELERY_REDIS_SSL:
+            return f"{base_url}?ssl_cert_reqs=CERT_NONE"
+
+        return base_url
 
     def get_celery_broker_url(self) -> str:
         """Get Celery broker URL (Redis)."""
