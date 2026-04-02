@@ -76,6 +76,8 @@ celery_app.conf.update(
     broker_transport_options={
         'visibility_timeout': 43200,    # 12 hours
         'retry_on_timeout': True,
+        # Keep all Kombu Redis broker keys in one Redis Cluster hash slot.
+        'global_keyprefix': '{celery}',
     },
 
     # Priority support for Redis transport
