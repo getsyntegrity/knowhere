@@ -485,17 +485,20 @@ def table2html(table: DocxTable, cell_image_map: dict = None) -> str:
             prev_tc_id = tc_id
         grid.append(row_data)
     
-    n_cols = len(grid[0]) if grid else 0
+    # Rows may have different cell counts due to complex merges;
+    # use the maximum for grid allocation, per-row length for access.
+    n_cols = max(len(r) for r in grid) if grid else 0
     
     # Calculate colspan for each cell (count consecutive cells with same _tc)
     colspan_grid = [[0] * n_cols for _ in range(n_rows)]
     
     for row_idx in range(n_rows):
+        row_len = len(grid[row_idx])
         col_idx = 0
-        while col_idx < n_cols:
+        while col_idx < row_len:
             tc_id = grid[row_idx][col_idx][0]
             span = 1
-            while col_idx + span < n_cols and grid[row_idx][col_idx + span][0] == tc_id:
+            while col_idx + span < row_len and grid[row_idx][col_idx + span][0] == tc_id:
                 span += 1
             colspan_grid[row_idx][col_idx] = span
             col_idx += span
@@ -506,6 +509,9 @@ def table2html(table: DocxTable, cell_image_map: dict = None) -> str:
     for col_idx in range(n_cols):
         row_idx = 0
         while row_idx < n_rows:
+            if col_idx >= len(grid[row_idx]):
+                row_idx += 1
+                continue
             cell = grid[row_idx][col_idx][1]
             vmerge = get_cell_vmerge(cell)
             
@@ -513,6 +519,8 @@ def table2html(table: DocxTable, cell_image_map: dict = None) -> str:
                 # Count how many 'continue' cells follow
                 span = 1
                 while row_idx + span < n_rows:
+                    if col_idx >= len(grid[row_idx + span]):
+                        break
                     next_cell = grid[row_idx + span][col_idx][1]
                     next_vmerge = get_cell_vmerge(next_cell)
                     if next_vmerge == 'continue':
@@ -536,7 +544,7 @@ def table2html(table: DocxTable, cell_image_map: dict = None) -> str:
         col_idx = 0
         unique_col_idx = 0  # Tracks unique tc index per row (matches XML <w:tc> order)
         
-        while col_idx < n_cols:
+        while col_idx < len(grid[row_idx]):
             tc_id, cell, is_new = grid[row_idx][col_idx]
             
             # Skip if this cell is a horizontal continuation

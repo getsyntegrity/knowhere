@@ -155,7 +155,7 @@ def tree_to_dataframe(tree, node_to_id, original_df):
 
     for idx, row in original_df.iterrows():
         row_id = int(row['id'])
-        old_level = int(row['level']) if row['level'] not in ['Not Sure', 'nan', -1] else -1
+        old_level = int(row['level']) if row['level'] not in [-2, 'nan', -1] else -1
         
         if old_level > -1:
             if row_id in preserved_ids:
@@ -577,7 +577,7 @@ def get_max_lvl(code_str: str):
 
     nums = [int(x.strip()) for x in match.group(1).split(',')]
     max_val = int(max(nums))
-    return max_val if max_val>1 else "Not Sure"
+    return max_val if max_val>1 else -2  # -2 = "Not Sure" sentinel (int-safe)
 
 
 def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
@@ -828,7 +828,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
             try:
                 outline_level = int(style_name.split(' ')[1])
             except:
-                outline_level = "Not Sure"
+                outline_level = -2  # "Not Sure" sentinel
             return outline_level
         else:
             return None
@@ -1194,7 +1194,7 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
 
     # mapping based on freq
     if not proceed_smart:
-        heading_preds['level'] = heading_preds['level'].map(lambda x: -1 if str(x)=='Not Sure' else x)
+        heading_preds['level'] = heading_preds['level'].map(lambda x: -1 if x == -2 else x)
         heading_preds, lvl_mapping = build_level_mapping(heading_preds, heading_preds['level'].tolist(), mode="freq")
         heading_preds = execute_level_mapping(heading_preds, lvl_mapping)
         heading_preds.drop("origin_level", axis=1, inplace=True)
@@ -1316,8 +1316,8 @@ def collapse_recursive(df, task, indices, merge_th=3, checked_pairs=None, depth=
 
         elif task == "collapse" and len(between) == 0:
             logger.debug(f"⚠️ Empty between i={i_txt[:15]}, j={j_txt[:15]} => set i.level=-1, j.level=Not Sure")
-            df.at[i, "level"] = "Not Sure"
-            df.at[j, "level"] = "Not Sure"
+            df.at[i, "level"] = -2  # "Not Sure" sentinel (int-safe)
+            df.at[j, "level"] = -2  # "Not Sure" sentinel (int-safe)
 
         # ========== get subgroups for recursive tasks ==========
         sub_between = between[between["level"] != -1]
