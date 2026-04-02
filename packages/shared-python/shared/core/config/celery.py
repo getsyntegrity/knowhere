@@ -11,6 +11,11 @@ class CeleryConfig(BaseModel):
 
     # Dedicated Redis instance for Celery broker / result backend / RedBeat.
     # Separate from the application Redis (REDIS_*) to isolate connection pools.
+    # Prefer CELERY_REDIS_URL so TLS/query params live in one place.
+    CELERY_REDIS_URL: Optional[str] = Field(
+        default=None,
+        description="Full Celery Redis URL for broker / result backend / RedBeat",
+    )
     CELERY_REDIS_HOST: str = Field(default="localhost", description="Celery Redis host")
     CELERY_REDIS_PORT: int = Field(default=6379, description="Celery Redis port")
     CELERY_REDIS_PASSWORD: Optional[str] = Field(default=None, description="Celery Redis password")
@@ -65,6 +70,9 @@ class CeleryConfig(BaseModel):
 
     def get_celery_redis_url(self) -> str:
         """Build the Redis URL for Celery broker, result backend, and RedBeat."""
+        if self.CELERY_REDIS_URL:
+            return self.CELERY_REDIS_URL
+
         protocol = "rediss" if self.CELERY_REDIS_SSL else "redis"
         password_part = f":{self.CELERY_REDIS_PASSWORD}@" if self.CELERY_REDIS_PASSWORD else ""
         base_url = (
