@@ -37,10 +37,11 @@ class _SyncDbContext:
         return False
 
 
-def test_celery_webhook_dispatch_uses_default_worker_queue() -> None:
-    route = celery_app.conf.task_routes["app.core.tasks.webhook_tasks.dispatch_webhook_task"]
+def test_qstash_webhook_recovery_uses_default_worker_queue() -> None:
+    task_name = "app.core.tasks.webhook_tasks.recover_orphaned_webhooks"
+    route = celery_app.amqp.router.route({}, task_name, args=(), kwargs={})
 
-    assert route == {"queue": "default"}
+    assert route["queue"].name == "default"
 
 
 def test_worker_failure_webhook_preserves_standard_error_payload(

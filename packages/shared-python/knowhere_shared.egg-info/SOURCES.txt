@@ -133,6 +133,7 @@ shared/tests/test_http_clients.py
 shared/tests/test_logging.py
 shared/tests/test_openai_timeout_defaults.py
 shared/tests/test_sync_credits_service.py
+shared/tests/test_webhook_delivery_regressions.py
 shared/tests/test_worker_health.py
 shared/utils/CommonHelper.py
 shared/utils/CommonHelperSync.py

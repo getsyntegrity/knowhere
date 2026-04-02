@@ -72,7 +72,7 @@ class WebhookEvent(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # QStash tracking (populated when WEBHOOK_DELIVERY_PROVIDER=qstash)
+    # QStash tracking for the outbound delivery managed by Upstash.
     qstash_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     
     # Timestamps
