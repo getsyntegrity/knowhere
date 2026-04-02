@@ -3,6 +3,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 class _FakeAppConfig:
     BROKER_POOL_LIMIT = 5
@@ -23,15 +25,17 @@ class _FakeAppConfig:
         return "default"
 
 
-def _load_celery_app_module() -> types.ModuleType:
+def _load_celery_app_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     shared_module = types.ModuleType("shared")
     core_module = types.ModuleType("shared.core")
     config_module = types.ModuleType("shared.core.config")
     config_module.app_config = _FakeAppConfig()
+    shared_module.core = core_module
+    core_module.config = config_module
 
-    sys.modules["shared"] = shared_module
-    sys.modules["shared.core"] = core_module
-    sys.modules["shared.core.config"] = config_module
+    monkeypatch.setitem(sys.modules, "shared", shared_module)
+    monkeypatch.setitem(sys.modules, "shared.core", core_module)
+    monkeypatch.setitem(sys.modules, "shared.core.config", config_module)
 
     module_path = (
         Path(__file__).resolve().parents[4]
@@ -48,8 +52,10 @@ def _load_celery_app_module() -> types.ModuleType:
     return module
 
 
-def test_sets_cluster_safe_global_keyprefix() -> None:
-    module = _load_celery_app_module()
+def test_sets_cluster_safe_global_keyprefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_celery_app_module(monkeypatch)
 
     transport_options = module.celery_app.conf.broker_transport_options
 
