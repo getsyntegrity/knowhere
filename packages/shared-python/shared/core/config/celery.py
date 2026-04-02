@@ -1,7 +1,7 @@
 """
 Celery configuration — Redis-backed broker and result backend.
 """
-from typing import Dict, Optional
+from typing import Dict
 
 from pydantic import BaseModel, Field
 
@@ -11,11 +11,10 @@ class CeleryConfig(BaseModel):
 
     # Dedicated Redis instance for Celery broker / result backend / RedBeat.
     # Separate from the application Redis (REDIS_*) to isolate connection pools.
-    CELERY_REDIS_HOST: str = Field(default="localhost", description="Celery Redis host")
-    CELERY_REDIS_PORT: int = Field(default=6379, description="Celery Redis port")
-    CELERY_REDIS_PASSWORD: Optional[str] = Field(default=None, description="Celery Redis password")
-    CELERY_REDIS_DATABASE: int = Field(default=0, description="Celery Redis database number")
-    CELERY_REDIS_SSL: bool = Field(default=False, description="Enable TLS for Celery Redis (AWS ElastiCache)")
+    CELERY_REDIS_URL: str = Field(
+        default="redis://localhost:6379/0",
+        description="Full Celery Redis URL for broker / result backend / RedBeat",
+    )
 
     # Broker connection pool
     BROKER_POOL_LIMIT: int = Field(default=10, description="Celery broker connection pool limit")
@@ -65,9 +64,7 @@ class CeleryConfig(BaseModel):
 
     def get_celery_redis_url(self) -> str:
         """Build the Redis URL for Celery broker, result backend, and RedBeat."""
-        protocol = "rediss" if self.CELERY_REDIS_SSL else "redis"
-        password_part = f":{self.CELERY_REDIS_PASSWORD}@" if self.CELERY_REDIS_PASSWORD else ""
-        return f"{protocol}://{password_part}{self.CELERY_REDIS_HOST}:{self.CELERY_REDIS_PORT}/{self.CELERY_REDIS_DATABASE}"
+        return self.CELERY_REDIS_URL
 
     def get_celery_broker_url(self) -> str:
         """Get Celery broker URL (Redis)."""

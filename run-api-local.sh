@@ -17,11 +17,7 @@ docker run --rm -p 5005:5005 \
   -e REDIS_PORT=6379 \
   -e REDIS_PASSWORD= \
   -e REDIS_DATABASE=0 \
-  -e CELERY_REDIS_HOST=knowhere_redis \
-  -e CELERY_REDIS_PORT=6379 \
-  -e CELERY_REDIS_PASSWORD= \
-  -e CELERY_REDIS_DATABASE=0 \
-  -e CELERY_REDIS_SSL=false \
+  -e CELERY_REDIS_URL=redis://knowhere_redis:6379/0 \
   -e SECRET_KEY=test-secret-key-for-development-only \
   -e TMP_PATH=/tmp/aismart_bid \
   -e FONT_PATH=/usr/share/fonts \
