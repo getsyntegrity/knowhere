@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import APIRouter, Request, Response
 from loguru import logger
@@ -77,15 +78,51 @@ def _extract_callback_data(body: bytes) -> Dict[str, Any]:
         return {"raw": body.decode("utf-8", errors="replace")}
 
 
+def _normalize_header_value(value: Any) -> Optional[str]:
+    """Normalize a callback header value to a single string."""
+    if isinstance(value, list):
+        if not value:
+            return None
+        first_value = value[0]
+        return first_value if isinstance(first_value, str) else str(first_value)
+
+    if isinstance(value, str):
+        return value
+
+    if value is None:
+        return None
+
+    return str(value)
+
+
 def _find_event_id(data: Dict[str, Any]) -> Optional[str]:
     """Extract the Knowhere event ID from QStash sourceHeader."""
     source_header = data.get("sourceHeader", {}) or {}
-    event_id = source_header.get("X-Knowhere-Event-Id") or source_header.get("x-knowhere-event-id")
+    event_id = _normalize_header_value(
+        source_header.get("X-Knowhere-Event-Id") or source_header.get("x-knowhere-event-id")
+    )
     if not event_id:
         for key, value in source_header.items():
             if key.lower() == "x-knowhere-event-id":
-                event_id = value[0] if isinstance(value, list) else value
+                event_id = _normalize_header_value(value)
                 break
+    return event_id
+
+
+def _build_callback_log_idempotency_key(
+    qstash_message_id: Optional[str],
+    event_id: str,
+) -> str:
+    """Build a fixed-width idempotency key for webhook_logs.
+
+    ``webhook_logs.idempotency_key`` is limited to 36 characters. QStash
+    ``sourceMessageId`` is longer, so store the raw value in
+    ``qstash_message_id`` and derive a stable UUID from it for the
+    idempotency key column.
+    """
+    if qstash_message_id:
+        return str(uuid5(NAMESPACE_URL, qstash_message_id))
+
     return event_id
 
 
@@ -126,11 +163,12 @@ def _process_qstash_callback(
             attempt_number=retried + 1,
             request_payload=event.payload,
             signature="",
-            idempotency_key=qstash_message_id or "",
+            idempotency_key=_build_callback_log_idempotency_key(qstash_message_id, event.id),
             response_status_code=int(response_status) if response_status else None,
             response_body=response_body[:4096] if response_body else None,
             error_message=str(error_message)[:4096] if error_message else None,
             duration_ms=0,
+            qstash_message_id=qstash_message_id,
         )
         db.add(log)
         db.commit()
