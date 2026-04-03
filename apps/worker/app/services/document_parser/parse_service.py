@@ -223,6 +223,7 @@ def checkerboard_inject_parse(
         from app.services.document_parser.pptx_parser import parse_pptx
 
         if filename and file_full_path:
+            # ====== iLoveAPI PPTX → PDF → MinerU (default production route) ======
             parsed_df = parse_pptx(
                 file_full_path, filename=filename,
                 output_dir=full_output_dir,
@@ -231,6 +232,19 @@ def checkerboard_inject_parse(
                 relative_root=relative_root,
                 baseurl=baseurl
             )
+            
+            # ====== [EXPERIMENTAL] Directly send PPTX to MinerU via parse_pdfs ======
+            # Uncomment the block below (and comment out parse_pptx above) to bypass iLoveAPI
+            # from app.services.document_parser.pdf_parser import parse_pdfs
+            # parsed_df = parse_pdfs(
+            #     file_full_path,
+            #     filename=filename,
+            #     output_dir=full_output_dir,
+            #     base_llm_paras=base_llm_paras,
+            #     profile=profile,
+            #     relative_root=relative_root,
+            #     s3_key=s3_key
+            # )
 
     elif '.md' in file_path_lower:
         logger.debug(f"file type is md")
