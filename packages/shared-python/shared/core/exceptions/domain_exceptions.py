@@ -676,6 +676,39 @@ class StorageServiceException(KnowhereException):
         )
 
 
+class LibreOfficeServiceException(KnowhereException):
+    """
+    LibreOffice document conversion failed.
+
+    5xx Error: Auto-defaults to safe user_message.
+
+    Details schema:
+        {"service": "libreoffice", "operation": "...", "exit_code": <int>}
+    """
+
+    def __init__(
+        self,
+        internal_message: str,
+        operation: str = "unknown",
+        exit_code: Optional[int] = None,
+        user_message: Optional[str] = None,
+        original_exception: Optional[Exception] = None,
+    ):
+        details: Dict[str, Any] = {
+            "service": "libreoffice",
+            "operation": operation,
+        }
+        if exit_code is not None:
+            details["exit_code"] = exit_code
+        super().__init__(
+            code=ErrorCode.INTERNAL_ERROR,
+            internal_message=internal_message,
+            user_message=user_message,  # Defaults to generic 5xx message
+            details=details,
+            original_exception=original_exception,
+        )
+
+
 class RedisServiceException(KnowhereException):
     """
     Redis/Cache service failed.
