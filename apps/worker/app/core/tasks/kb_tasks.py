@@ -437,6 +437,7 @@ def _parse(job_id: str, user_id: str | None):
                     file_full_path=local_temp_path,
                     filename=filename,
                     output_dir=output_dir,
+                    job_id=job_id,
                     internal_output_filename=internal_parse_name,
                     kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
                     doc_type=doc_type,

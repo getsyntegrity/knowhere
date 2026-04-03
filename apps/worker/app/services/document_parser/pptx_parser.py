@@ -2,18 +2,28 @@ import io
 import os
 import re
 import subprocess
-import tempfile
 import time
 import requests
 import jwt
 
 from loguru import logger
 from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import (
+    FileSystemException,
+    LibreOfficeServiceException,
+)
 from shared.core.logging import LogEvent
 from app.services.common.kb_utils import find_images
+from app.services.document_parser.mineru_pdf_service import (
+    get_existing_mineru_source_s3_key,
+)
+from app.services.document_parser.parser_log_utils import truncate_log_value
+from app.services.document_parser.pptx_pdf_rendering import (
+    render_pdf_to_image_pdf as _render_pdf_to_image_pdf,
+)
+from app.services.storage.sync_storage_service import download_s3_object_to_temp
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.pdf_parser import parse_pdfs
-from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 from shared.utils.CommonHelperSync import load_file_bytes
 from shared.utils.file_utils import path_handle
 from markitdown import MarkItDown
@@ -27,21 +37,53 @@ def pptx_to_pdf_libreoffice(pptx_path, outdir="."):
     """use LibreOffice to convert PPTX to PDF (local engine, formula rendering may be problematic)"""
     soffice_path = settings.LIBER_OFFICE or "/usr/bin/libreoffice"
     if not os.path.isfile(soffice_path):
-        raise FileNotFoundError(
-            f"LibreOffice not found at '{soffice_path}'. "
-            f"Install LibreOffice or set LIBER_OFFICE env to the correct path. "
-            f"PPTX parsing requires either iLoveAPI or LibreOffice."
+        raise LibreOfficeServiceException(
+            internal_message=(
+                f"LibreOffice not found at '{soffice_path}'. "
+                f"Install LibreOffice or set LIBER_OFFICE env to the correct path. "
+                f"PPTX parsing requires either iLoveAPI or LibreOffice."
+            ),
+            operation="resolve_binary",
         )
     from shared.core.constants import ProcessingConstants
-    filter_opts = f"Quality={ProcessingConstants.IMG_QUALITY};ReduceImageResolution=false;UseTaggedPDF=true,ExportNotes=true"
-    subprocess.run([
+    filter_opts = (
+        f"Quality={ProcessingConstants.IMG_QUALITY};"
+        "ReduceImageResolution=false;"
+        "UseTaggedPDF=true;"
+        "ExportNotes=true"
+    )
+    conversion_result = subprocess.run([
         soffice_path, "--headless",
-        "--convert-to", f"pdf:writer_pdf_Export:{filter_opts}",
+        "--convert-to", f"pdf:impress_pdf_Export:{filter_opts}",
         pptx_path, "--outdir", outdir
-    ], check=True)
+    ], check=False, capture_output=True, text=True)
 
     base = os.path.splitext(os.path.basename(pptx_path))[0]
     pdf_path = os.path.join(outdir, base + ".pdf")
+
+    if conversion_result.returncode != 0:
+        raise LibreOfficeServiceException(
+            internal_message=(
+                f"LibreOffice PPTX conversion failed with exit code {conversion_result.returncode}: "
+                f"input={pptx_path}, output_dir={outdir}, expected_output={pdf_path}, "
+                f"stdout={truncate_log_value(conversion_result.stdout)}, "
+                f"stderr={truncate_log_value(conversion_result.stderr)}"
+            ),
+            operation="convert_pptx_to_pdf",
+            exit_code=conversion_result.returncode,
+        )
+
+    if not os.path.exists(pdf_path):
+        raise LibreOfficeServiceException(
+            internal_message=(
+                "LibreOffice did not produce the expected PDF output: "
+                f"input={pptx_path}, output_dir={outdir}, expected_output={pdf_path}, "
+                f"stdout={truncate_log_value(conversion_result.stdout)}, "
+                f"stderr={truncate_log_value(conversion_result.stderr)}"
+            ),
+            operation="emit_pdf_output",
+        )
+
     return pdf_path, (base + ".pdf")
 
 
@@ -121,6 +163,11 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
         )
 
     start_time = time.monotonic()
+    current_step = "start_task"
+    upstream_server = None
+    upstream_task_id = None
+    server_url = None
+    server_filename = None
 
     try:
         token, lease = _get_iloveapi_token_lease()
@@ -152,15 +199,16 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                 ).warning(f"[iLoveAPI] Rate limited on start_task")
             res.raise_for_status()
             start_data = res.json()
-            server = start_data["server"]
-            task_id = start_data["task"]
-            server_url = f"https://{server}/v1"
+            upstream_server = start_data["server"]
+            upstream_task_id = start_data["task"]
+            server_url = f"https://{upstream_server}/v1"
 
             # Step 2: Upload from memory (BytesIO, no disk write)
+            current_step = "upload"
             upload_res = requests.post(
                 f"{server_url}/upload",
                 headers=headers,
-                data={"task": task_id},
+                data={"task": upstream_task_id},
                 files={"file": (filename, io.BytesIO(pptx_bytes))},
                 timeout=timeout,
             )
@@ -179,11 +227,12 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
             server_filename = upload_res.json()["server_filename"]
 
             # Step 3: Process
+            current_step = "process"
             process_res = requests.post(
                 f"{server_url}/process",
                 headers=headers,
                 json={
-                    "task": task_id,
+                    "task": upstream_task_id,
                     "tool": "officepdf",
                     "files": [{"server_filename": server_filename, "filename": filename}],
                 },
@@ -203,8 +252,9 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
             process_res.raise_for_status()
 
             # Step 4: Download PDF to memory
+            current_step = "download"
             download_res = requests.get(
-                f"{server_url}/download/{task_id}", headers=headers, timeout=timeout
+                f"{server_url}/download/{upstream_task_id}", headers=headers, timeout=timeout
             )
             if download_res.status_code == 429:
                 retry_after = int(download_res.headers.get("Retry-After", 60))
@@ -235,6 +285,17 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
         except requests.exceptions.HTTPError as e:
             duration_s = round(time.monotonic() - start_time, 2)
             status_code = e.response.status_code if e.response is not None else None
+            response_body = None
+            response_content_type = None
+            response_headers = None
+            response_url = None
+
+            if e.response is not None:
+                response_body = truncate_log_value(e.response.text)
+                response_content_type = e.response.headers.get("Content-Type")
+                response_headers = truncate_log_value(dict(e.response.headers))
+                response_url = str(e.response.url)
+
             logger.bind(
                 event=LogEvent.ILOVEAPI_REQUEST_FAIL.value,
                 service="iloveapi",
@@ -243,6 +304,15 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                 duration_s=duration_s,
                 error_type="http_error",
                 status_code=status_code,
+                step=current_step,
+                upstream_server=upstream_server,
+                upstream_server_url=server_url,
+                upstream_task_id=upstream_task_id,
+                upstream_server_filename=server_filename,
+                response_url=response_url,
+                response_content_type=response_content_type,
+                response_headers=response_headers,
+                response_body=response_body,
             ).warning(f"[iLoveAPI] HTTP error {status_code} for: {filename}")
             if e.response is not None and e.response.status_code in (401, 403, 429):
                 retry_after = int(e.response.headers.get("Retry-After", 60))
@@ -259,66 +329,54 @@ class _ILoveApiConcurrencyExceeded(Exception):
     pass
 
 
-# ==================== image-only PDF rendering ====================
-
-@worker
-def _render_pdf_worker(queue, src_pdf_path, dst_pdf_path, scale):
-    """Child process: render PDF pages as images into a new image-only PDF."""
-    import pymupdf
-    src_doc = pymupdf.open(src_pdf_path)
-    img_doc = pymupdf.open()
-    mat = pymupdf.Matrix(scale, scale)
-
-    for page in src_doc:
-        pix = page.get_pixmap(matrix=mat)
-        img_bytes = pix.tobytes("jpeg", jpg_quality=95)
-        new_page = img_doc.new_page(width=page.rect.width, height=page.rect.height)
-        new_page.insert_image(page.rect, stream=img_bytes)
-
-    img_doc.save(dst_pdf_path)
-    page_count = len(src_doc)
-    img_doc.close()
-    src_doc.close()
-    queue.put({"ok": True, "page_count": page_count})
+def _build_rendered_pdf_s3_key(job_id: str | None) -> str | None:
+    """Store rendered parser artifacts under a stable transform/ prefix."""
+    if settings.ENVIRONMENT == "development" or not job_id:
+        return None
+    return f"transform/{job_id}.rendered.pdf"
 
 
-def _render_pdf_to_image_pdf(pdf_bytes: bytes, scale: int = 3) -> bytes:
-    """
-    Render each page of a PDF as a high-res image and create an image-only PDF.
+def _parse_cached_rendered_pdf(
+    rendered_pdf_s3_key: str | None,
+    filename: str,
+    output_dir: str,
+    base_llm_paras,
+    relative_root,
+):
+    """Parse a previously rendered PPTX PDF from S3 without re-reading the source deck."""
+    if rendered_pdf_s3_key is None:
+        return None
 
-    Why? iLoveAPI/LibreOffice renders math formulas as vector paths in PDF.
-    MinerU cannot extract these as text (produces '????'). By converting to
-    images, MinerU is forced to use its VLM model which correctly OCRs
-    formulas into LaTeX.
+    cached_rendered_pdf_s3_key = get_existing_mineru_source_s3_key(rendered_pdf_s3_key)
+    if cached_rendered_pdf_s3_key is None:
+        return None
 
-    PyMuPDF work runs in a spawned child process for thread safety.
-    """
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as src:
-        src.write(pdf_bytes)
-        src_path = src.name
-    dst_path = src_path + ".rendered.pdf"
-
+    logger.info(
+        f"[parse_pptx] Reusing rendered PDF for MinerU URL mode: {rendered_pdf_s3_key}"
+    )
+    cached_rendered_pdf_path = download_s3_object_to_temp(
+        cached_rendered_pdf_s3_key,
+        suffix=".pdf",
+        temp_dir=output_dir,
+    )
     try:
-        result = run_in_child_process(
-            _render_pdf_worker, src_path, dst_path, scale,
+        return parse_pdfs(
+            cached_rendered_pdf_path,
+            filename,
+            output_dir,
+            base_llm_paras,
+            relative_root=relative_root,
+            s3_key=cached_rendered_pdf_s3_key,
         )
-        with open(dst_path, "rb") as f:
-            rendered = f.read()
-        logger.info(
-            f"[parse_pptx] Image-only PDF rendered: "
-            f"{len(rendered)/1024:.1f} KB, {result['page_count']} pages"
-        )
-        return rendered
     finally:
-        os.unlink(src_path)
-        if os.path.exists(dst_path):
-            os.unlink(dst_path)
+        if os.path.exists(cached_rendered_pdf_path):
+            os.remove(cached_rendered_pdf_path)
 
 
 # ==================== main parsing entrance ====================
 
 def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
-                     strategy="to_pdf_api", relative_root=None, baseurl=""):
+                     strategy="to_pdf_api", relative_root=None, baseurl="", job_id=None):
     """
     PPTX parsing entrance, aligned with parse_pdfs / parse_docx pattern.
 
@@ -327,14 +385,36 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
         - "to_pdf":     use LibreOffice to convert to PDF, then parse via MinerU
         - "to_pdf_api": use iLoveAPI to convert to PDF, then parse via MinerU (recommended)
     """
+    rendered_pdf_s3_key = (
+        _build_rendered_pdf_s3_key(job_id)
+        if strategy in {"to_pdf_api", "to_pdf"}
+        else None
+    )
+    if strategy in {"to_pdf_api", "to_pdf"}:
+        cached_result = _parse_cached_rendered_pdf(
+            rendered_pdf_s3_key=rendered_pdf_s3_key,
+            filename=filename,
+            output_dir=output_dir,
+            base_llm_paras=base_llm_paras,
+            relative_root=relative_root,
+        )
+        if cached_result is not None:
+            return cached_result
+
     pptx_data = load_file_bytes(pptx_path, file_url=baseurl)
     logger.info(f"[parse_pptx] PPTX loaded: {len(pptx_data)/1024:.1f} KB")
 
     if strategy == "to_pdf_api":
         from shared.core.exceptions.domain_exceptions import UnavailableException
         try:
-            return _parse_pptx_via_api(pptx_data, filename, output_dir,
-                                             base_llm_paras, relative_root)
+            return _parse_pptx_via_api(
+                pptx_data,
+                filename,
+                output_dir,
+                base_llm_paras,
+                relative_root,
+                rendered_pdf_s3_key=rendered_pdf_s3_key,
+            )
         except ValueError as e:
             if "iLoveAPI keys configured" in str(e) or "ILOVEAPI" in str(e):
                 logger.bind(
@@ -379,8 +459,14 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
             strategy = "to_pdf"
 
     if strategy == "to_pdf":
-        return _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
-                                                  base_llm_paras, relative_root)
+        return _parse_pptx_via_libreoffice(
+            pptx_data,
+            filename,
+            output_dir,
+            base_llm_paras,
+            relative_root,
+            rendered_pdf_s3_key=rendered_pdf_s3_key,
+        )
 
     elif strategy == "to_md":
         return _parse_pptx_to_md(pptx_data, filename, output_dir,
@@ -391,10 +477,14 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
 
 
 def _parse_pptx_via_api(pptx_data, filename, output_dir,
-                               base_llm_paras, relative_root):
+                               base_llm_paras, relative_root, rendered_pdf_s3_key=None):
     """
-    PPTX bytes → iLoveAPI PDF bytes → image-only PDF bytes → temp file → MinerU.
-    Only ONE temp file write (for MinerU upload, which requires a file path).
+    PPTX bytes → iLoveAPI PDF bytes → image-only PDF bytes → MinerU.
+
+    In production, if a job id is available, upload the rendered image-only PDF
+    to a deterministic transform key and let MinerU fetch that via URL mode.
+    This preserves the OCR-friendly rendered-PDF behavior while avoiding a long
+    worker-to-MinerU upload.
     """
     # Step 1: PPTX → PDF (in memory)
     pdf_bytes = _pptx_bytes_to_pdf_bytes(pptx_data, filename)
@@ -409,8 +499,12 @@ def _parse_pptx_via_api(pptx_data, filename, output_dir,
 
     try:
         parsed_df = parse_pdfs(
-            tmp_path, filename, output_dir, base_llm_paras,
-            relative_root=relative_root
+            tmp_path,
+            filename=filename,
+            output_dir=output_dir,
+            base_llm_paras=base_llm_paras,
+            relative_root=relative_root,
+            s3_key=rendered_pdf_s3_key,
         )
         return parsed_df
     finally:
@@ -419,10 +513,10 @@ def _parse_pptx_via_api(pptx_data, filename, output_dir,
 
 
 def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
-                                       base_llm_paras, relative_root):
+                                       base_llm_paras, relative_root, rendered_pdf_s3_key=None):
     """
     LibreOffice requires file paths (subprocess), so temp dir is unavoidable here.
-    PPTX → temp file → LibreOffice → PDF → image-only PDF bytes → temp file → MinerU.
+    PPTX → temp file → LibreOffice → PDF → image-only PDF bytes → MinerU.
     """
     import shutil
     import tempfile
@@ -438,8 +532,15 @@ def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
         pdf_path, _ = pptx_to_pdf_libreoffice(local_pptx, tmp_dir)
 
         # Read PDF into memory, then same image-only PDF flow
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
+        try:
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+        except OSError as exc:
+            raise FileSystemException(
+                internal_message=f"Failed to read converted PPTX PDF at '{pdf_path}'",
+                operation="read",
+                original_exception=exc,
+            ) from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -451,8 +552,12 @@ def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
 
     try:
         parsed_df = parse_pdfs(
-            tmp_path, filename, output_dir, base_llm_paras,
-            relative_root=relative_root
+            tmp_path,
+            filename=filename,
+            output_dir=output_dir,
+            base_llm_paras=base_llm_paras,
+            relative_root=relative_root,
+            s3_key=rendered_pdf_s3_key,
         )
         return parsed_df
     finally:

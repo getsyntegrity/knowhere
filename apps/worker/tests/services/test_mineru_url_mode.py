@@ -164,6 +164,10 @@ def test_parse_via_full_uses_url_mode_in_staging(monkeypatch, tmp_path):
         "app.services.storage.sync_storage_service.generate_download_url",
         fake_generate_download_url,
     )
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.verify_s3_file_exists",
+        lambda s3_key, bucket=None: {"exists": True, "size": 1024},
+    )
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("submit_url", url))
@@ -197,6 +201,345 @@ def test_parse_via_full_uses_url_mode_in_staging(monkeypatch, tmp_path):
     assert calls[1][0] == "submit_url"
     assert "/extract/task/batch" in calls[1][1]
     assert calls[2] == ("poll", "batch-url-2", "primary")
+
+
+def test_parse_via_full_uploads_local_file_and_uses_url_mode_when_source_object_missing(
+    monkeypatch, tmp_path
+):
+    """In non-development env, a local PDF can be uploaded to S3 before URL mode."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
+    manager, _ = _build_manager()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
+    )
+
+    calls = []
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.verify_s3_file_exists",
+        lambda s3_key, bucket=None: {"exists": False},
+    )
+
+    def fake_upload_to_s3(local_file_path, s3_key, bucket):
+        calls.append(("upload_to_s3", local_file_path, s3_key, bucket))
+
+    def fake_generate_download_url(s3_key, expires_in=3600):
+        calls.append(("presign", s3_key, expires_in))
+        return {"download_url": f"https://s3.example.com/{s3_key}?presigned=1"}
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.upload_to_s3",
+        fake_upload_to_s3,
+    )
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.generate_download_url",
+        fake_generate_download_url,
+    )
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(("submit_url", url))
+        return FakeResponse(200, {
+            "code": 0,
+            "data": {"batch_id": "batch-url-3"},
+        })
+
+    fake_session = type("S", (), {"post": staticmethod(fake_post)})()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_session", lambda: fake_session
+    )
+
+    def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
+        calls.append(("poll", task_id, preferred_token_id))
+
+    monkeypatch.setattr(mineru_pdf_service, "poll_mineru_task", fake_poll)
+
+    local_pdf = tmp_path / "sample.pdf"
+    local_pdf.write_bytes(b"%PDF-1.4\n")
+
+    mineru_pdf_service.parse_via_full(
+        str(local_pdf),
+        "sample.pdf",
+        str(tmp_path / "output"),
+        s3_key="transform/sample.rendered.pdf",
+    )
+
+    assert calls[0][0] == "upload_to_s3"
+    assert calls[0][2] == "transform/sample.rendered.pdf"
+    assert calls[1][0] == "presign"
+    assert calls[2][0] == "submit_url"
+    assert calls[3] == ("poll", "batch-url-3", "primary")
+
+
+def test_parse_via_full_falls_back_to_direct_upload_when_s3_verify_fails(
+    monkeypatch, tmp_path
+):
+    """Storage verification failures should not block MinerU parsing."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
+    manager, _ = _build_manager()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
+    )
+
+    calls = []
+
+    def fake_verify_s3_file_exists(s3_key, bucket=None):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.verify_s3_file_exists",
+        fake_verify_s3_file_exists,
+    )
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.upload_to_s3",
+        lambda *args, **kwargs: pytest.fail("verify failure should skip S3 upload"),
+    )
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(("post", url))
+        return FakeResponse(200, {
+            "code": 0,
+            "data": {
+                "batch_id": "batch-direct-verify",
+                "file_urls": ["https://oss.example/upload"],
+            },
+        })
+
+    def fake_put(url, data=None, timeout=None):
+        calls.append(("put", url))
+        return FakeResponse(200)
+
+    fake_session = type(
+        "S", (),
+        {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
+    )()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_session", lambda: fake_session
+    )
+
+    def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
+        calls.append(("poll", task_id))
+
+    monkeypatch.setattr(mineru_pdf_service, "poll_mineru_task", fake_poll)
+
+    local_pdf = tmp_path / "sample.pdf"
+    local_pdf.write_bytes(b"%PDF-1.4\n")
+
+    mineru_pdf_service.parse_via_full(
+        str(local_pdf),
+        "sample.pdf",
+        str(tmp_path / "output"),
+        s3_key="transform/sample.rendered.pdf",
+    )
+
+    assert any("/file-urls/batch" in c[1] for c in calls if c[0] == "post")
+    assert any(c[0] == "put" for c in calls)
+    assert calls[-1] == ("poll", "batch-direct-verify")
+
+
+def test_parse_via_full_falls_back_to_direct_upload_when_s3_upload_fails(
+    monkeypatch, tmp_path
+):
+    """Storage upload failures should fail open to direct MinerU upload."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
+    manager, _ = _build_manager()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
+    )
+
+    calls = []
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.verify_s3_file_exists",
+        lambda s3_key, bucket=None: {"exists": False},
+    )
+
+    def fake_upload_to_s3(local_file_path, s3_key, bucket):
+        raise RuntimeError("upload failed")
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.upload_to_s3",
+        fake_upload_to_s3,
+    )
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(("post", url))
+        return FakeResponse(200, {
+            "code": 0,
+            "data": {
+                "batch_id": "batch-direct-upload",
+                "file_urls": ["https://oss.example/upload"],
+            },
+        })
+
+    def fake_put(url, data=None, timeout=None):
+        calls.append(("put", url))
+        return FakeResponse(200)
+
+    fake_session = type(
+        "S", (),
+        {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
+    )()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_session", lambda: fake_session
+    )
+
+    def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
+        calls.append(("poll", task_id))
+
+    monkeypatch.setattr(mineru_pdf_service, "poll_mineru_task", fake_poll)
+
+    local_pdf = tmp_path / "sample.pdf"
+    local_pdf.write_bytes(b"%PDF-1.4\n")
+
+    mineru_pdf_service.parse_via_full(
+        str(local_pdf),
+        "sample.pdf",
+        str(tmp_path / "output"),
+        s3_key="transform/sample.rendered.pdf",
+    )
+
+    assert any("/file-urls/batch" in c[1] for c in calls if c[0] == "post")
+    assert any(c[0] == "put" for c in calls)
+    assert calls[-1] == ("poll", "batch-direct-upload")
+
+
+def test_parse_via_full_falls_back_to_direct_upload_when_presign_fails(
+    monkeypatch, tmp_path
+):
+    """Presign failures should fail open to direct MinerU upload."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
+    manager, _ = _build_manager()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
+    )
+
+    calls = []
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.verify_s3_file_exists",
+        lambda s3_key, bucket=None: {"exists": True, "size": 1024},
+    )
+
+    def fake_generate_download_url(s3_key, expires_in=3600):
+        raise RuntimeError("presign failed")
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.generate_download_url",
+        fake_generate_download_url,
+    )
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(("post", url))
+        return FakeResponse(200, {
+            "code": 0,
+            "data": {
+                "batch_id": "batch-direct-presign",
+                "file_urls": ["https://oss.example/upload"],
+            },
+        })
+
+    def fake_put(url, data=None, timeout=None):
+        calls.append(("put", url))
+        return FakeResponse(200)
+
+    fake_session = type(
+        "S", (),
+        {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
+    )()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_session", lambda: fake_session
+    )
+
+    def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
+        calls.append(("poll", task_id))
+
+    monkeypatch.setattr(mineru_pdf_service, "poll_mineru_task", fake_poll)
+
+    local_pdf = tmp_path / "sample.pdf"
+    local_pdf.write_bytes(b"%PDF-1.4\n")
+
+    mineru_pdf_service.parse_via_full(
+        str(local_pdf),
+        "sample.pdf",
+        str(tmp_path / "output"),
+        s3_key="transform/sample.rendered.pdf",
+    )
+
+    assert any("/file-urls/batch" in c[1] for c in calls if c[0] == "post")
+    assert any(c[0] == "put" for c in calls)
+    assert calls[-1] == ("poll", "batch-direct-presign")
+
+
+def test_parse_via_full_falls_back_to_direct_upload_when_url_submit_fails(
+    monkeypatch, tmp_path
+):
+    """MinerU URL-task submission failures should fail open to direct upload."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
+    manager, _ = _build_manager()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
+    )
+
+    calls = []
+
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.verify_s3_file_exists",
+        lambda s3_key, bucket=None: {"exists": True, "size": 1024},
+    )
+    monkeypatch.setattr(
+        "app.services.storage.sync_storage_service.generate_download_url",
+        lambda s3_key, expires_in=3600: {
+            "download_url": f"https://s3.example.com/{s3_key}?presigned=1"
+        },
+    )
+    monkeypatch.setattr(
+        mineru_pdf_service,
+        "_submit_url_task",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            MinerUServiceException(internal_message="url submit failed")
+        ),
+    )
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(("post", url))
+        return FakeResponse(200, {
+            "code": 0,
+            "data": {
+                "batch_id": "batch-direct-submit",
+                "file_urls": ["https://oss.example/upload"],
+            },
+        })
+
+    def fake_put(url, data=None, timeout=None):
+        calls.append(("put", url))
+        return FakeResponse(200)
+
+    fake_session = type(
+        "S", (),
+        {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
+    )()
+    monkeypatch.setattr(
+        mineru_pdf_service, "get_mineru_session", lambda: fake_session
+    )
+
+    def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
+        calls.append(("poll", task_id))
+
+    monkeypatch.setattr(mineru_pdf_service, "poll_mineru_task", fake_poll)
+
+    local_pdf = tmp_path / "sample.pdf"
+    local_pdf.write_bytes(b"%PDF-1.4\n")
+
+    mineru_pdf_service.parse_via_full(
+        str(local_pdf),
+        "sample.pdf",
+        str(tmp_path / "output"),
+        s3_key="transform/sample.rendered.pdf",
+    )
+
+    assert any("/file-urls/batch" in c[1] for c in calls if c[0] == "post")
+    assert any(c[0] == "put" for c in calls)
+    assert calls[-1] == ("poll", "batch-direct-submit")
 
 
 def test_parse_via_full_uses_direct_upload_in_development(

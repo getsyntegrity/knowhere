@@ -57,3 +57,67 @@ def test_checkerboard_inject_parse_uses_original_relative_root_and_internal_outp
     assert captured["relative_root"] == f"Default_Root/{source_filename}"
     assert output_dir.endswith(f"Default_Root/{internal_filename}")
     assert captured["output_dir"].endswith(f"Default_Root/{internal_filename}")
+
+
+def test_checkerboard_inject_parse_threads_job_id_to_pptx_parser(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakePptxProfile:
+        file_type = "pptx"
+        route = "standard"
+        doc_category = "generic"
+        page_count = 12
+        reasoning = ""
+
+        def summary(self) -> str:
+            return "fake-pptx"
+
+    monkeypatch.setattr(
+        parse_service,
+        "profile_document",
+        lambda file_path, filename="": _FakePptxProfile(),
+    )
+
+    def fake_parse_pptx(
+        file_full_path,
+        filename,
+        output_dir,
+        base_llm_paras,
+        strategy="to_pdf_api",
+        job_id=None,
+        relative_root=None,
+        baseurl="",
+    ):
+        captured["file_full_path"] = file_full_path
+        captured["filename"] = filename
+        captured["output_dir"] = output_dir
+        captured["strategy"] = strategy
+        captured["job_id"] = job_id
+        captured["relative_root"] = relative_root
+        return "parsed-pptx"
+
+    monkeypatch.setattr(
+        "app.services.document_parser.pptx_parser.parse_pptx",
+        fake_parse_pptx,
+    )
+
+    output_dir, parsed_df = parse_service.checkerboard_inject_parse(
+        file_full_path=str(tmp_path / "deck.pptx"),
+        filename="deck.pptx",
+        output_dir=str(tmp_path / "output-root"),
+        job_id="job_123",
+        internal_output_filename="deck_internal.pptx",
+        kb_dir="Default_Root",
+        doc_type="auto",
+        s3_key="uploads/deck.pptx",
+    )
+
+    assert parsed_df == "parsed-pptx"
+    assert captured["filename"] == "deck.pptx"
+    assert captured["strategy"] == "to_pdf_api"
+    assert captured["job_id"] == "job_123"
+    assert captured["relative_root"] == "Default_Root/deck.pptx"
+    assert output_dir.endswith("Default_Root/deck_internal.pptx")
