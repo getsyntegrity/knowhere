@@ -289,6 +289,90 @@ async def require_billing_limits(
     yield current_user
 
 
+# ---------------------------------------------------------------------------
+# require_ip_rate_limit -- unauthenticated endpoint protection
+# ---------------------------------------------------------------------------
+
+
+async def require_ip_rate_limit(request: Request) -> None:
+    """Rate-limit unauthenticated endpoints by client IP.
+
+    Uses the system_limits table (same config as Layer 0) to resolve the RPM
+    for the matched method + path pattern.  The sliding-window key is scoped
+    to the client IP instead of a user_id.
+
+    Fail-open: Redis errors are logged but the request is allowed through.
+    """
+    config = RateLimitConfig.get_instance()
+    if config.is_bypassed:
+        return
+
+    client_ip: str = request.client.host if request.client else "unknown"
+
+    scope_path: str = request.scope.get("path", request.url.path)
+    root_path: str = request.scope.get("root_path", "")
+    route_path: str = (
+        scope_path[len(root_path) :]
+        if root_path and scope_path.startswith(root_path)
+        else scope_path
+    )
+
+    rpm, matched_pattern = find_system_rpm(
+        request.method, route_path, config.system_rules
+    )
+
+    if rpm == -1:
+        return
+
+    try:
+        rate_item = config.parse_rate(f"{rpm}/hour")
+        namespace = config.namespaced_namespace("ip_rpm")
+        identifier = f"{client_ip}:{matched_pattern}"
+
+        is_allowed: bool = await config.sliding_window.hit(
+            rate_item, namespace, identifier
+        )
+        if not is_allowed:
+            import time
+
+            try:
+                stats = await config.sliding_window.get_window_stats(
+                    rate_item, namespace, identifier
+                )
+                reset_time = int(stats.reset_time)
+                now = int(time.time())
+                retry_after = max(1, reset_time - now)
+            except Exception:
+                retry_after = RateLimitException.DEFAULT_RETRY_AFTER
+
+            logger.warning(
+                "IP rate limit exceeded: ip={}, pattern={}, limit={}/hour",
+                client_ip,
+                matched_pattern,
+                rpm,
+            )
+            raise RateLimitException(
+                retry_after=retry_after,
+                limit=rpm,
+                period="hour",
+                internal_message=(
+                    f"IP rate limit exceeded for ip={client_ip}, "
+                    f"pattern={matched_pattern}, limit={rpm}/hour"
+                ),
+            )
+    except RateLimitException:
+        raise
+    except Exception as exc:
+        # Fail-open: Redis outage should not block guest registration
+        # entirely.  The limiter is abuse protection, not a gate.
+        logger.warning(
+            "rate_limit: Redis error during IP RPM check, "
+            "failing open for ip={}, error={}",
+            client_ip,
+            exc,
+        )
+
+
 async def enforce_job_creation_capacity(
     request: Request,
     db: AsyncSession,

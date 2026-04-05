@@ -5,6 +5,7 @@ Ensure all models are correctly imported to avoid circular import issues
 
 # 2. Then import models that depend on User
 from .api_key import APIKey
+from .guest_device import GuestDevice
 from .credits_transaction import CreditsTransaction
 from .job import Job
 from .job_result import JobChunk, JobResult
@@ -32,6 +33,7 @@ from .system_limit import SystemLimit
 __all__ = [
     "User",
     "APIKey",
+    "GuestDevice",
     "CreditsTransaction",
 
     "UserBalance",
