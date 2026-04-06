@@ -5,8 +5,9 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.services.guest.guest_registration_service import GuestRegistrationService
-from shared.core.exceptions.domain_exceptions import ConflictException
+from shared.core.exceptions.domain_exceptions import ConflictException, UnavailableException
 from shared.models.database.user import User
+from shared.models.schemas.guest import GuestRateLimitInfo
 
 
 def create_mock_session() -> AsyncMock:
@@ -29,6 +30,17 @@ async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> N
         service._device_repo,
         "get_by_device_id",
         AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_guest_rate_limit_info",
+        MagicMock(
+            return_value=GuestRateLimitInfo(
+                rpm=20,
+                daily_quota=-1,
+                max_concurrent_jobs=10,
+            )
+        ),
     )
     session.execute.return_value = SimpleNamespace(
         scalar_one_or_none=lambda: "api_key_id_123",
@@ -104,6 +116,17 @@ async def test_register_guest_reraises_non_race_integrity_errors(monkeypatch) ->
         "get_by_device_id",
         AsyncMock(return_value=None),
     )
+    monkeypatch.setattr(
+        service,
+        "_get_guest_rate_limit_info",
+        MagicMock(
+            return_value=GuestRateLimitInfo(
+                rpm=20,
+                daily_quota=-1,
+                max_concurrent_jobs=10,
+            )
+        ),
+    )
     session.flush.side_effect = error
 
     with pytest.raises(IntegrityError):
@@ -137,6 +160,17 @@ async def test_register_guest_conflicts_when_concurrent_create_loses_race(monkey
         "get_by_device_id",
         AsyncMock(return_value=None),
     )
+    monkeypatch.setattr(
+        service,
+        "_get_guest_rate_limit_info",
+        MagicMock(
+            return_value=GuestRateLimitInfo(
+                rpm=20,
+                daily_quota=-1,
+                max_concurrent_jobs=10,
+            )
+        ),
+    )
     locked_lookup = AsyncMock(return_value=existing_device)
     monkeypatch.setattr(
         service._device_repo,
@@ -163,3 +197,38 @@ async def test_register_guest_conflicts_when_concurrent_create_loses_race(monkey
     }
     session.rollback.assert_awaited_once_with()
     locked_lookup.assert_awaited_once_with(session, "device-123")
+
+
+@pytest.mark.asyncio
+async def test_register_guest_fails_before_commit_when_guest_rate_limit_missing(
+    monkeypatch,
+) -> None:
+    service = GuestRegistrationService()
+    session = create_mock_session()
+
+    monkeypatch.setattr(
+        service._device_repo,
+        "get_by_device_id",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_guest_rate_limit_info",
+        MagicMock(side_effect=UnavailableException(
+            internal_message="Guest tier limits are not loaded in RateLimitConfig",
+            retry_after=60,
+        )),
+    )
+
+    with pytest.raises(UnavailableException) as exc_info:
+        await service.register_guest(
+            session=session,
+            device_id="device-456",
+            client="knowhere-hub",
+            platform="macos",
+            app_version="1.0.0",
+        )
+
+    assert exc_info.value.retry_after == 60
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()

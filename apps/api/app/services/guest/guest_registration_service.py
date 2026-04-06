@@ -12,7 +12,10 @@ from app.repositories.guest_device_repository import GuestDeviceRepository
 from app.services.auth.api_key_service import APIKeyService
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
-from shared.core.exceptions.domain_exceptions import ConflictException
+from shared.core.exceptions.domain_exceptions import (
+    ConflictException,
+    UnavailableException,
+)
 from shared.models.database.guest_device import GuestDevice
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
@@ -26,9 +29,7 @@ _GUEST_KEY_NAME_PREFIX: str = "guest-device"
 _GUEST_DISPLAY_NAME_PREFIX: str = "Guest "
 _GUEST_DISPLAY_NAME_MAX_LENGTH: int = 255
 _GUEST_EMAIL_DOMAIN: str = "guest.knowhere.local"
-_DEFAULT_GUEST_MAX_CONCURRENT_JOBS: int = 10
-_DEFAULT_GUEST_RPM_LIMIT: int = 20
-_DEFAULT_GUEST_DAILY_QUOTA: int = -1
+_GUEST_RATE_LIMIT_RETRY_AFTER_SECONDS: int = 60
 
 
 class GuestRegistrationService:
@@ -96,6 +97,7 @@ class GuestRegistrationService:
         commit at the end ensures atomicity: if the device insert fails
         (e.g. concurrent race) the user/balance/key are rolled back too.
         """
+        rate_limit = self._get_guest_rate_limit_info()
         user_id = str(uuid4())
         guest_name = self._build_guest_name(device_id)
         guest_email = self._build_guest_email(user_id)
@@ -130,7 +132,7 @@ class GuestRegistrationService:
             self._get_device_id_log_token(device_id),
             user_id,
         )
-        return self._build_response(user_id, device_id, api_key, expires_at)
+        return self._build_response(user_id, device_id, api_key, expires_at, rate_limit)
 
     async def _create_api_key_without_commit(
         self,
@@ -172,9 +174,9 @@ class GuestRegistrationService:
         device_id: str,
         api_key: str,
         expires_at: datetime | None,
+        rate_limit: GuestRateLimitInfo,
     ) -> GuestRegisterResponse:
         """Assemble the registration response with rate-limit metadata."""
-        rate_limit = self._get_guest_rate_limit_info()
         return GuestRegisterResponse(
             guest_user_id=user_id,
             device_id=device_id,
@@ -185,22 +187,18 @@ class GuestRegistrationService:
 
     @staticmethod
     def _get_guest_rate_limit_info() -> GuestRateLimitInfo:
-        """Read guest tier limits from the live config."""
-        try:
-            config = RateLimitConfig.get_instance()
-            tier: TierLimits | None = config.tier_map.get(_GUEST_TIER)
-            if tier is not None:
-                return GuestRateLimitInfo(
-                    rpm=tier.rpm_limit,
-                    daily_quota=tier.daily_quota,
-                    max_concurrent_jobs=tier.max_concurrent_jobs,
-                )
-        except Exception:
-            pass
+        """Read guest tier limits from the live config or fail closed."""
+        config = RateLimitConfig.get_instance()
+        tier: TierLimits | None = config.tier_map.get(_GUEST_TIER)
+        if tier is None:
+            raise UnavailableException(
+                internal_message="Guest tier limits are not loaded in RateLimitConfig",
+                retry_after=_GUEST_RATE_LIMIT_RETRY_AFTER_SECONDS,
+            )
         return GuestRateLimitInfo(
-            rpm=_DEFAULT_GUEST_RPM_LIMIT,
-            daily_quota=_DEFAULT_GUEST_DAILY_QUOTA,
-            max_concurrent_jobs=_DEFAULT_GUEST_MAX_CONCURRENT_JOBS,
+            rpm=tier.rpm_limit,
+            daily_quota=tier.daily_quota,
+            max_concurrent_jobs=tier.max_concurrent_jobs,
         )
 
     @staticmethod
