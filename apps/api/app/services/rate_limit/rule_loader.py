@@ -47,6 +47,7 @@ async def _fetch_system_rules(
                 api_pattern=row.api_pattern,
                 priority=row.priority,
                 rpm=row.rpm,
+                period=getattr(row, "period", "minute"),
             )
         )
 

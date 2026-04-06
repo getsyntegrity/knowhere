@@ -50,6 +50,7 @@ async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> N
     assert created_user.email.endswith("@guest.knowhere.local")
     assert response.device_id == device_id
     assert response.api_key.startswith("sk_")
+    assert response.expires_at is None
     session.commit.assert_awaited_once_with()
 
 

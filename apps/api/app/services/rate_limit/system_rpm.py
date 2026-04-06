@@ -10,6 +10,33 @@ import fnmatch
 from app.services.rate_limit.config import DEFAULT_SYSTEM_RPM
 from app.services.rate_limit.data_structures import SystemRpmRule
 
+_DEFAULT_SYSTEM_PERIOD: str = "minute"
+
+
+def find_system_rule(
+    method: str,
+    path: str,
+    rules: list[SystemRpmRule],
+) -> SystemRpmRule:
+    """Find the first matching system rate-limit rule."""
+    for rule in rules:
+        is_method_match = (
+            rule.method == "*" or fnmatch.fnmatch(method.upper(), rule.method.upper())
+        )
+        if not is_method_match:
+            continue
+
+        if fnmatch.fnmatch(path, rule.api_pattern):
+            return rule
+
+    return SystemRpmRule(
+        method="*",
+        api_pattern="*",
+        priority=9999,
+        rpm=DEFAULT_SYSTEM_RPM,
+        period=_DEFAULT_SYSTEM_PERIOD,
+    )
+
 
 def find_system_rpm(
     method: str,
@@ -28,14 +55,5 @@ def find_system_rpm(
         A tuple of (rpm, matched_pattern).
         Falls back to (DEFAULT_SYSTEM_RPM, "*") when no rule matches.
     """
-    for rule in rules:
-        is_method_match = (
-            rule.method == "*" or fnmatch.fnmatch(method.upper(), rule.method.upper())
-        )
-        if not is_method_match:
-            continue
-
-        if fnmatch.fnmatch(path, rule.api_pattern):
-            return rule.rpm, rule.api_pattern
-
-    return DEFAULT_SYSTEM_RPM, "*"
+    rule = find_system_rule(method, path, rules)
+    return rule.rpm, rule.api_pattern

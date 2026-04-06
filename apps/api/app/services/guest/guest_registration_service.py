@@ -1,6 +1,6 @@
 """Guest registration business logic."""
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import NoReturn
 from uuid import uuid4
 
@@ -22,11 +22,13 @@ from shared.models.schemas.guest import (
 )
 
 _GUEST_TIER: str = "guest"
-_GUEST_KEY_EXPIRY_DAYS: int = 60
 _GUEST_KEY_NAME_PREFIX: str = "guest-device"
 _GUEST_DISPLAY_NAME_PREFIX: str = "Guest "
 _GUEST_DISPLAY_NAME_MAX_LENGTH: int = 255
 _GUEST_EMAIL_DOMAIN: str = "guest.knowhere.local"
+_DEFAULT_GUEST_MAX_CONCURRENT_JOBS: int = 10
+_DEFAULT_GUEST_RPM_LIMIT: int = 20
+_DEFAULT_GUEST_DAILY_QUOTA: int = -1
 
 
 class GuestRegistrationService:
@@ -46,12 +48,12 @@ class GuestRegistrationService:
     ) -> GuestRegisterResponse:
         """Register or re-register a guest device.
 
-        - If the device_id is new, create a guest user + API key + device record.
+        - If the device_id is new, create a guest user + non-expiring API key + device record.
         - If the device_id already exists, reject the request to prevent key takeover.
         - Handles concurrent first-registration race by waiting for the winner row
           and returning the same duplicate-registration conflict.
         """
-        expires_at = datetime.utcnow() + timedelta(days=_GUEST_KEY_EXPIRY_DAYS)
+        expires_at = None
         key_name = f"{_GUEST_KEY_NAME_PREFIX}-{device_id[:32]}"
 
         existing = await self._device_repo.get_by_device_id(session, device_id)
@@ -85,7 +87,7 @@ class GuestRegistrationService:
         platform: str,
         app_version: str | None,
         key_name: str,
-        expires_at: datetime,
+        expires_at: datetime | None,
     ) -> GuestRegisterResponse:
         """Create a brand-new guest user, API key, and device record.
 
@@ -135,7 +137,7 @@ class GuestRegistrationService:
         session: AsyncSession,
         user_id: str,
         name: str,
-        expires_at: datetime,
+        expires_at: datetime | None,
     ) -> str:
         """Generate an API key record and flush (but do not commit).
 
@@ -169,7 +171,7 @@ class GuestRegistrationService:
         user_id: str,
         device_id: str,
         api_key: str,
-        expires_at: datetime,
+        expires_at: datetime | None,
     ) -> GuestRegisterResponse:
         """Assemble the registration response with rate-limit metadata."""
         rate_limit = self._get_guest_rate_limit_info()
@@ -195,7 +197,11 @@ class GuestRegistrationService:
                 )
         except Exception:
             pass
-        return GuestRateLimitInfo(rpm=-1, daily_quota=-1, max_concurrent_jobs=10)
+        return GuestRateLimitInfo(
+            rpm=_DEFAULT_GUEST_RPM_LIMIT,
+            daily_quota=_DEFAULT_GUEST_DAILY_QUOTA,
+            max_concurrent_jobs=_DEFAULT_GUEST_MAX_CONCURRENT_JOBS,
+        )
 
     @staticmethod
     def _build_guest_name(device_id: str) -> str:

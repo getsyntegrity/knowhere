@@ -32,7 +32,7 @@ from app.services.rate_limit.config import (
 from app.services.rate_limit.data_structures import CurrentUser, TierLimits
 from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.limiter import RateLimiter
-from app.services.rate_limit.system_rpm import find_system_rpm
+from app.services.rate_limit.system_rpm import find_system_rpm, find_system_rule
 from shared.core.database import get_db, get_db_context
 from shared.core.exceptions.domain_exceptions import (
     RateLimitException,
@@ -303,9 +303,9 @@ async def require_billing_limits(
 async def require_ip_rate_limit(request: Request) -> None:
     """Rate-limit unauthenticated endpoints by client IP.
 
-    Uses the system_limits table (same config as Layer 0) to resolve the RPM
-    for the matched method + path pattern.  The sliding-window key is scoped
-    to the client IP instead of a user_id.
+    Uses the system_limits table (same config as Layer 0) to resolve the limit
+    for the matched method + path pattern. The key is scoped to the client IP
+    instead of a user_id.
 
     Fail-open: Redis errors are logged but the request is allowed through.
     """
@@ -323,26 +323,32 @@ async def require_ip_rate_limit(request: Request) -> None:
         else scope_path
     )
 
-    rpm, matched_pattern = find_system_rpm(
-        request.method, route_path, config.system_rules
-    )
+    rule = find_system_rule(request.method, route_path, config.system_rules)
+    rpm = rule.rpm
+    matched_pattern = rule.api_pattern
+    period = rule.period
 
     if rpm == -1:
         return
 
     try:
-        rate_item = config.parse_rate(f"{rpm}/hour")
-        namespace = config.namespaced_namespace("ip_rpm")
+        rate_item = config.parse_rate(f"{rpm}/{period}")
+        namespace = config.namespaced_namespace(f"ip_rate_limit:{period}")
         identifier = f"{client_ip}:{matched_pattern}"
+        window = (
+            config.fixed_window
+            if period == "day"
+            else config.sliding_window
+        )
 
-        is_allowed: bool = await config.sliding_window.hit(
+        is_allowed: bool = await window.hit(
             rate_item, namespace, identifier
         )
         if not is_allowed:
             import time
 
             try:
-                stats = await config.sliding_window.get_window_stats(
+                stats = await window.get_window_stats(
                     rate_item, namespace, identifier
                 )
                 reset_time = int(stats.reset_time)
@@ -352,18 +358,19 @@ async def require_ip_rate_limit(request: Request) -> None:
                 retry_after = RateLimitException.DEFAULT_RETRY_AFTER
 
             logger.warning(
-                "IP rate limit exceeded: ip={}, pattern={}, limit={}/hour",
+                "IP rate limit exceeded: ip={}, pattern={}, limit={}/{}",
                 client_ip,
                 matched_pattern,
                 rpm,
+                period,
             )
             raise RateLimitException(
                 retry_after=retry_after,
                 limit=rpm,
-                period="hour",
+                period=period,
                 internal_message=(
                     f"IP rate limit exceeded for ip={client_ip}, "
-                    f"pattern={matched_pattern}, limit={rpm}/hour"
+                    f"pattern={matched_pattern}, limit={rpm}/{period}"
                 ),
             )
     except RateLimitException:
