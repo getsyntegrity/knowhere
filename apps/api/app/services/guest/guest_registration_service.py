@@ -21,6 +21,8 @@ from shared.models.schemas.guest import (
 _GUEST_TIER: str = "guest"
 _GUEST_KEY_EXPIRY_DAYS: int = 60
 _GUEST_KEY_NAME_PREFIX: str = "guest-device"
+_GUEST_DISPLAY_NAME_PREFIX: str = "Guest "
+_GUEST_DISPLAY_NAME_MAX_LENGTH: int = 255
 
 
 class GuestRegistrationService:
@@ -61,7 +63,9 @@ class GuestRegistrationService:
             return await self._create_new_guest(
                 session, device_id, client, platform, app_version, key_name, expires_at
             )
-        except IntegrityError:
+        except IntegrityError as error:
+            if not self._is_concurrent_guest_registration_error(error):
+                raise
             # Concurrent registration race: another request inserted this
             # device_id first.  Roll back our partial work and re-issue
             # against the winning row.
@@ -162,8 +166,9 @@ class GuestRegistrationService:
         (e.g. concurrent race) the user/balance/key are rolled back too.
         """
         user_id = str(uuid4())
+        guest_name = self._build_guest_name(device_id)
 
-        user = User(id=user_id)
+        user = User(id=user_id, name=guest_name)
         session.add(user)
 
         balance = UserBalance(user_id=user_id, user_tier=_GUEST_TIER)
@@ -259,6 +264,35 @@ class GuestRegistrationService:
         except Exception:
             pass
         return GuestRateLimitInfo(rpm=-1, daily_quota=-1, max_concurrent_jobs=10)
+
+    @staticmethod
+    def _build_guest_name(device_id: str) -> str:
+        """Build a deterministic display name for guest-owned user rows."""
+        available_length = _GUEST_DISPLAY_NAME_MAX_LENGTH - len(_GUEST_DISPLAY_NAME_PREFIX)
+        normalized_device_id = device_id.strip()
+        guest_suffix = normalized_device_id[:available_length]
+        if guest_suffix:
+            return f"{_GUEST_DISPLAY_NAME_PREFIX}{guest_suffix}"
+        return _GUEST_DISPLAY_NAME_PREFIX.strip()
+
+    @staticmethod
+    def _is_concurrent_guest_registration_error(error: IntegrityError) -> bool:
+        """Return True only for device_id uniqueness races on guest_devices."""
+        statement = (error.statement or "").lower()
+        error_text = str(getattr(error, "orig", error)).lower()
+
+        targets_guest_device = (
+            "guest_devices" in statement
+            or "guest_devices" in error_text
+            or "ix_guest_devices_device_id" in error_text
+        )
+        is_unique_violation = (
+            "duplicate key value" in error_text
+            or "uniqueviolation" in error_text
+            or "unique constraint" in error_text
+        )
+
+        return targets_guest_device and is_unique_violation and "device_id" in error_text
 
     @staticmethod
     async def _resolve_api_key_id(session: AsyncSession, api_key: str) -> str | None:
