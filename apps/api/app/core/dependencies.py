@@ -1,6 +1,7 @@
 import hashlib
 import threading
 from datetime import timedelta
+from fnmatch import fnmatch
 from typing import Any
 
 import jwt
@@ -28,6 +29,11 @@ JWKS_CACHE_TTL_SECONDS = 60 * 60  # 3600 seconds
 # Cached PyJWKClient instance
 _jwks_client: PyJWKClient | None = None
 _jwks_client_lock = threading.Lock()
+_GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS: tuple[str, ...] = (
+    "/v1/jobs",
+    "/v1/jobs/*",
+    "/v1/billing/credits",
+)
 
 
 def _get_jwks_client() -> PyJWKClient:
@@ -116,17 +122,27 @@ def _get_route_path(request: Request) -> str:
     return scope_path
 
 
+def _is_guest_api_key_route_allowed(route_path: str) -> bool:
+    """Return whether a guest API key may access the given route."""
+    return any(
+        fnmatch(route_path, pattern)
+        for pattern in _GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS
+    )
+
+
 def _enforce_guest_api_key_scope(route_path: str, user_tier: str) -> None:
-    """Reject guest API keys outside the job API surface."""
+    """Reject guest API keys outside the guest-allowed API surface."""
     if user_tier != "guest":
         return
 
-    if route_path.startswith("/v1/jobs"):
+    if _is_guest_api_key_route_allowed(route_path):
         return
 
     raise PermissionDeniedException(
-        user_message="Guest API keys can only access job APIs",
-        required_permission="jobs",
+        user_message=(
+            "Guest API keys can only access job APIs and the billing credits API"
+        ),
+        required_permission="jobs_or_billing_credits",
     )
 
 

@@ -63,8 +63,81 @@ async def test_get_current_user_id_allows_guest_api_key_for_jobs(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_id_rejects_guest_api_key_for_billing_from_cache(monkeypatch) -> None:
-    request = make_request("/v1/billing", "Bearer sk_guest_billing")
+async def test_get_current_user_id_allows_guest_api_key_for_billing_credits_from_cache(
+    monkeypatch,
+) -> None:
+    request = make_request("/v1/billing/credits", "Bearer sk_guest_billing_credits")
+
+    monkeypatch.setattr(
+        core_dependencies.redis_pool_manager,
+        "get_redis_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        core_dependencies.identity_cache,
+        "get_cached_identity",
+        AsyncMock(
+            return_value={
+                "user_id": "guest-user",
+                "user_tier": "guest",
+            }
+        ),
+    )
+
+    user_id = await core_dependencies.get_current_user_id(
+        request=request,
+        authorization="Bearer sk_guest_billing_credits",
+        db=cast(AsyncSession, object()),
+    )
+
+    assert user_id == "guest-user"
+    assert request.state.cached_user_tier == "guest"
+    assert request.state.cached_identity_hit is True
+    assert request.state.user_id == "guest-user"
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_id_allows_guest_api_key_for_billing_credits_after_db_lookup(
+    monkeypatch,
+) -> None:
+    request = make_request("/v1/billing/credits", "Bearer sk_guest_billing_credits")
+    identity = APIKeyIdentity(user_id="guest-user", user_tier="guest")
+
+    monkeypatch.setattr(
+        core_dependencies.redis_pool_manager,
+        "get_redis_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        core_dependencies.identity_cache,
+        "get_cached_identity",
+        AsyncMock(return_value=None),
+    )
+    validate_identity = AsyncMock(return_value=identity)
+    mock_service = type(
+        "MockAPIKeyService",
+        (),
+        {"validate_api_key_identity": validate_identity},
+    )
+    monkeypatch.setattr(core_dependencies, "APIKeyService", mock_service)
+
+    user_id = await core_dependencies.get_current_user_id(
+        request=request,
+        authorization="Bearer sk_guest_billing_credits",
+        db=cast(AsyncSession, object()),
+    )
+
+    assert user_id == "guest-user"
+    assert request.state.cached_user_tier == "guest"
+    assert request.state.cached_identity_hit is False
+    assert request.state.user_id == "guest-user"
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_id_rejects_guest_api_key_for_other_billing_routes_from_cache(
+    monkeypatch,
+) -> None:
+    request = make_request("/v1/billing/usage", "Bearer sk_guest_billing")
 
     monkeypatch.setattr(
         core_dependencies.redis_pool_manager,
