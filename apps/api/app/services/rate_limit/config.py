@@ -10,7 +10,7 @@ from typing import Optional
 
 from loguru import logger
 
-from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
+from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from shared.core.exceptions.redis_exceptions import RedisConfigurationError
 
 
@@ -18,9 +18,10 @@ from shared.core.exceptions.redis_exceptions import RedisConfigurationError
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_SYSTEM_RPM: int = 1000
+DEFAULT_SYSTEM_LIMIT: int = 1000
 CONCURRENCY_RETRY_AFTER_SECONDS: int = 30
 REDIS_KEY_PREFIX: str = "knowhere-api:"
+DEFAULT_SYSTEM_PERIOD: str = "minute"
 
 _RATE_LIMIT_BYPASSED_ENV: str = "RATE_LIMIT_BYPASSED"
 
@@ -66,7 +67,7 @@ class RateLimitConfig:
 
         # In-memory maps (GIL-safe reference swap on update)
         self._tier_map: dict[str, TierLimits] = {}
-        self._system_rules: list[SystemRpmRule] = []
+        self._system_rules: list[SystemLimitRule] = []
 
         logger.info(
             "RateLimitConfig initialised "
@@ -114,7 +115,7 @@ class RateLimitConfig:
         return self._tier_map
 
     @property
-    def system_rules(self) -> list[SystemRpmRule]:
+    def system_rules(self) -> list[SystemLimitRule]:
         return self._system_rules
 
     @property
@@ -139,7 +140,7 @@ class RateLimitConfig:
     def update_rules(
         self,
         tier_map: dict[str, TierLimits],
-        system_rules: list[SystemRpmRule],
+        system_rules: list[SystemLimitRule],
     ) -> bool:
         """
         Atomically swap both maps.

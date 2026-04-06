@@ -29,9 +29,9 @@ class TierLimits:
 
 
 @dataclass(frozen=True)
-class SystemRpmRule:
+class SystemLimitRule:
     """
-    A system-level RPM rule that matches HTTP method + path pattern.
+    A system-level rate-limit rule that matches HTTP method + path pattern.
 
     Rules are sorted by priority ascending; first match wins.
     """
@@ -39,4 +39,5 @@ class SystemRpmRule:
     method: str
     api_pattern: str
     priority: int
-    rpm: int
+    limit: int
+    period: str = "minute"

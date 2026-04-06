@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.rate_limit.config import RateLimitConfig
-from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
+from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from shared.models.database.system_limit import SystemLimit
 from shared.models.database.tier_limit import TierLimit
 
@@ -33,20 +33,21 @@ async def _fetch_tier_map(db: AsyncSession) -> dict[str, TierLimits]:
 
 async def _fetch_system_rules(
     db: AsyncSession,
-) -> list[SystemRpmRule]:
+) -> list[SystemLimitRule]:
     """Query system_limits table ordered by priority ASC."""
     stmt = select(SystemLimit).order_by(SystemLimit.priority.asc())
     result = await db.execute(stmt)
     rows = result.scalars().all()
 
-    system_rules: list[SystemRpmRule] = []
+    system_rules: list[SystemLimitRule] = []
     for row in rows:
         system_rules.append(
-            SystemRpmRule(
+            SystemLimitRule(
                 method=row.method,
                 api_pattern=row.api_pattern,
                 priority=row.priority,
-                rpm=row.rpm,
+                limit=row.rpm,
+                period=getattr(row, "period", "minute"),
             )
         )
 

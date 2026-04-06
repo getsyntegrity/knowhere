@@ -23,6 +23,6 @@ class GuestRegisterResponse(BaseModel):
     """Response for guest device registration."""
     guest_user_id: str
     device_id: str
-    api_key: str = Field(description="Plaintext API key (sk_...), issued on every registration")
+    api_key: str = Field(description="Plaintext API key (sk_...), issued on first registration")
     rate_limit: GuestRateLimitInfo
-    expires_at: datetime
+    expires_at: datetime | None = Field(description="API key expiry timestamp, or null for non-expiring guest keys")

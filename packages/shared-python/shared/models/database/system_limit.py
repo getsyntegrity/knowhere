@@ -12,14 +12,18 @@ from shared.core.database import Base
 
 
 class SystemLimit(Base):
-    """System limit model - defines per-endpoint RPM limits"""
+    """System limit model - defines per-endpoint rate limits."""
     __tablename__ = "system_limits"
 
     method: Mapped[str] = mapped_column(String(10), primary_key=True)
     api_pattern: Mapped[str] = mapped_column(String(200), primary_key=True)
     priority: Mapped[int] = mapped_column(Integer, nullable=False)
     rpm: Mapped[int] = mapped_column(Integer, nullable=False)  # -1 = unlimited
+    period: Mapped[str] = mapped_column(String(10), nullable=False, default="minute")
     description: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
     def __repr__(self) -> str:
-        return f"<SystemLimit(method='{self.method}', api_pattern='{self.api_pattern}', rpm={self.rpm})>"
+        return (
+            f"<SystemLimit(method='{self.method}', api_pattern='{self.api_pattern}', "
+            f"rpm={self.rpm}, period='{self.period}')>"
+        )

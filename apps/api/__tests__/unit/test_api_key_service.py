@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.auth import api_key_service as api_key_service_module
-from app.services.auth.api_key_service import APIKeyService
+from app.services.auth.api_key_service import APIKeyIdentity, APIKeyService
 from shared.core.exceptions.domain_exceptions import NotFoundException
 
 
@@ -26,6 +26,7 @@ async def test_validate_api_key_schedules_last_used_update(monkeypatch):
     record = SimpleNamespace(
         id="api_key_id_1",
         user_id="user_1",
+        enabled_modules=None,
         is_valid=lambda: True,
     )
 
@@ -41,11 +42,42 @@ async def test_validate_api_key_schedules_last_used_update(monkeypatch):
         "_schedule_last_used_update",
         lambda api_key_id: scheduled.append(api_key_id),
     )
+    session.execute.return_value = SimpleNamespace(
+        scalar_one_or_none=lambda: "free",
+    )
 
     user_id = await service.validate_api_key(session, "sk_test_token")
 
     assert user_id == "user_1"
     assert scheduled == ["api_key_id_1"]
+
+
+@pytest.mark.asyncio
+async def test_validate_api_key_identity_returns_user_tier(monkeypatch):
+    service = APIKeyService()
+    session = AsyncMock()
+    record = SimpleNamespace(
+        id="api_key_id_2",
+        user_id="user_2",
+        enabled_modules=["guest"],
+        is_valid=lambda: True,
+    )
+
+    monkeypatch.setattr(
+        service.repository,
+        "get_by_key_hash",
+        AsyncMock(return_value=record),
+    )
+    session.execute.return_value = SimpleNamespace(
+        scalar_one_or_none=lambda: "guest",
+    )
+
+    identity = await service.validate_api_key_identity(session, "sk_test_guest")
+
+    assert identity == APIKeyIdentity(
+        user_id="user_2",
+        user_tier="guest",
+    )
 
 
 @pytest.mark.asyncio

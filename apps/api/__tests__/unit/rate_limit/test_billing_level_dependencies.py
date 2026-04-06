@@ -58,7 +58,7 @@ class _DailyQuotaErrorRateLimiter:
 
 
 @pytest.mark.asyncio
-async def test_require_billing_limits_sets_job_state_and_tier_limits(monkeypatch):
+async def test_require_billing_limits_yields_current_user(monkeypatch):
     redis = fakeredis.FakeRedis(decode_responses=True)
     redis_service = FakeRedisService(redis)
 
@@ -80,9 +80,6 @@ async def test_require_billing_limits_sets_job_state_and_tier_limits(monkeypatch
     )
     yielded_user = await agen.__anext__()
     assert yielded_user == user
-    assert request.state.rate_limit_tier_limits == TierLimits(
-        rpm_limit=60, max_concurrent_jobs=2, daily_quota=10
-    )
     await agen.aclose()
 
 
@@ -295,11 +292,6 @@ async def test_enforce_job_creation_capacity_allows_when_active_jobs_below_limit
     )
 
     request = make_request()
-    request.state.rate_limit_tier_limits = TierLimits(
-        rpm_limit=60,
-        max_concurrent_jobs=1,
-        daily_quota=10,
-    )
     user = CurrentUser(user_id="u_ok", user_tier="free")
 
     await deps.enforce_job_creation_capacity(request, FAKE_DB, user)
@@ -320,11 +312,6 @@ async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkey
     )
 
     request = make_request()
-    request.state.rate_limit_tier_limits = TierLimits(
-        rpm_limit=2,
-        max_concurrent_jobs=1,
-        daily_quota=10,
-    )
     user = CurrentUser(user_id="u_full", user_tier="free")
 
     with pytest.raises(RateLimitException) as exc_info:
@@ -353,11 +340,6 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_db_lock_fai
     monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", _broken_lock)
 
     request = make_request()
-    request.state.rate_limit_tier_limits = TierLimits(
-        rpm_limit=60,
-        max_concurrent_jobs=2,
-        daily_quota=10,
-    )
     user = CurrentUser(user_id="u_db_err", user_tier="free")
 
     with pytest.raises(UnavailableException) as exc_info:
@@ -383,11 +365,6 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_daily_quota
     )
 
     request = make_request()
-    request.state.rate_limit_tier_limits = TierLimits(
-        rpm_limit=60,
-        max_concurrent_jobs=2,
-        daily_quota=20,
-    )
     user = CurrentUser(user_id="u_daily_err", user_tier="free")
 
     with pytest.raises(UnavailableException) as exc_info:

@@ -2,8 +2,8 @@
 Redis-backed identity cache for user_id + user_tier resolution.
 
 Caches the mapping from authentication credentials (JWT user_id or API key hash)
-to the resolved identity (user_id, user_tier) so that tier lookups do not hit
-the database on every request.
+to the resolved identity (user_id, user_tier) so that
+tier lookups do not hit the database on every request.
 
 Key patterns (all prefixed with REDIS_KEY_PREFIX from config):
     JWT:     {REDIS_KEY_PREFIX}identity:jwt:{user_id}
