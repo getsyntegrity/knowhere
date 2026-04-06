@@ -40,6 +40,7 @@ async def test_set_apikey_identity_caps_ttl_and_maintains_reverse_index():
         user_id="user_b",
         user_tier="tier_3",
         ttl_seconds=7200,
+        enabled_modules=["guest"],
     )
 
     apikey_key = cache._apikey_key("hash_1")
@@ -49,7 +50,11 @@ async def test_set_apikey_identity_caps_ttl_and_maintains_reverse_index():
     apikey_ttl = await redis.ttl(apikey_key)
     reverse_ttl = await redis.ttl(reverse_key)
 
-    assert cached == {"user_id": "user_b", "user_tier": "tier_3"}
+    assert cached == {
+        "user_id": "user_b",
+        "user_tier": "tier_3",
+        "enabled_modules": ["guest"],
+    }
     assert members == {"hash_1"}
     assert 1 <= apikey_ttl <= 3600
     assert 1 <= reverse_ttl <= 3600

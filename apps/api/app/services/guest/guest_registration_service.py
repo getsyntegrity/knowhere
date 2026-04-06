@@ -1,5 +1,7 @@
 """Guest registration business logic."""
+import hashlib
 from datetime import datetime, timedelta
+from typing import NoReturn
 from uuid import uuid4
 
 from loguru import logger
@@ -10,6 +12,7 @@ from app.repositories.guest_device_repository import GuestDeviceRepository
 from app.services.auth.api_key_service import APIKeyService
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
+from shared.core.exceptions.domain_exceptions import ConflictException
 from shared.models.database.guest_device import GuestDevice
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
@@ -42,9 +45,10 @@ class GuestRegistrationService:
     ) -> GuestRegisterResponse:
         """Register or re-register a guest device.
 
-        - If the device_id already exists, revoke the old key and issue a new one.
         - If the device_id is new, create a guest user + API key + device record.
-        - Handles concurrent first-registration race via IntegrityError retry.
+        - If the device_id already exists, reject the request to prevent key takeover.
+        - Handles concurrent first-registration race by waiting for the winner row
+          and returning the same duplicate-registration conflict.
         """
         expires_at = datetime.utcnow() + timedelta(days=_GUEST_KEY_EXPIRY_DAYS)
         key_name = f"{_GUEST_KEY_NAME_PREFIX}-{device_id[:32]}"
@@ -52,12 +56,8 @@ class GuestRegistrationService:
         existing = await self._device_repo.get_by_device_id(session, device_id)
 
         if existing is not None:
-            # Lock the row to serialize concurrent reissue requests for the
-            # same device_id.  Without this, two parallel requests could both
-            # mint replacement keys, leaving multiple active credentials.
-            locked = await self._device_repo.get_by_device_id_for_update(session, device_id)
-            if locked is not None:
-                return await self._reissue_key(session, locked, key_name, expires_at)
+            await self._device_repo.get_by_device_id_for_update(session, device_id)
+            self._raise_existing_device_conflict(device_id)
 
         try:
             return await self._create_new_guest(
@@ -66,87 +66,15 @@ class GuestRegistrationService:
         except IntegrityError as error:
             if not self._is_concurrent_guest_registration_error(error):
                 raise
-            # Concurrent registration race: another request inserted this
-            # device_id first.  Roll back our partial work and re-issue
-            # against the winning row.
             await session.rollback()
-            logger.info(
-                "Concurrent guest registration detected, retrying as re-issue: device_id={}",
-                device_id,
-            )
-            existing = await self._device_repo.get_by_device_id(session, device_id)
-            if existing is None:
+            locked = await self._device_repo.get_by_device_id_for_update(session, device_id)
+            if locked is None:
                 raise
-            return await self._reissue_key(session, existing, key_name, expires_at)
-
-    async def _reissue_key(
-        self,
-        session: AsyncSession,
-        device: GuestDevice,
-        key_name: str,
-        expires_at: datetime,
-    ) -> GuestRegisterResponse:
-        """Revoke old guest key and issue a fresh one.
-
-        All mutations happen via direct SQL within a single transaction.
-        We avoid calling ``APIKeyService.revoke_api_key()`` and
-        ``create_api_key()`` because they commit internally — which would
-        break atomicity and leave ``guest_devices.api_key_id`` dangling
-        if a later step fails.
-        """
-        from sqlalchemy import delete, select
-
-        from shared.models.database.api_key import APIKey
-
-        user_id = device.user_id
-
-        # 1. Delete old key (if any) directly — no intermediate commit.
-        #    Fetch the key_hash first for cache invalidation later.
-        old_api_key_hash: str | None = None
-        if device.api_key_id:
-            hash_result = await session.execute(
-                select(APIKey.key_hash).where(APIKey.id == device.api_key_id).limit(1)
+            logger.info(
+                "Guest registration conflict detected after concurrent create: device_id_hash={}",
+                self._get_device_id_log_token(device_id),
             )
-            old_api_key_hash = hash_result.scalar_one_or_none()
-            await session.execute(
-                delete(APIKey).where(APIKey.id == device.api_key_id)
-            )
-
-        # 2. Create replacement key — flush only.
-        api_key = await self._create_api_key_without_commit(
-            session, user_id, key_name, expires_at
-        )
-
-        # 3. Link new key to device row — flush only.
-        new_key_id = await self._resolve_api_key_id(session, api_key)
-        if new_key_id:
-            await self._device_repo.update_api_key(
-                session, device.device_id, new_key_id
-            )
-
-        # 4. Single commit: old key gone, new key + device link persisted.
-        await session.commit()
-
-        # Best-effort cache invalidation for the deleted key.
-        if old_api_key_hash is not None:
-            try:
-                from shared.core.config import redis_pool_manager
-                from app.services.rate_limit.identity_cache import identity_cache
-
-                await identity_cache.invalidate_apikey(
-                    redis_pool_manager.get_redis_service(),
-                    user_id,
-                    old_api_key_hash,
-                )
-            except Exception as err:
-                logger.warning("Failed to invalidate old guest key cache (ignored): {}", err)
-
-        logger.info(
-            "Re-issued guest API key: device_id={}, user_id={}",
-            device.device_id,
-            user_id,
-        )
-        return self._build_response(user_id, device.device_id, api_key, expires_at)
+            self._raise_existing_device_conflict(device_id)
 
     async def _create_new_guest(
         self,
@@ -194,7 +122,9 @@ class GuestRegistrationService:
         await session.commit()
 
         logger.info(
-            "Created guest: device_id={}, user_id={}", device_id, user_id
+            "Created guest: device_id_hash={}, user_id={}",
+            self._get_device_id_log_token(device_id),
+            user_id,
         )
         return self._build_response(user_id, device_id, api_key, expires_at)
 
@@ -293,6 +223,21 @@ class GuestRegistrationService:
         )
 
         return targets_guest_device and is_unique_violation and "device_id" in error_text
+
+    @staticmethod
+    def _get_device_id_log_token(device_id: str) -> str:
+        """Return a short stable token for logs without exposing the raw device_id."""
+        return hashlib.sha256(device_id.encode()).hexdigest()[:12]
+
+    @classmethod
+    def _raise_existing_device_conflict(cls, device_id: str) -> NoReturn:
+        """Reject duplicate guest registration for an existing device."""
+        device_token = cls._get_device_id_log_token(device_id)
+        raise ConflictException(
+            user_message="This device is already registered. Use the existing guest API key for job APIs.",
+            resource="GuestDevice",
+            internal_message=f"Guest device already registered: device_id_hash={device_token}",
+        )
 
     @staticmethod
     async def _resolve_api_key_id(session: AsyncSession, api_key: str) -> str | None:

@@ -19,8 +19,9 @@ async def register_guest(
 ) -> GuestRegisterResponse:
     """Register a guest device and return an API key.
 
-    If the device_id already exists, the previous key is revoked and a new
-    one is issued.  The endpoint is rate-limited by client IP.
+    If the device_id is already registered, the endpoint returns a conflict
+    instead of rotating the existing guest API key. The endpoint is
+    rate-limited by client IP.
     """
     service = GuestRegistrationService()
     return await service.register_guest(

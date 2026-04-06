@@ -14,6 +14,7 @@ from shared.core.config import redis_pool_manager, settings
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
+    PermissionDeniedException,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,6 +107,30 @@ def decode_jwt_token(token: str) -> str:
         raise AuthException(user_message="Invalid token")
 
 
+def _get_route_path(request: Request) -> str:
+    """Return the request path without the application's root_path prefix."""
+    scope_path = request.scope.get("path", request.url.path)
+    root_path = request.scope.get("root_path", "")
+    if root_path and scope_path.startswith(root_path):
+        return scope_path[len(root_path):]
+    return scope_path
+
+
+def _enforce_api_key_scope(route_path: str, enabled_modules: tuple[str, ...]) -> None:
+    """Reject requests that exceed the authenticated API key's scope."""
+    if "all" in enabled_modules:
+        return
+
+    if "guest" in enabled_modules and route_path.startswith("/v1/jobs"):
+        return
+
+    if "guest" in enabled_modules:
+        raise PermissionDeniedException(
+            user_message="Guest API keys can only access job APIs",
+            required_permission="jobs",
+        )
+
+
 async def get_current_user_id(
     request: Request,
     authorization: str | None = Header(default=None, description="Bearer <token> OR internal signature auth"),
@@ -127,6 +152,8 @@ async def get_current_user_id(
     if scheme.lower() != "bearer" or not token:
         raise AuthException(user_message="Invalid Authorization header format")
 
+    route_path = _get_route_path(request)
+
     # Mode 1: API Key verification (for external clients)
     if token.startswith("sk_"):
         # Check identity cache first — skip DB on cache hit
@@ -138,21 +165,29 @@ async def get_current_user_id(
             )
             if cached is not None:
                 cached_user_id = cached.get("user_id")
-                if cached_user_id:
+                cached_enabled_modules = cached.get("enabled_modules")
+                if cached_user_id and cached_enabled_modules is not None:
+                    enabled_modules = tuple(str(module) for module in cached_enabled_modules)
+                    _enforce_api_key_scope(route_path, enabled_modules)
                     # Stash tier so with_current_user can reuse it
                     request.state.cached_user_tier = cached.get("user_tier")
                     request.state.cached_identity_hit = True
+                    request.state.api_key_enabled_modules = enabled_modules
                     request.state.user_id = cached_user_id
                     return cached_user_id
+        except PermissionDeniedException:
+            raise
         except Exception:
             pass  # Fall through to DB validation
 
         # Cache miss — validate via DB
         api_key_service = APIKeyService()
-        user_id = await api_key_service.validate_api_key(db, token)
-        if user_id:
-            request.state.user_id = user_id
-            return user_id
+        identity = await api_key_service.validate_api_key_identity(db, token)
+        if identity:
+            _enforce_api_key_scope(route_path, identity.enabled_modules)
+            request.state.api_key_enabled_modules = identity.enabled_modules
+            request.state.user_id = identity.user_id
+            return identity.user_id
         else:
             raise AuthException(user_message="Invalid API Key")
 

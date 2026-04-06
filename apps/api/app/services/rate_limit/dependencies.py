@@ -164,12 +164,18 @@ async def with_current_user(
                 user_tier = await _resolve_user_tier_from_db(user_id)
                 if is_api_key_auth and api_key_hash:
                     ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
+                    enabled_modules = getattr(
+                        request.state,
+                        "api_key_enabled_modules",
+                        None,
+                    )
                     await identity_cache.set_apikey_identity(
                         redis_service,
                         api_key_hash,
                         user_id,
                         user_tier,
                         ttl_seconds=ttl_seconds,
+                        enabled_modules=enabled_modules,
                     )
                 else:
                     await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)

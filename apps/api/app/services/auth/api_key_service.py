@@ -4,6 +4,7 @@ API Key 管理服务
 import asyncio
 import hashlib
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
@@ -15,6 +16,15 @@ from shared.core.exceptions.domain_exceptions import ValidationException, NotFou
 from shared.core.database import get_db_context
 from shared.core.config import redis_pool_manager
 from app.services.rate_limit.identity_cache import identity_cache
+
+
+@dataclass(frozen=True)
+class APIKeyIdentity:
+    """Resolved identity for a validated API key."""
+
+    user_id: str
+    enabled_modules: tuple[str, ...]
+
 
 class APIKeyService:
     """API Key管理服务"""
@@ -73,6 +83,15 @@ class APIKeyService:
     
     async def validate_api_key(self, session: AsyncSession, api_key: str) -> Optional[str]:
         """Validate API key against DB, return user_id or None."""
+        identity = await self.validate_api_key_identity(session, api_key)
+        return identity.user_id if identity is not None else None
+
+    async def validate_api_key_identity(
+        self,
+        session: AsyncSession,
+        api_key: str,
+    ) -> Optional[APIKeyIdentity]:
+        """Validate API key and return the authenticated identity."""
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
 
@@ -81,7 +100,11 @@ class APIKeyService:
 
         self._schedule_last_used_update(str(api_key_record.id))
 
-        return str(api_key_record.user_id)
+        enabled_modules = tuple(api_key_record.enabled_modules or ["all"])
+        return APIKeyIdentity(
+            user_id=str(api_key_record.user_id),
+            enabled_modules=enabled_modules,
+        )
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
         """撤销API Key（直接删除）"""

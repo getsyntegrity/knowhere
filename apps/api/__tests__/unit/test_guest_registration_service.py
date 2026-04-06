@@ -1,4 +1,3 @@
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -6,8 +5,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.services.guest.guest_registration_service import GuestRegistrationService
+from shared.core.exceptions.domain_exceptions import ConflictException
 from shared.models.database.user import User
-from shared.models.schemas.guest import GuestRateLimitInfo, GuestRegisterResponse
 
 
 def create_mock_session() -> AsyncMock:
@@ -53,6 +52,41 @@ async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_register_guest_rejects_existing_device_id(monkeypatch) -> None:
+    service = GuestRegistrationService()
+    session = create_mock_session()
+    existing_device = SimpleNamespace(device_id="device-123")
+
+    monkeypatch.setattr(
+        service._device_repo,
+        "get_by_device_id",
+        AsyncMock(return_value=existing_device),
+    )
+    locked_lookup = AsyncMock(return_value=existing_device)
+    monkeypatch.setattr(
+        service._device_repo,
+        "get_by_device_id_for_update",
+        locked_lookup,
+    )
+
+    with pytest.raises(ConflictException) as exc_info:
+        await service.register_guest(
+            session=session,
+            device_id="device-123",
+            client="knowhere-hub",
+            platform="macos",
+            app_version="1.0.0",
+        )
+
+    assert exc_info.value.details == {
+        "reason": "ALREADY_EXISTS",
+        "resource": "GuestDevice",
+    }
+    locked_lookup.assert_awaited_once_with(session, "device-123")
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_register_guest_reraises_non_race_integrity_errors(monkeypatch) -> None:
     service = GuestRegistrationService()
     session = create_mock_session()
@@ -82,21 +116,10 @@ async def test_register_guest_reraises_non_race_integrity_errors(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_register_guest_retries_when_device_id_conflict_wins_race(monkeypatch) -> None:
+async def test_register_guest_conflicts_when_concurrent_create_loses_race(monkeypatch) -> None:
     service = GuestRegistrationService()
     session = create_mock_session()
-    existing_device = SimpleNamespace(
-        device_id="device-123",
-        user_id="user-123",
-        api_key_id="api_key_id_123",
-    )
-    expected_response = GuestRegisterResponse(
-        guest_user_id="user-123",
-        device_id="device-123",
-        api_key="sk_existing",
-        rate_limit=GuestRateLimitInfo(rpm=-1, daily_quota=-1, max_concurrent_jobs=10),
-        expires_at=datetime.utcnow(),
-    )
+    existing_device = SimpleNamespace(device_id="device-123")
     conflict_error = IntegrityError(
         "INSERT INTO guest_devices (device_id) VALUES ($1)",
         {},
@@ -109,26 +132,31 @@ async def test_register_guest_retries_when_device_id_conflict_wins_race(monkeypa
     monkeypatch.setattr(
         service._device_repo,
         "get_by_device_id",
-        AsyncMock(side_effect=[None, existing_device]),
+        AsyncMock(return_value=None),
     )
+    locked_lookup = AsyncMock(return_value=existing_device)
     monkeypatch.setattr(
-        service,
-        "_reissue_key",
-        AsyncMock(return_value=expected_response),
+        service._device_repo,
+        "get_by_device_id_for_update",
+        locked_lookup,
     )
     session.execute.return_value = SimpleNamespace(
         scalar_one_or_none=lambda: "api_key_id_new",
     )
     session.commit.side_effect = conflict_error
 
-    response = await service.register_guest(
-        session=session,
-        device_id="device-123",
-        client="knowhere-hub",
-        platform="macos",
-        app_version="1.0.0",
-    )
+    with pytest.raises(ConflictException) as exc_info:
+        await service.register_guest(
+            session=session,
+            device_id="device-123",
+            client="knowhere-hub",
+            platform="macos",
+            app_version="1.0.0",
+        )
 
-    assert response == expected_response
+    assert exc_info.value.details == {
+        "reason": "ALREADY_EXISTS",
+        "resource": "GuestDevice",
+    }
     session.rollback.assert_awaited_once_with()
-    service._reissue_key.assert_awaited_once()
+    locked_lookup.assert_awaited_once_with(session, "device-123")
