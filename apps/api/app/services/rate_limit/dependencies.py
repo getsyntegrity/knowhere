@@ -137,58 +137,44 @@ async def with_current_user(
     """
     redis_service = redis_pool_manager.get_redis_service()
 
-    # -- Resolve user_tier (reuse stashed value -> cache -> DB fallback) --
+    # -- Resolve user_tier (cache -> DB fallback) --
     user_tier: str = _DEFAULT_TIER
-    cached_tier: str | None = getattr(request.state, "cached_user_tier", None)
-    is_identity_hit: bool = getattr(request.state, "cached_identity_hit", False)
-
-    if is_identity_hit and cached_tier is not None:
-        # Already resolved in get_current_user_id — skip second lookup
-        user_tier = cached_tier
-    else:
-        token = _extract_bearer_token(request.headers.get("authorization"))
-        is_api_key_auth = bool(token and token.startswith("sk_"))
-        api_key_hash = hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
-        cache_key: str = (
-            identity_cache._apikey_key(api_key_hash)
-            if is_api_key_auth and api_key_hash
-            else identity_cache._jwt_key(user_id)
+    token = _extract_bearer_token(request.headers.get("authorization"))
+    is_api_key_auth = bool(token and token.startswith("sk_"))
+    api_key_hash = hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
+    cache_key: str = (
+        identity_cache._apikey_key(api_key_hash)
+        if is_api_key_auth and api_key_hash
+        else identity_cache._jwt_key(user_id)
+    )
+    try:
+        cached: dict | None = await identity_cache.get_cached_identity(
+            redis_service, cache_key
         )
-        try:
-            cached: dict | None = await identity_cache.get_cached_identity(
-                redis_service, cache_key
-            )
-            if cached is not None:
-                user_tier = cached.get("user_tier", _DEFAULT_TIER)
-            else:
-                user_tier = await _resolve_user_tier_from_db(user_id)
-                if is_api_key_auth and api_key_hash:
-                    ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
-                    enabled_modules = getattr(
-                        request.state,
-                        "api_key_enabled_modules",
-                        None,
-                    )
-                    await identity_cache.set_apikey_identity(
-                        redis_service,
-                        api_key_hash,
-                        user_id,
-                        user_tier,
-                        ttl_seconds=ttl_seconds,
-                        enabled_modules=enabled_modules,
-                    )
-                else:
-                    await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
-        except Exception:
-            logger.warning(
-                "rate_limit: Redis error during identity resolution, "
-                "falling back to DB for user_id={}",
-                user_id,
-            )
+        if cached is not None:
+            user_tier = cached.get("user_tier", _DEFAULT_TIER)
+        else:
             user_tier = await _resolve_user_tier_from_db(user_id)
+            if is_api_key_auth and api_key_hash:
+                ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
+                await identity_cache.set_apikey_identity(
+                    redis_service,
+                    api_key_hash,
+                    user_id,
+                    user_tier,
+                    ttl_seconds=ttl_seconds,
+                )
+            else:
+                await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
+    except Exception:
+        logger.warning(
+            "rate_limit: Redis error during identity resolution, "
+            "falling back to DB for user_id={}",
+            user_id,
+        )
+        user_tier = await _resolve_user_tier_from_db(user_id)
 
     current_user = CurrentUser(user_id=user_id, user_tier=user_tier)
-    request.state.user_id = user_id
 
     with log_context(user_id=user_id):
         # -- Bypass switch --
@@ -290,8 +276,6 @@ async def require_billing_limits(
             retry_after=_RETRY_AFTER_SECONDS,
         )
 
-    # -- Hand control to the route handler --
-    request.state.rate_limit_tier_limits = tier_limits
     yield current_user
 
 
@@ -396,10 +380,7 @@ async def enforce_job_creation_capacity(
     if config.is_bypassed:
         return
 
-    tier_limits = getattr(request.state, "rate_limit_tier_limits", None)
-    if not isinstance(tier_limits, TierLimits):
-        tier_limits = config.tier_map.get(current_user.user_tier)
-
+    tier_limits = config.tier_map.get(current_user.user_tier)
     if tier_limits is None:
         logger.error(
             "rate_limit: no tier config for tier='{}', user_id={}",

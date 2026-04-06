@@ -91,7 +91,6 @@ async def test_with_current_user_enforces_system_rpm(monkeypatch):
     user = await resolve_dep(deps.with_current_user(request=request, user_id="u_sys_ok"))
 
     assert user == CurrentUser(user_id="u_sys_ok", user_tier="tier_1")
-    assert request.state.user_id == "u_sys_ok"
     assert _PassSystemRateLimiter.calls == [("u_sys_ok", 30, "/v1/jobs")]
 
 
@@ -230,7 +229,7 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
     api_key_hash = hashlib.sha256(api_key_token.encode()).hexdigest()
 
     observed_cache_keys: list[str] = []
-    apikey_set_calls: list[tuple[str, str, str, int, tuple[str, ...] | None]] = []
+    apikey_set_calls: list[tuple[str, str, str, int]] = []
 
     async def _cache_miss(_redis, cache_key: str):
         observed_cache_keys.append(cache_key)
@@ -248,7 +247,6 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
         call_user_id: str,
         call_user_tier: str,
         ttl_seconds: int,
-        enabled_modules=None,
     ):
         apikey_set_calls.append(
             (
@@ -256,7 +254,6 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
                 call_user_id,
                 call_user_tier,
                 ttl_seconds,
-                tuple(enabled_modules) if enabled_modules is not None else None,
             )
         )
 
@@ -277,13 +274,12 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
     monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
 
     request = make_request(authorization=f"Bearer {api_key_token}")
-    request.state.api_key_enabled_modules = ("guest",)
     user = await resolve_dep(deps.with_current_user(request=request, user_id="u_apikey"))
 
     assert user == CurrentUser(user_id="u_apikey", user_tier="tier_3")
     assert observed_cache_keys == [deps.identity_cache._apikey_key(api_key_hash)]
     assert apikey_set_calls == [
-        (api_key_hash, "u_apikey", "tier_3", 123, ("guest",))
+        (api_key_hash, "u_apikey", "tier_3", 123)
     ]
 
 

@@ -8,14 +8,23 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
-from shared.models.database.api_key import APIKey
-from app.repositories.api_key_repository import APIKeyRepository
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
-from shared.core.exceptions.domain_exceptions import ValidationException, NotFoundException, KnowhereException, APIKeyOperationException
-from shared.core.database import get_db_context
+from app.repositories.api_key_repository import APIKeyRepository
 from shared.core.config import redis_pool_manager
+from shared.core.database import get_db_context
+from shared.core.exceptions.domain_exceptions import (
+    APIKeyOperationException,
+    KnowhereException,
+    NotFoundException,
+    ValidationException,
+)
+from shared.models.database.api_key import APIKey
+from shared.models.database.user_balance import UserBalance
 from app.services.rate_limit.identity_cache import identity_cache
+
+_DEFAULT_USER_TIER: str = "free"
 
 
 @dataclass(frozen=True)
@@ -23,7 +32,7 @@ class APIKeyIdentity:
     """Resolved identity for a validated API key."""
 
     user_id: str
-    enabled_modules: tuple[str, ...]
+    user_tier: str
 
 
 class APIKeyService:
@@ -99,12 +108,27 @@ class APIKeyService:
             return None
 
         self._schedule_last_used_update(str(api_key_record.id))
+        user_id = str(api_key_record.user_id)
+        user_tier = await self._resolve_user_tier(session, user_id)
 
-        enabled_modules = tuple(api_key_record.enabled_modules or ["all"])
         return APIKeyIdentity(
-            user_id=str(api_key_record.user_id),
-            enabled_modules=enabled_modules,
+            user_id=user_id,
+            user_tier=user_tier,
         )
+
+    async def _resolve_user_tier(
+        self,
+        session: AsyncSession,
+        user_id: str,
+    ) -> str:
+        """Resolve the billing tier for the API key owner."""
+        result = await session.execute(
+            select(UserBalance.user_tier)
+            .where(UserBalance.user_id == user_id)
+            .limit(1)
+        )
+        user_tier = result.scalar_one_or_none()
+        return str(user_tier) if user_tier is not None else _DEFAULT_USER_TIER
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
         """撤销API Key（直接删除）"""

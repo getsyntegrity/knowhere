@@ -116,19 +116,18 @@ def _get_route_path(request: Request) -> str:
     return scope_path
 
 
-def _enforce_api_key_scope(route_path: str, enabled_modules: tuple[str, ...]) -> None:
-    """Reject requests that exceed the authenticated API key's scope."""
-    if "all" in enabled_modules:
+def _enforce_guest_api_key_scope(route_path: str, user_tier: str) -> None:
+    """Reject guest API keys outside the job API surface."""
+    if user_tier != "guest":
         return
 
-    if "guest" in enabled_modules and route_path.startswith("/v1/jobs"):
+    if route_path.startswith("/v1/jobs"):
         return
 
-    if "guest" in enabled_modules:
-        raise PermissionDeniedException(
-            user_message="Guest API keys can only access job APIs",
-            required_permission="jobs",
-        )
+    raise PermissionDeniedException(
+        user_message="Guest API keys can only access job APIs",
+        required_permission="jobs",
+    )
 
 
 async def get_current_user_id(
@@ -136,12 +135,7 @@ async def get_current_user_id(
     authorization: str | None = Header(default=None, description="Bearer <token> OR internal signature auth"),
     db: AsyncSession = Depends(get_db),
 ) -> str:
-    """Authenticate the caller and return user_id.
-
-    When the identity cache is hit the resolved ``user_tier`` is stashed on
-    ``request.state.cached_user_tier`` so that downstream dependencies
-    (``with_current_user``) can skip a second cache/DB lookup.
-    """
+    """Authenticate the caller and return user_id."""
     if not authorization:
         raise AuthException(
             user_message="Authentication required. Provide Authorization header."
@@ -165,15 +159,9 @@ async def get_current_user_id(
             )
             if cached is not None:
                 cached_user_id = cached.get("user_id")
-                cached_enabled_modules = cached.get("enabled_modules")
-                if cached_user_id and cached_enabled_modules is not None:
-                    enabled_modules = tuple(str(module) for module in cached_enabled_modules)
-                    _enforce_api_key_scope(route_path, enabled_modules)
-                    # Stash tier so with_current_user can reuse it
-                    request.state.cached_user_tier = cached.get("user_tier")
-                    request.state.cached_identity_hit = True
-                    request.state.api_key_enabled_modules = enabled_modules
-                    request.state.user_id = cached_user_id
+                cached_user_tier = cached.get("user_tier")
+                if cached_user_id and isinstance(cached_user_tier, str):
+                    _enforce_guest_api_key_scope(route_path, cached_user_tier)
                     return cached_user_id
         except PermissionDeniedException:
             raise
@@ -184,14 +172,10 @@ async def get_current_user_id(
         api_key_service = APIKeyService()
         identity = await api_key_service.validate_api_key_identity(db, token)
         if identity:
-            _enforce_api_key_scope(route_path, identity.enabled_modules)
-            request.state.api_key_enabled_modules = identity.enabled_modules
-            request.state.user_id = identity.user_id
+            _enforce_guest_api_key_scope(route_path, identity.user_tier)
             return identity.user_id
         else:
             raise AuthException(user_message="Invalid API Key")
 
     # Mode 2: JWT verification (for Dashboard/Internal)
-    user_id = decode_jwt_token(token)
-    request.state.user_id = user_id
-    return user_id
+    return decode_jwt_token(token)

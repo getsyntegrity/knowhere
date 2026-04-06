@@ -30,7 +30,7 @@ def make_request(path: str, authorization: str) -> Request:
 @pytest.mark.asyncio
 async def test_get_current_user_id_allows_guest_api_key_for_jobs(monkeypatch) -> None:
     request = make_request("/v1/jobs", "Bearer sk_guest_jobs")
-    identity = APIKeyIdentity(user_id="guest-user", enabled_modules=("guest",))
+    identity = APIKeyIdentity(user_id="guest-user", user_tier="guest")
 
     monkeypatch.setattr(
         core_dependencies.redis_pool_manager,
@@ -57,7 +57,6 @@ async def test_get_current_user_id_allows_guest_api_key_for_jobs(monkeypatch) ->
     )
 
     assert user_id == "guest-user"
-    assert request.state.api_key_enabled_modules == ("guest",)
 
 
 @pytest.mark.asyncio
@@ -76,7 +75,6 @@ async def test_get_current_user_id_rejects_guest_api_key_for_billing_from_cache(
             return_value={
                 "user_id": "guest-user",
                 "user_tier": "guest",
-                "enabled_modules": ["guest"],
             }
         ),
     )

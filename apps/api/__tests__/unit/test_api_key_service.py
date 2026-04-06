@@ -42,6 +42,9 @@ async def test_validate_api_key_schedules_last_used_update(monkeypatch):
         "_schedule_last_used_update",
         lambda api_key_id: scheduled.append(api_key_id),
     )
+    session.execute.return_value = SimpleNamespace(
+        scalar_one_or_none=lambda: "free",
+    )
 
     user_id = await service.validate_api_key(session, "sk_test_token")
 
@@ -50,7 +53,7 @@ async def test_validate_api_key_schedules_last_used_update(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_validate_api_key_identity_returns_enabled_modules(monkeypatch):
+async def test_validate_api_key_identity_returns_user_tier(monkeypatch):
     service = APIKeyService()
     session = AsyncMock()
     record = SimpleNamespace(
@@ -65,12 +68,15 @@ async def test_validate_api_key_identity_returns_enabled_modules(monkeypatch):
         "get_by_key_hash",
         AsyncMock(return_value=record),
     )
+    session.execute.return_value = SimpleNamespace(
+        scalar_one_or_none=lambda: "guest",
+    )
 
     identity = await service.validate_api_key_identity(session, "sk_test_guest")
 
     assert identity == APIKeyIdentity(
         user_id="user_2",
-        enabled_modules=("guest",),
+        user_tier="guest",
     )
 
 

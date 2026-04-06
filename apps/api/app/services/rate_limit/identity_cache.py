@@ -2,7 +2,7 @@
 Redis-backed identity cache for user_id + user_tier resolution.
 
 Caches the mapping from authentication credentials (JWT user_id or API key hash)
-to the resolved identity (user_id, user_tier, optional enabled_modules) so that
+to the resolved identity (user_id, user_tier) so that
 tier lookups do not hit the database on every request.
 
 Key patterns (all prefixed with REDIS_KEY_PREFIX from config):
@@ -12,7 +12,7 @@ Key patterns (all prefixed with REDIS_KEY_PREFIX from config):
 """
 
 import json
-from typing import Optional, Sequence
+from typing import Optional
 
 from loguru import logger
 from shared.services.redis.redis_service import RedisService
@@ -102,7 +102,6 @@ class IdentityCache:
         user_id: str,
         user_tier: str,
         ttl_seconds: int,
-        enabled_modules: Sequence[str] | None = None,
     ) -> None:
         """Cache identity for an API-key-authenticated user.
 
@@ -114,8 +113,6 @@ class IdentityCache:
         effective_ttl: int = min(_APIKEY_MAX_TTL_SECONDS, ttl_seconds)
         key: str = self._apikey_key(api_key_hash)
         payload: dict = {"user_id": user_id, "user_tier": user_tier}
-        if enabled_modules is not None:
-            payload["enabled_modules"] = list(enabled_modules)
         try:
             await redis.set(key, payload, ttl=effective_ttl)
             # Maintain reverse index so invalidate_user can find all
