@@ -163,7 +163,7 @@ class GuestRegistrationService:
         """
         user_id = str(uuid4())
 
-        user = User(id=user_id, is_guest=True)
+        user = User(id=user_id)
         session.add(user)
 
         balance = UserBalance(user_id=user_id, user_tier=_GUEST_TIER)

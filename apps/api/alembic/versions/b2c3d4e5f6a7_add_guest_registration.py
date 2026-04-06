@@ -1,4 +1,4 @@
-"""Add guest registration: guest_devices table, user.is_guest column, guest tier, and system limit
+"""Add guest registration: guest_devices table, guest tier, and system limit
 
 Revision ID: b2c3d4e5f6a7
 Revises: a1b2c3d4e5f6
@@ -20,13 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add guest registration support."""
-    # 1. Add is_guest column to user table
-    op.add_column(
-        "user",
-        sa.Column("is_guest", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-    )
-
-    # 2. Create guest_devices table
+    # 1. Create guest_devices table
     op.create_table(
         "guest_devices",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -43,7 +37,7 @@ def upgrade() -> None:
     op.create_index("ix_guest_devices_device_id", "guest_devices", ["device_id"], unique=True)
     op.create_index("ix_guest_devices_user_id", "guest_devices", ["user_id"])
 
-    # 3. Insert guest tier into tier_limits
+    # 2. Insert guest tier into tier_limits
     # Use min_lifetime_amount_micro = -1 so that refresh_tier() (which picks
     # the highest tier where total_spend >= threshold) never accidentally
     # assigns normal users to the guest tier.  Guest users are assigned to
@@ -56,7 +50,7 @@ def upgrade() -> None:
         """
     )
 
-    # 4. Insert system limit for guest registration endpoint (50 per hour per IP)
+    # 3. Insert system limit for guest registration endpoint (50 per hour per IP)
     op.execute(
         """
         INSERT INTO system_limits (method, api_pattern, priority, rpm, description)
@@ -73,4 +67,3 @@ def downgrade() -> None:
     op.drop_index("ix_guest_devices_user_id", table_name="guest_devices")
     op.drop_index("ix_guest_devices_device_id", table_name="guest_devices")
     op.drop_table("guest_devices")
-    op.drop_column("user", "is_guest")
