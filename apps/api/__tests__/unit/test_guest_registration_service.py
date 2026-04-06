@@ -46,6 +46,8 @@ async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> N
 
     assert isinstance(created_user, User)
     assert created_user.name == "Guest codex-staging-smoke-20260406"
+    assert created_user.email.startswith("guest+")
+    assert created_user.email.endswith("@guest.knowhere.local")
     assert response.device_id == device_id
     assert response.api_key.startswith("sk_")
     session.commit.assert_awaited_once_with()

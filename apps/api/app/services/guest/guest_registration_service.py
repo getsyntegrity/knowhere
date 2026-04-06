@@ -26,6 +26,7 @@ _GUEST_KEY_EXPIRY_DAYS: int = 60
 _GUEST_KEY_NAME_PREFIX: str = "guest-device"
 _GUEST_DISPLAY_NAME_PREFIX: str = "Guest "
 _GUEST_DISPLAY_NAME_MAX_LENGTH: int = 255
+_GUEST_EMAIL_DOMAIN: str = "guest.knowhere.local"
 
 
 class GuestRegistrationService:
@@ -95,8 +96,9 @@ class GuestRegistrationService:
         """
         user_id = str(uuid4())
         guest_name = self._build_guest_name(device_id)
+        guest_email = self._build_guest_email(user_id)
 
-        user = User(id=user_id, name=guest_name)
+        user = User(id=user_id, name=guest_name, email=guest_email)
         session.add(user)
 
         balance = UserBalance(user_id=user_id, user_tier=_GUEST_TIER)
@@ -204,6 +206,11 @@ class GuestRegistrationService:
         if guest_suffix:
             return f"{_GUEST_DISPLAY_NAME_PREFIX}{guest_suffix}"
         return _GUEST_DISPLAY_NAME_PREFIX.strip()
+
+    @staticmethod
+    def _build_guest_email(user_id: str) -> str:
+        """Build a unique placeholder email for guest-owned user rows."""
+        return f"guest+{user_id}@{_GUEST_EMAIL_DOMAIN}"
 
     @staticmethod
     def _is_concurrent_guest_registration_error(error: IntegrityError) -> bool:
