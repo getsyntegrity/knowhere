@@ -13,7 +13,7 @@ api_router = APIRouter()
 # API Key management
 api_router.include_router(api_key.router, prefix="/auth", tags=["API Key管理"])
 
-# Guest registration (unauthenticated, IP-rate-limited)
+# Guest registration 
 api_router.include_router(guest.router, prefix="/guest", tags=["Guest Registration"])
 
 # Billing

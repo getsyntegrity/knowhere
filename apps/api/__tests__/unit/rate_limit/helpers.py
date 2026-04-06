@@ -10,16 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 fakeredis = pytest.importorskip("fakeredis.aioredis")
 
-from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
+from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 
 # Sentinel AsyncSession — never actually used at runtime because DB calls
 # are monkeypatched, but satisfies the type checker.
 FAKE_DB: AsyncSession = cast(AsyncSession, object())
 _T = TypeVar("_T")
 
-DEFAULT_SYSTEM_RULES: list[SystemRpmRule] = [
-    SystemRpmRule(method="POST", api_pattern="/v1/jobs", priority=100, rpm=30),
-    SystemRpmRule(method="*", api_pattern="*", priority=9999, rpm=1000),
+DEFAULT_SYSTEM_RULES: list[SystemLimitRule] = [
+    SystemLimitRule(method="POST", api_pattern="/v1/jobs", priority=100, limit=30),
+    SystemLimitRule(method="*", api_pattern="*", priority=9999, limit=1000),
 ]
 
 
@@ -92,7 +92,7 @@ def make_request(authorization: str | None = None) -> Request:
 def build_real_config(
     monkeypatch,
     tier_map: dict[str, TierLimits],
-    system_rules: list[SystemRpmRule] | None = None,
+    system_rules: list[SystemLimitRule] | None = None,
 ):
     """Create a real RateLimitConfig backed by fakeredis."""
     from types import SimpleNamespace

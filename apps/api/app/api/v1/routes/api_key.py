@@ -31,12 +31,6 @@ async def create_api_key(
     db: AsyncSession = Depends(get_db)
 ):
     """创建API Key"""
-    if current_user.user_tier == "guest":
-        raise ValidationException(
-            user_message="Guest users cannot create API keys",
-            violations=[{"field": "user_tier", "description": "Upgrade to a full account first"}],
-        )
-
     api_key_service = APIKeyService()
     
     try:

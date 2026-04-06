@@ -161,6 +161,9 @@ async def get_current_user_id(
                 cached_user_id = cached.get("user_id")
                 cached_user_tier = cached.get("user_tier")
                 if cached_user_id and isinstance(cached_user_tier, str):
+                    request.state.cached_user_tier = cached_user_tier
+                    request.state.cached_identity_hit = True
+                    request.state.user_id = cached_user_id
                     _enforce_guest_api_key_scope(route_path, cached_user_tier)
                     return cached_user_id
         except PermissionDeniedException:
@@ -172,6 +175,9 @@ async def get_current_user_id(
         api_key_service = APIKeyService()
         identity = await api_key_service.validate_api_key_identity(db, token)
         if identity:
+            request.state.cached_user_tier = identity.user_tier
+            request.state.cached_identity_hit = False
+            request.state.user_id = identity.user_id
             _enforce_guest_api_key_scope(route_path, identity.user_tier)
             return identity.user_id
         else:

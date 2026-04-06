@@ -1,4 +1,4 @@
-"""Add guest registration with guest tier and daily endpoint limits.
+"""Add guest registration with guest tier.
 
 Revision ID: b2c3d4e5f6a7
 Revises: a1b2c3d4e5f6
@@ -20,15 +20,22 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add guest registration support."""
-    op.add_column(
-        "system_limits",
-        sa.Column(
-            "period",
-            sa.String(length=10),
-            nullable=False,
-            server_default=_DEFAULT_SYSTEM_LIMIT_PERIOD,
-        ),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    system_limit_columns = {
+        column["name"] for column in inspector.get_columns("system_limits")
+    }
+    if "period" not in system_limit_columns:
+        op.add_column(
+            "system_limits",
+            sa.Column(
+                "period",
+                sa.String(length=10),
+                nullable=False,
+                server_default="minute",
+            ),
+        )
+        op.alter_column("system_limits", "period", server_default=None)
 
     # 1. Create guest_devices table
     op.create_table(
@@ -60,22 +67,23 @@ def upgrade() -> None:
         """
     )
 
-    # 3. Insert system limit for guest registration endpoint (100 per day per IP)
     op.execute(
         """
         INSERT INTO system_limits (method, api_pattern, priority, rpm, period, description)
-        VALUES ('POST', '/v1/guest', 100, 100, 'day', 'Guest registration endpoint IP rate limit (per day)')
+        VALUES ('POST', '/v1/guest', 100, 100, 'day', 'Guest registration endpoint global daily limit')
         ON CONFLICT (method, api_pattern) DO NOTHING
         """
     )
-    op.alter_column("system_limits", "period", server_default=None)
 
 
 def downgrade() -> None:
     """Remove guest registration support."""
     op.execute("DELETE FROM system_limits WHERE method = 'POST' AND api_pattern = '/v1/guest'")
+    # ``period`` may have existed before this revision on some databases.
+    # Since this migration does not persist whether it created the column,
+    # downgrade leaves it in place rather than risking removal of a
+    # pre-existing schema element.
     op.execute("DELETE FROM tier_limits WHERE tier_name = 'guest'")
     op.drop_index("ix_guest_devices_user_id", table_name="guest_devices")
     op.drop_index("ix_guest_devices_device_id", table_name="guest_devices")
     op.drop_table("guest_devices")
-    op.drop_column("system_limits", "period")

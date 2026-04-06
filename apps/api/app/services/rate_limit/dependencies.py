@@ -6,7 +6,7 @@ Dependency chain (outermost -> innermost):
                             ->  get_db
 
 ``with_current_user`` resolves identity (user_id + user_tier), caches it in
-Redis, and enforces the system-wide RPM limit (Layer 0).
+Redis, and enforces the matched system limit (Layer 0).
 
 ``require_billing_limits`` enforces billing RPM (Layer 1) and yields control
 to the route handler. Concurrency (Layer 2) and daily quota (Layer 3) are
@@ -32,7 +32,7 @@ from app.services.rate_limit.config import (
 from app.services.rate_limit.data_structures import CurrentUser, TierLimits
 from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.limiter import RateLimiter
-from app.services.rate_limit.system_rpm import find_system_rpm, find_system_rule
+from app.services.rate_limit.system_limit import find_system_rule
 from shared.core.database import get_db, get_db_context
 from shared.core.exceptions.domain_exceptions import (
     RateLimitException,
@@ -92,6 +92,29 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
     return token
 
 
+def _get_route_path(request: Request) -> str:
+    """Return the request path without the application's root_path prefix."""
+    scope_path: str = request.scope.get("path", request.url.path)
+    root_path: str = request.scope.get("root_path", "")
+    if root_path and scope_path.startswith(root_path):
+        return scope_path[len(root_path):]
+    return scope_path
+
+
+def _get_route_limit_identifier(request: Request) -> str:
+    """Return a stable identifier for route-scoped system limits."""
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    if isinstance(route_path, str) and route_path:
+        return route_path
+
+    route_path_format = getattr(route, "path_format", None)
+    if isinstance(route_path_format, str) and route_path_format:
+        return route_path_format
+
+    return _get_route_path(request)
+
+
 async def _resolve_apikey_cache_ttl_seconds(api_key_hash: str) -> int:
     """Resolve cache TTL for API key identity (max 1 hour)."""
     max_ttl_seconds = 3600
@@ -117,7 +140,7 @@ async def _resolve_apikey_cache_ttl_seconds(api_key_hash: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# with_current_user -- Layer 0 (system RPM)
+# with_current_user -- Layer 0 (matched system limit)
 # ---------------------------------------------------------------------------
 
 
@@ -125,7 +148,7 @@ async def with_current_user(
     request: Request,
     user_id: str = Depends(get_current_user_id),
 ) -> AsyncGenerator[CurrentUser, None]:
-    """Resolve identity and enforce the system-wide RPM limit.
+    """Resolve identity and enforce the matched system limit.
 
     Steps:
         1. ``get_current_user_id`` already authenticated the user (401
@@ -133,46 +156,87 @@ async def with_current_user(
         2. Resolve ``user_tier`` from the identity cache; fall back to DB on
            cache miss or Redis error.
         3. If ``RATE_LIMIT_BYPASSED`` is set, return immediately.
-        4. Check system RPM via the rate limiter (fail-open on Redis error).
+        4. Check the matched system limit via the rate limiter (fail-open on
+           Redis error).
     """
     redis_service = redis_pool_manager.get_redis_service()
 
     # -- Resolve user_tier (cache -> DB fallback) --
-    user_tier: str = _DEFAULT_TIER
-    token = _extract_bearer_token(request.headers.get("authorization"))
-    is_api_key_auth = bool(token and token.startswith("sk_"))
-    api_key_hash = hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
-    cache_key: str = (
-        identity_cache._apikey_key(api_key_hash)
-        if is_api_key_auth and api_key_hash
-        else identity_cache._jwt_key(user_id)
+    user_tier: str | None = getattr(request.state, "cached_user_tier", None)
+    stashed_user_id: str | None = getattr(request.state, "user_id", None)
+    cached_identity_hit: bool | None = getattr(
+        request.state, "cached_identity_hit", None
     )
-    try:
-        cached: dict | None = await identity_cache.get_cached_identity(
-            redis_service, cache_key
-        )
-        if cached is not None:
-            user_tier = cached.get("user_tier", _DEFAULT_TIER)
-        else:
-            user_tier = await _resolve_user_tier_from_db(user_id)
+
+    if isinstance(user_tier, str) and stashed_user_id == user_id:
+        if cached_identity_hit is False:
+            token = _extract_bearer_token(request.headers.get("authorization"))
+            is_api_key_auth = bool(token and token.startswith("sk_"))
+            api_key_hash = (
+                hashlib.sha256(token.encode()).hexdigest()
+                if is_api_key_auth
+                else None
+            )
             if is_api_key_auth and api_key_hash:
-                ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
-                await identity_cache.set_apikey_identity(
-                    redis_service,
-                    api_key_hash,
-                    user_id,
-                    user_tier,
-                    ttl_seconds=ttl_seconds,
-                )
-            else:
-                await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
-    except Exception:
-        logger.warning(
-            "rate_limit: Redis error during identity resolution, "
-            "falling back to DB for user_id={}",
-            user_id,
+                try:
+                    ttl_seconds = await _resolve_apikey_cache_ttl_seconds(
+                        api_key_hash
+                    )
+                    await identity_cache.set_apikey_identity(
+                        redis_service,
+                        api_key_hash,
+                        user_id,
+                        user_tier,
+                        ttl_seconds=ttl_seconds,
+                    )
+                except Exception:
+                    logger.warning(
+                        "rate_limit: failed to backfill API key identity cache "
+                        "for user_id={}",
+                        user_id,
+                    )
+    else:
+        token = _extract_bearer_token(request.headers.get("authorization"))
+        is_api_key_auth = bool(token and token.startswith("sk_"))
+        api_key_hash = (
+            hashlib.sha256(token.encode()).hexdigest()
+            if is_api_key_auth
+            else None
         )
-        user_tier = await _resolve_user_tier_from_db(user_id)
+        cache_key: str = (
+            identity_cache._apikey_key(api_key_hash)
+            if is_api_key_auth and api_key_hash
+            else identity_cache._jwt_key(user_id)
+        )
+        try:
+            cached: dict | None = await identity_cache.get_cached_identity(
+                redis_service, cache_key
+            )
+            if cached is not None:
+                user_tier = cached.get("user_tier", _DEFAULT_TIER)
+            else:
+                user_tier = await _resolve_user_tier_from_db(user_id)
+                if is_api_key_auth and api_key_hash:
+                    ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
+                    await identity_cache.set_apikey_identity(
+                        redis_service,
+                        api_key_hash,
+                        user_id,
+                        user_tier,
+                        ttl_seconds=ttl_seconds,
+                    )
+                else:
+                    await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
+        except Exception:
+            logger.warning(
+                "rate_limit: Redis error during identity resolution, "
+                "falling back to DB for user_id={}",
+                user_id,
+            )
+            user_tier = await _resolve_user_tier_from_db(user_id)
+
+    if user_tier is None:
+        user_tier = _DEFAULT_TIER
 
     current_user = CurrentUser(user_id=user_id, user_tier=user_tier)
 
@@ -183,26 +247,25 @@ async def with_current_user(
             yield current_user
             return
 
-        # -- Layer 0: system RPM --
+        # -- Layer 0: matched system limit --
         try:
-            scope_path: str = request.scope.get("path", request.url.path)
-            root_path: str = request.scope.get("root_path", "")
-            route_path: str = (
-                scope_path[len(root_path):]
-                if root_path and scope_path.startswith(root_path)
-                else scope_path
-            )
-            rpm, matched_pattern = find_system_rpm(
+            route_path = _get_route_path(request)
+            rule = find_system_rule(
                 request.method, route_path, config.system_rules
             )
             limiter = RateLimiter(config)
-            await limiter.check_system_rpm(user_id, rpm, matched_pattern)
+            await limiter.check_system_limit(
+                identifier=user_id,
+                limit=rule.limit,
+                matched_pattern=rule.api_pattern,
+                period=rule.period,
+            )
         except RateLimitException:
             raise
         except Exception as exc:
             # Fail-open: log and let the request through.
             logger.warning(
-                "rate_limit: Redis error during system RPM check, "
+                "rate_limit: Redis error during system limit check, "
                 "failing open for user_id={}, error={}",
                 user_id,
                 exc,
@@ -279,94 +342,40 @@ async def require_billing_limits(
     yield current_user
 
 
-# ---------------------------------------------------------------------------
-# require_ip_rate_limit -- unauthenticated endpoint protection
-# ---------------------------------------------------------------------------
+async def require_route_system_limit(request: Request) -> None:
+    """Apply the matched system limit to the current route using a route key.
 
-
-async def require_ip_rate_limit(request: Request) -> None:
-    """Rate-limit unauthenticated endpoints by client IP.
-
-    Uses the system_limits table (same config as Layer 0) to resolve the limit
-    for the matched method + path pattern. The key is scoped to the client IP
-    instead of a user_id.
-
-    Fail-open: Redis errors are logged but the request is allowed through.
+    Prefer the framework route template so paths with different parameters
+    share the same budget bucket. If no explicit rule matches, the default
+    system rule still protects the route with the wider fallback budget.
+    Fail closed when Redis or limiter state is unavailable.
     """
     config = RateLimitConfig.get_instance()
     if config.is_bypassed:
         return
 
-    client_ip: str = request.client.host if request.client else "unknown"
-
-    scope_path: str = request.scope.get("path", request.url.path)
-    root_path: str = request.scope.get("root_path", "")
-    route_path: str = (
-        scope_path[len(root_path) :]
-        if root_path and scope_path.startswith(root_path)
-        else scope_path
-    )
-
+    route_path = _get_route_path(request)
+    route_identifier = _get_route_limit_identifier(request)
     rule = find_system_rule(request.method, route_path, config.system_rules)
-    rpm = rule.rpm
-    matched_pattern = rule.api_pattern
-    period = rule.period
-
-    if rpm == -1:
-        return
-
+    limiter = RateLimiter(config)
     try:
-        rate_item = config.parse_rate(f"{rpm}/{period}")
-        namespace = config.namespaced_namespace(f"ip_rate_limit:{period}")
-        identifier = f"{client_ip}:{matched_pattern}"
-        window = (
-            config.fixed_window
-            if period == "day"
-            else config.sliding_window
+        await limiter.check_system_limit(
+            identifier=route_identifier,
+            limit=rule.limit,
+            matched_pattern=rule.api_pattern,
+            period=rule.period,
+            use_global_key=True,
         )
-
-        is_allowed: bool = await window.hit(
-            rate_item, namespace, identifier
-        )
-        if not is_allowed:
-            import time
-
-            try:
-                stats = await window.get_window_stats(
-                    rate_item, namespace, identifier
-                )
-                reset_time = int(stats.reset_time)
-                now = int(time.time())
-                retry_after = max(1, reset_time - now)
-            except Exception:
-                retry_after = RateLimitException.DEFAULT_RETRY_AFTER
-
-            logger.warning(
-                "IP rate limit exceeded: ip={}, pattern={}, limit={}/{}",
-                client_ip,
-                matched_pattern,
-                rpm,
-                period,
-            )
-            raise RateLimitException(
-                retry_after=retry_after,
-                limit=rpm,
-                period=period,
-                internal_message=(
-                    f"IP rate limit exceeded for ip={client_ip}, "
-                    f"pattern={matched_pattern}, limit={rpm}/{period}"
-                ),
-            )
     except RateLimitException:
         raise
     except Exception as exc:
-        # Fail-open: Redis outage should not block guest registration
-        # entirely.  The limiter is abuse protection, not a gate.
-        logger.warning(
-            "rate_limit: Redis error during IP RPM check, "
-            "failing open for ip={}, error={}",
-            client_ip,
-            exc,
+        raise UnavailableException(
+            internal_message=(
+                f"Redis error in route system limit: {exc}"
+            ),
+            retry_after=_RETRY_AFTER_SECONDS,
+            limit=rule.limit,
+            period=rule.period,
         )
 
 

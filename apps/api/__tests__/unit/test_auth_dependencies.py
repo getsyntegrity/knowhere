@@ -57,6 +57,9 @@ async def test_get_current_user_id_allows_guest_api_key_for_jobs(monkeypatch) ->
     )
 
     assert user_id == "guest-user"
+    assert request.state.cached_user_tier == "guest"
+    assert request.state.cached_identity_hit is False
+    assert request.state.user_id == "guest-user"
 
 
 @pytest.mark.asyncio
@@ -85,3 +88,7 @@ async def test_get_current_user_id_rejects_guest_api_key_for_billing_from_cache(
             authorization="Bearer sk_guest_billing",
             db=cast(AsyncSession, object()),
         )
+
+    assert request.state.cached_user_tier == "guest"
+    assert request.state.cached_identity_hit is True
+    assert request.state.user_id == "guest-user"
