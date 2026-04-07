@@ -1,8 +1,9 @@
 from app.services.rate_limit.config import (
+    DEFAULT_SYSTEM_LIMIT,
     RateLimitConfig,
     _is_rate_limit_bypassed,
 )
-from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
+from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from shared.core.exceptions.redis_exceptions import RedisConfigurationError
 
 
@@ -35,8 +36,8 @@ def test_update_rules_sorts_system_rules_by_priority():
         "free": TierLimits(rpm_limit=2, max_concurrent_jobs=2, daily_quota=20)
     }
     unsorted_rules = [
-        SystemRpmRule(method="*", api_pattern="*", priority=9999, rpm=1000),
-        SystemRpmRule(method="POST", api_pattern="/v1/jobs", priority=100, rpm=30),
+        SystemLimitRule(method="*", api_pattern="*", priority=9999, limit=DEFAULT_SYSTEM_LIMIT),
+        SystemLimitRule(method="POST", api_pattern="/v1/jobs", priority=100, limit=30),
     ]
 
     cfg.update_rules(tier_map, unsorted_rules)
@@ -44,6 +45,6 @@ def test_update_rules_sorts_system_rules_by_priority():
     assert cfg.tier_map == tier_map
     assert [r.priority for r in cfg.system_rules] == [100, 9999]
     assert (
-        cfg.namespaced_namespace("system_rpm")
-        == "knowhere-api:rate_limit:system_rpm"
+        cfg.namespaced_namespace("system_limit")
+        == "knowhere-api:rate_limit:system_limit"
     )

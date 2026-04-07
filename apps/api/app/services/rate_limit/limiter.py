@@ -1,7 +1,7 @@
 """
 Rate limiter layer implementations.
 
-Wraps the ``limits`` library for Layer 0 (System RPM), Layer 1 (Billing RPM),
+Wraps the ``limits`` library for Layer 0 (system limits), Layer 1 (Billing RPM),
 and Layer 3 (Daily Quota) checks. Each layer raises RateLimitException on
 rejection with appropriate retry headers.
 """
@@ -28,46 +28,74 @@ class RateLimiter:
         self._config: RateLimitConfig = config
 
     # ------------------------------------------------------------------
-    # Layer 0 -- System RPM (per-endpoint sliding window)
+    # Layer 0 -- System limits (per-endpoint matched window)
     # ------------------------------------------------------------------
 
-    async def check_system_rpm(
+    async def check_system_limit(
         self,
-        user_id: str,
-        rpm: int,
+        identifier: str,
+        limit: int,
         matched_pattern: str,
+        *,
+        period: str = "minute",
+        use_global_key: bool = False,
     ) -> None:
         """
-        Layer 0: System RPM check.
+        Layer 0: System limit check.
 
-        Raises RateLimitException if the per-endpoint sliding window
-        is exhausted for this user.
+        Raises RateLimitException if the per-endpoint system limit
+        is exhausted for the resolved identifier.
         """
-        if self._config.is_bypassed or rpm == -1:
+        if self._config.is_bypassed or limit == -1:
             return
 
-        rate_item = self._config.parse_rate(f"{rpm}/minute")
-        namespace = self._config.namespaced_namespace("system_rpm")
-        identifier = f"{user_id}:{matched_pattern}"
+        rate_item = self._config.parse_rate(f"{limit}/{period}")
+        namespace_suffix = (
+            "system_limit" if period == "minute" else f"system_limit:{period}"
+        )
+        namespace = self._config.namespaced_namespace(namespace_suffix)
+        rate_limit_key = (
+            identifier
+            if use_global_key
+            else f"{identifier}:{matched_pattern}"
+        )
+        window = (
+            self._config.fixed_window
+            if period == "day"
+            else self._config.sliding_window
+        )
+        strategy = "fixed" if period == "day" else "sliding"
 
-        is_allowed: bool = await self._config.sliding_window.hit(
-            rate_item, namespace, identifier
+        is_allowed: bool = await window.hit(
+            rate_item, namespace, rate_limit_key
         )
         if not is_allowed:
             headers = await self._build_rejection_headers(
-                rate_item, namespace, identifier, rpm, "minute", strategy="sliding"
+                rate_item,
+                namespace,
+                rate_limit_key,
+                limit,
+                period,
+                strategy=strategy,
+            )
+            target = (
+                f"route={identifier}, pattern={matched_pattern}"
+                if use_global_key
+                else f"user={identifier}, pattern={matched_pattern}"
             )
             logger.warning(
-                f"System RPM exceeded: user={user_id}, "
-                f"pattern={matched_pattern}, limit={rpm}/min"
+                "System limit exceeded: {}, limit={}/{}",
+                target,
+                limit,
+                period,
             )
             exc = RateLimitException(
                 retry_after=headers["retry_after"],
-                limit=rpm,
-                period="minute",
+                limit=limit,
+                period=period,
                 internal_message=(
-                    f"System RPM exceeded for user={user_id}, "
-                    f"pattern={matched_pattern}, limit={rpm}/min"
+                    f"System limit exceeded for {target}, "
+                    f"limit={limit}/{period}"
                 ),
             )
             exc.details.update(

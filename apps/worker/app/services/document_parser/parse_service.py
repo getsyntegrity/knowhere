@@ -60,6 +60,7 @@ def checkerboard_inject_parse(
     filename: str, 
     output_dir: str,
     internal_output_filename: str,
+    job_id: str | None = None,
     kb_dir: str = "Default_Root",
     llm_histories: int = 5,
     smart_title_parse: bool = True,
@@ -91,6 +92,7 @@ def checkerboard_inject_parse(
         add_frag_desc: extra fragment description
         base_url: optional source base URL
         fragment_content: raw fragment content
+        job_id: optional job identifier used for parser artifacts
         internal_output_filename: normalized internal folder name for on-disk output
         s3_key: optional S3 key for downstream parsers
     
@@ -229,8 +231,9 @@ def checkerboard_inject_parse(
                 output_dir=full_output_dir,
                 base_llm_paras=base_llm_paras,
                 strategy="to_pdf_api",
+                job_id=job_id,
                 relative_root=relative_root,
-                baseurl=baseurl
+                baseurl=baseurl,
             )
             
             # ====== [EXPERIMENTAL] Directly send PPTX to MinerU via parse_pdfs ======

@@ -5,7 +5,7 @@ import pytest
 fakeredis = pytest.importorskip("fakeredis.aioredis")
 
 from app.services.rate_limit import dependencies as deps
-from app.services.rate_limit.data_structures import CurrentUser, SystemRpmRule
+from app.services.rate_limit.data_structures import CurrentUser, SystemLimitRule
 from shared.core.exceptions.domain_exceptions import RateLimitException
 
 from .helpers import FakeRedisService, make_request, resolve_dep
@@ -15,39 +15,45 @@ class _SystemConfig:
     def __init__(self) -> None:
         self.is_bypassed = False
         self.system_rules = [
-            SystemRpmRule(
+            SystemLimitRule(
                 method="POST",
                 api_pattern="/v1/jobs",
                 priority=100,
-                rpm=30,
+                limit=30,
             )
         ]
 
 
 class _PassSystemRateLimiter:
-    calls: list[tuple[str, int, str]] = []
+    calls: list[tuple[str, int, str, str, bool]] = []
 
     def __init__(self, _config) -> None:
         pass
 
-    async def check_system_rpm(
+    async def check_system_limit(
         self,
-        user_id: str,
-        rpm: int,
+        identifier: str,
+        limit: int,
         matched_pattern: str,
+        *,
+        period: str = "minute",
+        use_global_key: bool = False,
     ) -> None:
-        self.calls.append((user_id, rpm, matched_pattern))
+        self.calls.append((identifier, limit, matched_pattern, period, use_global_key))
 
 
 class _Raise429SystemRateLimiter:
     def __init__(self, _config) -> None:
         pass
 
-    async def check_system_rpm(
+    async def check_system_limit(
         self,
-        _user_id: str,
-        _rpm: int,
-        _matched_pattern: str,
+        identifier: str,
+        limit: int,
+        matched_pattern: str,
+        *,
+        period: str = "minute",
+        use_global_key: bool = False,
     ) -> None:
         raise RateLimitException(retry_after=7, limit=30, period="minute")
 
@@ -56,17 +62,20 @@ class _RaiseSystemErrorRateLimiter:
     def __init__(self, _config) -> None:
         pass
 
-    async def check_system_rpm(
+    async def check_system_limit(
         self,
-        _user_id: str,
-        _rpm: int,
-        _matched_pattern: str,
+        identifier: str,
+        limit: int,
+        matched_pattern: str,
+        *,
+        period: str = "minute",
+        use_global_key: bool = False,
     ) -> None:
         raise RuntimeError("redis transient error")
 
 
 @pytest.mark.asyncio
-async def test_with_current_user_enforces_system_rpm(monkeypatch):
+async def test_with_current_user_enforces_system_limit(monkeypatch):
     redis = fakeredis.FakeRedis(decode_responses=True)
     redis_service = FakeRedisService(redis)
 
@@ -91,12 +100,11 @@ async def test_with_current_user_enforces_system_rpm(monkeypatch):
     user = await resolve_dep(deps.with_current_user(request=request, user_id="u_sys_ok"))
 
     assert user == CurrentUser(user_id="u_sys_ok", user_tier="tier_1")
-    assert request.state.user_id == "u_sys_ok"
-    assert _PassSystemRateLimiter.calls == [("u_sys_ok", 30, "/v1/jobs")]
+    assert _PassSystemRateLimiter.calls == [("u_sys_ok", 30, "/v1/jobs", "minute", False)]
 
 
 @pytest.mark.asyncio
-async def test_with_current_user_raises_on_system_rpm_exceeded(monkeypatch):
+async def test_with_current_user_raises_on_system_limit_exceeded(monkeypatch):
     redis = fakeredis.FakeRedis(decode_responses=True)
     redis_service = FakeRedisService(redis)
 
@@ -125,7 +133,7 @@ async def test_with_current_user_raises_on_system_rpm_exceeded(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_with_current_user_fail_open_on_system_rpm_error(monkeypatch):
+async def test_with_current_user_fail_open_on_system_limit_error(monkeypatch):
     redis = fakeredis.FakeRedis(decode_responses=True)
     redis_service = FakeRedisService(redis)
 
@@ -181,6 +189,105 @@ async def test_with_current_user_identity_jwt_cache_hit_skips_db_lookup(monkeypa
 
     assert user == CurrentUser(user_id="u_cache_hit", user_tier="tier_5")
     assert db_lookup_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_with_current_user_reuses_stashed_apikey_tier_without_redis_lookup(
+    monkeypatch,
+):
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    redis_service = FakeRedisService(redis)
+    cache_lookup_calls = 0
+
+    async def _cache_lookup(_redis, _cache_key):
+        nonlocal cache_lookup_calls
+        cache_lookup_calls += 1
+        return {"user_id": "u_apikey", "user_tier": "tier_9"}
+
+    monkeypatch.setattr(
+        deps.redis_pool_manager, "get_redis_service", lambda: redis_service
+    )
+    monkeypatch.setattr(deps.identity_cache, "get_cached_identity", _cache_lookup)
+    monkeypatch.setattr(
+        deps.RateLimitConfig,
+        "get_instance",
+        classmethod(lambda _cls: _SystemConfig()),
+    )
+    monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
+
+    request = make_request(authorization="Bearer sk_guest")
+    request.state.cached_user_tier = "tier_3"
+    request.state.cached_identity_hit = True
+    request.state.user_id = "u_apikey"
+
+    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_apikey"))
+
+    assert user == CurrentUser(user_id="u_apikey", user_tier="tier_3")
+    assert cache_lookup_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_with_current_user_backfills_apikey_cache_from_stashed_db_identity(
+    monkeypatch,
+):
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    redis_service = FakeRedisService(redis)
+    api_key_token = "sk_test_123"
+    api_key_hash = hashlib.sha256(api_key_token.encode()).hexdigest()
+    cache_lookup_calls = 0
+    apikey_set_calls: list[tuple[str, str, str, int]] = []
+
+    async def _cache_lookup(_redis, _cache_key):
+        nonlocal cache_lookup_calls
+        cache_lookup_calls += 1
+        return {"user_id": "u_apikey", "user_tier": "tier_9"}
+
+    async def _apikey_ttl(_api_key_hash: str):
+        return 123
+
+    async def _set_apikey_identity(
+        _redis,
+        call_api_key_hash: str,
+        call_user_id: str,
+        call_user_tier: str,
+        ttl_seconds: int,
+    ):
+        apikey_set_calls.append(
+            (
+                call_api_key_hash,
+                call_user_id,
+                call_user_tier,
+                ttl_seconds,
+            )
+        )
+
+    monkeypatch.setattr(
+        deps.redis_pool_manager, "get_redis_service", lambda: redis_service
+    )
+    monkeypatch.setattr(deps.identity_cache, "get_cached_identity", _cache_lookup)
+    monkeypatch.setattr(deps, "_resolve_apikey_cache_ttl_seconds", _apikey_ttl)
+    monkeypatch.setattr(
+        deps.identity_cache, "set_apikey_identity", _set_apikey_identity
+    )
+    monkeypatch.setattr(
+        deps.RateLimitConfig,
+        "get_instance",
+        classmethod(lambda _cls: _SystemConfig()),
+    )
+    monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
+
+    request = make_request(authorization=f"Bearer {api_key_token}")
+    request.state.cached_user_tier = "tier_3"
+    request.state.cached_identity_hit = False
+    request.state.user_id = "u_apikey"
+
+    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_apikey"))
+
+    assert user == CurrentUser(user_id="u_apikey", user_tier="tier_3")
+    assert cache_lookup_calls == 0
+    assert apikey_set_calls == [
+        (api_key_hash, "u_apikey", "tier_3", 123)
+    ]
 
 
 @pytest.mark.asyncio
@@ -250,7 +357,12 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
         ttl_seconds: int,
     ):
         apikey_set_calls.append(
-            (call_api_key_hash, call_user_id, call_user_tier, ttl_seconds)
+            (
+                call_api_key_hash,
+                call_user_id,
+                call_user_tier,
+                ttl_seconds,
+            )
         )
 
     monkeypatch.setattr(
@@ -274,7 +386,9 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
 
     assert user == CurrentUser(user_id="u_apikey", user_tier="tier_3")
     assert observed_cache_keys == [deps.identity_cache._apikey_key(api_key_hash)]
-    assert apikey_set_calls == [(api_key_hash, "u_apikey", "tier_3", 123)]
+    assert apikey_set_calls == [
+        (api_key_hash, "u_apikey", "tier_3", 123)
+    ]
 
 
 @pytest.mark.asyncio

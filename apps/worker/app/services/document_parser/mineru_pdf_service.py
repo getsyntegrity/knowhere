@@ -7,6 +7,7 @@ from loguru import logger
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from app.services.document_parser.parser_log_utils import truncate_log_value
 from app.services.document_parser.mineru_quota_manager import get_mineru_quota_manager
 from shared.core.config import settings
 from shared.core.constants import APIConstants
@@ -68,6 +69,119 @@ def get_mineru_headers(api_key: str) -> dict[str, str]:
 
 def _mineru_logger(step: str, **fields: Any):
     return logger.bind(service="mineru", step=step, **fields)
+
+
+def _should_use_mineru_s3_url_mode(s3_key: Optional[str]) -> bool:
+    return settings.ENVIRONMENT != "development" and s3_key is not None
+
+
+def _log_mineru_url_mode_storage_fallback(
+    operation: str,
+    s3_key: str,
+    local_file_path: Optional[str],
+    exc: Exception,
+) -> None:
+    _mineru_logger(
+        "url_mode_storage_fallback",
+        operation=operation,
+        source_s3_key=s3_key,
+        local_file_path=local_file_path,
+        error_type=type(exc).__name__,
+        error_message=truncate_log_value(exc),
+    ).warning(
+        "MinerU URL-mode storage preparation failed. Falling back to direct upload."
+    )
+
+
+def _log_mineru_url_mode_ingestion_fallback(
+    operation: str,
+    s3_key: str,
+    pdf_url: str,
+    exc: Exception,
+) -> None:
+    _mineru_logger(
+        "url_mode_ingestion_fallback",
+        operation=operation,
+        source_s3_key=s3_key,
+        source_kind="remote_url" if is_remote(pdf_url) else "local_file",
+        source_path=None if is_remote(pdf_url) else pdf_url,
+        error_type=type(exc).__name__,
+        error_message=truncate_log_value(exc),
+    ).warning(
+        "MinerU URL-mode ingestion setup failed. Falling back to direct upload."
+    )
+
+
+def _inspect_mineru_source_s3_key(s3_key: Optional[str]) -> tuple[Optional[str], bool]:
+    """Inspect whether URL mode can reuse or prepare the requested S3 source key."""
+    if not _should_use_mineru_s3_url_mode(s3_key):
+        return None, False
+
+    assert s3_key is not None
+    from app.services.storage.sync_storage_service import verify_s3_file_exists
+
+    try:
+        existing_file = verify_s3_file_exists(s3_key, settings.S3_BUCKET_NAME)
+    except Exception as exc:
+        _log_mineru_url_mode_storage_fallback(
+            operation="verify_source_object",
+            s3_key=s3_key,
+            local_file_path=None,
+            exc=exc,
+        )
+        return None, False
+
+    if existing_file.get("exists"):
+        _mineru_logger(
+            "url_mode_source_reused",
+            source_s3_key=s3_key,
+        ).info("Reusing existing S3 source for MinerU URL mode")
+        return s3_key, True
+
+    return None, True
+
+
+def get_existing_mineru_source_s3_key(s3_key: Optional[str]) -> Optional[str]:
+    """Return an existing S3 source key for URL mode, or None if it is unavailable."""
+    existing_s3_key, _ = _inspect_mineru_source_s3_key(s3_key)
+    return existing_s3_key
+
+
+def resolve_mineru_source_s3_key(
+    s3_key: Optional[str],
+    local_file_path: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve an S3 source key for URL mode, uploading a local file if needed."""
+    existing_s3_key, can_prepare_url_mode = _inspect_mineru_source_s3_key(s3_key)
+    if existing_s3_key is not None:
+        return existing_s3_key
+
+    if not can_prepare_url_mode:
+        return None
+
+    if local_file_path is None or is_remote(local_file_path):
+        return None
+
+    assert s3_key is not None
+    from app.services.storage.sync_storage_service import upload_to_s3
+
+    try:
+        upload_to_s3(local_file_path, s3_key, settings.S3_BUCKET_NAME)
+    except Exception as exc:
+        _log_mineru_url_mode_storage_fallback(
+            operation="upload_source_object",
+            s3_key=s3_key,
+            local_file_path=local_file_path,
+            exc=exc,
+        )
+        return None
+
+    _mineru_logger(
+        "url_mode_source_uploaded",
+        source_s3_key=s3_key,
+        local_file_path=local_file_path,
+    ).info("Uploaded local PDF to S3 for MinerU URL mode")
+    return s3_key
 
 
 def _get_retry_after_seconds(
@@ -239,11 +353,11 @@ def poll_mineru_task(
 
                 state = status.get("state", "unknown")
                 if state != last_state:
-                    polling_logger.bind(
-                        token_id=lease.token_id,
-                        attempt=attempt + 1,
-                        state=state,
-                    ).info("MinerU status changed")
+                    # polling_logger.bind(
+                    #     token_id=lease.token_id,
+                    #     attempt=attempt + 1,
+                    #     state=state,
+                    # ).info("MinerU status changed")
                     last_state = state
 
                 if state == "done":
@@ -265,10 +379,10 @@ def poll_mineru_task(
                                 status["extract_progress"]["extracted_pages"]
                                 / status["extract_progress"]["total_pages"]
                             )
-                            polling_logger.bind(
-                                token_id=lease.token_id,
-                                progress=progress,
-                            ).info("MinerU parsing progress updated")
+                            # polling_logger.bind(
+                            #     token_id=lease.token_id,
+                            #     progress=progress,
+                            # ).info("MinerU parsing progress updated")
                         except (KeyError, ZeroDivisionError):
                             polling_logger.bind(token_id=lease.token_id).info(
                                 "MinerU parsing in progress"
@@ -602,18 +716,33 @@ def parse_via_full(
     output_dir: str,
     s3_key: Optional[str] = None,
 ) -> None:
-    if settings.ENVIRONMENT != "development" and s3_key is not None:
-        from app.services.storage.sync_storage_service import generate_download_url
+    resolved_s3_key = resolve_mineru_source_s3_key(
+        s3_key=s3_key,
+        local_file_path=None if is_remote(pdf_url) else pdf_url,
+    )
 
-        presigned = generate_download_url(
-            s3_key, expires_in=settings.MINERU_URL_MODE_PRESIGN_EXPIRY
-        )
-        presigned_url = presigned["download_url"]
-        _mineru_logger("ingestion_mode", mode="s3_url").info(
-            "Using S3 URL mode for MinerU ingestion"
-        )
-        batch_id, token_id = _submit_url_task(presigned_url, filename)
-    else:
+    if resolved_s3_key is not None:
+        try:
+            from app.services.storage.sync_storage_service import generate_download_url
+
+            presigned = generate_download_url(
+                resolved_s3_key, expires_in=settings.MINERU_URL_MODE_PRESIGN_EXPIRY
+            )
+            presigned_url = presigned["download_url"]
+            _mineru_logger("ingestion_mode", mode="s3_url").info(
+                "Using S3 URL mode for MinerU ingestion"
+            )
+            batch_id, token_id = _submit_url_task(presigned_url, filename)
+        except Exception as exc:
+            _log_mineru_url_mode_ingestion_fallback(
+                operation="start_url_mode_ingestion",
+                s3_key=resolved_s3_key,
+                pdf_url=pdf_url,
+                exc=exc,
+            )
+            resolved_s3_key = None
+
+    if resolved_s3_key is None:
         _mineru_logger("ingestion_mode", mode="direct_upload").info(
             "Using direct upload mode for MinerU ingestion"
         )

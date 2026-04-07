@@ -4,6 +4,7 @@ Provides S3 file operations and HTTP file downloads using sync adapters
 that yield cooperatively under gevent.
 """
 import os
+import tempfile
 import uuid as _uuid
 from typing import Any, Dict, Optional
 
@@ -53,6 +54,40 @@ def upload_to_s3(local_file_path: str, s3_key: str, bucket: str):
     """Upload file to S3 using sync adapter."""
     adapter = get_storage_adapter()
     adapter.upload_file(local_file_path, s3_key, bucket)
+
+
+def download_s3_object_to_temp(
+    s3_key: str,
+    suffix: str,
+    temp_dir: str,
+    bucket: Optional[str] = None,
+) -> str:
+    """Download an object-storage file into a task-local temp file."""
+    adapter = get_storage_adapter()
+    bucket_name = bucket or settings.S3_BUCKET_NAME
+    local_temp_path: str | None = None
+
+    try:
+        os.makedirs(temp_dir, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=suffix,
+            dir=temp_dir,
+        ) as temp_file:
+            local_temp_path = temp_file.name
+        adapter.download_file(s3_key, local_temp_path, bucket_name)
+        return local_temp_path
+    except Exception as e:
+        if local_temp_path and os.path.exists(local_temp_path):
+            os.remove(local_temp_path)
+        raise StorageServiceException(
+            internal_message=(
+                f"Failed to download object-storage file to temp path: "
+                f"s3_key={s3_key}, temp_dir={temp_dir}, error={e}"
+            ),
+            operation="download_s3_object_to_temp",
+            original_exception=e,
+        ) from e
 
 
 def upload_zip_result(job_id: str, zip_file_path: str) -> str:

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.rate_limit.data_structures import SystemRpmRule, TierLimits
+from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from app.services.rate_limit.rule_loader import (
     _fetch_system_rules,
     _fetch_tier_map,
@@ -64,8 +64,8 @@ async def test_fetch_system_rules_builds_rule_list():
     )
     rules = await _fetch_system_rules(db)
     assert rules == [
-        SystemRpmRule(method="POST", api_pattern="/v1/jobs", priority=100, rpm=30),
-        SystemRpmRule(method="*", api_pattern="*", priority=9999, rpm=1000),
+        SystemLimitRule(method="POST", api_pattern="/v1/jobs", priority=100, limit=30),
+        SystemLimitRule(method="*", api_pattern="*", priority=9999, limit=1000),
     ]
 
 
@@ -74,7 +74,7 @@ async def test_load_rules_updates_config(monkeypatch):
     tier_map = {
         "free": TierLimits(rpm_limit=2, max_concurrent_jobs=2, daily_quota=20)
     }
-    rules = [SystemRpmRule(method="*", api_pattern="*", priority=9999, rpm=1000)]
+    rules = [SystemLimitRule(method="*", api_pattern="*", priority=9999, limit=1000)]
     update_calls: list[tuple[dict, list]] = []
 
     class _Config:

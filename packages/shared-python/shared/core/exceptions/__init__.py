@@ -13,6 +13,7 @@ from shared.core.exceptions.domain_exceptions import (
     TimeoutException,
     UnknownException,
     FileSystemException,
+    LibreOfficeServiceException,
 )
 from shared.core.exceptions.retryable_exceptions import RETRYABLE_EXCEPTIONS
 from shared.core.exceptions.webhook_exceptions import (
@@ -37,6 +38,7 @@ __all__ = [
     "TimeoutException",
     "UnknownException",
     "FileSystemException",
+    "LibreOfficeServiceException",
     # Webhook Exceptions
     "WebhookException",
     "WebhookConfigException",

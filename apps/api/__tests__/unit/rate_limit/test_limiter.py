@@ -55,28 +55,28 @@ def _config(
 
 
 @pytest.mark.asyncio
-async def test_check_system_rpm_skips_when_bypassed():
+async def test_check_system_limit_skips_when_bypassed():
     sliding = _Window(hit_allowed=False)
     limiter = RateLimiter(_config(is_bypassed=True, sliding=sliding))
-    await limiter.check_system_rpm("u1", 10, "/v1/jobs")
+    await limiter.check_system_limit("u1", 10, "/v1/jobs")
     assert sliding.hit_calls == []
 
 
 @pytest.mark.asyncio
-async def test_check_system_rpm_skips_when_unlimited():
+async def test_check_system_limit_skips_when_unlimited():
     sliding = _Window(hit_allowed=False)
     limiter = RateLimiter(_config(sliding=sliding))
-    await limiter.check_system_rpm("u1", -1, "/v1/jobs")
+    await limiter.check_system_limit("u1", -1, "/v1/jobs")
     assert sliding.hit_calls == []
 
 
 @pytest.mark.asyncio
-async def test_check_system_rpm_raises_with_window_details():
+async def test_check_system_limit_raises_with_window_details():
     sliding = _Window(hit_allowed=False, remaining=0, reset_time=int(time.time()) + 20)
     limiter = RateLimiter(_config(sliding=sliding))
 
     with pytest.raises(RateLimitException) as exc_info:
-        await limiter.check_system_rpm("u_sys", 12, "/v1/jobs")
+        await limiter.check_system_limit("u_sys", 12, "/v1/jobs")
 
     exc = exc_info.value
     assert exc.limit == 12
@@ -84,6 +84,34 @@ async def test_check_system_rpm_raises_with_window_details():
     assert exc.details["remaining"] == 0
     assert isinstance(exc.details["reset"], int)
     assert exc.details["reset"] >= int(time.time())
+
+
+@pytest.mark.asyncio
+async def test_check_system_limit_uses_fixed_window_for_global_day_rule():
+    fixed = _Window(hit_allowed=False, remaining=0, reset_time=int(time.time()) + 20)
+    sliding = _Window()
+    limiter = RateLimiter(_config(sliding=sliding, fixed=fixed))
+
+    with pytest.raises(RateLimitException) as exc_info:
+        await limiter.check_system_limit(
+            "ignored",
+            100,
+            "/v1/guest",
+            period="day",
+            use_global_key=True,
+        )
+
+    exc = exc_info.value
+    assert exc.limit == 100
+    assert exc.period == "day"
+    assert fixed.hit_calls == [
+        (
+            "parsed:100/day",
+            "knowhere-api:rate_limit:system_limit:day",
+            "ignored",
+        )
+    ]
+    assert sliding.hit_calls == []
 
 
 @pytest.mark.asyncio

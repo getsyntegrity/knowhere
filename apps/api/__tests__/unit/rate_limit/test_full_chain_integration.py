@@ -108,7 +108,6 @@ async def test_full_chain_allows_first_request(monkeypatch):
     )
     yielded = await agen.__anext__()
     assert yielded == current_user
-    assert request.state.rate_limit_tier_limits == _FREE_LIMITS
     await agen.aclose()
 
     # L2 + L3
