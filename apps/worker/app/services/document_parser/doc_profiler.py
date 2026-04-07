@@ -681,54 +681,28 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         )
 
     landscape_ratio = landscape_pages / n_sampled if n_sampled > 0 else 0.0
-    is_atlas = (
-        profile.avg_text_density < ATLAS_TEXT_THRESHOLD
-        and profile.avg_image_coverage > ATLAS_IMAGE_COVERAGE_MIN
-        and landscape_ratio >= ATLAS_MIN_LANDSCAPE_RATIO
-        and profile.page_count >= ATLAS_MIN_PAGES
+
+    # ── Linear atlas gate: VLM always makes the final call ──
+    # Any document meeting all 4 conditions is sent for VLM visual confirmation.
+    # We do NOT heuristically commit here — VLM decides in parse_service.
+    ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN = 0.30
+    is_atlas_candidate = (
+        profile.avg_text_density < ATLAS_TEXT_THRESHOLD              # text-sparse (< 200 chars/page)
+        and profile.avg_image_coverage > ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN  # image-heavy (> 30%)
+        and landscape_ratio >= ATLAS_MIN_LANDSCAPE_RATIO             # mostly landscape (>= 50%)
+        and profile.page_count >= ATLAS_MIN_PAGES                    # multi-page (>= 2)
     )
-    if is_atlas:
-        profile.doc_category = "atlas"
+    if is_atlas_candidate:
+        profile.doc_category = "generic"  # provisional — VLM will promote to "atlas" if confirmed
+        profile.atlas_candidate = True
         reasons.append(
-            f"atlas: text={profile.avg_text_density:.0f}<{ATLAS_TEXT_THRESHOLD}, "
-            f"img={profile.avg_image_coverage:.1%}>{ATLAS_IMAGE_COVERAGE_MIN:.0%}, "
+            f"atlas_candidate: text={profile.avg_text_density:.0f}<{ATLAS_TEXT_THRESHOLD}, "
+            f"img={profile.avg_image_coverage:.1%}>{ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN:.0%}, "
             f"landscape={landscape_ratio:.0%}>={ATLAS_MIN_LANDSCAPE_RATIO:.0%}, "
-            f"pages={profile.page_count}>={ATLAS_MIN_PAGES}"
+            f"pages={profile.page_count}>={ATLAS_MIN_PAGES} → VLM confirmation required"
         )
     else:
         profile.doc_category = "generic"
-        if (
-            profile.avg_text_density < ATLAS_TEXT_THRESHOLD
-            and profile.avg_image_coverage > ATLAS_IMAGE_COVERAGE_MIN
-        ):
-            # Explain why atlas was NOT triggered despite text/image match
-            skip_reasons = []
-            if landscape_ratio < ATLAS_MIN_LANDSCAPE_RATIO:
-                skip_reasons.append(
-                    f"landscape={landscape_ratio:.0%}<{ATLAS_MIN_LANDSCAPE_RATIO:.0%}"
-                )
-            if profile.page_count < ATLAS_MIN_PAGES:
-                skip_reasons.append(
-                    f"pages={profile.page_count}<{ATLAS_MIN_PAGES}"
-                )
-            reasons.append(f"atlas_skipped: {', '.join(skip_reasons)}")
-
-    # ── Atlas candidate: relaxed heuristic for VLM second-pass ──
-    # Triggered when heuristic is inconclusive (e.g. text-density too high due to OCR
-    # overlay on scanned atlas pages). VLM will make the final call in parse_service.
-    ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN = 0.30
-    if (
-        profile.doc_category != "atlas"  # not already confirmed
-        and landscape_ratio >= ATLAS_MIN_LANDSCAPE_RATIO
-        and profile.page_count >= ATLAS_MIN_PAGES
-        and profile.avg_image_coverage >= ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN
-    ):
-        profile.atlas_candidate = True
-        reasons.append(
-            f"atlas_candidate: landscape={landscape_ratio:.0%}, "
-            f"img={profile.avg_image_coverage:.1%}, pages={profile.page_count} "
-            f"→ VLM confirmation required"
-        )
 
     if landscape_ratio >= 0.8 and profile.doc_category == "generic":
         slide_ratios = [1.333, 1.778, 1.600]
