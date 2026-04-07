@@ -169,6 +169,9 @@ class ChunksRedisService:
                 img_name = (
                     path.split("/")[-1] if "/" in path else f"image_{chunk_id}.jpg"
                 )
+                # Ensure image file name has an extension (atlas paths lack one)
+                if not any(img_name.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                    img_name += ".png"
                 metadata["file_path"] = f"images/{img_name}"
             elif chunk_type == "table":
                 tbl_name = (
