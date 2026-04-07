@@ -329,7 +329,7 @@ def parse_atlas(
             continue
 
         if vlm_info:
-            chunk_title = f"P{page_num} {vlm_info[:50]}"
+            chunk_title = vlm_info[:80]
         else:
             chunk_title = _make_title_from_text(page_text, page_num)
 

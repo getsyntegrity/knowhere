@@ -1181,15 +1181,42 @@ def postprocess_tb(df, drop=False):
             was_multiindex = isinstance(df.columns, pd.MultiIndex)
             n_levels = df.columns.nlevels if was_multiindex else 1
             
-            # Avoid name collision: if the index name already exists as a column,
-            # clear it before reset_index to prevent "cannot insert X, already exists"
-            existing_col_names = {str(c) for c in df.columns}
+            # Avoid name collision before reset_index().
+            # Two collision sources:
+            #   A) An index level name, when padded into a tuple by pandas,
+            #      matches an existing column.
+            #   B) Multiple index levels share the same name → pandas tries
+            #      to insert duplicate columns (e.g. five levels all named
+            #      '专业技术职级通道（全员）' → five columns all padded to
+            #      ('专业技术职级通道（全员）', '')).
+            # Strategy: de-duplicate index.names so every level gets a unique
+            # column name during reset_index, then clean up afterwards.
+            existing_col_set = set(df.columns)
+
+            def _make_padded(name):
+                """Simulate the column name pandas would create for this index level."""
+                if was_multiindex:
+                    return (name,) + ('',) * (n_levels - 1)
+                return name
+
             if isinstance(df.index, pd.MultiIndex):
-                new_names = [None if n is not None and str(n) in existing_col_names else n
-                             for n in df.index.names]
-                df.index.names = new_names
+                seen_counts = {}      # name → how many times seen so far
+                deduped = []
+                for n in df.index.names:
+                    if n is None:
+                        deduped.append(None)
+                        continue
+                    padded = _make_padded(n)
+                    # Collision with existing column OR with a previously-seen index name
+                    if padded in existing_col_set or n in seen_counts:
+                        deduped.append(None)  # let pandas auto-name it (level_0, level_1 …)
+                    else:
+                        deduped.append(n)
+                    seen_counts[n] = seen_counts.get(n, 0) + 1
+                df.index.names = deduped
             elif hasattr(df.index, 'name') and df.index.name is not None:
-                if str(df.index.name) in existing_col_names:
+                padded = _make_padded(df.index.name)
+                if padded in existing_col_set:
                     df.index.name = None
             
             df = df.reset_index()  # Converts index to columns

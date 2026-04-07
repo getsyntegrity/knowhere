@@ -283,18 +283,34 @@ def build_prompt(task, texts, query, **kwargs):
     elif task == "atlas-page-info":
         temperature = 0.1
         max_tokens = 300
-        prompt = f'''
+        prompt = '''
         You will receive a scanned page from an engineering atlas (drawing collection).
-        Extract key information using the following priority:
-        
-        1. FIRST: Look for an info bar / title block (usually at the bottom-right corner or bottom edge of the page). If found, extract the key fields inside it (title, drawing number, etc.) and return them in a single line.
-        2. IF NO info bar is found: Identify the most important content visible on this page and summarize it in no more than 10 words.
-        3. IF the page is completely blank or contains only meaningless noise: return exactly: null
-        
+        Your task is to extract the atlas number, atlas name, and page label from the title block (info bar), then format the output EXACTLY as shown below.
+
+        Steps:
+        1. FIRST: Find the title block / info bar (usually at the bottom-right corner or bottom edge of the page).
+           - Extract:
+             a) Atlas number (图集号): a code with letters and digits, may include hyphens
+             b) Atlas name (图集名): the Chinese or English name of this drawing collection
+             c) Page label (页码): the page number or label shown in the title block
+           - Output EXACTLY this format (replace placeholders with real values):
+             <atlas_no> （<atlas_name>）page <page_label>
+             Example: 22D701-3 （电缆桥架安装）page 5
+
+        2. IF the title block is present but you can only find SOME fields (e.g. no atlas name), fill what you can and omit missing parts:
+           - Only atlas number found: <atlas_no>
+           - Only atlas name found: <atlas_name>
+           - Use your best judgment for partial matches
+
+        3. IF NO title block is found at all: summarize the most important content on this page in no more than 10 Chinese or English words.
+
+        4. IF the page is completely blank or contains only meaningless noise: return exactly: null
+
         Requirements:
-        - Return a single concise line, no explanations or prefixes
+        - Output a SINGLE LINE only, no explanations, no prefixes, no extra text
         - Use the SAME LANGUAGE as the text visible on the page
-        - Output the content DIRECTLY, do not add any format wrappers or explanations
+        - Do NOT wrap the output in quotes or markdown
+        - Do NOT add any explanation before or after the formatted string
         '''
 
     # ==================== Table Processing Prompts ====================

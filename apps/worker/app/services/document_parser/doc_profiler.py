@@ -69,6 +69,11 @@ class DocProfile:
     estimated_fast_benefit: float = 0.0
     estimated_risk_score: float = 0.0
 
+    # Atlas VLM second-pass flag
+    # True when heuristics suggest atlas-like layout but confidence is not high enough
+    # to commit without visual confirmation from a VLM.
+    atlas_candidate: bool = False
+
     # Page details for debug
     page_details: List[dict] = field(default_factory=list)
 
@@ -707,6 +712,23 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
                     f"pages={profile.page_count}<{ATLAS_MIN_PAGES}"
                 )
             reasons.append(f"atlas_skipped: {', '.join(skip_reasons)}")
+
+    # ── Atlas candidate: relaxed heuristic for VLM second-pass ──
+    # Triggered when heuristic is inconclusive (e.g. text-density too high due to OCR
+    # overlay on scanned atlas pages). VLM will make the final call in parse_service.
+    ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN = 0.30
+    if (
+        profile.doc_category != "atlas"  # not already confirmed
+        and landscape_ratio >= ATLAS_MIN_LANDSCAPE_RATIO
+        and profile.page_count >= ATLAS_MIN_PAGES
+        and profile.avg_image_coverage >= ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN
+    ):
+        profile.atlas_candidate = True
+        reasons.append(
+            f"atlas_candidate: landscape={landscape_ratio:.0%}, "
+            f"img={profile.avg_image_coverage:.1%}, pages={profile.page_count} "
+            f"→ VLM confirmation required"
+        )
 
     if landscape_ratio >= 0.8 and profile.doc_category == "generic":
         slide_ratios = [1.333, 1.778, 1.600]

@@ -14,6 +14,7 @@ from shared.core.exceptions.domain_exceptions import (
 # document_parser imports
 from app.services.document_parser.doc_profiler import profile_document
 from app.services.document_parser.stage_profiler import stage_timer
+from app.services.document_parser.atlas_classifier import classify_atlas_with_vlm
 
 
 def cleanup_unreferenced_images(output_dir: str) -> int:
@@ -150,6 +151,22 @@ def checkerboard_inject_parse(
         profile = profile_document(file_full_path, internal_output_filename)
     logger.info(f"📋 DocProfile: {profile.summary()}")
     logger.debug(f"📋 Reasoning: {profile.reasoning}")
+
+    # ── VLM second-pass: confirm atlas_candidate with visual check ──
+    # Heuristics can miss atlases that have a rich OCR text layer on top of
+    # scanned drawing pages (avg_text_density too high). VLM sees the actual
+    # page layout and makes the final call.
+    if profile.atlas_candidate and profile.doc_category not in ("atlas", "ppt_converted"):
+        logger.info(f"🔍 Atlas candidate detected, running VLM visual check for {filename}")
+        with stage_timer("document.atlas_vlm_check", filename=filename):
+            vlm_is_atlas = classify_atlas_with_vlm(file_full_path)
+        if vlm_is_atlas:
+            profile.doc_category = "atlas"
+            profile.reasoning += " | vlm_confirmed_atlas=True"
+            logger.info(f"✅ VLM confirmed atlas for {filename}")
+        else:
+            profile.reasoning += " | vlm_confirmed_atlas=False"
+            logger.info(f"ℹ️ VLM rejected atlas for {filename}, routing as generic")
 
     # ── Page count guard: reject oversized PDFs before routing ──
     PDF_PAGE_LIMIT = 600
