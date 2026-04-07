@@ -22,7 +22,7 @@ from loguru import logger
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import PDFParsingException
 from app.services.common.kb_utils import (
-    find_matches_parsing, gen_str_codes, get_str_time, process_dup_paths_df
+    gen_str_codes, get_str_time, process_dup_paths_df
 )
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
@@ -370,7 +370,10 @@ def parse_atlas(
             chunk_path = safe_title
 
         # Build df row (11 columns)
-        match_type = find_matches_parsing(content, chunk_path)
+        # Atlas chunks are image-primary: use IMAGE marker directly.
+        # find_matches_parsing() prepends "PTXT\n" which causes downstream
+        # chunk type classifier to misclassify as "text" instead of "image".
+        match_type = img_marker
         tokens = tokenize2stw_remove([content], stopwords)
         df_list.append([
             content,        # content
