@@ -114,7 +114,7 @@ def build_prompt(task, texts, query, **kwargs):
         max_tokens = kwargs['paras']['max_tokens']
         toc_context = kwargs['paras'].get('toc_context', '')
         
-        # 构建 TOC 参考部分（如果有）
+        # developing toc context (if any)
         if toc_context:
             toc_section = f"""
         ***Important Reference: Table of Contents (TOC)***
@@ -135,35 +135,68 @@ def build_prompt(task, texts, query, **kwargs):
         You are a document structure auditing expert. You will receive an HTML table with text rows, where each row may be a heading or body text, including:
         1. id column: line number
         2. heading column: text content
-        3. level column: preliminary estimated level (may be inaccurate), as follows:
-            1 represents `<h1>` (the highest level), 2 represents `<h2>`, and so on
-            -1 indicates the text is estimated as "body text", not a heading
+        3. level column: preliminary estimated level (may be inaccurate or missing), where:
+            1 represents `<h1>` (highest), 2 represents `<h2>`, and so on
+            -1 indicates the text is estimated as body text (not a heading)
             Not Sure indicates the level is undetermined
-        
+
         Data to be adjusted:
         '''
         {texts}
         '''
 
-        ***Your task is*** to [adjust text levels to form an outline with clear and accurate parent-child relationships]. Your available actions:
-        1. If you believe the current row's level estimate is accurate, keep it unchanged
-        2. If you believe the current row's level estimate is inaccurate, adjust it to the correct level (integer from 1-{max_depth})
-        3. If you believe the current row is more suitable as body text rather than a heading, adjust its level to -1
+        ***Process in THREE steps:***
 
-        ***Principles to follow*** when making the above judgments:
-        1. Pay attention to parent-child level relationships between consecutive candidate texts
-        2. Levels between consecutive headings cannot skip (e.g., jumping from level 1 to level 3)
+        **STEP 1 — Global Pattern Scan (before assigning any levels)**
+        Scan ALL candidate heading rows (rows where level != -1 or level = Not Sure) across the entire input.
+        Identify every distinct structural/numbering pattern that signals hierarchy depth, for example:
+        - Decimal numbering: "1", "1.1", "1.1.1" → depth increases with dot count
+        - Enumeration styles: "一、" "（一）" "1、" "①" → shallower to deeper
+        - Chapter/section keywords: "Chapter X", "Part X", "第X章", "第X节" → typically top-level
+        - Indentation or formatting cues visible in the text prefix
+        Rank these patterns from shallowest to deepest to form a pattern → level mapping.
+
+        **STEP 2 — Assign levels using the following rules (in priority order)**
+        Rule 1 — Normalize to start at level 1:
+            The shallowest heading pattern found in this document MUST be assigned level 1.
+            Do NOT preserve preliminary estimates that start at level 2, 3, or deeper
+            if those headings are actually the top-level headings of the document.
+        Rule 2 — Global consistency (highest priority among content rules):
+            Headings that share the same structural pattern MUST receive the SAME level
+            throughout the ENTIRE document, regardless of their position or textual content.
+            (e.g., all "X.Y" two-part numbers must have the same level; all "X.Y.Z"
+            three-part numbers must share a different, deeper level.)
+        Rule 3 — Pattern over semantics:
+            When determining a heading's level, its numbering/structural pattern takes
+            precedence over its text length or semantic meaning.
+            Parenthetical annotations or long descriptions inside a heading text do NOT
+            indicate a different hierarchy level.
+        Rule 4 — Parent-child continuity:
+            Each heading must be consistent with adjacent headings — a heading can only
+            go one level deeper than its nearest ancestor heading.
+        Rule 5 — No level skipping:
+            Levels between consecutive headings cannot skip
+            (e.g., level 1 followed directly by level 3 is invalid).
+        Rule 6 — Body text demotion:
+            If a row does not serve as a section title in the document outline
+            (e.g., it is a full sentence, annotation, data value, or body continuation),
+            set its level to -1.
+
+        **STEP 3 — Consistency check (one pass) before writing output**
+        Scan the level assignments you are about to output and confirm:
+        - All headings sharing the same structural pattern have been assigned the same level.
+        If any inconsistency is found, normalise to the most representative level for that pattern.
 
         ***Output requirements***
         - Output must be a [JSON array] only
         - **Only include rows that you judge to be headings** (level >= 1). Do NOT include body text rows (level = -1) in the output
         - Any row not present in your output will be automatically treated as body text (level = -1)
-        - Each element should contain the following fields in order:
-            - "id": original line number (integer);
-            - "level": the heading level for that row (integer from 1~{max_depth})
+        - Each element must contain the following fields in order:
+            - "id": original line number (integer)
+            - "level": the corrected heading level (integer from 1 to {max_depth})
 
-        ***Other requirements***
-        - Output only standard JSON, do not add any format wrappers (e.g., do not add ```json)
+        ***Format requirements***
+        - Output only valid JSON — do not add markdown fences (no ```json)
         - Do not add escaped newlines or other control characters
         - Do not add any explanations, comments, or descriptive text
 

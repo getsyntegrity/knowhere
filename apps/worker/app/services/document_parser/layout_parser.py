@@ -1246,24 +1246,33 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
             base_preds.insert(1, "heading", basic_df["heading"].values)
             base_preds["reason"] = basic_df["reason"].values
 
-            base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
-            logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules")
-
             # Save base_preds as preds_3
             save_intermediate_csv(base_preds, output_dir, f"preds_3_llm_base{csv_suffix}")
 
-            if len(level_dfs) > 1:
+            if len(level_dfs) == 1:
+                # Single chunk: use LLM results directly without mapping.
+                # Mapping is designed to extrapolate chunk-0 decisions to chunks 1..N,
+                # but for single-chunk docs it's redundant and lossy — it collapses
+                # LLM's contextual per-row level into a per-reason-code majority vote.
+                logger.info("single chunk — skipping reason-code mapping, using LLM output directly")
+                full_preds = base_preds[["id", "heading", "level", "reason"]].copy()
+                full_preds['heading'] = raw_headings
+            else:
+                # Multi-chunk: build reason-code mapping from chunk 0, apply to all chunks
+                base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
+                logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules")
+
                 logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
                 lvl_mapping = handle_unseen_codes(raw_preds, level_dfs, lvl_mapping, output_dir)
 
-            for l, level_df in enumerate(level_dfs):
-                level_df = execute_level_mapping(level_df, lvl_mapping)
-                full_preds.append(level_df)
+                for l, level_df in enumerate(level_dfs):
+                    level_df = execute_level_mapping(level_df, lvl_mapping)
+                    full_preds.append(level_df)
 
-            full_preds = pd.concat(full_preds, ignore_index=True)
-            full_preds['heading'] = raw_headings
+                full_preds = pd.concat(full_preds, ignore_index=True)
+                full_preds['heading'] = raw_headings
+                full_preds.drop("origin_level", axis=1, inplace=True)
 
-            full_preds.drop("origin_level", axis=1, inplace=True)
             save_intermediate_csv(full_preds, output_dir, f"preds_4_llm_final{csv_suffix}")
 
     except Exception as e:
