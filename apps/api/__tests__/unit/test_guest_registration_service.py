@@ -27,6 +27,12 @@ async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> N
     device_id = "codex-staging-smoke-20260406"
 
     monkeypatch.setattr(
+        service._credits_service,
+        "ensure_user_initialized",
+        AsyncMock(),
+    )
+
+    monkeypatch.setattr(
         service._device_repo,
         "get_by_device_id",
         AsyncMock(return_value=None),
@@ -117,6 +123,11 @@ async def test_register_guest_reraises_non_race_integrity_errors(monkeypatch) ->
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(
+        service._credits_service,
+        "ensure_user_initialized",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
         service,
         "_get_guest_rate_limit_info",
         MagicMock(
@@ -159,6 +170,11 @@ async def test_register_guest_conflicts_when_concurrent_create_loses_race(monkey
         service._device_repo,
         "get_by_device_id",
         AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        service._credits_service,
+        "ensure_user_initialized",
+        AsyncMock(),
     )
     monkeypatch.setattr(
         service,
