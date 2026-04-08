@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from shared.utils.chunk_refs import CHUNK_REF_PATTERN
 
 from app.services.connect_builder.builder import (
     DEFAULT_CONFIG,
@@ -173,6 +174,86 @@ def _connections_to_edges(
     return edges
 
 
+def _merge_related_connections_into_chunks(
+    chunks: List[Dict[str, Any]],
+    connections: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    """Backfill related connections into chunk metadata without touching embeds."""
+    if not chunks or not connections:
+        return
+
+    chunk_map = {
+        str(chunk.get("chunk_id") or chunk.get("know_id", "")): chunk
+        for chunk in chunks
+        if chunk.get("chunk_id") or chunk.get("know_id")
+    }
+
+    for chunk_id, conn_list in connections.items():
+        chunk = chunk_map.get(str(chunk_id))
+        if not chunk:
+            continue
+        metadata = chunk.setdefault("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+            chunk["metadata"] = metadata
+        existing = metadata.get("connect_to", [])
+        if not isinstance(existing, list):
+            existing = []
+
+        merged = []
+        seen = set()
+        for item in existing:
+            if not isinstance(item, dict):
+                continue
+            key = (
+                str(item.get("target") or ""),
+                str(item.get("relation") or "related"),
+                str(item.get("ref") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+
+        for conn in conn_list:
+            if not isinstance(conn, dict):
+                continue
+            if conn.get("relation", "related") != "related":
+                continue
+            key = (
+                str(conn.get("target") or ""),
+                "related",
+                "",
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({
+                "target": conn.get("target", ""),
+                "relation": "related",
+                "score": conn.get("score", 0.0),
+                "keywords": conn.get("keywords", []),
+            })
+
+        metadata["connect_to"] = merged
+
+
+def _save_chunks_by_source_file(kb_dir: str, chunks: List[Dict[str, Any]]) -> None:
+    """Persist grouped chunks.json files after metadata backfill."""
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for chunk in chunks:
+        source_file = chunk.get("_source_file")
+        if not source_file:
+            continue
+        cleaned = dict(chunk)
+        cleaned.pop("_source_file", None)
+        grouped[str(source_file)].append(cleaned)
+
+    for source_file, source_chunks in grouped.items():
+        output_path = os.path.join(kb_dir, source_file, "chunks.json")
+        _save_chunks(source_chunks, output_path)
+
+
 # ─── Incremental Matching ────────────────────────────────────────────────────
 
 def _incremental_connections(
@@ -306,7 +387,7 @@ def _incremental_connections(
 # Token filtering — same logic as text_utils._is_meaningful_token
 _CN_EN_NUM_RE = re.compile(r'[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?')
 _CHUNK_MARKER_RE = re.compile(
-    r'IMAGE_\S+_IMAGE|TABLE_\S+_TABLE|image-\d+|table-\d+',
+    rf'{CHUNK_REF_PATTERN}|image-\d+|table-\d+',
     re.IGNORECASE,
 )
 
@@ -330,7 +411,10 @@ def _extract_tokens_from_content(content: str) -> List[str]:
     content = re.sub(r'&\w+;', ' ', content)
     try:
         import jieba
-        raw = jieba.lcut(content)
+        if hasattr(jieba, "lcut"):
+            raw = jieba.lcut(content)
+        else:
+            raw = list(jieba.cut(content))
     except ImportError:
         raw = re.split(r'[\s,;，；。！？、\-/]+', content)
     return [t for t in raw if _is_meaningful_token(t)]
@@ -581,6 +665,7 @@ def update_knowledge_graph(
     connect_config: Optional[Dict[str, Any]] = None,
     chunk_stats: Optional[Dict[str, Dict[str, Any]]] = None,
     file_summaries: Optional[Dict[str, str]] = None,
+    new_connections: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """Incrementally update a file-level knowledge graph with new chunks."""
     if chunk_stats is None:
@@ -601,9 +686,10 @@ def update_knowledge_graph(
 
     file_keywords = _compute_tfidf_top_keywords(file_chunks)
 
-    new_connections = _incremental_connections(
-        new_chunks=new_chunks, existing_chunks=existing_chunks, config=connect_config,
-    )
+    if new_connections is None:
+        new_connections = _incremental_connections(
+            new_chunks=new_chunks, existing_chunks=existing_chunks, config=connect_config,
+        )
     new_chunk_edges = _connections_to_edges(new_connections)
     existing_file_edges = existing_graph.get("edges", [])
     new_file_edges = _aggregate_file_level_edges(new_chunk_edges, chunk_to_file, chunk_paths)
@@ -1113,6 +1199,7 @@ def build_and_deploy(
 
     # Load chunk_stats for importance calculation
     stats = load_chunk_stats(kb_id)
+    stats_chunks: List[Dict[str, Any]] = chunks
 
     if existing_graph is None:
         # ── First build: full ──
@@ -1145,6 +1232,9 @@ def build_and_deploy(
             logger.info("📊 rebuild Knowledge Graph (rebuild_all=False, new chunks only) ...")
 
         connections = build_connections(all_chunks, connect_config)
+        _merge_related_connections_into_chunks(all_chunks, connections)
+        _save_chunks_by_source_file(kb_dir, all_chunks)
+        stats_chunks = all_chunks
         graph = build_knowledge_graph(
             all_chunks=all_chunks,
             connections=connections,
@@ -1162,12 +1252,21 @@ def build_and_deploy(
                 "📊 All new chunks are duplicates of existing data, "
                 "skipping incremental update"
             )
+            stats_chunks = existing_chunks
             graph = existing_graph
         else:
             logger.info(
                 f"📊 incremental update Knowledge Graph "
                 f"({len(deduped_new)} new, {len(chunks) - len(deduped_new)} skipped) ..."
             )
+            related_connections = _incremental_connections(
+                new_chunks=deduped_new,
+                existing_chunks=existing_chunks,
+                config=connect_config,
+            )
+            _merge_related_connections_into_chunks(existing_chunks + deduped_new, related_connections)
+            _save_chunks_by_source_file(kb_dir, existing_chunks + deduped_new)
+            stats_chunks = existing_chunks + deduped_new
             graph = update_knowledge_graph(
                 existing_graph=existing_graph,
                 new_chunks=deduped_new,
@@ -1176,6 +1275,7 @@ def build_and_deploy(
                 connect_config=connect_config,
                 chunk_stats=stats,
                 file_summaries=file_summaries,
+                new_connections=related_connections,
             )
 
     # Save graph
@@ -1185,7 +1285,7 @@ def build_and_deploy(
     stats_path = _get_stats_path(kb_id)
     now = datetime.now(timezone.utc).isoformat()
     updated = False
-    for chunk in chunks:
+    for chunk in stats_chunks:
         cid = str(chunk.get("chunk_id") or chunk.get("know_id", ""))
         if cid and cid not in stats:
             stats[cid] = {

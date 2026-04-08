@@ -645,7 +645,7 @@ def judge_by_conditions(text, scope=20, return_detail=False, CN_SPECIAL_IDX=12):
     regex_letter_brac_paren = r"^[\(\（]\s*[A-Za-z](?:\.\d+)*(?!\.0)\s*[\)\）]"
     regex_letter_brac_right = r"^[A-Za-z](?:\.\d+)*(?!\.0)\s*[\)\）]"
     # ========== Appendix ==========
-    regex_appendix = r"^((附件|附录|附表|附图)|(?i:appendix))[\s_\-—]{0,4}[[一二三四五六七八九十A-Za-z\d]"
+    regex_appendix = r"^((附件|附录|附表|附图)|(?i:appendix))[\s_\-—]{0,4}(?:\[)?[一二三四五六七八九十A-Za-z\d]"
 
     pos_regex_conditions = [
         # English Numbering

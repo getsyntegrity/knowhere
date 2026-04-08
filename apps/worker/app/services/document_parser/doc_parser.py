@@ -11,6 +11,7 @@ from app.services.common.kb_utils import (find_matches_parsing, gen_str_codes,
                                           process_path_texts, remove_spaces)
 from shared.utils.text_utils import tokenize2stw_remove
 from shared.utils.file_utils import path_handle
+from shared.utils.chunk_refs import build_chunk_ref, has_chunk_ref
 from app.services.document_parser.table_parser import sanitize_table_name_from_header
 from app.services.document_parser.image_parser import ask_image, _get_vision_client
 from app.services.document_parser.layout_parser import pred_titles
@@ -67,8 +68,8 @@ def _find_img_context(headings_stack, max_chars=100):
         # Traverse backward to find non-table/image content
         for item in reversed(content_list):
             item_stripped = str(item).strip()
-            # Skip TABLE_ and IMAGE_ identifiers
-            if item_stripped.startswith('TABLE_') or item_stripped.startswith('IMAGE_'):
+            # Skip image/table reference blocks when looking for textual context.
+            if has_chunk_ref(item_stripped):
                 continue
             # Found valid text
             if item_stripped:
@@ -124,7 +125,6 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     os.rename(img_raw_path, img_path) # if summary fails, renaming is not applied
 
     temp_uid = gen_str_codes(hashlib.md5(img_file['data']).hexdigest())
-    img_id = 'IMAGE_' + temp_uid + '_IMAGE'
 
     # Build img_summary_field for df_list: image-n + optional summary
     if img_summary:
@@ -132,16 +132,17 @@ def handle_image(df_list, img_file, img_dir, headings_stack, current_heading, im
     else:
         img_summary_field = image_index
     
-    # Build image_ref for heading_stack: image-n + optional summary + image_id
-    if img_summary:
-        image_ref = f"\n{image_index}\n{img_summary}\n{img_id}\n"
-    else:
-        image_ref = f"\n{image_index}\n{img_id}\n"
-    
     img_path = f"images/{img_name}{img_ext}"
+    img_ref = build_chunk_ref(img_path)
+
+    # Build image_ref for heading_stack: optional summary + image path ref
+    if img_summary:
+        image_ref = f"\n{img_summary}\n{img_ref}\n"
+    else:
+        image_ref = f"\n{img_ref}\n"
 
     headings_stack[-1]['content'].append(image_ref)
-    df_list.append([image_ref, img_path, img_id, len(image_ref), "", img_summary_field, temp_uid, "", "", time_stamp, ""])
+    df_list.append([image_ref, img_path, "image", len(image_ref), "", img_summary_field, temp_uid, "", "", time_stamp, ""])
     return headings_stack, df_list
 
 
@@ -234,15 +235,15 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
                 
                 # Also add as IMAGE entry in df_list for indexing
                 temp_uid = gen_str_codes(hashlib.md5(img_data['data']).hexdigest())
-                img_id = 'IMAGE_' + temp_uid + '_IMAGE'
                 img_summary_field = f"{image_index}\n{img_summary}" if img_summary else image_index
                 relative_img_path = f"images/{img_name}{img_ext}"
+                img_ref = build_chunk_ref(relative_img_path)
                 if img_summary:
-                    image_ref = f"\n{image_index}\n{img_summary}\n{img_id}\n"
+                    image_ref = f"\n{img_summary}\n{img_ref}\n"
                 else:
-                    image_ref = f"\n{image_index}\n{img_id}\n"
+                    image_ref = f"\n{img_ref}\n"
                 table_img_entries.append([
-                    image_ref, relative_img_path, img_id,
+                    image_ref, relative_img_path, "image",
                     len(image_ref), "", img_summary_field,
                     temp_uid, "", "", time_stamp, ""
                 ])
@@ -281,7 +282,6 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
         tb_summary = table_index
 
     temp_uid = gen_str_codes((tb_html_str + str(table_count)))
-    table_id = 'TABLE_' + temp_uid + '_TABLE'
 
     # Use LLM title for filename when available, fallback to raw_tb_name
     effective_name = llm_title if llm_title else raw_tb_name
@@ -293,13 +293,14 @@ def handle_table(df_list, block, tb_dir, headings_stack, current_heading, table_
 
     # Use relative path for tables (avoid absolute path in path column)
     tb_path = f"tables/{tb_name}.html"
-    # Build table_ref for heading_stack: table-n + optional LLM summary + table_id
+    tb_ref = build_chunk_ref(tb_path)
+    # Build table_ref for heading_stack: optional LLM summary + table path ref
     if llm_summary:
-        table_ref = f"\n{table_index}\n{llm_summary}\n{table_id}\n"
+        table_ref = f"\n{llm_summary}\n{tb_ref}\n"
     else:
-        table_ref = f"\n{table_index}\n{table_id}\n"
+        table_ref = f"\n{tb_ref}\n"
     headings_stack[-1]['content'].append(table_ref)
-    df_list.append([tb_html_str, tb_path, table_id, len(tb_html_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp, ""])
+    df_list.append([tb_html_str, tb_path, "table", len(tb_html_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp, ""])
     return headings_stack, df_list, img_count
 
 
@@ -608,8 +609,7 @@ def convert_doc2dics(parsed_structure, df_list, output_dir, base_llm_paras, rela
             keywords = row['keywords']
             summary = row['local_summary']
             # Deterministic know_id: filter out IMAGE/TABLE ref items, hash pure text only
-            marker_pattern = re.compile(r'IMAGE_.*?_IMAGE|TABLE_.*?_TABLE')
-            text_items = [item for item in row['content_lst'] if not marker_pattern.search(str(item))]
+            text_items = [item for item in row['content_lst'] if not has_chunk_ref(str(item))]
             pure_text = '\n'.join(text_items).strip()
             know_id = gen_str_codes(pure_text)
             # Use relative_root for path instead of absolute kb_dir

@@ -14,6 +14,7 @@ from shared.services.ai.response_process_service import eval_response
 from app.services.common.kb_utils import (gen_str_codes, get_str_time,
                                           process_dup_paths_df)
 from shared.utils.CommonHelperSync import is_remote, load_file_bytes
+from shared.utils.chunk_refs import build_chunk_ref
 from shared.utils.file_utils import path_handle
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import (
@@ -269,16 +270,11 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
 
     # Deterministic know_id: use image binary hash
     temp_uid = gen_str_codes(hashlib.md5(img_bytes).hexdigest())
-    img_id = 'IMAGE_' + temp_uid + '_IMAGE'
-    if type_resp["answer"]=="text":
-        match_type = '\n'.join([img_id, 'PTXT'])
-    else:
-        match_type = img_id
-
-    img_bottom_content = f"{img_id}\nImage Content:\n{image_content}"
     # Use relative path with relative_root prefix
     relative_img_path = f"{relative_root}{split_char}{final_img_name}" if relative_root else final_img_name
-    df_list.append([img_bottom_content, relative_img_path, match_type, len(img_bottom_content), "", image_summary, temp_uid, "", "", time_stamp, ""])
+    img_ref = build_chunk_ref(relative_img_path)
+    img_bottom_content = f"{img_ref}\nImage Content:\n{image_content}"
+    df_list.append([img_bottom_content, relative_img_path, "image", len(img_bottom_content), "", image_summary, temp_uid, "", "", time_stamp, ""])
 
     img_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
     img_df = process_dup_paths_df(img_df)

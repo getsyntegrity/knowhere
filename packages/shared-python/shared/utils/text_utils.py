@@ -3,7 +3,16 @@
 这些函数被多个服务使用，保留在 shared-python 中
 """
 import re
+import warnings
 from typing import List, Optional
+from shared.utils.chunk_refs import CHUNK_REF_PATTERN
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"pkg_resources is deprecated as an API\..*",
+    category=UserWarning,
+    module=r"jieba\._compat",
+)
 
 import jieba
 
@@ -62,7 +71,7 @@ def _get_default_stopwords() -> frozenset:
 
 # Pre-clean: strip chunk reference markers before tokenization
 _CHUNK_MARKER_RE = re.compile(
-    r'IMAGE_\S+_IMAGE|TABLE_\S+_TABLE|image-\d+|table-\d+',
+    rf'{CHUNK_REF_PATTERN}|image-\d+|table-\d+',
     re.IGNORECASE,
 )
 
@@ -90,7 +99,12 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
     for content in contents:
         # Pre-clean: remove IMAGE_/TABLE_ markers and reference labels
         content = _CHUNK_MARKER_RE.sub('', content)
-        raw_tokens = jieba.lcut(content)
+        if hasattr(jieba, "lcut"):
+            raw_tokens = jieba.lcut(content)
+        elif hasattr(jieba, "cut"):
+            raw_tokens = list(jieba.cut(content))
+        else:
+            raw_tokens = re.split(r'[\s,;，；。！？、\-/]+', content)
         # Filter: keep only tokens with meaningful characters (Chinese/English/numbers)
         tokens = [t for t in raw_tokens if _is_meaningful_token(t)]
         # Remove stopwords
