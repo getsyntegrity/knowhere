@@ -87,16 +87,8 @@ async def get_credits_balance(
 
         balance_micro_dollar = await credits_service.get_balance(db, current_user.user_id)
         
-        # Default limit
-        limit_micro_dollar = MicroDollar.from_dollars(1000).amount
-        # TODO: Retrieve limit from config, or remove the limit concept
-        
-        usage_percentage = (balance_micro_dollar / limit_micro_dollar * 100) if limit_micro_dollar > 0 else 0
-
         return CreditsBalanceResponse(
-            credits_balance=MicroDollar(balance_micro_dollar).to_credit(),
-            credits_limit=MicroDollar(limit_micro_dollar).to_credit(),
-            usage_percentage=round(usage_percentage, 2)
+            credits_balance=MicroDollar(balance_micro_dollar).to_credit()
         )
         
     except Exception as e:

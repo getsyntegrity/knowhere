@@ -23,6 +23,7 @@ from shared.models.schemas.guest import (
     GuestRateLimitInfo,
     GuestRegisterResponse,
 )
+from shared.services.billing.credits_service import CreditsService
 
 _GUEST_TIER: str = "guest"
 _GUEST_KEY_NAME_PREFIX: str = "guest-device"
@@ -38,6 +39,7 @@ class GuestRegistrationService:
     def __init__(self) -> None:
         self._device_repo = GuestDeviceRepository()
         self._api_key_service = APIKeyService()
+        self._credits_service = CreditsService()
 
     async def register_guest(
         self,
@@ -105,10 +107,12 @@ class GuestRegistrationService:
         user = User(id=user_id, name=guest_name, email=guest_email)
         session.add(user)
 
-        balance = UserBalance(user_id=user_id, user_tier=_GUEST_TIER)
-        session.add(balance)
-
-        await session.flush()
+        await self._credits_service.ensure_user_initialized(session, user_id)
+        
+        balance = await session.get(UserBalance, user_id)
+        if balance is not None:
+            balance.user_tier = _GUEST_TIER
+            await session.flush()
 
         api_key = await self._create_api_key_without_commit(
             session, user_id, key_name, expires_at

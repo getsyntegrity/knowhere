@@ -3,7 +3,7 @@ API Key 数据访问层
 """
 from typing import List, Optional, Sequence
 
-from datetime import datetime
+from datetime import datetime, timezone
 from shared.models.database.api_key import APIKey
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import delete, or_, select, update
@@ -41,7 +41,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
     
     async def get_unexpired_by_user_id(self, session: AsyncSession, user_id: str) -> Sequence[APIKey]:
         """获取用户的所有未过期API Key（包含禁用的）"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)
@@ -67,11 +67,11 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
     
     async def update_last_used(self, session: AsyncSession, api_key_id: str) -> bool:
         """更新最后使用时间"""
-        from datetime import datetime
+        from datetime import datetime, timezone
         result = await session.execute(
             update(APIKey)
             .where(APIKey.id == api_key_id)
-            .values(last_used_at=datetime.utcnow())
+            .values(last_used_at=datetime.now(timezone.utc).replace(tzinfo=None))
         )
         return result.rowcount > 0
     
