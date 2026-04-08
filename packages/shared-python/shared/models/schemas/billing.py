@@ -28,8 +28,6 @@ class BuyCreditsPackageRequest(BaseModel):
 class CreditsBalanceResponse(BaseModel):
     """Credits余额响应"""
     credits_balance: float
-    credits_limit: float
-    usage_percentage: float
 
 
 class UsageStatsResponse(BaseModel):

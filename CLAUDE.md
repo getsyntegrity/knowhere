@@ -1,4 +1,4 @@
-# Codex Agent Guidance
+# Agent Guidance
 
 ## Test Writing Standards
 
