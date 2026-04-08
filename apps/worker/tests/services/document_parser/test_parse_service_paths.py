@@ -7,8 +7,10 @@ class _FakeProfile:
     file_type = "txt"
     route = "standard"
     doc_category = "generic"
+    atlas_candidate = False
     page_count = 1
     reasoning = ""
+    scan_type = None
 
     def summary(self) -> str:
         return "fake"
@@ -69,8 +71,10 @@ def test_checkerboard_inject_parse_threads_job_id_to_pptx_parser(
         file_type = "pptx"
         route = "standard"
         doc_category = "generic"
+        atlas_candidate = False
         page_count = 12
         reasoning = ""
+        scan_type = None
 
         def summary(self) -> str:
             return "fake-pptx"

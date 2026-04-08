@@ -160,8 +160,13 @@ def _atlas_render_pages_worker(queue, pdf_path, img_dir, skip_pages_list, dpi, p
         page = doc[page_idx]
         page_text = page_texts_list[page_idx]
         pix = page.get_pixmap(dpi=dpi)
-        img_name = f"page-{page_num}.png"
-        pix.save(os.path.join(img_dir, img_name))
+        img_name = f"page-{page_num}.jpg"
+        # Save as JPEG instead of PNG: ~5-10x smaller for opaque page renders.
+        # Atlas pages are photos/drawings with no transparency, so lossless PNG
+        # provides no visual benefit while inflating images/ from ~100MB to ~10MB.
+        img_bytes = pix.tobytes("jpeg", jpg_quality=85)
+        with open(os.path.join(img_dir, img_name), "wb") as f:
+            f.write(img_bytes)
         page_data.append((page_num, page_text, img_name))
 
     doc.close()
@@ -336,8 +341,9 @@ def parse_atlas(
         # Sanitize title for path usage
         safe_title = re.sub(r'[/\\:*?"<>|]', '_', chunk_title)
 
-        # Rename image file to use descriptive title
-        new_img_name = f"{safe_title}.png"
+        # Rename image file to use descriptive title (match Phase 1 JPEG format)
+        img_ext = os.path.splitext(img_name)[1]  # .jpg from Phase 1
+        new_img_name = f"{safe_title}{img_ext}"
         old_img_path = os.path.join(img_dir, img_name)
         new_img_path = os.path.join(img_dir, new_img_name)
         if os.path.exists(old_img_path):

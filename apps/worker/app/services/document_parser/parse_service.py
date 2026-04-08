@@ -294,5 +294,25 @@ def checkerboard_inject_parse(
     # Post-processing: clean up unreferenced UUID-named images
     with stage_timer("document.cleanup_unreferenced_images", output_dir=full_output_dir):
         cleanup_unreferenced_images(full_output_dir)
-    
+
+    # Post-processing: compress output images (PNG→JPEG, resize oversized)
+    from app.services.document_parser.image_compressor import (
+        compress_output_images,
+        apply_rename_map_to_dataframe,
+    )
+    with stage_timer("document.compress_images", output_dir=full_output_dir):
+        compress_stats = compress_output_images(full_output_dir)
+        if compress_stats.processed > 0:
+            logger.info(
+                f"📦 Image compression: {compress_stats.processed} processed "
+                f"({compress_stats.converted_png_to_jpg} PNG→JPG, "
+                f"{compress_stats.resized} resized), "
+                f"{compress_stats.bytes_before / 1024 / 1024:.1f}MB → "
+                f"{compress_stats.bytes_after / 1024 / 1024:.1f}MB"
+            )
+        # Update DataFrame references when PNG→JPG conversions occurred
+        if compress_stats.rename_map and parsed_df is not None:
+            parsed_df = apply_rename_map_to_dataframe(parsed_df, compress_stats.rename_map)
+
     return full_output_dir, parsed_df
+
