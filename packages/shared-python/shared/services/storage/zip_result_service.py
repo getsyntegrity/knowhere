@@ -85,14 +85,15 @@ class ZipResultService:
                 chunks_json = json.dumps({"chunks": formatted_chunks}, ensure_ascii=False, indent=2)
                 zip_file.writestr("chunks.json", chunks_json.encode("utf-8"))
 
-                # 1b. Generate chunks_slim.json (LLM-optimized: only type/path/content/summary)
+                # 1b. Generate chunks_slim.json for retrieval-time chunk routing.
                 slim_chunks = []
                 for fc in formatted_chunks:
+                    summary = " ".join(str((fc.get("metadata") or {}).get("summary", "") or "").split())
+                    content = " ".join(str(fc.get("content", "") or "").split())
                     slim = {
                         "type": fc.get("type", "text"),
                         "path": fc.get("path", ""),
-                        "content": fc.get("content", ""),
-                        "summary": (fc.get("metadata") or {}).get("summary", ""),
+                        "content": summary or content[:300],
                     }
                     slim_chunks.append(slim)
                 slim_json = json.dumps({"chunks": slim_chunks}, ensure_ascii=False, indent=2)
