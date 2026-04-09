@@ -125,9 +125,11 @@ https://github.com/<org>/<repo>/compare/<target_branch>...<current_branch>
 ```bash
 git checkout <home_branch>
 git pull origin <target_branch> --rebase
+git push origin <home_branch>
 ```
 
-- This ensures `<home_branch>` is always up-to-date with the latest staging after every sync.
+- Pulls latest `staging` into local `<home_branch>`, then pushes to remote.
+- This keeps all three in sync: **cloud staging ↔ cloud `<home_branch>` ↔ local `<home_branch>`**.
 
 ### Step 9: Delete the Temporary Branch Locally
 
