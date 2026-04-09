@@ -749,7 +749,7 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
 
 def _profile_pdf(file_path: str) -> DocProfile:
     """Profile a PDF by running PyMuPDF analysis in a spawned child process."""
-    result = run_in_child_process(_profile_pdf_worker, file_path, timeout=60)
+    result = run_in_child_process(_profile_pdf_worker, file_path, timeout=300)
     profile = DocProfile(**result["profile"])
     logger.info(
         f"[doc-profiler] route={profile.route} band={profile.decision_band} "
