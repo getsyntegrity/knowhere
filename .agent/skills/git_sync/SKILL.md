@@ -32,9 +32,8 @@ Each project can have a `.agent/sync.json` in its root:
 
 ### If `.agent/sync.json` does NOT exist:
 
-1. Ask the user: "目标分支是 `staging` 吗？还是其他分支？"
-2. Create `.agent/sync.json` with the confirmed value
-3. Proceed with the sync
+1. Default target branch to `staging`.
+2. Proceed with the sync.
 
 ---
 
@@ -60,24 +59,18 @@ git remote get-url origin
 - Record `CURRENT_BRANCH` and `REMOTE_URL`
 - Parse GitHub org/repo from remote URL for PR link generation
 
-### Step 3: Pre-flight Confirmation ⚠️
+### Step 3: Pre-flight Summary
 
-**Before doing anything**, present a summary to the user and wait for confirmation:
+Present a summary to the user and **auto-proceed** (do not wait for confirmation):
 
 ```
-🔍 同步预览:
+🔍 自动同步已启动:
   当前分支: <current_branch>
-  目标分支: <target_branch> (来自 .agent/sync.json)
-  远程仓库: <remote_url>
-  操作: merge origin/<target_branch> → push <current_branch> → PR
-
-确认执行？(y/n)
+  目标分支: <target_branch>
+  操作: auto commit → merge origin/<target_branch> → push <current_branch> → PR
 ```
 
-- If user says **no** or wants to change target → update `.agent/sync.json` and re-confirm
-- If user says **yes** → proceed to Step 4
-
-This prevents accidental merges when `sync.json` has a stale or wrong `target_branch`.
+This prevents the workflow from stalling.
 
 ### Step 4: Check for Uncommitted Changes
 
@@ -91,8 +84,7 @@ git status --porcelain
   2. **Auto-generate a commit message** based on the diff:
      - Analyze changed files and diff content
      - Generate a conventional commit message (e.g., `feat: add X`, `fix: resolve Y`, `refactor: extract Z`)
-     - Present the generated message to the user for confirmation
-  3. On confirmation:
+  3. **Auto-commit** without asking for confirmation:
      ```bash
      git add -A
      git commit -m "<generated message>"
@@ -148,7 +140,7 @@ PR 链接: https://github.com/<org>/<repo>/compare/<target_branch>...<current_br
 ## Important Rules
 
 1. **Never force push** without explicit user confirmation
-2. **Always show the generated commit message** before committing — user can edit
+2. **Auto-commit**: Do not ask for confirmation on the commit message or the sync itself, unless there is a conflict.
 3. **Stop on merge conflicts** — never auto-resolve
 4. **Dynamic, not hardcoded** — always derive branch/remote/repo info from git commands
 5. **One sync at a time** — if already mid-sync, don't restart

@@ -1,7 +1,6 @@
 import io
 import os
 import re
-import subprocess
 import time
 import requests
 import jwt
@@ -10,7 +9,6 @@ from loguru import logger
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import (
     FileSystemException,
-    LibreOfficeServiceException,
 )
 from shared.core.logging import LogEvent
 from app.services.common.kb_utils import find_images
@@ -18,6 +16,9 @@ from app.services.document_parser.mineru_pdf_service import (
     get_existing_mineru_source_s3_key,
 )
 from app.services.document_parser.parser_log_utils import truncate_log_value
+from app.services.document_parser.legacy_converter import (
+    _convert_with_libreoffice,
+)
 from app.services.document_parser.pptx_pdf_rendering import (
     render_pdf_to_image_pdf as _render_pdf_to_image_pdf,
 )
@@ -27,7 +28,6 @@ from app.services.document_parser.pdf_parser import parse_pdfs
 from shared.utils.CommonHelperSync import load_file_bytes
 from shared.utils.file_utils import path_handle
 from markitdown import MarkItDown
-from pptx import Presentation
 from pptx2md import ConversionConfig, convert
 
 
@@ -35,16 +35,6 @@ from pptx2md import ConversionConfig, convert
 
 def pptx_to_pdf_libreoffice(pptx_path, outdir="."):
     """use LibreOffice to convert PPTX to PDF (local engine, formula rendering may be problematic)"""
-    soffice_path = settings.LIBER_OFFICE or "/usr/bin/libreoffice"
-    if not os.path.isfile(soffice_path):
-        raise LibreOfficeServiceException(
-            internal_message=(
-                f"LibreOffice not found at '{soffice_path}'. "
-                f"Install LibreOffice or set LIBER_OFFICE env to the correct path. "
-                f"PPTX parsing requires either iLoveAPI or LibreOffice."
-            ),
-            operation="resolve_binary",
-        )
     from shared.core.constants import ProcessingConstants
     filter_opts = (
         f"Quality={ProcessingConstants.IMG_QUALITY};"
@@ -52,39 +42,13 @@ def pptx_to_pdf_libreoffice(pptx_path, outdir="."):
         "UseTaggedPDF=true;"
         "ExportNotes=true"
     )
-    conversion_result = subprocess.run([
-        soffice_path, "--headless",
-        "--convert-to", f"pdf:impress_pdf_Export:{filter_opts}",
-        pptx_path, "--outdir", outdir
-    ], check=False, capture_output=True, text=True)
-
-    base = os.path.splitext(os.path.basename(pptx_path))[0]
-    pdf_path = os.path.join(outdir, base + ".pdf")
-
-    if conversion_result.returncode != 0:
-        raise LibreOfficeServiceException(
-            internal_message=(
-                f"LibreOffice PPTX conversion failed with exit code {conversion_result.returncode}: "
-                f"input={pptx_path}, output_dir={outdir}, expected_output={pdf_path}, "
-                f"stdout={truncate_log_value(conversion_result.stdout)}, "
-                f"stderr={truncate_log_value(conversion_result.stderr)}"
-            ),
-            operation="convert_pptx_to_pdf",
-            exit_code=conversion_result.returncode,
-        )
-
-    if not os.path.exists(pdf_path):
-        raise LibreOfficeServiceException(
-            internal_message=(
-                "LibreOffice did not produce the expected PDF output: "
-                f"input={pptx_path}, output_dir={outdir}, expected_output={pdf_path}, "
-                f"stdout={truncate_log_value(conversion_result.stdout)}, "
-                f"stderr={truncate_log_value(conversion_result.stderr)}"
-            ),
-            operation="emit_pdf_output",
-        )
-
-    return pdf_path, (base + ".pdf")
+    return _convert_with_libreoffice(
+        source_path=pptx_path,
+        outdir=outdir,
+        convert_to_arg=f"pdf:impress_pdf_Export:{filter_opts}",
+        expected_output_ext="pdf",
+        operation="convert_pptx_to_pdf",
+    )
 
 
 # ==================== iLoveAPI conversion ====================

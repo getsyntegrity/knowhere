@@ -24,6 +24,7 @@ from app.services.document_parser.html_parser import first_cols_rows_html, merge
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
 from app.services.document_parser.txt_parser import extract_title_keywords_summary, split_title_summary
 from shared.utils.file_utils import path_handle
+from shared.utils.chunk_refs import build_chunk_ref, has_chunk_ref
 from shared.utils.text_utils import tokenize2stw_remove
 from bs4 import BeautifulSoup
 from loguru import logger
@@ -145,6 +146,24 @@ def clean_md_table_lines(table_lines, start_line_num):
                 cleaned_lines.append(cleaned_line)
     return cleaned_lines, error_lines
 
+
+def replace_chunk_ref_in_rows(df_list, old_path: str, new_path: str) -> None:
+    """Rewrite readable chunk refs after deferred image/table renames."""
+    old_ref = build_chunk_ref(old_path)
+    new_ref = build_chunk_ref(new_path)
+    if not old_ref or old_ref == new_ref:
+        return
+
+    for row in df_list:
+        if len(row) > 0 and isinstance(row[0], str):
+            row[0] = row[0].replace(old_ref, new_ref)
+        if len(row) > 1 and row[1] == old_path:
+            row[1] = new_path
+        if len(row) > 2 and isinstance(row[2], str):
+            row[2] = row[2].replace(old_ref, new_ref)
+        if len(row) > 8 and isinstance(row[8], str):
+            row[8] = row[8].replace(old_ref, new_ref)
+
 def update_df_list(df_list, content_items, path, llm_paras, time_stamp, page_nums="", summary_len=1500, skip_llm=False):
     """Flush accumulated content_items into a chunk row in df_list.
     
@@ -155,13 +174,13 @@ def update_df_list(df_list, content_items, path, llm_paras, time_stamp, page_num
         skip_llm: if True, skip inline LLM calls (deferred to parallel batch).
     """
     # Separate pure text from IMAGE/TABLE ref blocks for deterministic know_id
-    marker_pattern = re.compile(r'IMAGE_.*?_IMAGE|TABLE_.*?_TABLE')
-    text_items = [item for item in content_items if not marker_pattern.search(str(item))]
+    text_items = [item for item in content_items if not has_chunk_ref(str(item))]
     pure_text = '\n'.join(text_items).strip()
     bottom_content = '\n'.join(content_items).strip()
 
     match_type = find_matches_parsing(bottom_content, path)
-    know_id = gen_str_codes(pure_text)
+    know_id_source = pure_text if pure_text else f"{path or ''}::{page_nums or ''}"
+    know_id = gen_str_codes(know_id_source)
     bottom_tokens = tokenize2stw_remove([bottom_content], llm_paras['stopwords'])
 
     keywords = ''
@@ -346,7 +365,8 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 with open(update_img_path, 'rb') as img_f:
                     img_binary_hash = hashlib.md5(img_f.read()).hexdigest()
                 temp_uid = gen_str_codes(img_binary_hash)
-                img_id = 'IMAGE_' + temp_uid + '_IMAGE'
+                relative_img_path = f"images/{img_name}{img_suffix}"
+                img_ref = build_chunk_ref(relative_img_path)
                 
                 # Build img_summary_field for df_list: image-n + optional summary
                 if effective_summary:
@@ -354,16 +374,15 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 else:
                     img_summary_field = image_index
                 
-                # Build image_ref for content: image-n + optional summary + image_id
+                # Build image_ref for content: optional summary + image path ref
                 if effective_summary:
-                    img_content = f"\n{image_index}\n{effective_summary}\n{img_id}\n"
+                    img_content = f"\n{effective_summary}\n{img_ref}\n"
                 else:
-                    img_content = f"\n{image_index}\n{img_id}\n"
+                    img_content = f"\n{img_ref}\n"
                 
                 content_items.append(img_content)
 
-                relative_img_path = f"images/{img_name}{img_suffix}"
-                df_list.append([img_content, relative_img_path, img_id, len(img_content), "", img_summary_field, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
+                df_list.append([img_content, relative_img_path, "image", len(img_content), "", img_summary_field, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
                 if base_llm_paras['summary_image']:
                     # Store img_dir, img_name, img_suffix for post-loop rename (mirrors table deferred task)
                     deferred_llm_tasks.append(("image", len(df_list) - 1, relative_img_path, img_dir, img_name, img_suffix))
@@ -415,21 +434,22 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                 effective_name = llm_title if llm_title else raw_tb_name
                 tb_name = path_handle(f"table-{str(table_count)} {effective_name}", mode="clean_single")
                 temp_uid = gen_str_codes((tb_str + str(table_count)))
-                table_id = 'TABLE_' + temp_uid + '_TABLE'
 
-                # Build table_ref for content: table-n + optional LLM summary + table_id
+                relative_tb_path = f"tables/{tb_name}.html"
+                tb_ref = build_chunk_ref(relative_tb_path)
+
+                # Build table_ref for content: optional LLM summary + table path ref
                 if llm_summary:
-                    content_items.append(f'\n{table_index}\n{llm_summary}\n{table_id}\n')
+                    content_items.append(f'\n{llm_summary}\n{tb_ref}\n')
                 else:
-                    content_items.append(f'\n{table_index}\n{table_id}\n')
+                    content_items.append(f'\n{tb_ref}\n')
                 tb_path = os.path.join(tb_dir, f"{tb_name}.html")
                 # Add border to HTML tables for consistent display
                 tb_str_with_border = tb_str.replace('<table>', "<table border='1'>").replace('<table ', "<table border='1' ")
                 with open(tb_path, 'w', encoding='utf-8') as f:
                     f.write(tb_str_with_border)
 
-                relative_tb_path = f"tables/{tb_name}.html"
-                df_list.append([tb_str, relative_tb_path, table_id, len(tb_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
+                df_list.append([tb_str, relative_tb_path, "table", len(tb_str), tb_keywords, tb_summary, temp_uid, "", "", time_stamp, str(current_pg_num) if current_pg_num > 0 else ""])
                 if base_llm_paras['summary_table']:
                     deferred_llm_tasks.append(("table", len(df_list) - 1, tb_str, tb_dir, tb_name, table_count - 1))
                 table_lines = [] # Reset table_lines after storing the DataFrame
@@ -450,7 +470,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
     if base_llm_paras.get('summary_txt'):
         for idx, entry in enumerate(df_list):
             marker = entry[2]  # col 2: match_type / img_id / table_id
-            if isinstance(marker, str) and ('IMAGE_' in marker or 'TABLE_' in marker):
+            if isinstance(marker, str) and marker.strip().split('\n', 1)[0].lower() in {"image", "table"}:
                 continue
             if len(entry[0]) > summary_len and not entry[4] and not entry[5]:
                 deferred_llm_tasks.append(("text", idx, entry[0]))
@@ -514,7 +534,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                     img_title, img_summary = result
                     entry = df_list[idx]
                     if img_summary:
-                        image_index = entry[0].split('\n')[1] if '\n' in entry[0] else "image"
+                        image_index = entry[5].split('\n')[0] if entry[5] else "image"
                         entry[5] = f"{image_index}\n{img_summary}"
                     # Rename image file if LLM provided a better title (mirrors table rename logic)
                     if img_title:
@@ -529,7 +549,9 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                         new_path = os.path.join(i_dir, f"{new_img_name}{i_suffix}")
                         if old_path != new_path and os.path.exists(old_path):
                             os.rename(old_path, new_path)
-                            entry[1] = f"images/{new_img_name}{i_suffix}"
+                            new_relative_path = f"images/{new_img_name}{i_suffix}"
+                            replace_chunk_ref_in_rows(df_list, entry[1], new_relative_path)
+                            entry[1] = new_relative_path
                 elif task_type == "table":
                     title, kw, summary = result
                     entry = df_list[idx]
@@ -547,7 +569,9 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
                         new_path = os.path.join(t_dir, f"{new_tb_name}.html")
                         if old_path != new_path and os.path.exists(old_path):
                             os.rename(old_path, new_path)
-                            entry[1] = f"tables/{new_tb_name}.html"
+                            new_relative_path = f"tables/{new_tb_name}.html"
+                            replace_chunk_ref_in_rows(df_list, entry[1], new_relative_path)
+                            entry[1] = new_relative_path
                 elif task_type == "text":
                     kw, summary = result
                     df_list[idx][4] = kw if isinstance(kw, str) else ""

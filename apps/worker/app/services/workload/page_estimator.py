@@ -4,15 +4,17 @@ Page Estimator Service
 Calculates page counts for billing based on:
 - PDF: Physical page count from metadata
 - PPTX: Slide count
-- Text-based (DOCX, TXT, MD, JSON, XLSX): Word-based estimation using count_cn_en
+- Text-based (DOC, DOCX, TXT, MD, JSON): Word-based estimation using count_cn_en
+- Spreadsheet-based (XLS, XLSX): Row-based estimation
 
 Supported file types:
-- .pdf, .docx, .pptx, .xlsx
+- .pdf, .doc, .docx, .pptx, .xls, .xlsx
 - .txt, .md, .json, .fragment
 - .png, .jpg, .jpeg
 """
 import math
 import re
+import tempfile
 from pathlib import Path
 
 from shared.core.logging import logger
@@ -33,8 +35,8 @@ class PageEstimator:
     Billing Logic:
     - PDF: Physical page count from metadata
     - PPTX: Slide count
-    - DOCX/TXT/MD/JSON: Word-based estimation (count_cn_en / 500)
-    - XLSX: Row-based estimation (rows / 50)
+    - DOC/DOCX/TXT/MD/JSON: Word-based estimation (count_cn_en / 500)
+    - XLS/XLSX: Row-based estimation (rows / 50)
     - Images: 1 page per image
     """
     
@@ -57,8 +59,12 @@ class PageEstimator:
                 return cls._estimate_pdf(file_path)
             elif suffix == '.pptx':
                 return cls._estimate_pptx(file_path)
+            elif suffix == '.doc':
+                return cls._estimate_doc(file_path)
             elif suffix == '.docx':
                 return cls._estimate_docx(file_path)
+            elif suffix == '.xls':
+                return cls._estimate_xls(file_path)
             elif suffix == '.xlsx':
                 return cls._estimate_xlsx(file_path)
             elif suffix in ['.txt', '.md', '.json', '.fragment']:
@@ -134,6 +140,21 @@ class PageEstimator:
         except Exception as e:
             logger.error(f"DOCX estimation error: {e}")
             return 1
+
+    @classmethod
+    def _estimate_doc(cls, file_path: str) -> int:
+        """
+        Estimate pages for DOC by converting it to DOCX first.
+        """
+        try:
+            from app.services.document_parser.legacy_converter import doc_to_docx
+
+            with tempfile.TemporaryDirectory(prefix="page-estimator-doc-") as temp_dir:
+                converted_path, _ = doc_to_docx(file_path, temp_dir)
+                return cls._estimate_docx(converted_path)
+        except Exception as e:
+            logger.error(f"DOC estimation error: {e}")
+            return 1
     
     @classmethod
     def _estimate_xlsx(cls, file_path: str) -> int:
@@ -157,6 +178,21 @@ class PageEstimator:
             return 1
         except Exception as e:
             logger.error(f"XLSX estimation error: {e}")
+            return 1
+
+    @classmethod
+    def _estimate_xls(cls, file_path: str) -> int:
+        """
+        Estimate pages for XLS by converting it to XLSX first.
+        """
+        try:
+            from app.services.document_parser.legacy_converter import xls_to_xlsx
+
+            with tempfile.TemporaryDirectory(prefix="page-estimator-xls-") as temp_dir:
+                converted_path, _ = xls_to_xlsx(file_path, temp_dir)
+                return cls._estimate_xlsx(converted_path)
+        except Exception as e:
+            logger.error(f"XLS estimation error: {e}")
             return 1
     
     @classmethod

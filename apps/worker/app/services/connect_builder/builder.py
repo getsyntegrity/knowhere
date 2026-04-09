@@ -12,6 +12,7 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from shared.utils.chunk_refs import CHUNK_REF_RE
 
 
 # ─── Relation Type Registry (extensible, not hard-coded) ──────────────────────
@@ -240,7 +241,7 @@ def _parse_tokens_field(raw) -> List[str]:
     for w in words:
         if len(w) <= 1:
             continue
-        if any(w.startswith(p) for p in _MARKER_PREFIXES):
+        if any(w.startswith(p) for p in _MARKER_PREFIXES) or CHUNK_REF_RE.fullmatch(w):
             continue
         if _UUID_LIKE_RE.match(w):
             continue
@@ -419,8 +420,8 @@ def deserialize_connections(raw: Any) -> List[Dict[str, Any]]:
 
     Handles:
       - JSON array string: '[{"target": "...", ...}]'
+      - Single target string: 'doc/section-a'
       - Empty / NaN / None: returns []
-      - Legacy newline-separated format: returns as-is strings (backward compat)
 
     Args:
         raw: Raw value from DataFrame connectto column.
@@ -451,12 +452,6 @@ def deserialize_connections(raw: Any) -> List[Dict[str, Any]]:
         except json.JSONDecodeError:
             pass
 
-    # Legacy format: newline-separated strings → wrap in basic structure
-    if "\n" in raw_str:
-        lines = [line.strip() for line in raw_str.split("\n") if line.strip()]
-        return [{"target": line, "relation": "related", "score": 1.0, "keywords": []} for line in lines]
-
-    # Single value
     if raw_str:
         return [{"target": raw_str, "relation": "related", "score": 1.0, "keywords": []}]
 

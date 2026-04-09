@@ -222,6 +222,29 @@ def checkerboard_inject_parse(
         if filename and file_full_path:
             parsed_df = parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root, s3_key=s3_key)
 
+    elif '.doc' in file_path_lower and '.docx' not in file_path_lower:
+        logger.debug("file type is doc")
+        from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
+        from app.services.document_parser.legacy_converter import doc_to_docx
+
+        if filename and file_full_path:
+            converted_docx_path, _ = doc_to_docx(file_full_path, outdir=full_output_dir)
+            parsed_structure, df_list = parse_docx(
+                converted_docx_path,
+                base_llm_paras,
+                full_output_dir,
+                filename,
+                baseurl,
+                relative_root=relative_root,
+            )
+            parsed_df = convert_doc2dics(
+                parsed_structure,
+                df_list,
+                full_output_dir,
+                base_llm_paras=base_llm_paras,
+                relative_root=relative_root,
+            )
+
     elif '.docx' in file_path_lower:
         logger.debug(f"file type is docx")
         from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
@@ -229,6 +252,22 @@ def checkerboard_inject_parse(
         if filename and file_full_path:
             parsed_structure, df_list = parse_docx(file_full_path, base_llm_paras, full_output_dir, filename, baseurl, relative_root=relative_root)
             parsed_df = convert_doc2dics(parsed_structure, df_list, full_output_dir, base_llm_paras=base_llm_paras, relative_root=relative_root)
+
+    elif '.xls' in file_path_lower and '.xlsx' not in file_path_lower:
+        logger.debug("file type is xls")
+        from app.services.document_parser.legacy_converter import xls_to_xlsx
+        from app.services.document_parser.table_parser import parse_xlsx
+
+        if filename and file_full_path:
+            converted_xlsx_path, _ = xls_to_xlsx(file_full_path, outdir=full_output_dir)
+            parsed_df = parse_xlsx(
+                converted_xlsx_path,
+                filename,
+                full_output_dir,
+                baseurl,
+                base_llm_paras=base_llm_paras,
+                relative_root=relative_root,
+            )
 
     elif '.xlsx' in file_path_lower:
         logger.debug(f"file type is xlsx")
@@ -280,7 +319,7 @@ def checkerboard_inject_parse(
     else:
         # Unsupported file type
         file_ext = os.path.splitext(file_full_path)[1].lower()
-        supported_types = ['.txt', '.fragment', '.png', '.jpg', '.jpeg', '.pdf', '.docx', '.xlsx', '.pptx', '.md', '.json']
+        supported_types = ['.txt', '.fragment', '.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.pptx', '.md', '.json']
         raise ValidationException(
             user_message=f"Unsupported file type: {file_ext}",
             violations=[{

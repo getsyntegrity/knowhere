@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from loguru import logger
 from PIL import Image
+from shared.utils.chunk_refs import extract_chunk_refs
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -172,12 +173,7 @@ class ZipResultService:
                     data_id=data_id,
                     source_file_name=source_file_name,
                     statistics=statistics,
-                    image_files_info=image_files_info,
-                    table_files_info=table_files_info,
-                    has_markdown=markdown_path is not None,
-                    has_kb_csv=has_kb_csv,
-                    has_hierarchy=has_hierarchy,
-                    has_toc=has_toc,
+                    job_metadata=job_metadata,
                 )
                 manifest_json = json.dumps(manifest, ensure_ascii=False, indent=2)
                 zip_file.writestr("manifest.json", manifest_json.encode("utf-8"))
@@ -214,9 +210,11 @@ class ZipResultService:
 
         for chunk in chunks:
             chunk_type = chunk.get("type", "")
-            if "IMAGE" in chunk_type or chunk_type == "image":
+            raw_type = str(chunk_type).strip()
+            normalized_type = raw_type.split("\n", 1)[0].lower()
+            if normalized_type == "image":
                 image_chunks += 1
-            elif "TABLE" in chunk_type or chunk_type == "table":
+            elif normalized_type == "table":
                 table_chunks += 1
             else:
                 text_chunks += 1
@@ -236,34 +234,138 @@ class ZipResultService:
         table_files_map: Dict[str, Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """Convert chunks data to ZIP specification format"""
-        
-        def safe_parse_rels(type_val, connects):
-            """Safely parse relationship fields"""
+
+        def safe_parse_rels(type_val):
+            """Safely parse in-document relationship fields from type metadata."""
             rels = []
-            # Extract relationships from type field (multi-line format)
             if type_val and isinstance(type_val, str):
                 if "\n" in type_val:
-                    rels.extend([line.strip() for line in type_val.split("\n")[1:-1] if line.strip()])
-            # Extract relationships from connectto field
-            if connects:
-                if isinstance(connects, list):
-                    rels.extend([str(c).strip() for c in connects if c])
-                elif isinstance(connects, str):
-                    if "\n" in connects:
-                        rels.extend([line.strip() for line in connects.split("\n") if line.strip()])
-                    else:
-                        rels.append(connects.strip())
+                    lines = [line.strip() for line in type_val.split("\n") if line.strip()]
+                    rels.extend([line for line in lines[1:] if line.upper() != "PTXT"])
             return rels if rels else []
+
+        def build_resource_target_map() -> Dict[str, str]:
+            """Build ref/path -> chunk_id aliases for image and table chunks."""
+            target_map: Dict[str, str] = {}
+            for chunk in chunks:
+                chunk_id = str(chunk.get("chunk_id") or chunk.get("know_id") or "").strip()
+                if not chunk_id:
+                    continue
+                chunk_type_str = str(chunk.get("type", "")).strip().split("\n", 1)[0].lower()
+                if chunk_type_str not in {"image", "table"}:
+                    continue
+                metadata = chunk.get("metadata", {})
+                file_path = ""
+                if isinstance(metadata, dict):
+                    file_path = str(metadata.get("file_path") or "").strip()
+                if not file_path:
+                    file_info = image_files_map.get(chunk_id) if chunk_type_str == "image" else table_files_map.get(chunk_id)
+                    if file_info:
+                        file_path = str(file_info.get("file_path") or "").strip()
+                path_alias = str(chunk.get("path") or "").strip()
+                aliases = {file_path, path_alias}
+                for alias in list(aliases):
+                    if alias:
+                        aliases.add(f"[{alias}]")
+                for alias in aliases:
+                    if alias:
+                        target_map[alias] = chunk_id
+            return target_map
+
+        def normalize_connect_to(connects, target_map: Dict[str, str]) -> List[Dict[str, Any]]:
+            """Normalize connect_to to chunk_id-based entries."""
+            if not connects:
+                return []
+
+            raw_items = connects if isinstance(connects, list) else [connects]
+            normalized = []
+            for item in raw_items:
+                if not item:
+                    continue
+
+                if isinstance(item, dict):
+                    target = str(item.get("target") or "").strip()
+                    normalized_target = target_map.get(target, target)
+                    if not normalized_target:
+                        continue
+
+                    normalized_item = {
+                        "target": normalized_target,
+                        "relation": item.get("relation", "related"),
+                    }
+                    if "score" in item:
+                        normalized_item["score"] = item.get("score", 1.0)
+                    if "keywords" in item:
+                        normalized_item["keywords"] = item.get("keywords", [])
+                    if "ref" in item and item.get("ref"):
+                        normalized_item["ref"] = item.get("ref")
+                    normalized.append(normalized_item)
+                    continue
+
+                item_str = str(item).strip()
+                if not item_str:
+                    continue
+                normalized_target = target_map.get(item_str, item_str)
+                normalized.append({
+                    "target": normalized_target,
+                    "relation": "related",
+                    "score": 1.0,
+                    "keywords": [],
+                })
+
+            return normalized
+
+        def refs_to_embed_connections(refs: List[str], target_map: Dict[str, str]) -> List[Dict[str, Any]]:
+            """Convert resource refs to connect_to embeds entries."""
+            normalized = []
+            for ref in refs:
+                ref_str = str(ref or "").strip()
+                if not ref_str:
+                    continue
+                target_id = target_map.get(ref_str)
+                if not target_id and ref_str.startswith("[") and ref_str.endswith("]"):
+                    target_id = target_map.get(ref_str[1:-1].strip())
+                if not target_id:
+                    continue
+                normalized.append({
+                    "target": target_id,
+                    "relation": "embeds",
+                    "ref": ref_str,
+                })
+            return normalized
+
+        def merge_connections(*connection_lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            """Merge connect_to entries while keeping stable order."""
+            merged: List[Dict[str, Any]] = []
+            seen = set()
+            for connection_list in connection_lists:
+                for item in connection_list or []:
+                    if not isinstance(item, dict):
+                        continue
+                    key = (
+                        str(item.get("target") or ""),
+                        str(item.get("relation") or "related"),
+                        str(item.get("ref") or ""),
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    merged.append(item)
+            return merged
+
+        resource_target_map = build_resource_target_map()
         
         formatted = []
         for chunk in chunks:
             chunk_id = str(chunk.get("chunk_id") or chunk.get("know_id"))
             chunk_type_str = chunk.get("type", "")
+            raw_type = str(chunk_type_str).strip()
+            normalized_type = raw_type.split("\n", 1)[0].lower()
             
             # Determine chunk type
-            if "IMAGE" in chunk_type_str.upper() or chunk_type_str == "image":
+            if normalized_type == "image":
                 chunk_type = "image"
-            elif "TABLE" in chunk_type_str.upper() or chunk_type_str == "table":
+            elif normalized_type == "table":
                 chunk_type = "table"
             else:
                 chunk_type = "text"
@@ -287,15 +389,17 @@ class ZipResultService:
                 metadata["tokens"] = existing_metadata.get("tokens") or chunk.get("tokens", 0)
                 metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
                 
-                # Try to extract relationships from metadata or original fields
-                relationships = existing_metadata.get("relationships")
-                if not relationships:
-                    # Try to parse from type and connectto fields
-                    type_val = chunk.get("type_raw") or chunk_type_str
-                    connects = chunk.get("connectto")
-                    relationships = safe_parse_rels(type_val, connects)
-                
-                metadata["relationships"] = relationships if relationships else []
+                # Convert in-text resource refs into embeds edges.
+                relationship_refs = safe_parse_rels(chunk.get("type_raw") or chunk_type_str)
+                if not relationship_refs:
+                    relationship_refs = extract_chunk_refs(content)
+
+                embed_connections = refs_to_embed_connections(relationship_refs, resource_target_map)
+                related_connections = normalize_connect_to(
+                    existing_metadata.get("connect_to") or chunk.get("connect_to") or chunk.get("connectto"),
+                    resource_target_map,
+                )
+                metadata["connect_to"] = merge_connections(embed_connections, related_connections)
                 
             elif chunk_type == "image":
                 # Get image info from existing_metadata or image_files_map
@@ -395,8 +499,7 @@ class ZipResultService:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
             
-            # Support standardized type: "image" or legacy format "IMAGE_xxx"
-            if chunk_type != "image" and "IMAGE" not in chunk_type:
+            if chunk_type != "image":
                 continue
 
             # Try to get original filename from chunk's path field
@@ -510,8 +613,7 @@ class ZipResultService:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
             
-            # Support standardized type: "table" or legacy format "TABLE_xxx"
-            if chunk_type != "table" and "TABLE" not in chunk_type:
+            if chunk_type != "table":
                 continue
 
             # Try to get original filename from chunk's path field
@@ -592,52 +694,29 @@ class ZipResultService:
         data_id: Optional[str],
         source_file_name: str,
         statistics: Dict[str, Any],
-        image_files_info: List[Dict[str, Any]],
-        table_files_info: List[Dict[str, Any]],
-        has_markdown: bool = False,
-        has_kb_csv: bool = False,
-        has_hierarchy: bool = False,
-        has_toc: bool = False,
+        job_metadata: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Generate manifest.json"""
-        # Prepare images array (keep only necessary fields: id, file_path, size_bytes, format, width, height)
-        images = []
-        for img_info in image_files_info:
-            images.append({
-                "id": img_info["id"],
-                "file_path": img_info["file_path"],
-                "size_bytes": img_info["size_bytes"],
-                "format": img_info["format"],
-                "width": img_info.get("width"),
-                "height": img_info.get("height"),
-            })
-
-        # Prepare tables array (keep only necessary fields: id, file_path, size_bytes, format)
-        tables = []
-        for table_info in table_files_info:
-            tables.append({
-                "id": table_info["id"],
-                "file_path": table_info["file_path"],
-                "size_bytes": table_info["size_bytes"],
-                "format": table_info["format"],
-            })
-
         manifest = {
-            "version": "1.0",
+            "version": "2.0",
             "job_id": job_id,
             "data_id": data_id,
             "source_file_name": source_file_name,
             "processing_date": datetime.utcnow().isoformat() + "Z",
-            "statistics": statistics,
-            "files": {
-                "chunks": "chunks.json",
-                "markdown": "full.md" if has_markdown else None,
-                "kb_csv": "kb.csv" if has_kb_csv else None,
-                "hierarchy": "hierarchy.json" if has_hierarchy else None,
-                "toc_hierarchies": "toc_hierarchies.json" if has_toc else None,
-                "images": images,
-                "tables": tables,
+            "processing": {
+                "page_count": job_metadata.get("page_count"),
+                "billing_status": job_metadata.get("billing_status"),
+                "cost": {
+                    "micro_dollars": job_metadata.get("billing_amount_micro_dollars"),
+                    "credits": job_metadata.get("billing_credits"),
+                },
+                "timing": {
+                    "started_at": job_metadata.get("processing_started_at"),
+                    "completed_at": job_metadata.get("processing_completed_at"),
+                    "duration_ms": job_metadata.get("processing_duration_ms"),
+                },
             },
+            "statistics": statistics,
         }
 
         return manifest

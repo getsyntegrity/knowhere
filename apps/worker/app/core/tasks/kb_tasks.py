@@ -7,6 +7,7 @@ All I/O operations use sync services that yield cooperatively under gevent.
 import os
 import shutil
 import tempfile
+from datetime import datetime, timezone
 
 import requests
 from loguru import logger
@@ -375,6 +376,7 @@ def _parse(job_id: str, user_id: str | None):
             credits_service = SyncCreditsService()
             billing_amount = billing_calculator.calculate_page_cost(page_count)
             billing_reason = billing_calculator.format_description(page_count, filename)
+            processing_started_at = datetime.now(timezone.utc)
 
             with get_sync_db_context() as db:
                 job_result = db.execute(
@@ -421,10 +423,15 @@ def _parse(job_id: str, user_id: str | None):
                         job.billing_status = "charged"
 
             # Store billing info in Redis
-            metadata_service.update_metadata(job_id, {
+            metadata_updates = {
                 "page_count": page_count,
                 "billing_status": "charged",
-            })
+                "billing_amount_micro_dollars": billing_amount.amount,
+                "billing_credits": billing_amount.to_credit(),
+                "processing_started_at": processing_started_at.isoformat(),
+            }
+            metadata_service.update_metadata(job_id, metadata_updates)
+            job_metadata.update(metadata_updates)
 
             doc_type = JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto")
             logger.info(
@@ -487,6 +494,16 @@ def _parse(job_id: str, user_id: str | None):
             data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 
             lifecycle_service.update_progress(job_id, progress=80, message="Generating ZIP package...")
+            processing_completed_at = datetime.now(timezone.utc)
+            processing_timing_updates = {
+                "processing_completed_at": processing_completed_at.isoformat(),
+                "processing_duration_ms": max(
+                    0,
+                    int((processing_completed_at - processing_started_at).total_seconds() * 1000),
+                ),
+            }
+            metadata_service.update_metadata(job_id, processing_timing_updates)
+            job_metadata.update(processing_timing_updates)
 
             # Generate ZIP package
             zip_service = ZipResultService()

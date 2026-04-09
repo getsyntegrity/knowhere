@@ -130,6 +130,8 @@ LARGE_IMAGE_PAGE_RATIO = 0.25
 SIGNIFICANT_IMAGE_MIN_DIM = 400
 SIGNIFICANT_IMAGE_MIN_PIXELS = 250_000
 
+PROFILE_MAX_NEW_XREFS_PER_PAGE = 30
+
 TABLE_DRAWING_LINE_THRESHOLD = 12
 TABLE_DRAWING_STRONG_THRESHOLD = 18
 TABLE_DRAWING_RECT_THRESHOLD = 2
@@ -399,6 +401,13 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     complex_pages = 0
     max_drawing_count = 0
 
+    # Track xrefs already processed across pages to avoid redundant
+    # get_image_rects() calls on shared/inherited image resources.
+    # PDFs with shared xrefs (e.g. scanned docs) report ALL document
+    # images on every page; without dedup this causes O(pages × images)
+    # content-stream scans.
+    seen_xrefs: set = set()
+
     for idx in sample_indices:
         page = doc[idx]
         page_width = page.rect.width
@@ -425,6 +434,7 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         page_medium_image_coverage = 0.0
         skinny_count = 0
 
+        new_xref_count = 0
         for img in images:
             xref = img[0]
             img_w, img_h = img[2], img[3]
@@ -434,6 +444,15 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
                 and img_h < DEGRADED_SKINNY_MAX_H
             ):
                 skinny_count += 1
+
+            # ── xref dedup: skip images already analyzed on earlier pages ──
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+            new_xref_count += 1
+            # Cap expensive get_image_rects calls per page
+            if new_xref_count > PROFILE_MAX_NEW_XREFS_PER_PAGE:
+                continue
 
             try:
                 rects = page.get_image_rects(xref)

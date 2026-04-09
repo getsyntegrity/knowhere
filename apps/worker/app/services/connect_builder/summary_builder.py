@@ -18,6 +18,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from shared.utils.chunk_refs import CHUNK_REF_PATTERN, REFERENCE_LABEL_PATTERN
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -89,9 +90,9 @@ def _build_chunk_lookup(
       - If metadata.summary exists → use it directly
       - Otherwise → title (node_key) + keywords + content[:200]
     """
-    marker_re = re.compile(r"IMAGE_.*?_IMAGE|TABLE_.*?_TABLE")
+    marker_re = re.compile(CHUNK_REF_PATTERN, re.IGNORECASE)
     # Also strip standalone table/image reference lines like "table-4", "image-1"
-    ref_re = re.compile(r"^\s*(table|image)-\d+\s*$", re.IGNORECASE)
+    ref_re = re.compile(REFERENCE_LABEL_PATTERN, re.IGNORECASE)
     lookup: Dict[str, str] = {}
 
     for chunk in chunks:

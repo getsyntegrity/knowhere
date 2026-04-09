@@ -645,7 +645,7 @@ def judge_by_conditions(text, scope=20, return_detail=False, CN_SPECIAL_IDX=12):
     regex_letter_brac_paren = r"^[\(\（]\s*[A-Za-z](?:\.\d+)*(?!\.0)\s*[\)\）]"
     regex_letter_brac_right = r"^[A-Za-z](?:\.\d+)*(?!\.0)\s*[\)\）]"
     # ========== Appendix ==========
-    regex_appendix = r"^((附件|附录|附表|附图)|(?i:appendix))[\s_\-—]{0,4}[[一二三四五六七八九十A-Za-z\d]"
+    regex_appendix = r"^((附件|附录|附表|附图)|(?i:appendix))[\s_\-—]{0,4}(?:\[)?[一二三四五六七八九十A-Za-z\d]"
 
     pos_regex_conditions = [
         # English Numbering
@@ -907,6 +907,54 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
     return preds_df
 
 
+def format_toc_context_for_llm(toc_context) -> str:
+    """Convert TOC hierarchy objects into compact LLM-friendly plain text."""
+    if not toc_context:
+        return ""
+
+    if isinstance(toc_context, str):
+        return toc_context
+
+    toc_items = toc_context if isinstance(toc_context, list) else [toc_context]
+    formatted_blocks = []
+
+    for toc_idx, toc_item in enumerate(toc_items, start=1):
+        if not isinstance(toc_item, dict):
+            formatted_blocks.append(str(toc_item))
+            continue
+
+        toc_range = toc_item.get("toc_range")
+        toc_entries = toc_item.get("toc_with_level") or []
+
+        if toc_range and len(toc_range) == 2:
+            formatted_blocks.append(
+                f"TOC {toc_idx} (source rows {toc_range[0]}-{toc_range[1]}):"
+            )
+        else:
+            formatted_blocks.append(f"TOC {toc_idx}:")
+
+        if not toc_entries:
+            formatted_blocks.append("- No TOC entries available")
+            continue
+
+        for entry in toc_entries:
+            if not isinstance(entry, dict):
+                continue
+
+            heading = str(entry.get("heading", "")).strip().replace("\n", " ")
+            if not heading:
+                continue
+
+            level = entry.get("level")
+            line_id = entry.get("id")
+            if isinstance(level, int):
+                formatted_blocks.append(f"- level {level} | id {line_id} | {heading}")
+            else:
+                formatted_blocks.append(f"- id {line_id} | {heading}")
+
+    return "\n".join(formatted_blocks)
+
+
 def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=8192, task="eval-headings"):
     """Apply LLM to analyze the hierarchy of headings
     
@@ -921,12 +969,17 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
     Returns:
         List of dicts with id and level
     """
-    
-    level_md = df2md(df) # df2html(df)
+
+    level_md = df2md(df)
     ot_limit = int(len(level_md) * 1.2)
     ot_limit = min(ot_limit, max_len)
+    formatted_toc_context = format_toc_context_for_llm(toc_context)
 
-    paras = {"max_tokens": ot_limit, "max_depth": max_depth, "toc_context": toc_context or ""}
+    paras = {
+        "max_tokens": ot_limit,
+        "max_depth": max_depth,
+        "toc_context": formatted_toc_context,
+    }
     prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=level_md, query="", paras=paras)
     messages = [
         {"role": "system", "content": "you are a document auditing expert"},
@@ -1224,6 +1277,19 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
+    resource_rows = None
+    resource_mask = raw_preds["heading"].eq("resource or annotation") & raw_preds["level"].eq(-1)
+    if resource_mask.any():
+        resource_rows = raw_preds.loc[resource_mask, ["id", "heading", "level", "reason"]].copy()
+        raw_preds = raw_preds.loc[~resource_mask].reset_index(drop=True)
+        logger.info(
+            f"smart parse => stripped {len(resource_rows)} resource/annotation rows before LLM"
+        )
+
+    if len(raw_preds) == 0:
+        logger.info("smart parse => only resource/annotation rows remain, skipping LLM hierarchy detection")
+        return resource_rows.sort_values("id").reset_index(drop=True)
+
     full_preds = []
     level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
     logger.info(f"smart parse => {len(level_dfs)} chunks, LLM on chunk 0, mapping on the rest")
@@ -1238,6 +1304,10 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
         ):
             logger.debug("🚀 smart parse => interpreting hierarchy patterns...")
             df4llm = basic_df.drop(columns=["reason"])
+            from .metadata_extractor import clean_md_text_for_llm
+            # Keep formatting signals in `reason` / preliminary `level`, but let the LLM
+            # judge hierarchy from the semantic heading text instead of raw markdown markers.
+            df4llm["heading"] = df4llm["heading"].apply(clean_md_text_for_llm)
             logger.debug(f"DataFrame transformation completed, rows: {len(df4llm)}")
 
             layout_res = hiearchy_llm(df4llm, model_name, max_depth, toc_hierarchies, task="eval-headings")
@@ -1279,6 +1349,8 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
         logger.warning(f"LLM-based parsing fails due to {e}, using non-llm pipeline...")
         full_preds = pd.concat(level_dfs, ignore_index=True)
         full_preds = est_hierarchies_naive(full_preds)
+    if resource_rows is not None and not resource_rows.empty:
+        full_preds = pd.concat([full_preds, resource_rows], ignore_index=True).sort_values("id").reset_index(drop=True)
     return full_preds
 
 

@@ -46,7 +46,7 @@ class StorageConfig(BaseModel):
     MAX_FILE_SIZE: int = Field(default=104857600, description="最大文件大小（字节）")
     MAX_IMAGE_SIZE: int = Field(default=10485760, description="最大图像大小（字节）")
     SUPPORTED_EXTENSIONS: str = Field(
-        default=".docx,.pdf,.txt,.xlsx,.pptx,.jpg,.jpeg,.png,.md",
+        default=".doc,.docx,.pdf,.txt,.xls,.xlsx,.pptx,.jpg,.jpeg,.png,.md",
         description="支持的文件扩展名"
     )
     
