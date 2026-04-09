@@ -41,7 +41,6 @@ class DocProfile:
     avg_text_density: float = 0.0
     avg_image_coverage: float = 0.0
     has_tables: bool = False
-    has_detected_tables: bool = False
     has_embedded_fonts: bool = False
     is_multi_column: bool = False
     is_degraded_electronic: bool = False
@@ -107,7 +106,7 @@ SCAN_IMAGE_COVERAGE_MIN = 0.6
 SCAN_PAGE_RATIO = 0.7
 
 ATLAS_TEXT_THRESHOLD = 200
-ATLAS_IMAGE_COVERAGE_MIN = 0.4
+ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN = 0.30
 ATLAS_MIN_LANDSCAPE_RATIO = 0.5  # ≥50% of sampled pages must be landscape
 ATLAS_MIN_PAGES = 2  # single-page scans (resumes, posters) are not atlases
 
@@ -212,7 +211,7 @@ def _estimate_risk_score(profile: DocProfile) -> float:
         risk += 0.20
     if profile.is_degraded_electronic:
         risk += 0.20
-    if profile.has_detected_tables:
+    if profile.has_tables:
         risk += 0.30
 
     risk += min(0.20, profile.large_image_page_ratio * 1.2)
@@ -237,7 +236,7 @@ def _classify_route(profile: DocProfile) -> tuple[str, str, float, float, list[s
         hard_gate_reasons.append("multi_column")
     if profile.is_degraded_electronic:
         hard_gate_reasons.append("degraded_electronic")
-    if profile.has_detected_tables:
+    if profile.has_tables:
         hard_gate_reasons.append(
             f"table_signals={profile.table_signal_pages}p/{profile.table_signal_strength:.2f}"
         )
@@ -420,7 +419,6 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         images = page.get_images(full=True)
         img_total_area = 0.0
         page_significant_image_count = 0
-        page_significant_coverage = 0.0
         page_max_rect_ratio = 0.0
         page_medium_image_coverage = 0.0
         skinny_count = 0
@@ -464,7 +462,6 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
 
                 if is_significant:
                     page_significant_image_count += 1
-                    page_significant_coverage += area_ratio
                 elif area_ratio >= MEDIUM_IMAGE_AREA_RATIO:
                     page_medium_image_coverage += area_ratio
 
@@ -642,7 +639,6 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     profile.avg_image_coverage = total_image_coverage / n_sampled if n_sampled > 0 else 0.0
     profile.has_embedded_fonts = has_any_fonts
     profile.has_tables = has_any_tables
-    profile.has_detected_tables = has_any_tables
     profile.is_multi_column = multi_col_pages > (n_sampled * 0.3)
     profile.is_degraded_electronic = degraded_pages > (n_sampled * DEGRADED_PAGE_RATIO)
     profile.sample_text = " ".join(all_text_parts)[:500]
@@ -685,7 +681,6 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     # ── Linear atlas gate: VLM always makes the final call ──
     # Any document meeting all 4 conditions is sent for VLM visual confirmation.
     # We do NOT heuristically commit here — VLM decides in parse_service.
-    ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN = 0.30
     is_atlas_candidate = (
         profile.avg_text_density < ATLAS_TEXT_THRESHOLD              # text-sparse (< 200 chars/page)
         and profile.avg_image_coverage > ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN  # image-heavy (> 30%)

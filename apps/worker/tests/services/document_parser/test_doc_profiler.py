@@ -162,7 +162,7 @@ def test_profile_pdf_worker_marks_safe_fast_for_dense_text_pdf(monkeypatch):
     assert profile["scan_type"] == "electronic"
     assert profile["route"] == "fast"
     assert profile["decision_band"] == "safe_fast"
-    assert profile["has_detected_tables"] is False
+    assert profile["has_tables"] is False
     assert profile["has_significant_images"] is False
 
 
@@ -173,7 +173,7 @@ def test_profile_pdf_worker_marks_safe_standard_for_detected_tables(monkeypatch)
 
     profile = _run_profile_worker(monkeypatch, pages)
 
-    assert profile["has_detected_tables"] is True
+    assert profile["has_tables"] is True
     assert profile["route"] == "standard"
     assert profile["decision_band"] == "safe_standard"
 
@@ -185,7 +185,7 @@ def test_profile_pdf_worker_ignores_find_tables_only_hits(monkeypatch):
 
     profile = _run_profile_worker(monkeypatch, pages)
 
-    assert profile["has_detected_tables"] is False
+    assert profile["has_tables"] is False
     assert profile["route"] == "fast"
     assert profile["decision_band"] == "safe_fast"
 
@@ -229,7 +229,7 @@ def test_profile_pdf_worker_ignores_fill_only_rectangles_for_text_pdf(monkeypatc
 
     profile = _run_profile_worker(monkeypatch, pages)
 
-    assert profile["has_detected_tables"] is False
+    assert profile["has_tables"] is False
     assert profile["complex_page_ratio"] == 0.0
     assert profile["route"] == "fast"
     assert profile["decision_band"] == "safe_fast"
@@ -240,7 +240,7 @@ def test_profile_pdf_worker_marks_short_clean_text_pdf_as_safe_fast(monkeypatch)
 
     profile = _run_profile_worker(monkeypatch, pages)
 
-    assert profile["has_detected_tables"] is False
+    assert profile["has_tables"] is False
     assert profile["complex_page_ratio"] == 0.0
     assert profile["route"] == "fast"
     assert profile["decision_band"] == "safe_fast"
@@ -262,7 +262,7 @@ def test_profile_pdf_worker_ignores_fill_only_line_boxes_for_text_pdf(monkeypatc
 
     profile = _run_profile_worker(monkeypatch, pages)
 
-    assert profile["has_detected_tables"] is False
+    assert profile["has_tables"] is False
     assert profile["complex_page_ratio"] == 0.0
     assert profile["route"] == "fast"
     assert profile["decision_band"] == "safe_fast"
