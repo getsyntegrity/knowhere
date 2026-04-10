@@ -66,6 +66,9 @@ class StripeService:
                 cancel_url=cancel_url,
                 metadata={'user_id': user_id, 'plan_id': plan_id, 'type': 'subscription'},
                 allow_promotion_codes=True,
+                # Disable Adaptive Pricing to prevent currency switcher from hiding Alipay.
+                # Alipay handles USD→CNY conversion internally for customers.
+                adaptive_pricing={"enabled": False},
             )
             return str(session.url or "")
         except stripe.StripeError as e:
@@ -168,7 +171,9 @@ class StripeService:
 
                 # 收集更多客户信息，便于后续关联
                 "allow_promotion_codes": True,
-
+                # Disable Adaptive Pricing to prevent currency switcher from hiding Alipay.
+                # Alipay handles USD→CNY conversion internally for customers.
+                "adaptive_pricing": {"enabled": False},
                 # 强制收集账单地址，Checkout 在创建 Customer 时会同步到客户记录
                 "billing_address_collection": "required",
             }
