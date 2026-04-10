@@ -57,7 +57,7 @@ class StripeService:
             price_id = await self.price_config_service.get_plan_price_id(db, plan_id)
             
             session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
+                payment_method_types=['card', 'alipay'],
                 line_items=[{
                     'price': price_id,
                     'quantity': 1,
@@ -150,7 +150,7 @@ class StripeService:
             session_params: Dict[str, Any] = {
                 "customer": customer_id,
                 "customer_update": {"address": "auto"},
-                "payment_method_types": ["card"],
+                "payment_method_types": ["card", "alipay"],
                 "client_reference_id": str(user_id),
                 "line_items": [
                     {
@@ -165,8 +165,12 @@ class StripeService:
                 # 将元信息同步到 PaymentIntent/Charge，便于退款 webhook 获取 user_id
                 "payment_intent_data": {
                     "metadata": metadata,
-                    # 保存卡片到 Customer，便于在控制台查看尾号/后续复用
-                    "setup_future_usage": "off_session",
+                },
+                # 保存卡片到 Customer，便于在控制台查看尾号/后续复用但仅限于 card，支持 alipay 不报错
+                "payment_method_options": {
+                    "card": {
+                        "setup_future_usage": "off_session",
+                    }
                 },
                 # 收集更多客户信息，便于后续关联
                 "allow_promotion_codes": True,
@@ -198,6 +202,7 @@ class StripeService:
             intent = stripe.PaymentIntent.create(
                 amount=amount,  # amount in cents
                 currency=currency,
+                payment_method_types=['card', 'alipay'],
                 metadata={
                     'user_id': user_id,
                     'type': 'credits',
