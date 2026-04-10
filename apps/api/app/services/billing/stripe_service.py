@@ -165,12 +165,7 @@ class StripeService:
                 "payment_intent_data": {
                     "metadata": metadata,
                 },
-                # 保存卡片到 Customer，便于在控制台查看尾号/后续复用但仅限于 card，支持 alipay 不报错
-                "payment_method_options": {
-                    "card": {
-                        "setup_future_usage": "off_session",
-                    }
-                },
+
                 # 收集更多客户信息，便于后续关联
                 "allow_promotion_codes": True,
                 "phone_number_collection": {"enabled": True},
@@ -194,7 +189,7 @@ class StripeService:
         user_id: str, 
         amount: int, 
         credits_amount: int,
-        currency: str = 'cny'  # 使用人民币
+        currency: str = 'usd'
     ) -> Dict[str, Any]:
         """创建支付意图（用于Credits购买）"""
         try:
