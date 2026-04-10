@@ -168,7 +168,7 @@ class StripeService:
 
                 # 收集更多客户信息，便于后续关联
                 "allow_promotion_codes": True,
-                "phone_number_collection": {"enabled": True},
+
                 # 强制收集账单地址，Checkout 在创建 Customer 时会同步到客户记录
                 "billing_address_collection": "required",
             }
