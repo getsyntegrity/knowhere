@@ -57,7 +57,6 @@ class StripeService:
             price_id = await self.price_config_service.get_plan_price_id(db, plan_id)
             
             session = stripe.checkout.Session.create(
-                payment_method_types=['card', 'alipay'],
                 line_items=[{
                     'price': price_id,
                     'quantity': 1,
@@ -150,7 +149,7 @@ class StripeService:
             session_params: Dict[str, Any] = {
                 "customer": customer_id,
                 "customer_update": {"address": "auto"},
-                "payment_method_types": ["card", "alipay"],
+
                 "client_reference_id": str(user_id),
                 "line_items": [
                     {
@@ -202,7 +201,7 @@ class StripeService:
             intent = stripe.PaymentIntent.create(
                 amount=amount,  # amount in cents
                 currency=currency,
-                payment_method_types=['card', 'alipay'],
+                automatic_payment_methods={"enabled": True},
                 metadata={
                     'user_id': user_id,
                     'type': 'credits',
