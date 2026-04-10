@@ -8,6 +8,7 @@ from shared.utils.OpenAICompatibleClientSync import get_openai_client
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
 from shared.utils.CommonHelperSync import load_file_bytes
+from shared.utils.chunk_refs import CHUNK_REF_PATTERN
 from bs4 import BeautifulSoup
 from loguru import logger
 
@@ -193,7 +194,7 @@ def postprocess_leaf_dics(dict_list, llm_paras, merge_key='heading', content_key
 
     # generate summary and keywords for bottom nodes — parallel via gevent
     df_with_labels = pd.DataFrame(columns=['path', 'content_lst', 'path_identifier', 'keywords', 'local_summary'])
-    pattern = re.compile(r'(TABLE_.*?_TABLE|IMAGE_.*?_IMAGE)')
+    pattern = re.compile(CHUNK_REF_PATTERN)
 
     # Collect rows and identify which need LLM
     rows_data = []

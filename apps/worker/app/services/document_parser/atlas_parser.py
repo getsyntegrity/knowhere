@@ -26,6 +26,7 @@ from app.services.common.kb_utils import (
 )
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
+from shared.utils.chunk_refs import build_chunk_ref
 from shared.utils.text_utils import tokenize2stw_remove
 
 
@@ -358,7 +359,7 @@ def parse_atlas(
         actual_img_path = new_img_path if os.path.exists(new_img_path) else old_img_path
         with open(actual_img_path, 'rb') as img_f:
             know_id = _build_atlas_know_id(page_num, img_f.read())
-        img_marker = f"IMAGE_{know_id}_IMAGE"
+        img_marker = build_chunk_ref(img_ref)
 
         content_parts = [f"\n{img_marker}"]
         if vlm_info:
@@ -379,7 +380,7 @@ def parse_atlas(
         # Atlas chunks are image-primary: use IMAGE marker directly.
         # find_matches_parsing() prepends "PTXT\n" which causes downstream
         # chunk type classifier to misclassify as "text" instead of "image".
-        match_type = img_marker
+        match_type = "image"
         tokens = tokenize2stw_remove([content], stopwords)
         df_list.append([
             content,        # content

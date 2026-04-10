@@ -81,7 +81,7 @@ git status --porcelain
 - If working tree is **clean** → skip to Step 5
 - If there are **uncommitted changes**:
   1. Run `git diff --stat` to see what changed
-  2. **Auto-generate** a conventional commit message based on the diff (e.g. `feat: add X`, `fix: resolve Y`)
+  2. **Auto-generate** a conventional commit message based on the diff (e.g. `feat: add X`, `fix: resolve Y`, `refactor: extract Z`)
   3. **Auto-commit without asking**:
      ```bash
      git add -A
@@ -166,7 +166,8 @@ git branch -D <current_branch>
 
 1. **Never force push** to remote without explicit user confirmation
 2. **Auto-commit** — do not ask for message confirmation, just generate and commit
-3. **Auto-proceed** — do not ask for confirmation before starting the sync
+3. **Auto-proceed** — do not ask for confirmation before starting the sync (unless there is a merge conflict)
 4. **Stop on merge conflicts** — never auto-resolve
 5. **Always return to home_branch** — leave the workspace clean after every sync
 6. **Dynamic, not hardcoded** — always derive branch/remote/repo info from git commands
+7. **One sync at a time** — if already mid-sync, don't restart

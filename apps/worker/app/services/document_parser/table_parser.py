@@ -21,6 +21,8 @@ from shared.utils.text_utils import tokenize2stw_remove, remove_duplicates_order
 
 from app.services.document_parser.html_parser import df2html
 from shared.utils.CommonHelperSync import load_file_bytes
+from shared.utils.chunk_refs import build_chunk_ref
+from shared.utils.file_utils import path_handle
 from bs4 import BeautifulSoup
 from loguru import logger
 
@@ -1411,9 +1413,10 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
                     tb_summary = table_index
                     tb_keywords = tb_keywords if tb_keywords else tb_keywords_fallback
 
-                # Use LLM title for filename when available, fallback to sheet_name
+                # Use a filesystem-safe filename so LLM titles like "A/B" do not
+                # accidentally create nested paths under tables/.
                 effective_name = llm_title if llm_title else sheet_name
-                tb_name = remove_spaces('table-' + effective_name) + '.html'
+                tb_name = path_handle(remove_spaces('table-' + effective_name), mode="clean_single") + '.html'
                 tb_path = os.path.join(tb_dir, tb_name)
                 soup = BeautifulSoup(tb_strs, features='html.parser')
                 tb_html_str = soup.prettify()
@@ -1422,15 +1425,15 @@ def parse_xlsx(file_path, file_name, output_dir, baseurl, base_llm_paras=None, w
 
                 # Use same temp_uid for both marker and know_id (aligned with doc_parser/md_parser)
                 temp_uid = gen_str_codes(tb_strs + str(sheet_name))
-                tb_id = 'TABLE_' + temp_uid + '_TABLE'
-                tb_bottom_content = f"{tb_id}\nTable summary:\n{tb_summary}\nMain columns:\n{tb_keywords}"
+                relative_tb_path = f"tables/{tb_name}"
+                tb_ref = build_chunk_ref(relative_tb_path)
+                tb_bottom_content = f"{tb_ref}\nTable summary:\n{tb_summary}\nMain columns:\n{tb_keywords}"
                 
                 bottom_tokens = tokenize2stw_remove([tb_bottom_content], base_llm_paras['stopwords'])
 
                 all_tb_paths.extend(tb_paths)
                 # Use relative path for tables: "tables/xxx.html"
-                relative_tb_path = f"tables/{tb_name}"
-                df_list.append([tb_bottom_content, relative_tb_path, tb_id, len(tb_strs), tb_keywords, tb_summary, temp_uid, bottom_tokens, "", time_stamp, ""])
+                df_list.append([tb_bottom_content, relative_tb_path, "table", len(tb_strs), tb_keywords, tb_summary, temp_uid, bottom_tokens, "", time_stamp, ""])
 
             except KnowhereException:
                 raise

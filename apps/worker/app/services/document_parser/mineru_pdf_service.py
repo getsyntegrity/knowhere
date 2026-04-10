@@ -269,7 +269,7 @@ def poll_mineru_task(
 
     max_polling_attempts = 120
     polling_interval = 5.0
-    max_wait_time = 600
+    max_wait_time = 6000
 
     start_time = time.time()
     attempt = 0

@@ -5,6 +5,7 @@ from datetime import datetime
 import pandas as pd
 from shared.core.config import settings
 from shared.utils.file_utils import path_handle
+from shared.utils.chunk_refs import extract_chunk_refs
 from bs4 import BeautifulSoup
 from loguru import logger
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException, ValidationException
@@ -36,12 +37,10 @@ def find_images(folder_path):
 
 def find_matches_parsing(content, path):
     """解析内容中的表格和图片标记"""
-    pattern = re.compile(r'(TABLE_.*?_TABLE|IMAGE_.*?_IMAGE)')
-    matches = pattern.findall(content)
+    matches = extract_chunk_refs(content)
     if len(matches) == 0:
         match_type = 'PTXT'
     else:
-        matches.append('PTXT')
         match_type = '\n'.join((['PTXT'] + matches))
     
     split_char = settings.SPLIT_CHAR or ";"
