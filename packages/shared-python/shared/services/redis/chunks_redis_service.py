@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from shared.services.redis.redis_service import RedisService
+from shared.utils.chunk_refs import extract_chunk_refs
 
 try:
     import pandas as pd
@@ -94,18 +95,19 @@ class ChunksRedisService:
             if type_is_valid:
                 type_str = str(type_val)
                 if "\n" in type_str:
-                    lines = type_str.split("\n")[1:-1]
-                    rels.extend([line.strip() for line in lines if line.strip()])
+                    lines = [line.strip() for line in type_str.split("\n") if line.strip()]
+                    rels.extend([line for line in lines[1:] if line.upper() != "PTXT"])
             return rels if rels else []
 
         def parse_connect_to(connects):
             """解析 connectto 字段为 cross-chunk 关系列表"""
             if not connects or (pd is not None and pd.isna(connects)):
                 return []
+            if isinstance(connects, list):
+                return connects
             connects_str = str(connects).strip()
             if not connects_str:
                 return []
-            # JSON array format (new)
             if connects_str.startswith("["):
                 try:
                     parsed = json.loads(connects_str)
@@ -113,12 +115,68 @@ class ChunksRedisService:
                         return parsed
                 except json.JSONDecodeError:
                     pass
-            # Legacy: newline-separated chunk IDs
-            if "\n" in connects_str:
-                lines = [line.strip() for line in connects_str.split("\n") if line.strip()]
-                return [{"target": line, "relation": "related", "score": 1.0, "keywords": []} for line in lines]
-            # Legacy: single value
             return [{"target": connects_str, "relation": "related", "score": 1.0, "keywords": []}]
+
+        def build_resource_target_map(chunk_list: List[Dict[str, Any]]) -> Dict[str, str]:
+            """Build ref/path -> chunk_id aliases for image and table chunks."""
+            target_map: Dict[str, str] = {}
+            for item in chunk_list:
+                if item.get("type") not in {"image", "table"}:
+                    continue
+                item_id = str(item.get("chunk_id") or item.get("know_id") or "").strip()
+                if not item_id:
+                    continue
+                metadata = item.get("metadata", {})
+                file_path = ""
+                if isinstance(metadata, dict):
+                    file_path = str(metadata.get("file_path") or "").strip()
+                path_alias = str(item.get("path") or "").strip()
+                aliases = {file_path, path_alias}
+                for alias in list(aliases):
+                    if alias:
+                        aliases.add(f"[{alias}]")
+                for alias in aliases:
+                    if alias:
+                        target_map[alias] = item_id
+            return target_map
+
+        def refs_to_embed_connections(refs: List[str], target_map: Dict[str, str]) -> List[Dict[str, Any]]:
+            """Convert resource refs to connect_to embeds entries."""
+            connections: List[Dict[str, Any]] = []
+            for ref in refs:
+                ref_str = str(ref or "").strip()
+                if not ref_str:
+                    continue
+                target_id = target_map.get(ref_str)
+                if not target_id and ref_str.startswith("[") and ref_str.endswith("]"):
+                    target_id = target_map.get(ref_str[1:-1].strip())
+                if not target_id:
+                    continue
+                connections.append({
+                    "target": target_id,
+                    "relation": "embeds",
+                    "ref": ref_str,
+                })
+            return connections
+
+        def merge_connections(*connection_lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            """Merge connect_to entries while keeping stable order."""
+            merged: List[Dict[str, Any]] = []
+            seen = set()
+            for connection_list in connection_lists:
+                for item in connection_list or []:
+                    if not isinstance(item, dict):
+                        continue
+                    key = (
+                        str(item.get("target") or ""),
+                        str(item.get("relation") or "related"),
+                        str(item.get("ref") or ""),
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    merged.append(item)
+            return merged
 
         chunks = []
         for i, (_, row) in enumerate(df.iterrows()):
@@ -132,11 +190,12 @@ class ChunksRedisService:
             type_val = row.get("type", "")
 
             if isinstance(type_val, str):
-                if type_val.startswith("PTXT"):
+                normalized_type = type_val.strip().split("\n", 1)[0].lower()
+                if normalized_type == "ptxt":
                     chunk_type = "text"
-                elif type_val.startswith("IMAGE_"):
+                elif normalized_type == "image":
                     chunk_type = "image"
-                elif type_val.startswith("TABLE_"):
+                elif normalized_type == "table":
                     chunk_type = "table"
                 else:
                     chunk_type = "text"
@@ -144,14 +203,15 @@ class ChunksRedisService:
                 chunk_type = "text"
 
             # 构建metadata
+            relationship_refs = safe_parse_rels(type_val) or extract_chunk_refs(content)
             metadata = {
                 "keywords": safe_split_kws(row.get("keywords")),
                 "summary": str(row.get("summary", "")),
                 "length": safe_int(row.get("length")) or len(content),
                 "tokens": safe_parse_tokens(row.get("tokens")),
-                "relationships": safe_parse_rels(type_val),
                 "connect_to": parse_connect_to(row.get("connectto")),
             }
+            metadata["_relationship_refs"] = relationship_refs
 
             # 解析 page_nums: "3,4" → [3, 4]
             raw_page_nums = row.get("page_nums", "")
@@ -196,6 +256,20 @@ class ChunksRedisService:
             }
 
             chunks.append(chunk)
+
+        resource_target_map = build_resource_target_map(chunks)
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            relationship_refs = metadata.pop("_relationship_refs", [])
+            if chunk.get("type") != "text":
+                continue
+            embed_connections = refs_to_embed_connections(relationship_refs, resource_target_map)
+            metadata["connect_to"] = merge_connections(
+                embed_connections,
+                metadata.get("connect_to", []),
+            )
 
         logger.debug(f"DataFrame转换完成: chunks数量={len(chunks)}")
         return chunks

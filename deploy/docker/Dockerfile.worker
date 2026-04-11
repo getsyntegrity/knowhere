@@ -40,7 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgomp1 \
     libreoffice-core \
+    libreoffice-calc \
     libreoffice-impress \
+    libreoffice-writer \
     && rm -rf /var/lib/apt/lists/*
 
 # 从构建阶段复制虚拟环境

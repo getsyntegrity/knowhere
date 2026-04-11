@@ -57,7 +57,6 @@ class StripeService:
             price_id = await self.price_config_service.get_plan_price_id(db, plan_id)
             
             session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
                 line_items=[{
                     'price': price_id,
                     'quantity': 1,
@@ -67,6 +66,9 @@ class StripeService:
                 cancel_url=cancel_url,
                 metadata={'user_id': user_id, 'plan_id': plan_id, 'type': 'subscription'},
                 allow_promotion_codes=True,
+                # Disable Adaptive Pricing to prevent currency switcher from hiding Alipay.
+                # Alipay handles USD→CNY conversion internally for customers.
+                adaptive_pricing={"enabled": False},
             )
             return str(session.url or "")
         except stripe.StripeError as e:
@@ -150,7 +152,7 @@ class StripeService:
             session_params: Dict[str, Any] = {
                 "customer": customer_id,
                 "customer_update": {"address": "auto"},
-                "payment_method_types": ["card"],
+
                 "client_reference_id": str(user_id),
                 "line_items": [
                     {
@@ -165,12 +167,13 @@ class StripeService:
                 # 将元信息同步到 PaymentIntent/Charge，便于退款 webhook 获取 user_id
                 "payment_intent_data": {
                     "metadata": metadata,
-                    # 保存卡片到 Customer，便于在控制台查看尾号/后续复用
-                    "setup_future_usage": "off_session",
                 },
+
                 # 收集更多客户信息，便于后续关联
                 "allow_promotion_codes": True,
-                "phone_number_collection": {"enabled": True},
+                # Disable Adaptive Pricing to prevent currency switcher from hiding Alipay.
+                # Alipay handles USD→CNY conversion internally for customers.
+                "adaptive_pricing": {"enabled": False},
                 # 强制收集账单地址，Checkout 在创建 Customer 时会同步到客户记录
                 "billing_address_collection": "required",
             }
@@ -191,13 +194,14 @@ class StripeService:
         user_id: str, 
         amount: int, 
         credits_amount: int,
-        currency: str = 'cny'  # 使用人民币
+        currency: str = 'usd'
     ) -> Dict[str, Any]:
         """创建支付意图（用于Credits购买）"""
         try:
             intent = stripe.PaymentIntent.create(
                 amount=amount,  # amount in cents
                 currency=currency,
+                automatic_payment_methods={"enabled": True},
                 metadata={
                     'user_id': user_id,
                     'type': 'credits',
