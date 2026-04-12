@@ -908,7 +908,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
 
 
 def format_toc_context_for_llm(toc_context) -> str:
-    """Convert TOC hierarchy objects into compact LLM-friendly plain text."""
+    """Convert TOC hierarchy or structured payloads into compact LLM-friendly plain text."""
     if not toc_context:
         return ""
 
@@ -935,6 +935,14 @@ def format_toc_context_for_llm(toc_context) -> str:
 
         if not toc_entries:
             formatted_blocks.append("- No TOC entries available")
+            continue
+
+        if isinstance(toc_entries, str):
+            toc_entries = toc_entries.strip()
+            if toc_entries:
+                formatted_blocks.append(toc_entries)
+            else:
+                formatted_blocks.append("- No TOC entries available")
             continue
 
         for entry in toc_entries:
@@ -1030,12 +1038,18 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
         raise
 
 
-def _compute_zone_boundaries(toc_hierarchies):
-    """Compute content zone boundaries in post-TOC-removal coordinates.
+def _compute_zone_boundaries(toc_hierarchies, coordinate_mode="post_removal"):
+    """Compute content zone boundaries for documents with multiple TOC areas.
 
-    When multiple TOCs exist, they divide the document into zones.
-    Each zone starts right after a TOC area and extends to just before
-    the next TOC area (or end of document).
+    When multiple TOCs exist, they divide the document into zones. Each zone
+    starts right after a TOC area and extends to just before the next TOC area
+    (or end of document).
+
+    coordinate_mode:
+        - "post_removal": TOC ranges are in original coordinates, but heading IDs
+          are measured after TOC rows were removed (MD/PDF path).
+        - "original": heading IDs stay in original document coordinates, so zones
+          can be computed directly from TOC boundaries (DOCX path).
 
     Args:
         toc_hierarchies: List of toc hierarchy dicts (sorted by toc_range start)
@@ -1044,6 +1058,9 @@ def _compute_zone_boundaries(toc_hierarchies):
         List of (zone_start_post, zone_end_post_or_None, toc_hierarchy_dict)
         zone_end_post is None for the last zone (extends to end of document)
     """
+    if coordinate_mode not in {"post_removal", "original"}:
+        raise ValueError(f"Unsupported coordinate_mode: {coordinate_mode}")
+
     sorted_tocs = sorted(toc_hierarchies, key=lambda t: t["toc_range"][0])
 
     zones = []
@@ -1051,24 +1068,47 @@ def _compute_zone_boundaries(toc_hierarchies):
 
     for i, toc in enumerate(sorted_tocs):
         toc_start, toc_end = toc["toc_range"]
-        toc_size = toc_end - toc_start + 1
-        cumulative_removed += toc_size
+        zone_start = toc_end + 1
 
-        # Zone starts right after this TOC in post-removal coords
-        zone_start_orig = toc_end + 1
-        zone_start_post = zone_start_orig - cumulative_removed
+        if coordinate_mode == "post_removal":
+            toc_size = toc_end - toc_start + 1
+            cumulative_removed += toc_size
+            zone_start -= cumulative_removed
 
-        # Zone ends right before next TOC (or end of file)
         if i + 1 < len(sorted_tocs):
             next_toc_start = sorted_tocs[i + 1]["toc_range"][0]
-            zone_end_orig = next_toc_start - 1
-            zone_end_post = zone_end_orig - cumulative_removed
+            zone_end = next_toc_start - 1
+            if coordinate_mode == "post_removal":
+                zone_end -= cumulative_removed
         else:
-            zone_end_post = None  # to end of document
+            zone_end = None  # to end of document
 
-        zones.append((zone_start_post, zone_end_post, toc))
+        if zone_end is not None and zone_end < zone_start:
+            continue
+        zones.append((zone_start, zone_end, toc))
 
     return zones
+
+
+def _resolve_first_toc_boundary(toc_hierarchies=None, first_toc_ele_num=None):
+    """Resolve the earliest available first-TOC boundary across coordinate sources."""
+    toc_range_start = None
+    if toc_hierarchies:
+        first_range = toc_hierarchies[0].get("toc_range")
+        if first_range and len(first_range) == 2:
+            toc_range_start = first_range[0]
+
+    candidates = [value for value in (toc_range_start, first_toc_ele_num) if value is not None]
+    if not candidates:
+        return None
+
+    resolved_start = min(candidates)
+    if toc_range_start is not None and first_toc_ele_num is not None and toc_range_start != first_toc_ele_num:
+        logger.info(
+            f"📌 TOC boundary mismatch detected: toc_range start={toc_range_start}, "
+            f"first_toc_ele_num={first_toc_ele_num}, using earliest={resolved_start}"
+        )
+    return resolved_start
 
 
 def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_regx=True, smart_parse=False, model_name=None, output_dir=None, layout_json_path=None, first_toc_ele_num=None):
@@ -1104,31 +1144,34 @@ def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_
     # headings.  Remove them before LLM judging to avoid misjudgment, then
     # splice back with level=-1 after all processing is done.
     pre_toc_rows = None
-    if toc_hierarchies and doc_type == "md":
-        first_toc_start = toc_hierarchies[0].get("toc_range", (0, 0))[0]
-        if first_toc_start > 0:
-            pre_toc_mask = raw_preds['id'] < first_toc_start
-            if pre_toc_mask.any():
-                pre_toc_rows = raw_preds[pre_toc_mask].copy()
-                pre_toc_rows['level'] = -1
-                raw_preds = raw_preds[~pre_toc_mask].reset_index(drop=True)
+    first_toc_start = None
+    if doc_type == "md":
+        first_toc_start = _resolve_first_toc_boundary(toc_hierarchies=toc_hierarchies)
+    elif doc_type == "docx":
+        first_toc_start = _resolve_first_toc_boundary(
+            toc_hierarchies=toc_hierarchies,
+            first_toc_ele_num=first_toc_ele_num,
+        )
+
+    if first_toc_start is not None and first_toc_start > 0:
+        pre_toc_mask = raw_preds['id'] < first_toc_start
+        if pre_toc_mask.any():
+            pre_toc_rows = raw_preds[pre_toc_mask].copy()
+            pre_toc_rows['level'] = -1
+            raw_preds = raw_preds[~pre_toc_mask].reset_index(drop=True)
+            if doc_type == "docx":
+                logger.info(f"📌 Excluded {len(pre_toc_rows)} pre-TOC blocks "
+                            f"(id < {first_toc_start}) from heading prediction")
+            else:
                 logger.info(f"📌 Excluded {len(pre_toc_rows)} pre-TOC lines "
                             f"(id < {first_toc_start}) from heading prediction")
-    elif first_toc_ele_num is not None and doc_type == "docx":
-        if first_toc_ele_num > 0:
-            pre_toc_mask = raw_preds['id'] < first_toc_ele_num
-            if pre_toc_mask.any():
-                pre_toc_rows = raw_preds[pre_toc_mask].copy()
-                pre_toc_rows['level'] = -1
-                raw_preds = raw_preds[~pre_toc_mask].reset_index(drop=True)
-                logger.info(f"📌 Excluded {len(pre_toc_rows)} pre-TOC blocks "
-                            f"(ele_num < {first_toc_ele_num}) from heading prediction")
 
     # 2. Zone-based prediction when multiple TOCs exist
-    if toc_hierarchies and len(toc_hierarchies) > 1 and doc_type == "md" and smart_parse:
+    if toc_hierarchies and len(toc_hierarchies) > 1 and doc_type in {"md", "docx"} and smart_parse:
         # Multiple TOCs divide the document into independent zones.
         # Each zone gets its own naive + LLM pipeline with zone-specific TOC context.
-        zones = _compute_zone_boundaries(toc_hierarchies)
+        coordinate_mode = "post_removal" if doc_type == "md" else "original"
+        zones = _compute_zone_boundaries(toc_hierarchies, coordinate_mode=coordinate_mode)
         logger.info(f"🗂️ Zone-based prediction: {len(zones)} zones from {len(toc_hierarchies)} TOCs")
 
         def _process_single_zone(zone_idx, zone_start, zone_end, zone_toc):

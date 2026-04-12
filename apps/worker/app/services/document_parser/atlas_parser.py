@@ -268,7 +268,7 @@ def parse_atlas(
     logger.info(f"📐 Atlas: {scan_label} document, VLM enabled for info extraction")
 
     # ── TOC detection (runs in parent — uses LLM, no PyMuPDF) ──
-    model_name = base_llm_paras.get("model_name", "deepseek-chat")
+    model_name = base_llm_paras.get("model_name", settings.NORMOL_MODEL)
     toc_page_set, toc_hierarchies = _detect_toc_pages_from_texts(page_texts, model_name)
 
     if toc_page_set:
