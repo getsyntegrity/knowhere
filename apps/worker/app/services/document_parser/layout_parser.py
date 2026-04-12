@@ -768,7 +768,7 @@ def filter_md_headings(md_lines, num_pos=17, num_neg=6, layout_json_path=None):
             str_lvl = f"POS {zero_pos_code} NEG {zero_neg_code}"
             if meta_ctx:
                 str_lvl += " META [0, 0, 0]"
-            line = "resource or annotation"
+            line = "Figure/Image"
         else:
             line_clean, hash_lvl = md_heading_match(line, as_is=False)  # detect "#" in .md lines
             
@@ -1320,18 +1320,22 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
-    resource_rows = None
-    resource_mask = raw_preds["heading"].eq("resource or annotation") & raw_preds["level"].eq(-1)
-    if resource_mask.any():
-        resource_rows = raw_preds.loc[resource_mask, ["id", "heading", "level", "reason"]].copy()
-        raw_preds = raw_preds.loc[~resource_mask].reset_index(drop=True)
-        logger.info(
-            f"smart parse => stripped {len(resource_rows)} resource/annotation rows before LLM"
-        )
-
-    if len(raw_preds) == 0:
-        logger.info("smart parse => only resource/annotation rows remain, skipping LLM hierarchy detection")
-        return resource_rows.sort_values("id").reset_index(drop=True)
+    # NOTE: the following code is the old logic to remove "Figure/Image" rows before sending to LLM
+    # (replaced by the mapping-exclusion approach below for multi-chunk docs, and
+    #  by the Figure/Image Rule 0 in the prompt for single-chunk / LLM-direct paths)
+    # resource_rows = None
+    # resource_mask = raw_preds["heading"].eq("Figure/Image") & raw_preds["level"].eq(-1)
+    # if resource_mask.any():
+    #     resource_rows = raw_preds.loc[resource_mask, ["id", "heading", "level", "reason"]].copy()
+    #     raw_preds = raw_preds.loc[~resource_mask].reset_index(drop=True)
+    #     logger.info(
+    #         f"smart parse => stripped {len(resource_rows)} Figure/Image rows before LLM"
+    #     )
+    #
+    # if len(raw_preds) == 0:
+    #     logger.info("smart parse => only Figure/Image rows remain, skipping LLM hierarchy detection")
+    #     return resource_rows.sort_values("id").reset_index(drop=True)
+    resource_rows = None  # keep for re-injection below (no-op now that stripping is disabled)
 
     full_preds = []
     level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
@@ -1371,16 +1375,33 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
                 full_preds = base_preds[["id", "heading", "level", "reason"]].copy()
                 full_preds['heading'] = raw_headings
             else:
-                # Multi-chunk: build reason-code mapping from chunk 0, apply to all chunks
-                base_preds, lvl_mapping = build_level_mapping(base_preds, basic_df['level'].tolist(), mode="freq")
-                logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules")
+                # Multi-chunk: build reason-code mapping from chunk 0, apply to all chunks.
+                # Figure/Image rows always have level=-1 and a fixed heading placeholder;
+                # including them in the mapping would pollute the reason-code → level table.
+                # Separate them out, force level=-1, then re-insert after mapping.
+                figure_mask_base = base_preds["heading"].eq("Figure/Image")
+                base_preds_for_mapping = base_preds[~figure_mask_base].copy()
+                base_origin_for_mapping = basic_df.loc[~figure_mask_base.values, 'level'].tolist()
+
+                base_preds_for_mapping, lvl_mapping = build_level_mapping(
+                    base_preds_for_mapping, base_origin_for_mapping, mode="freq"
+                )
+                logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules (Figure/Image excluded)")
 
                 logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
                 lvl_mapping = handle_unseen_codes(raw_preds, level_dfs, lvl_mapping, output_dir)
 
                 for l, level_df in enumerate(level_dfs):
-                    level_df = execute_level_mapping(level_df, lvl_mapping)
-                    full_preds.append(level_df)
+                    figure_mask_chunk = level_df["heading"].eq("Figure/Image")
+                    non_figure_df = level_df[~figure_mask_chunk].copy()
+                    non_figure_df = execute_level_mapping(non_figure_df, lvl_mapping)
+                    # Restore Figure/Image rows with forced level=-1
+                    figure_df = level_df[figure_mask_chunk].copy()
+                    figure_df["level"] = -1
+                    figure_df["origin_level"] = -1
+                    merged_chunk = pd.concat([non_figure_df, figure_df], ignore_index=True)
+                    merged_chunk = merged_chunk.sort_values("id").reset_index(drop=True)
+                    full_preds.append(merged_chunk)
 
                 full_preds = pd.concat(full_preds, ignore_index=True)
                 full_preds['heading'] = raw_headings
