@@ -209,7 +209,7 @@ def parse_md(output_dir, source_type, file_path=None, md_lines=None, base_llm_pa
     md_lines = merge_html_tables(md_lines)
     
     # Detect TOC using async LLM-based detection (sxjg logic)
-    model_name = base_llm_paras.get("model_name", "deepseek-chat") if base_llm_paras else "deepseek-chat"
+    model_name = base_llm_paras.get("model_name", settings.NORMOL_MODEL) if base_llm_paras else settings.NORMOL_MODEL
     with stage_timer("md.detect_toc", line_count=len(md_lines), model_name=model_name):
         toc_hierarchies, md_lines = detect_tocs_in_texts(md_lines, model_name=model_name)
 

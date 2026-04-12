@@ -29,6 +29,154 @@ from shared.services.ai.response_process_service import eval_response
 
 # ==================== DOCX TOC Detection Functions ====================
 
+TOC_TITLE_KEYWORDS = {"目录", "目次", "contents", "table of contents"}
+
+
+def _parse_w_int_attr(elem, ns, attr_names):
+    """Parse the first integer-valued OOXML attribute from a list of names."""
+    if elem is None:
+        return None
+
+    for attr_name in attr_names:
+        raw_val = elem.get('{%s}%s' % (ns['w'], attr_name))
+        if raw_val is None:
+            continue
+        try:
+            return int(raw_val)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def get_docx_toc_layout_hints(elem, ns):
+    """Extract outline/indent hints for TOC paragraphs without numeric TOC styles."""
+    ppr = elem.find('./w:pPr', namespaces=ns)
+    if ppr is None:
+        ppr = elem.find('.//w:pPr', namespaces=ns)
+
+    if ppr is None:
+        return {
+            "outline_level": None,
+            "left_indent": None,
+        }
+
+    outline_elem = ppr.find('./w:outlineLvl', namespaces=ns)
+    outline_level = None
+    if outline_elem is not None:
+        outline_val = _parse_w_int_attr(outline_elem, ns, ["val"])
+        if outline_val is not None:
+            outline_level = outline_val + 1
+
+    indent_elem = ppr.find('./w:ind', namespaces=ns)
+    left_indent = _parse_w_int_attr(indent_elem, ns, ["left", "start", "leftChars", "startChars"])
+
+    return {
+        "outline_level": outline_level,
+        "left_indent": left_indent,
+    }
+
+
+def infer_toc_level_from_text(text: str):
+    """Fallback TOC level inference from numbering patterns in TOC text."""
+    text_clean = str(text).strip()
+    if not text_clean:
+        return None
+
+    normalized = re.sub(r'\s+', ' ', text_clean).lower()
+    if normalized in TOC_TITLE_KEYWORDS:
+        return None
+
+    pos_code = judge_by_conditions(text_clean)
+    neg_code = remove_by_conditions(text_clean)
+    if any(x > 0 for x in neg_code) or not any(x > 0 for x in pos_code):
+        return None
+
+    return max(int(x) for x in pos_code)
+
+
+def is_toc_title_text(text: str) -> bool:
+    """Return True when the line is likely the standalone TOC heading itself."""
+    normalized = re.sub(r'\s+', ' ', str(text).strip()).lower()
+    return normalized in TOC_TITLE_KEYWORDS
+
+
+def infer_toc_levels_from_indentation(entries: list) -> None:
+    """Populate missing TOC levels by ranking paragraph indentation within one TOC area."""
+    indent_values = sorted({
+        entry["left_indent"]
+        for entry in entries
+        if entry.get("level") is None
+        and entry.get("left_indent") is not None
+        and not is_toc_title_text(entry.get("heading", ""))
+    })
+
+    if not indent_values:
+        return
+
+    indent_to_level = {indent: idx + 1 for idx, indent in enumerate(indent_values)}
+    for entry in entries:
+        if entry.get("level") is not None:
+            continue
+        if is_toc_title_text(entry.get("heading", "")):
+            continue
+        left_indent = entry.get("left_indent")
+        if left_indent is None:
+            continue
+        entry["level"] = indent_to_level.get(left_indent)
+
+def get_docx_toc_style_info(elem, ns):
+    """
+    Parse TOC style metadata from a DOCX paragraph element.
+
+    Returns:
+        dict: {
+            'is_toc_style': bool,
+            'toc_level': Optional[int],
+            'style_name': Optional[str]
+        }
+    """
+    style = elem.find('.//w:pPr/w:pStyle', namespaces=ns)
+    if style is None:
+        return {
+            "is_toc_style": False,
+            "toc_level": None,
+            "style_name": None,
+        }
+
+    val = style.get('{%s}val' % ns['w'])
+    if not val:
+        return {
+            "is_toc_style": False,
+            "toc_level": None,
+            "style_name": None,
+        }
+
+    val_lower = val.lower().strip()
+    if "toc" not in val_lower and "目录" not in val:
+        return {
+            "is_toc_style": False,
+            "toc_level": None,
+            "style_name": val,
+        }
+
+    level = None
+    match = re.search(r'(?:toc|目录)\s*[_-]?(\d+)$', val_lower)
+    if match:
+        level = int(match.group(1))
+
+    layout_hints = get_docx_toc_layout_hints(elem, ns)
+    if level is None:
+        level = layout_hints["outline_level"]
+
+    return {
+        "is_toc_style": True,
+        "toc_level": level,
+        "style_name": val,
+        "outline_level": layout_hints["outline_level"],
+        "left_indent": layout_hints["left_indent"],
+    }
+
+
 def get_toc_level(elem, ns):
     """
     检测段落样式是否为 TOC 样式
@@ -40,14 +188,13 @@ def get_toc_level(elem, ns):
     Returns:
         bool: True 如果是 TOC 样式
     """
-    style = elem.find('.//w:pPr/w:pStyle', namespaces=ns)
-    if style is not None:
-        val = style.get('{%s}val' % ns['w'])
-        if val:
-            val_lower = val.lower().strip()
-            if "toc" in val_lower or "目录" in val:
-                return True
-    return False
+    style_info = get_docx_toc_style_info(elem, ns)
+    if not style_info["is_toc_style"]:
+        return False
+
+    if style_info["toc_level"] is not None:
+        return style_info["toc_level"]
+    return True
 
 
 def detect_sdt_toc(elem, ns):
@@ -108,7 +255,8 @@ def detect_doc_tocs(elem, ns):
             'is_field_end': bool - 是否是域结束
         }
     """
-    is_style = get_toc_level(elem, ns)
+    style_info = get_docx_toc_style_info(elem, ns)
+    is_style = style_info["is_toc_style"]
     is_field_start = False
 
     instrs = elem.findall('.//w:instrText', namespaces=ns)
@@ -135,6 +283,10 @@ def detect_doc_tocs(elem, ns):
     
     return {
         'is_style': is_style,
+        'toc_level': style_info["toc_level"],
+        'style_name': style_info["style_name"],
+        'outline_level': style_info.get("outline_level"),
+        'left_indent': style_info.get("left_indent"),
         'is_field_start': is_field_start,
         'is_field_end': is_field_end
     }
@@ -539,6 +691,113 @@ def build_tree_tocs(toc_with_level: list) -> dict:
     return root
 
 
+def build_toc_hierarchy_payload(
+    toc_entries: list,
+    toc_range: tuple | None = None,
+    scan_range: tuple | None = None,
+) -> dict | None:
+    """
+    Build a toc_hierarchies-compatible payload from structured TOC entries.
+    """
+    valid_entries = []
+    for entry in toc_entries:
+        heading = str(entry.get("heading", "")).strip()
+        level = entry.get("level")
+        if not heading or not isinstance(level, int) or level <= 0:
+            continue
+
+        normalized_entry = {
+            "id": entry.get("id"),
+            "heading": heading,
+            "level": level,
+        }
+        if "reason" in entry:
+            normalized_entry["reason"] = entry["reason"]
+        valid_entries.append(normalized_entry)
+
+    if not valid_entries:
+        return None
+
+    result_df = pd.DataFrame(valid_entries)
+    payload = {
+        "toc_range": toc_range or (valid_entries[0]["id"], valid_entries[-1]["id"]),
+        "toc_with_level": df2md(result_df, index=False),
+        "toc_tree": build_tree_tocs(valid_entries),
+    }
+    if scan_range is not None:
+        payload["scan_range"] = scan_range
+    return payload
+
+
+def build_docx_toc_hierarchies(block_tuples: list) -> list:
+    """
+    Convert DOCX TOC blocks into the same toc_hierarchies structure used by MD/PDF.
+    """
+    toc_areas = []
+    current_area = []
+
+    for ele_num, block, label, meta in block_tuples:
+        if "TOC" in label:
+            current_area.append((ele_num, block, meta or {}))
+            continue
+
+        if current_area:
+            toc_areas.append(current_area)
+            current_area = []
+
+    if current_area:
+        toc_areas.append(current_area)
+
+    toc_hierarchies = []
+    for area in toc_areas:
+        toc_entries = []
+        for ele_num, block, meta in area:
+            toc_level = meta.get("toc_level")
+            try:
+                toc_level = int(toc_level) if toc_level is not None else None
+            except (TypeError, ValueError):
+                toc_level = None
+
+            text = getattr(block, "text", str(block)).strip()
+            if not text:
+                continue
+
+            if toc_level is None:
+                outline_level = meta.get("toc_outline_level")
+                try:
+                    toc_level = int(outline_level) if outline_level is not None else None
+                except (TypeError, ValueError):
+                    toc_level = None
+
+            if toc_level is None:
+                toc_level = infer_toc_level_from_text(text)
+
+            left_indent = meta.get("toc_left_indent")
+            try:
+                left_indent = int(left_indent) if left_indent is not None else None
+            except (TypeError, ValueError):
+                left_indent = None
+
+            toc_entries.append({
+                "id": ele_num,
+                "heading": text,
+                "level": toc_level if toc_level and toc_level > 0 else None,
+                "reason": gen_reason_code_toc(text),
+                "left_indent": left_indent,
+            })
+
+        infer_toc_levels_from_indentation(toc_entries)
+        payload = build_toc_hierarchy_payload(
+            toc_entries,
+            toc_range=(area[0][0], area[-1][0]),
+            scan_range=(area[0][0], area[-1][0]),
+        )
+        if payload:
+            toc_hierarchies.append(payload)
+
+    return toc_hierarchies
+
+
 def gen_reason_code_toc(text: str) -> str:
     """
     Generate reason code for a text line using judge_by_conditions and remove_by_conditions.
@@ -619,15 +878,10 @@ def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6)
             result_data.append({"id": line_id, "heading": heading, "level": level, "reason": reason})
             valid_items_for_tree.append({"id": line_id, "heading": heading, "level": level, "reason": reason})
     
-    if result_data:
-        result_df = pd.DataFrame(result_data)
-        toc_with_level = df2md(result_df, index=False)
-    else:
-        toc_with_level = ""
-    
-    # Build nested JSON
-    toc_tree = build_tree_tocs(valid_items_for_tree)
-    return toc_with_level, toc_tree
+    payload = build_toc_hierarchy_payload(valid_items_for_tree)
+    if not payload:
+        return "", {}
+    return payload["toc_with_level"], payload["toc_tree"]
 
 
 def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "normal", limit_: int = 150):

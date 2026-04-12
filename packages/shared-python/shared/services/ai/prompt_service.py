@@ -163,6 +163,10 @@ def build_prompt(task, texts, query, **kwargs):
         use the same rules below to decide whether they are true headings (level >= 1)
         or body text (level = -1).
 
+        Rule 0 — Figure/Image rows are always body text (highest priority, no exceptions):
+            Any row whose heading text is exactly "Figure/Image" MUST be assigned level = -1.
+            These represent embedded images, figures, or inline resource references in the document.
+            Do NOT include these rows in the output (they are automatically treated as level = -1).
         Rule 1 — Normalize to start at level 1:
             The shallowest heading pattern found in this document MUST be assigned level 1.
             Do NOT preserve preliminary estimates that start at level 2, 3, or deeper

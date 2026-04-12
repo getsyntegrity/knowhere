@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import os
 import re
 import zipfile
@@ -16,9 +17,9 @@ from app.services.document_parser.table_parser import sanitize_table_name_from_h
 from app.services.document_parser.image_parser import ask_image, _get_vision_client
 from app.services.document_parser.layout_parser import pred_titles
 from app.services.document_parser.html_parser import table2html
-from app.services.document_parser.toc_parser import (detect_doc_tocs,
-                                                     detect_sdt_toc,
-                                                     get_toc_level)
+from app.services.document_parser.toc_parser import (build_docx_toc_hierarchies,
+                                                     detect_doc_tocs,
+                                                     detect_sdt_toc)
 from app.services.document_parser.txt_parser import postprocess_leaf_dics
 from shared.utils.CommonHelperSync import load_file_bytes
 from docx import Document
@@ -353,6 +354,7 @@ def iter_block_items(doc_data):
                         
                         if is_toc_sdt:
                             label = 'TOC-AREA'
+                            toc_info = detect_doc_tocs(p_elem, ns)
                         else:
                             toc_info = detect_doc_tocs(p_elem, ns)
                             if toc_info['is_style'] or toc_info['is_field_start']:
@@ -361,7 +363,16 @@ def iter_block_items(doc_data):
                                 label = 'PTXT'
                         
                         if text:
-                            yield ele_num, text, label, None
+                            meta = None
+                            if "TOC" in label:
+                                meta = {
+                                    "toc_level": toc_info.get("toc_level"),
+                                    "toc_outline_level": toc_info.get("outline_level"),
+                                    "toc_left_indent": toc_info.get("left_indent"),
+                                    "toc_style_name": toc_info.get("style_name"),
+                                    "toc_source": "sdt",
+                                }
+                            yield ele_num, text, label, meta
                             ele_num += 1
                 continue
 
@@ -385,7 +396,16 @@ def iter_block_items(doc_data):
                     label = 'PTXT'
 
                 if text or p_obj is not None:
-                    yield ele_num, p_obj or text, label, None
+                    meta = None
+                    if "TOC" in label:
+                        meta = {
+                            "toc_level": toc_info.get("toc_level"),
+                            "toc_outline_level": toc_info.get("outline_level"),
+                            "toc_left_indent": toc_info.get("left_indent"),
+                            "toc_style_name": toc_info.get("style_name"),
+                            "toc_source": "paragraph",
+                        }
+                    yield ele_num, p_obj or text, label, meta
                     ele_num += 1
 
                 # images
@@ -447,9 +467,18 @@ def iter_block_items(doc_data):
         while map_index < len(p_tbl_map):
             tag, node = p_tbl_map[map_index]
             if tag == 'p':
-                lvl = get_toc_level(node, ns)
-                label = f'TOC-{int(lvl)}' if lvl is not None else 'PTXT'
-                yield ele_num, Paragraph(node, doc), label, None
+                toc_info = detect_doc_tocs(node, ns)
+                label = 'TOC-AREA' if toc_info['is_style'] else 'PTXT'
+                meta = None
+                if "TOC" in label:
+                    meta = {
+                        "toc_level": toc_info.get("toc_level"),
+                        "toc_outline_level": toc_info.get("outline_level"),
+                        "toc_left_indent": toc_info.get("left_indent"),
+                        "toc_style_name": toc_info.get("style_name"),
+                        "toc_source": "tail-map",
+                    }
+                yield ele_num, Paragraph(node, doc), label, meta
             elif tag == 'tbl':
                 yield ele_num, Table(node, doc), 'TABLE', None
             ele_num += 1
@@ -473,6 +502,12 @@ def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", 
     # Record first TOC block position before filtering, for pre-TOC exclusion in pred_titles
     toc_blocks = [b for b in block_tuples if "TOC" in b[2]]
     first_toc_ele_num = toc_blocks[0][0] if toc_blocks else None
+    toc_hierarchies = build_docx_toc_hierarchies(block_tuples)
+    if toc_hierarchies and output_dir:
+        toc_json_path = os.path.join(output_dir, 'toc_hierarchies.json')
+        with open(toc_json_path, 'w', encoding='utf-8') as f:
+            json.dump(toc_hierarchies, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved DOCX TOC hierarchies to {toc_json_path}")
     block_tuples = [b for b in block_tuples if not "TOC" in b[2]]  # remove toc area
 
     heading_infos = []
@@ -487,8 +522,17 @@ def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", 
     outline_dic = {-1:-1}
     smart_title_parse = llm_paras['smart_title_parse']
     if not llm_paras['doc_type'] in "templates":
-        model_name = llm_paras.get("model_name", "deepseek-chat") if llm_paras else "deepseek-chat"
-        heading_candidates = pred_titles(heading_infos, doc_type="docx", enable_regx=True, smart_parse=smart_title_parse, model_name=model_name, output_dir=output_dir, first_toc_ele_num=first_toc_ele_num)
+        model_name = llm_paras.get("model_name", settings.NORMOL_MODEL) if llm_paras else settings.NORMOL_MODEL
+        heading_candidates = pred_titles(
+            heading_infos,
+            doc_type="docx",
+            toc_hierarchies=toc_hierarchies or None,
+            enable_regx=True,
+            smart_parse=smart_title_parse,
+            model_name=model_name,
+            output_dir=output_dir,
+            first_toc_ele_num=first_toc_ele_num,
+        )
 
     if len(heading_candidates) > 0 and not (heading_candidates['level'] == -1).all():
         assert heading_candidates['id'].is_unique
