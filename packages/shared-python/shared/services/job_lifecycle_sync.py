@@ -55,6 +55,7 @@ class SyncJobLifecycleService:
         result_s3_key: str,
         checksum: str,
         zip_size: int,
+        chunks: Optional[List[Dict[str, Any]]] = None,
         stored_count: int = 0,
         kb_records: Optional[List[Dict[str, Any]]] = None,
         delivery_mode: str = "url",
@@ -67,7 +68,7 @@ class SyncJobLifecycleService:
             3. Mark job as DONE via state machine (CAS)
             4. Create WebhookEvent if webhook_enabled
             5. COMMIT
-            6. Post-commit: clear Redis chunks, enqueue webhook
+            6. Post-commit: clear Redis chunks if they were used, enqueue webhook
         """
         logger.info(f"Finalizing job success: job_id={job_id}")
 
@@ -85,10 +86,13 @@ class SyncJobLifecycleService:
                     result_size=zip_size,
                 )
 
-                redis_service = SyncRedisServiceFactory.get_service()
-                chunks_redis = SyncChunksRedisService(redis_service)
-                chunks = chunks_redis.get_chunks(chunks_job_id) or []
-                self._replace_chunks(db, job_result.id, chunks)
+                chunks_redis: Optional[SyncChunksRedisService] = None
+                resolved_chunks = chunks
+                if resolved_chunks is None:
+                    redis_service = SyncRedisServiceFactory.get_service()
+                    chunks_redis = SyncChunksRedisService(redis_service)
+                    resolved_chunks = chunks_redis.get_chunks(chunks_job_id) or []
+                self._replace_chunks(db, job_result.id, resolved_chunks)
 
                 transition_ok = self._state_machine.mark_completed(
                     db, job_id,
@@ -110,7 +114,8 @@ class SyncJobLifecycleService:
                 db.commit()
                 logger.info(f"Job {job_id} success transaction committed")
 
-                self._post_commit_cleanup(chunks_job_id, chunks_redis)
+                if chunks_redis is not None:
+                    self._post_commit_cleanup(chunks_job_id, chunks_redis)
                 self._post_commit_enqueue_webhook(webhook_event)
 
                 return {
