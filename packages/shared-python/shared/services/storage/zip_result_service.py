@@ -476,6 +476,15 @@ class ZipResultService:
         """Collect image file information"""
         image_files = []
         if not os.path.exists(images_dir):
+            has_image_chunks = any(chunk.get("type", "") == "image" for chunk in chunks)
+            if has_image_chunks:
+                raise StorageServiceException(
+                    internal_message=(
+                        "Image directory not found for ZIP packaging: "
+                        f"images_dir={images_dir}"
+                    ),
+                    operation="collect_image_files",
+                )
             return image_files
 
         # Get all image files
@@ -558,11 +567,13 @@ class ZipResultService:
                 original_name = matched_name
 
             if not source_path:
-                logger.warning(
-                    "Cannot resolve image file for ZIP packaging: "
-                    f"chunk_id={chunk_id}, candidates={candidate_names}"
+                raise StorageServiceException(
+                    internal_message=(
+                        "Cannot resolve image file for ZIP packaging: "
+                        f"chunk_id={chunk_id}, candidates={candidate_names}"
+                    ),
+                    operation="collect_image_files",
                 )
-                continue
 
             # Get image dimensions
             width = None
