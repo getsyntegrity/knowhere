@@ -467,23 +467,15 @@ def _parse(job_id: str, user_id: str | None):
             if add_contents_df.empty:
                 logger.warning(f"No content returned from file parsing: job_id={job_id}, filename={filename}")
 
-            lifecycle_service.update_progress(job_id, progress=30, message="Parse completed, saving chunks...")
+            lifecycle_service.update_progress(job_id, progress=30, message="Parse completed, preparing chunks...")
 
-            # Save DataFrame as chunks to Redis (sync)
-            chunks_redis_service = SyncChunksRedisService(redis_service)
             chunks = []
 
             if add_contents_df is not None:
+                chunks_redis_service = SyncChunksRedisService(redis_service)
                 chunks = chunks_redis_service.dataframe_to_chunks(add_contents_df)
-                success = chunks_redis_service.save_chunks(job_id, chunks)
-                if success:
-                    logger.info(f"DataFrame saved as chunks to Redis: job_id={job_id}")
-                else:
-                    logger.error(f"Failed to save DataFrame as chunks: job_id={job_id}")
-            else:
-                chunks_redis_service.save_chunks(job_id, chunks)
 
-            lifecycle_service.update_progress(job_id, progress=70, message="Chunks saved, generating zip...")
+            lifecycle_service.update_progress(job_id, progress=70, message="Chunks ready, generating zip...")
             logger.info(f"Chunks prepared: job_id={job_id}, count={len(chunks)}")
 
             # Get source file name
@@ -533,7 +525,7 @@ def _parse(job_id: str, user_id: str | None):
             # Finalize job success directly to the database
             lifecycle_service.finalize_job_success(
                 job_id=job_id,
-                chunks_job_id=job_id,
+                chunks=chunks,
                 result_s3_key=result_s3_key,
                 checksum=checksum_value,
                 zip_size=zip_size,

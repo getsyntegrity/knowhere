@@ -115,6 +115,19 @@ class _FakeChunksRedisService:
         return True
 
 
+class _FailOnSaveChunksRedisService:
+    expected_chunks = [{"chunk_id": "chunk-1", "type": "text", "path": "doc/test", "content": "hello", "metadata": {}}]
+
+    def __init__(self, redis_service):
+        self.redis_service = redis_service
+
+    def dataframe_to_chunks(self, dataframe: pd.DataFrame):
+        return list(self.expected_chunks)
+
+    def save_chunks(self, job_id: str, chunks):
+        raise AssertionError("chunks should stay in memory instead of round-tripping through Redis")
+
+
 class _FakeRedisJobLock:
     def __init__(self, redis_service, job_id: str):
         self.redis_service = redis_service
@@ -329,6 +342,70 @@ def test_parse_uses_s3_extension_for_internal_parse_name(monkeypatch, tmp_path):
     assert parse_call["filename"] == "legacy-upload.txt"
     assert parse_call["internal_output_filename"] == "legacy-upload.pdf"
     assert _find_task_workspaces(tmp_path, "job_123") == []
+
+
+def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_path):
+    redis_service = MagicMock()
+    job = type("JobRow", (), {"billing_status": "charged"})()
+    metadata_service = _FakeSuccessMetadataService(redis_service)
+    lifecycle_service = _FakeLifecycleService()
+
+    def fake_checkerboard_inject_parse(**kwargs):
+        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "full.md").write_text("body", encoding="utf-8")
+        return str(output_dir), pd.DataFrame(
+            [
+                {
+                    "content": "hello",
+                    "path": "doc/test",
+                    "type": "text",
+                    "length": 5,
+                    "keywords": "",
+                    "summary": "",
+                    "know_id": "kid",
+                    "tokens": "",
+                    "connectto": "",
+                    "addtime": "now",
+                    "page_nums": "1",
+                }
+            ]
+        )
+
+    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+        source_path = Path(temp_dir) / f"downloaded{file_ext}"
+        source_path.write_bytes(b"pdf")
+        return str(source_path)
+
+    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks.SyncRedisServiceFactory,
+        "get_service",
+        staticmethod(lambda: redis_service),
+    )
+    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
+    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FailOnSaveChunksRedisService)
+    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
+    monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
+    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
+    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
+    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
+    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+    monkeypatch.setattr(
+        kb_tasks.ZipResultService,
+        "generate_zip_package",
+        lambda self, **kwargs: (str(Path(kwargs["temp_dir"]) / "result.zip"), {"value": "checksum"}, {"total_chunks": 1}, 3),
+    )
+    monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
+
+    kb_tasks._parse("job_123", "user_123")
+
+    assert lifecycle_service.success_calls[0]["chunks"] == _FailOnSaveChunksRedisService.expected_chunks
+    assert "chunks_job_id" not in lifecycle_service.success_calls[0]
 
 
 def test_parse_cleans_task_workspace_after_failure(monkeypatch, tmp_path):
