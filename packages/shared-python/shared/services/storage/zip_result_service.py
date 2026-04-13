@@ -403,20 +403,9 @@ class ZipResultService:
                 metadata["connect_to"] = merge_connections(embed_connections, related_connections)
                 
             elif chunk_type == "image":
-                # Get image info from existing_metadata or image_files_map
-                file_path = existing_metadata.get("file_path")
-                
-                if not file_path:
-                    # Get image info from image_files_map
-                    img_info = image_files_map.get(chunk_id)
-                    if img_info:
-                        file_path = img_info["file_path"]
-                    else:
-                        # Extract from path or use default
-                        img_name = path.split("/")[-1] if "/" in path else f"image_{chunk_id}.jpg"
-                        file_path = f"images/{img_name}"
-                
-                metadata["file_path"] = file_path
+                img_info = image_files_map.get(chunk_id)
+                if img_info:
+                    metadata["file_path"] = img_info["file_path"]
                 # Unified schema: include keywords and tokens for all chunk types
                 metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
                 metadata["tokens"] = []
@@ -543,18 +532,24 @@ class ZipResultService:
 
             metadata = chunk.get("metadata", {})
             candidate_names: List[str] = []
+            metadata_file_path = ""
             if metadata and isinstance(metadata, dict):
+                metadata_file_path = str(metadata.get("file_path") or "").strip()
                 add_candidate(candidate_names, metadata.get("file_path"))
                 add_candidate(candidate_names, metadata.get("original_name"))
 
             # Try to get original filename from chunk's path field
+            if metadata_file_path.startswith("images/"):
+                original_name = os.path.basename(metadata_file_path)
+            else:
+                original_name = None
+
             original_path = chunk.get("path", "")
             if original_path:
                 add_candidate(candidate_names, original_path)
+                # Normalize path separators: replace --> with /, then extract filename
                 normalized_path = original_path.replace("-->", "/")
                 original_name = os.path.basename(normalized_path)
-            else:
-                original_name = None
 
             source_path, matched_name, ext = resolve_source_path(
                 candidate_names, str(chunk_id)
@@ -563,13 +558,11 @@ class ZipResultService:
                 original_name = matched_name
 
             if not source_path:
-                raise StorageServiceException(
-                    internal_message=(
-                        "Cannot resolve image file for ZIP packaging: "
-                        f"chunk_id={chunk_id}, candidates={candidate_names}"
-                    ),
-                    operation="collect_image_files",
+                logger.warning(
+                    "Cannot resolve image file for ZIP packaging: "
+                    f"chunk_id={chunk_id}, candidates={candidate_names}"
                 )
+                continue
 
             # Get image dimensions
             width = None

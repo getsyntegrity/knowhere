@@ -2,6 +2,7 @@
 Chunks数据Redis服务
 """
 import json
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -100,12 +101,20 @@ class ChunksRedisService:
             return rels if rels else []
 
         def normalize_resource_ref(ref: Any) -> str:
-            """标准化资源引用，去掉 chunk ref 包裹符号。"""
+            """Normalize chunk refs like [images/foo.jpg] to images/foo.jpg."""
             ref_str = str(ref or "").strip()
             if ref_str.startswith("[") and ref_str.endswith("]"):
                 ref_str = ref_str[1:-1].strip()
             return ref_str
 
+        def find_embedded_resource_path(refs: List[str], resource_dir: str) -> str:
+            """Prefer exact embedded resource refs over guessed names from chunk paths."""
+            resource_prefix = f"{resource_dir}/"
+            for ref in refs:
+                normalized_ref = normalize_resource_ref(ref)
+                if normalized_ref.startswith(resource_prefix):
+                    return normalized_ref
+            return ""
         def parse_connect_to(connects):
             """解析 connectto 字段为 cross-chunk 关系列表"""
             if not connects or (pd is not None and pd.isna(connects)):
@@ -233,29 +242,31 @@ class ChunksRedisService:
 
             # 根据类型添加特定字段
             if chunk_type == "image":
-                image_ref = ""
-                for ref in relationship_refs:
-                    normalized_ref = normalize_resource_ref(ref)
-                    if normalized_ref.lower().startswith("images/"):
-                        image_ref = normalized_ref
-                        break
-
-                if image_ref:
-                    img_name = image_ref.split("/", 1)[1]
-                    metadata["file_path"] = image_ref
+                embedded_image_path = find_embedded_resource_path(relationship_refs, "images")
+                if embedded_image_path:
+                    img_name = os.path.basename(embedded_image_path)
+                    metadata["file_path"] = embedded_image_path
                     metadata["original_name"] = img_name
                 else:
-                    img_name = path.split("/")[-1] if path else f"image_{chunk_id}.jpg"
+                    normalized_path = path.replace("-->", "/")
+                    img_name = (
+                        os.path.basename(normalized_path) if normalized_path else f"image_{chunk_id}.jpg"
+                    )
                     # Ensure image file name has an extension (atlas paths lack one)
                     if not any(img_name.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
                         img_name += ".png"
                     metadata["file_path"] = f"images/{img_name}"
                     metadata["original_name"] = img_name
             elif chunk_type == "table":
-                tbl_name = (
-                    path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"
-                )
-                metadata["file_path"] = f"tables/{tbl_name}"
+                embedded_table_path = find_embedded_resource_path(relationship_refs, "tables")
+                if embedded_table_path:
+                    metadata["file_path"] = embedded_table_path
+                else:
+                    normalized_path = path.replace("-->", "/")
+                    tbl_name = (
+                        os.path.basename(normalized_path) if normalized_path else f"table_{chunk_id}.html"
+                    )
+                    metadata["file_path"] = f"tables/{tbl_name}"
 
             # 构建chunk对象
             chunk = {

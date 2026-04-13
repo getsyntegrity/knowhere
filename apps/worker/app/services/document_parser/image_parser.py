@@ -187,10 +187,14 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
     df_list = []
     time_stamp = get_str_time()
     os.makedirs(output_dir, exist_ok=True)
+    img_dir = os.path.join(output_dir, "images")
+    os.makedirs(img_dir, exist_ok=True)
 
     try:
-        # Save image to local directory temporarily, use filename by default
-        img_path = os.path.join(output_dir, filename)
+        # Store standalone image uploads under images/ so downstream packaging
+        # can collect them with the same convention as document-extracted images.
+        relative_source_path = f"images/{filename}"
+        img_path = os.path.join(img_dir, filename)
         img_bytes = load_file_bytes(image_path, file_url=baseurl)
         img_obj = Image.open(io.BytesIO(img_bytes))
         img_obj.save(img_path)
@@ -210,21 +214,21 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         img_task = "summary-images"
         img_max_tokens = ProcessingConstants.IMG_MAX_TOKENS
         img_context = f"{filename}\n{base_llm_paras['frag_desc']}"
-        type_resp = ask_image(client, output_dir, paths_=[filename], title_text=img_context, task="judge-image-type", size_cut=False)
+        type_resp = ask_image(client, output_dir, paths_=[relative_source_path], title_text=img_context, task="judge-image-type", size_cut=False)
         if type_resp is not None:
             if type_resp["answer"]=="text":
                 img_task = "ocr-image"
                 img_max_tokens = ProcessingConstants.IMG_OCR_MAX_TOKENS
 
         if base_llm_paras['summary_image']: # Leave room for context to help understand the image
-            image_content = ask_image(client, output_dir, paths_=[filename], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
+            image_content = ask_image(client, output_dir, paths_=[relative_source_path], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
             if image_content is None:
                 image_content = filename
         else:
             image_content = filename
 
         if type_resp["answer"]=="text" and base_llm_paras['summary_image']:
-            llm_resp = ask_image(client, output_dir, paths_=[filename], title_text=filename, size_cut=False)
+            llm_resp = ask_image(client, output_dir, paths_=[relative_source_path], title_text=filename, size_cut=False)
             if llm_resp:
                 from app.services.document_parser.txt_parser import split_title_summary
                 img_title, image_summary = split_title_summary(llm_resp)
@@ -243,8 +247,11 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         # 2. Decide whether to rename based on image title and filename
         img_name = path_handle((img_title or image_summary)[:20], mode="clean_single")
         img_suffix = os.path.splitext(img_path)[-1]
+        img_stem, inferred_suffix = os.path.splitext(img_name)
+        if inferred_suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            img_name = img_stem or img_name
         if auto_rename:
-            update_img_path = os.path.join(output_dir, f"{img_name}{img_suffix}")
+            update_img_path = os.path.join(img_dir, f"{img_name}{img_suffix}")
             if os.path.exists(img_path):
                 if img_path != update_img_path:
                     os.rename(img_path, update_img_path)

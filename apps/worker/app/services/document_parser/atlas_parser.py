@@ -44,6 +44,26 @@ def _build_atlas_know_id(page_num: int, image_bytes: bytes) -> str:
     return gen_str_codes(f"{page_num}:{image_hash}")
 
 
+def _build_unique_image_name(
+    safe_title: str,
+    img_ext: str,
+    used_image_names: set[str],
+) -> str:
+    """Allocate a stable unique filename before any later chunk-path deduping."""
+    candidate = f"{safe_title}{img_ext}"
+    if candidate not in used_image_names:
+        used_image_names.add(candidate)
+        return candidate
+
+    suffix = 2
+    while True:
+        candidate = f"{safe_title}_{suffix}{img_ext}"
+        if candidate not in used_image_names:
+            used_image_names.add(candidate)
+            return candidate
+        suffix += 1
+
+
 def _compress_for_vlm(img_path: str, max_side: int = IMG_MAX_SIDE) -> str:
     """
     Resize image so the longest side <= max_side, save as JPEG for smaller size.
@@ -323,6 +343,7 @@ def parse_atlas(
     df_list = []
     custom_md_lines = []
     skipped_null = 0
+    used_image_names: set[str] = set()
 
     for page_num, page_text, img_name in page_data:
         # Determine chunk title
@@ -344,11 +365,12 @@ def parse_atlas(
 
         # Rename image file to use descriptive title (match Phase 1 JPEG format)
         img_ext = os.path.splitext(img_name)[1]  # .jpg from Phase 1
-        new_img_name = f"{safe_title}{img_ext}"
+        new_img_name = _build_unique_image_name(safe_title, img_ext, used_image_names)
         old_img_path = os.path.join(img_dir, img_name)
         new_img_path = os.path.join(img_dir, new_img_name)
         if os.path.exists(old_img_path):
-            os.rename(old_img_path, new_img_path)
+            if old_img_path != new_img_path:
+                os.rename(old_img_path, new_img_path)
             img_name = new_img_name
 
         # Build chunk content
