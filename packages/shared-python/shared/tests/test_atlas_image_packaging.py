@@ -63,7 +63,7 @@ def test_collect_image_files_uses_metadata_file_path_for_atlas_images(tmp_path, 
     assert image_files[0]["source_path"] == str(correct_path)
 
 
-def test_collect_image_files_skips_when_declared_image_is_missing(tmp_path, monkeypatch):
+def test_collect_image_files_raises_when_declared_image_is_missing(tmp_path, monkeypatch):
     images_dir = tmp_path / "images"
     images_dir.mkdir()
 
@@ -72,22 +72,21 @@ def test_collect_image_files_skips_when_declared_image_is_missing(tmp_path, monk
 
     monkeypatch.setattr("os.listdir", lambda _: ["wrong-first.jpg"])
 
-    image_files = ZipResultService()._collect_image_files(
-        [
-            {
-                "chunk_id": "atlas-page-4",
-                "type": "image",
-                "path": "05SG522 （总说明）page 4",
-                "metadata": {
-                    "file_path": "images/05SG522 （总说明）page 4.jpg",
-                    "original_name": "05SG522 （总说明）page 4.jpg",
-                },
-            }
-        ],
-        str(images_dir),
-    )
-
-    assert image_files == []
+    with pytest.raises(StorageServiceException, match="Cannot resolve image file"):
+        ZipResultService()._collect_image_files(
+            [
+                {
+                    "chunk_id": "atlas-page-4",
+                    "type": "image",
+                    "path": "05SG522 （总说明）page 4",
+                    "metadata": {
+                        "file_path": "images/05SG522 （总说明）page 4.jpg",
+                        "original_name": "05SG522 （总说明）page 4.jpg",
+                    },
+                }
+            ],
+            str(images_dir),
+        )
 
 
 def test_collect_table_files_raises_when_declared_table_is_missing(tmp_path, monkeypatch):

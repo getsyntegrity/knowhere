@@ -255,18 +255,12 @@ class ZipResultService:
                     continue
                 metadata = chunk.get("metadata", {})
                 file_path = ""
-                if chunk_type_str == "image":
-                    file_info = image_files_map.get(chunk_id)
-                    if not file_info:
-                        continue
-                    file_path = str(file_info.get("file_path") or "").strip()
-                else:
-                    if isinstance(metadata, dict):
-                        file_path = str(metadata.get("file_path") or "").strip()
-                    if not file_path:
-                        file_info = table_files_map.get(chunk_id)
-                        if file_info:
-                            file_path = str(file_info.get("file_path") or "").strip()
+                if isinstance(metadata, dict):
+                    file_path = str(metadata.get("file_path") or "").strip()
+                if not file_path:
+                    file_info = image_files_map.get(chunk_id) if chunk_type_str == "image" else table_files_map.get(chunk_id)
+                    if file_info:
+                        file_path = str(file_info.get("file_path") or "").strip()
                 path_alias = str(chunk.get("path") or "").strip()
                 aliases = {file_path, path_alias}
                 for alias in list(aliases):
@@ -367,10 +361,10 @@ class ZipResultService:
             raw_type = str(chunk_type_str).strip()
             normalized_type = raw_type.split("\n", 1)[0].lower()
             img_info = image_files_map.get(chunk_id)
-            
+
             # Determine chunk type
             if normalized_type == "image":
-                chunk_type = "image" if img_info else "text"
+                chunk_type = "image"
             elif normalized_type == "table":
                 chunk_type = "table"
             else:
@@ -482,9 +476,12 @@ class ZipResultService:
         if not os.path.exists(images_dir):
             has_image_chunks = any(chunk.get("type", "") == "image" for chunk in chunks)
             if has_image_chunks:
-                logger.warning(
-                    "Image directory missing during ZIP packaging; "
-                    f"downgrading image chunks to text: images_dir={images_dir}"
+                raise StorageServiceException(
+                    internal_message=(
+                        "Image directory not found for ZIP packaging: "
+                        f"images_dir={images_dir}"
+                    ),
+                    operation="collect_image_files",
                 )
             return image_files
 
@@ -568,11 +565,13 @@ class ZipResultService:
                 original_name = matched_name
 
             if not source_path:
-                logger.warning(
-                    "Skipping unresolved image during ZIP packaging; "
-                    f"chunk_id={chunk_id}, candidates={candidate_names}"
+                raise StorageServiceException(
+                    internal_message=(
+                        "Cannot resolve image file for ZIP packaging: "
+                        f"chunk_id={chunk_id}, candidates={candidate_names}"
+                    ),
+                    operation="collect_image_files",
                 )
-                continue
 
             # Get image dimensions
             width = None
