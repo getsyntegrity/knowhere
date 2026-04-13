@@ -64,9 +64,6 @@ class ZipResultService:
             os.makedirs(effective_temp_dir, exist_ok=True)
             zip_file_path = os.path.join(effective_temp_dir, f"result_{job_id}.zip")
 
-            # Calculate chunks statistics
-            statistics = self._calculate_statistics(chunks)
-
             # Collect image and table file info (must be done before formatting chunks as file info is needed)
             images_dir = os.path.join(add_dir, "images")
             tables_dir = os.path.join(add_dir, "tables")
@@ -79,6 +76,7 @@ class ZipResultService:
             
             # Convert chunks data format (using file info)
             formatted_chunks = self._format_chunks(chunks, image_files_map, table_files_map)
+            statistics = self._calculate_statistics(formatted_chunks)
 
             # Create ZIP package
             with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
@@ -362,7 +360,8 @@ class ZipResultService:
             chunk_type_str = chunk.get("type", "")
             raw_type = str(chunk_type_str).strip()
             normalized_type = raw_type.split("\n", 1)[0].lower()
-            
+            img_info = image_files_map.get(chunk_id)
+
             # Determine chunk type
             if normalized_type == "image":
                 chunk_type = "image"
@@ -403,7 +402,6 @@ class ZipResultService:
                 metadata["connect_to"] = merge_connections(embed_connections, related_connections)
                 
             elif chunk_type == "image":
-                img_info = image_files_map.get(chunk_id)
                 if img_info:
                     metadata["file_path"] = img_info["file_path"]
                 # Unified schema: include keywords and tokens for all chunk types
@@ -476,6 +474,15 @@ class ZipResultService:
         """Collect image file information"""
         image_files = []
         if not os.path.exists(images_dir):
+            has_image_chunks = any(chunk.get("type", "") == "image" for chunk in chunks)
+            if has_image_chunks:
+                raise StorageServiceException(
+                    internal_message=(
+                        "Image directory not found for ZIP packaging: "
+                        f"images_dir={images_dir}"
+                    ),
+                    operation="collect_image_files",
+                )
             return image_files
 
         # Get all image files
@@ -558,11 +565,13 @@ class ZipResultService:
                 original_name = matched_name
 
             if not source_path:
-                logger.warning(
-                    "Cannot resolve image file for ZIP packaging: "
-                    f"chunk_id={chunk_id}, candidates={candidate_names}"
+                raise StorageServiceException(
+                    internal_message=(
+                        "Cannot resolve image file for ZIP packaging: "
+                        f"chunk_id={chunk_id}, candidates={candidate_names}"
+                    ),
+                    operation="collect_image_files",
                 )
-                continue
 
             # Get image dimensions
             width = None
