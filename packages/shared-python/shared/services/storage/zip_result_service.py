@@ -531,11 +531,6 @@ class ZipResultService:
                             matched_ext.lstrip(".") or "jpg",
                         )
 
-            for filename, file_path in image_files_map.items():
-                if str(chunk_id) in filename or filename.startswith("图"):
-                    _, ext = os.path.splitext(filename)
-                    return file_path, filename, ext.lstrip(".") or "jpg"
-
             return None, None, "jpg"
 
         # Match images from chunks
@@ -568,11 +563,13 @@ class ZipResultService:
                 original_name = matched_name
 
             if not source_path:
-                logger.warning(
-                    "Cannot find image file: "
-                    f"chunk_id={chunk_id}, candidates={candidate_names}"
+                raise StorageServiceException(
+                    internal_message=(
+                        "Cannot resolve image file for ZIP packaging: "
+                        f"chunk_id={chunk_id}, candidates={candidate_names}"
+                    ),
+                    operation="collect_image_files",
                 )
-                continue
 
             # Get image dimensions
             width = None
@@ -636,6 +633,36 @@ class ZipResultService:
             file_path = os.path.join(tables_dir, filename)
             if os.path.isfile(file_path) and filename.endswith(".html"):
                 table_files_map[filename] = file_path
+
+        def add_candidate(candidates: List[str], value: Optional[str]) -> None:
+            if not value:
+                return
+            candidate = os.path.basename(str(value).strip().replace("-->", "/"))
+            if not candidate:
+                return
+            if candidate.startswith("[") and candidate.endswith("]"):
+                candidate = candidate[1:-1].strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        def resolve_source_path(candidates: List[str]) -> Tuple[Optional[str], Optional[str]]:
+            for candidate in candidates:
+                if candidate in table_files_map:
+                    return table_files_map[candidate], candidate
+
+                stem, _ = os.path.splitext(candidate)
+                if stem:
+                    stem_matches = [
+                        filename
+                        for filename in table_files_map
+                        if os.path.splitext(filename)[0] == stem
+                    ]
+                    if len(stem_matches) == 1:
+                        matched = stem_matches[0]
+                        return table_files_map[matched], matched
+
+            return None, None
+
         # Match tables from chunks
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
@@ -644,44 +671,38 @@ class ZipResultService:
             if chunk_type != "table":
                 continue
 
+            metadata = chunk.get("metadata", {})
+            candidate_names: List[str] = []
+            if metadata and isinstance(metadata, dict):
+                add_candidate(candidate_names, metadata.get("file_path"))
+                add_candidate(candidate_names, metadata.get("original_name"))
+
             # Try to get original filename from chunk's path field
             original_path = chunk.get("path", "")
             if original_path:
                 # Normalize path separators: replace --> with /, then extract filename
                 normalized_path = original_path.replace("-->", "/")
                 original_name = os.path.basename(normalized_path)
+                add_candidate(candidate_names, original_path)
             else:
                 original_name = None
-            
-            # If original filename not found, try to find from tables_dir
-            if not original_name:
-                # Try to match files related to chunk_id
-                for filename in table_files_map.keys():
-                    if str(chunk_id) in filename or filename.startswith("表"):
-                        original_name = filename
-                        break
 
-            source_path = None
-            if original_name and original_name in table_files_map:
-                source_path = table_files_map[original_name]
-            else:
-                # If not found, use the first unused table file
-                for filename, file_path in table_files_map.items():
-                    if filename not in [tb["original_name"] for tb in table_files]:
-                        source_path = file_path
-                        original_name = filename
-                        break
+            source_path, matched_name = resolve_source_path(candidate_names)
+            if matched_name:
+                original_name = matched_name
 
             if not source_path:
-                logger.warning(
-                    f"Cannot find table file: chunk_id={chunk_id}, original_name={original_name}"
+                raise StorageServiceException(
+                    internal_message=(
+                        "Cannot resolve table file for ZIP packaging: "
+                        f"chunk_id={chunk_id}, candidates={candidate_names}"
+                    ),
+                    operation="collect_table_files",
                 )
-                continue
 
             file_size = os.path.getsize(source_path)
             
             # Priority: use file_path from metadata, then original_name, finally chunk_id
-            metadata = chunk.get("metadata", {})
             if metadata and isinstance(metadata, dict):
                 # metadata.file_path format: "tables/xxx.html"
                 zip_file_path = metadata.get("file_path")
