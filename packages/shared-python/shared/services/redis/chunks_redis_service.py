@@ -99,6 +99,13 @@ class ChunksRedisService:
                     rels.extend([line for line in lines[1:] if line.upper() != "PTXT"])
             return rels if rels else []
 
+        def normalize_resource_ref(ref: Any) -> str:
+            """标准化资源引用，去掉 chunk ref 包裹符号。"""
+            ref_str = str(ref or "").strip()
+            if ref_str.startswith("[") and ref_str.endswith("]"):
+                ref_str = ref_str[1:-1].strip()
+            return ref_str
+
         def parse_connect_to(connects):
             """解析 connectto 字段为 cross-chunk 关系列表"""
             if not connects or (pd is not None and pd.isna(connects)):
@@ -226,13 +233,24 @@ class ChunksRedisService:
 
             # 根据类型添加特定字段
             if chunk_type == "image":
-                img_name = (
-                    path.split("/")[-1] if "/" in path else f"image_{chunk_id}.jpg"
-                )
-                # Ensure image file name has an extension (atlas paths lack one)
-                if not any(img_name.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
-                    img_name += ".png"
-                metadata["file_path"] = f"images/{img_name}"
+                image_ref = ""
+                for ref in relationship_refs:
+                    normalized_ref = normalize_resource_ref(ref)
+                    if normalized_ref.lower().startswith("images/"):
+                        image_ref = normalized_ref
+                        break
+
+                if image_ref:
+                    img_name = image_ref.split("/", 1)[1]
+                    metadata["file_path"] = image_ref
+                    metadata["original_name"] = img_name
+                else:
+                    img_name = path.split("/")[-1] if path else f"image_{chunk_id}.jpg"
+                    # Ensure image file name has an extension (atlas paths lack one)
+                    if not any(img_name.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                        img_name += ".png"
+                    metadata["file_path"] = f"images/{img_name}"
+                    metadata["original_name"] = img_name
             elif chunk_type == "table":
                 tbl_name = (
                     path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"

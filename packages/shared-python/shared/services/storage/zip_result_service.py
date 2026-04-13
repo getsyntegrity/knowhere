@@ -495,6 +495,49 @@ class ZipResultService:
             file_path = os.path.join(images_dir, filename)
             if os.path.isfile(file_path):
                 image_files_map[filename] = file_path
+
+        def add_candidate(candidates: List[str], value: Optional[str]) -> None:
+            if not value:
+                return
+            candidate = os.path.basename(str(value).strip().replace("-->", "/"))
+            if not candidate:
+                return
+            if candidate.startswith("[") and candidate.endswith("]"):
+                candidate = candidate[1:-1].strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        def resolve_source_path(
+            candidates: List[str], chunk_id: str
+        ) -> Tuple[Optional[str], Optional[str], str]:
+            for candidate in candidates:
+                if candidate in image_files_map:
+                    _, ext = os.path.splitext(candidate)
+                    return image_files_map[candidate], candidate, ext.lstrip(".") or "jpg"
+
+                stem, ext = os.path.splitext(candidate)
+                if stem:
+                    stem_matches = [
+                        filename
+                        for filename in image_files_map
+                        if os.path.splitext(filename)[0] == stem
+                    ]
+                    if len(stem_matches) == 1:
+                        matched = stem_matches[0]
+                        _, matched_ext = os.path.splitext(matched)
+                        return (
+                            image_files_map[matched],
+                            matched,
+                            matched_ext.lstrip(".") or "jpg",
+                        )
+
+            for filename, file_path in image_files_map.items():
+                if str(chunk_id) in filename or filename.startswith("图"):
+                    _, ext = os.path.splitext(filename)
+                    return file_path, filename, ext.lstrip(".") or "jpg"
+
+            return None, None, "jpg"
+
         # Match images from chunks
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
@@ -503,46 +546,31 @@ class ZipResultService:
             if chunk_type != "image":
                 continue
 
+            metadata = chunk.get("metadata", {})
+            candidate_names: List[str] = []
+            if metadata and isinstance(metadata, dict):
+                add_candidate(candidate_names, metadata.get("file_path"))
+                add_candidate(candidate_names, metadata.get("original_name"))
+
             # Try to get original filename from chunk's path field
             original_path = chunk.get("path", "")
             if original_path:
-                # Normalize path separators: replace --> with /, then extract filename
+                add_candidate(candidate_names, original_path)
                 normalized_path = original_path.replace("-->", "/")
                 original_name = os.path.basename(normalized_path)
             else:
                 original_name = None
-            
-            # If original filename not found, try to find from images_dir
-            if not original_name:
-                # Try to match files related to chunk_id
-                for filename in image_files_map.keys():
-                    if str(chunk_id) in filename or filename.startswith("图"):
-                        original_name = filename
-                        break
 
-            # Get file extension
-            if original_name:
-                _, ext = os.path.splitext(original_name)
-                ext = ext.lstrip(".") or "jpg"
-            else:
-                ext = "jpg"
-
-            source_path = None
-            if original_name and original_name in image_files_map:
-                source_path = image_files_map[original_name]
-            else:
-                # If not found, use the first unused image file
-                for filename, file_path in image_files_map.items():
-                    if filename not in [img["original_name"] for img in image_files]:
-                        source_path = file_path
-                        original_name = filename
-                        _, ext = os.path.splitext(filename)
-                        ext = ext.lstrip(".") or "jpg"
-                        break
+            source_path, matched_name, ext = resolve_source_path(
+                candidate_names, str(chunk_id)
+            )
+            if matched_name:
+                original_name = matched_name
 
             if not source_path:
                 logger.warning(
-                    f"Cannot find image file: chunk_id={chunk_id}, original_name={original_name}"
+                    "Cannot find image file: "
+                    f"chunk_id={chunk_id}, candidates={candidate_names}"
                 )
                 continue
 
@@ -558,7 +586,6 @@ class ZipResultService:
             file_size = os.path.getsize(source_path)
             
             # Priority: use file_path from metadata, then original_name, finally chunk_id
-            metadata = chunk.get("metadata", {})
             if metadata and isinstance(metadata, dict):
                 # metadata.file_path format: "images/xxx.jpg"
                 zip_file_path = metadata.get("file_path")
