@@ -26,7 +26,6 @@ from shared.models.database.knowledge_base import ContentBase
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.services.billing.credits_sync_service import SyncCreditsService
 from shared.services.redis.redis_sync_service import (
-    SyncChunksRedisService,
     SyncRedisServiceFactory,
 )
 from shared.utils.error_details import normalize_error_details
@@ -51,7 +50,6 @@ class SyncJobLifecycleService:
     def finalize_job_success(
         self,
         job_id: str,
-        chunks_job_id: str,
         result_s3_key: str,
         checksum: str,
         zip_size: int,
@@ -68,7 +66,7 @@ class SyncJobLifecycleService:
             3. Mark job as DONE via state machine (CAS)
             4. Create WebhookEvent if webhook_enabled
             5. COMMIT
-            6. Post-commit: clear Redis chunks if they were used, enqueue webhook
+            6. Post-commit: enqueue webhook
         """
         logger.info(f"Finalizing job success: job_id={job_id}")
 
@@ -86,13 +84,7 @@ class SyncJobLifecycleService:
                     result_size=zip_size,
                 )
 
-                chunks_redis: Optional[SyncChunksRedisService] = None
-                resolved_chunks = chunks
-                if resolved_chunks is None:
-                    redis_service = SyncRedisServiceFactory.get_service()
-                    chunks_redis = SyncChunksRedisService(redis_service)
-                    resolved_chunks = chunks_redis.get_chunks(chunks_job_id) or []
-                self._replace_chunks(db, job_result.id, resolved_chunks)
+                self._replace_chunks(db, job_result.id, chunks or [])
 
                 transition_ok = self._state_machine.mark_completed(
                     db, job_id,
@@ -114,8 +106,6 @@ class SyncJobLifecycleService:
                 db.commit()
                 logger.info(f"Job {job_id} success transaction committed")
 
-                if chunks_redis is not None:
-                    self._post_commit_cleanup(chunks_job_id, chunks_redis)
                 self._post_commit_enqueue_webhook(webhook_event)
 
                 return {
@@ -375,15 +365,6 @@ class SyncJobLifecycleService:
             logger.info(f"Refunded {amount} credits for job {job_id}")
         except Exception as exc:
             logger.error(f"Credit refund failed for job {job_id}: {exc}")
-
-    def _post_commit_cleanup(
-        self, chunks_job_id: str, chunks_redis: SyncChunksRedisService,
-    ) -> None:
-        """Best-effort Redis cleanup after commit."""
-        try:
-            chunks_redis.delete_chunks(chunks_job_id)
-        except Exception as exc:
-            logger.warning(f"Failed to clear Redis chunks for {chunks_job_id}: {exc}")
 
     def _post_commit_enqueue_webhook(
         self, webhook_event: Optional[WebhookEvent],

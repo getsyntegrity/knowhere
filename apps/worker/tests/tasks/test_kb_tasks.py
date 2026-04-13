@@ -405,6 +405,7 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
     kb_tasks._parse("job_123", "user_123")
 
     assert lifecycle_service.success_calls[0]["chunks"] == _FailOnSaveChunksRedisService.expected_chunks
+    assert "chunks_job_id" not in lifecycle_service.success_calls[0]
 
 
 def test_parse_cleans_task_workspace_after_failure(monkeypatch, tmp_path):

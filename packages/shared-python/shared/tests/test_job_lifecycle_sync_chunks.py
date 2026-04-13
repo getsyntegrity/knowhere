@@ -72,7 +72,6 @@ def test_finalize_job_success_uses_direct_chunks_without_redis_lookup(
 
     result = service.finalize_job_success(
         job_id="job_123",
-        chunks_job_id="job_123",
         chunks=chunks,
         result_s3_key="results/job_123.zip",
         checksum="checksum",

@@ -525,7 +525,6 @@ def _parse(job_id: str, user_id: str | None):
             # Finalize job success directly to the database
             lifecycle_service.finalize_job_success(
                 job_id=job_id,
-                chunks_job_id=job_id,
                 chunks=chunks,
                 result_s3_key=result_s3_key,
                 checksum=checksum_value,
