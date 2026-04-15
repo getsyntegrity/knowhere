@@ -1,3 +1,6 @@
+import json
+import zipfile
+
 import pytest
 import pandas as pd
 from PIL import Image
@@ -31,6 +34,34 @@ def test_dataframe_to_chunks_preserves_embedded_atlas_image_filename():
     assert chunks[0]["metadata"]["file_path"] == "images/05SG522 （总说明）page 4.jpg"
 
 
+def test_dataframe_to_chunks_preserves_actual_extension_for_vector_images():
+    df = pd.DataFrame(
+        [
+            {
+                "content": "image-16",
+                "path": "table-27-image-16 施工方法及操作要求.emf",
+                "type": "image",
+                "length": 40,
+                "keywords": "",
+                "summary": "image-16",
+                "know_id": "table-27-image-16",
+                "tokens": "",
+                "connectto": "",
+                "addtime": "2026-04-15T00:00:00Z",
+                "page_nums": "",
+            }
+        ]
+    )
+
+    chunks = ChunksRedisService(None)._dataframe_to_chunks(df)
+
+    assert chunks[0]["type"] == "image"
+    assert (
+        chunks[0]["metadata"]["file_path"]
+        == "images/table-27-image-16 施工方法及操作要求.emf"
+    )
+
+
 def test_collect_image_files_uses_metadata_file_path_for_atlas_images(tmp_path, monkeypatch):
     images_dir = tmp_path / "images"
     images_dir.mkdir()
@@ -61,6 +92,55 @@ def test_collect_image_files_uses_metadata_file_path_for_atlas_images(tmp_path, 
     )
 
     assert image_files[0]["source_path"] == str(correct_path)
+
+
+def test_generate_zip_package_preserves_actual_extension_for_vector_images(tmp_path):
+    add_dir = tmp_path / "parsed"
+    images_dir = add_dir / "images"
+    images_dir.mkdir(parents=True)
+
+    vector_filename = "table-27-image-16 施工方法及操作要求.emf"
+    (images_dir / vector_filename).write_bytes(b"fake emf bytes")
+
+    df = pd.DataFrame(
+        [
+            {
+                "content": "image-16",
+                "path": "table-27-image-16 施工方法及操作要求.emf",
+                "type": "image",
+                "length": 40,
+                "keywords": "",
+                "summary": "image-16",
+                "know_id": "table-27-image-16",
+                "tokens": "",
+                "connectto": "",
+                "addtime": "2026-04-15T00:00:00Z",
+                "page_nums": "",
+            }
+        ]
+    )
+
+    chunks = ChunksRedisService(None)._dataframe_to_chunks(df)
+
+    zip_file_path, _, _, _ = ZipResultService().generate_zip_package(
+        job_id="job-vector-image",
+        chunks=chunks,
+        add_dir=str(add_dir),
+        source_file_name="source.docx",
+        data_id=None,
+        job_metadata={},
+        parsed_df=df,
+        temp_dir=str(tmp_path),
+    )
+
+    with zipfile.ZipFile(zip_file_path) as zip_file:
+        zip_image_entries = sorted(
+            name for name in zip_file.namelist() if name.startswith("images/")
+        )
+        chunk_payload = json.loads(zip_file.read("chunks.json"))["chunks"]
+
+    assert zip_image_entries == [f"images/{vector_filename}"]
+    assert chunk_payload[0]["metadata"]["file_path"] == f"images/{vector_filename}"
 
 
 def test_collect_image_files_raises_when_declared_image_is_missing(tmp_path, monkeypatch):

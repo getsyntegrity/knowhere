@@ -252,8 +252,9 @@ class ChunksRedisService:
                     img_name = (
                         os.path.basename(normalized_path) if normalized_path else f"image_{chunk_id}.jpg"
                     )
-                    # Ensure image file name has an extension (atlas paths lack one)
-                    if not any(img_name.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                    _, img_ext = os.path.splitext(img_name)
+                    # Atlas image paths may lack an extension entirely; keep any real suffix.
+                    if not img_ext:
                         img_name += ".png"
                     metadata["file_path"] = f"images/{img_name}"
                     metadata["original_name"] = img_name
