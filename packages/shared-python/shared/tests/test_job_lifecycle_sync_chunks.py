@@ -84,3 +84,30 @@ def test_finalize_job_success_uses_direct_chunks_without_redis_lookup(
     assert result == {"status": "success", "job_id": "job_123", "stored_count": 0}
     assert captured == {"job_result_id": "result_123", "chunks": chunks}
     db.commit.assert_called_once()
+
+def test_try_refund_credits_skips_jobs_that_never_charged(monkeypatch) -> None:
+    db = MagicMock()
+    job = SimpleNamespace(
+        job_id="job_123",
+        user_id="user_123",
+        credits_charged=100,
+        billing_status="billing_failed",
+    )
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=job)
+    )
+    refund_calls: list[dict[str, object]] = []
+
+    class _FakeCreditsService:
+        def refund_job_credits(self, **kwargs):
+            refund_calls.append(kwargs)
+            return 999
+
+    monkeypatch.setattr(lifecycle_module, "SyncCreditsService", _FakeCreditsService)
+
+    service = lifecycle_module.SyncJobLifecycleService()
+    service._try_refund_credits(db, "job_123")
+
+    assert refund_calls == []
+    assert job.billing_status == "billing_failed"
+

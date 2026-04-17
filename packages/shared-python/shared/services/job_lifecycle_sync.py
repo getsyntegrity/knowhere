@@ -351,7 +351,7 @@ class SyncJobLifecycleService:
 
             amount = getattr(job, "credits_charged", 0) or 0
             billing_status = getattr(job, "billing_status", "")
-            if amount <= 0 or billing_status == "refunded":
+            if amount <= 0 or billing_status != "charged":
                 return
 
             credits_service = SyncCreditsService()
