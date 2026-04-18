@@ -363,6 +363,7 @@ class SyncJobLifecycleService:
 
             chunk_id = chunk.get("chunk_id") or f"chunk_{uuid4().hex[:12]}"
             db.add(DocumentChunk(
+                id=f"dchk_{uuid4().hex[:12]}",
                 chunk_id=chunk_id,
                 user_id=str(job.user_id),
                 namespace=namespace,

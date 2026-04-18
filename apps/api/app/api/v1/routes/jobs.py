@@ -370,6 +370,8 @@ async def create_job(
                 job=job,
                 source_type="file",
                 data_id=payload.data_id,
+                namespace=effective_namespace,
+                document_id=effective_document_id,
                 upload_url=upload_info["upload_url"],
                 upload_headers=upload_info["upload_headers"],
                 expires_in=upload_info["expires_in"],
@@ -469,6 +471,8 @@ async def create_job(
                     job=job,
                     source_type="url",
                     data_id=payload.data_id,
+                    namespace=effective_namespace,
+                    document_id=effective_document_id,
                 )
 
                 return response

@@ -68,7 +68,8 @@ class DocumentChunk(Base):
 
     __tablename__ = 'document_chunks'
 
-    chunk_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'dchk_{uuid4().hex[:12]}')
+    chunk_id: Mapped[str] = mapped_column(String(64), nullable=False)
     user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
     document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
@@ -87,6 +88,7 @@ class DocumentChunk(Base):
     __table_args__ = (
         UniqueConstraint('document_id', 'job_result_id', 'source_chunk_path', name='uq_document_chunks_revision_path'),
         Index('idx_document_chunks_scope', 'user_id', 'namespace'),
+        Index('idx_document_chunks_chunk_id', 'chunk_id'),
         Index('idx_document_chunks_doc_revision', 'document_id', 'job_result_id'),
         Index('idx_document_chunks_section', 'section_id'),
     )

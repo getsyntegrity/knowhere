@@ -83,4 +83,6 @@ async def test_create_job_defaults_namespace_for_new_documents(monkeypatch):
     )
 
     assert response.source_type == "file"
+    assert response.namespace == "default"
+    assert response.document_id is None
     assert captured["metadata"]["namespace"] == "default"

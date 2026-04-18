@@ -65,6 +65,7 @@ def upgrade() -> None:
 
     op.create_table(
         'document_chunks',
+        sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('chunk_id', sa.String(length=64), nullable=False),
         sa.Column('user_id', sa.Text(), nullable=False),
         sa.Column('namespace', sa.String(length=255), nullable=False, server_default='default'),
@@ -81,10 +82,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['document_id'], ['documents.document_id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['job_result_id'], ['job_results.id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['section_id'], ['document_sections.section_id'], ondelete='SET NULL'),
-        sa.PrimaryKeyConstraint('chunk_id'),
+        sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('document_id', 'job_result_id', 'source_chunk_path', name='uq_document_chunks_revision_path'),
     )
     op.create_index('idx_document_chunks_scope', 'document_chunks', ['user_id', 'namespace'])
+    op.create_index('idx_document_chunks_chunk_id', 'document_chunks', ['chunk_id'])
     op.create_index('idx_document_chunks_doc_revision', 'document_chunks', ['document_id', 'job_result_id'])
     op.create_index('idx_document_chunks_section', 'document_chunks', ['section_id'])
 
@@ -92,6 +94,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index('idx_document_chunks_section', table_name='document_chunks')
     op.drop_index('idx_document_chunks_doc_revision', table_name='document_chunks')
+    op.drop_index('idx_document_chunks_chunk_id', table_name='document_chunks')
     op.drop_index('idx_document_chunks_scope', table_name='document_chunks')
     op.drop_table('document_chunks')
 

@@ -130,4 +130,7 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
 
     assert any(isinstance(obj, Document) and obj.namespace == 'default' for obj in added)
     assert any(isinstance(obj, DocumentSection) and obj.section_path == 'Billing / Refunds' for obj in added)
-    assert any(isinstance(obj, DocumentChunk) and obj.text == 'Refunds within 30 days are allowed.' for obj in added)
+    matching_chunks = [obj for obj in added if isinstance(obj, DocumentChunk) and obj.text == 'Refunds within 30 days are allowed.']
+    assert len(matching_chunks) == 1
+    assert matching_chunks[0].chunk_id == 'chunk_1'
+    assert matching_chunks[0].id.startswith('dchk_')
