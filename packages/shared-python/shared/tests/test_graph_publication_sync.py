@@ -157,3 +157,80 @@ def test_publish_document_graph_skips_similar_edges_without_peer_document_node()
 
     similar_edges = [edge for edge in db.added if getattr(edge, 'edge_kind', None) == 'similar']
     assert similar_edges == []
+
+
+def test_publish_document_graph_flushes_nodes_before_querying_peers():
+    from types import SimpleNamespace
+
+    from shared.services.retrieval.graph_service import DocumentGraphService
+
+    section = SimpleNamespace(
+        section_id='sec_1',
+        parent_section_id=None,
+        section_path='Policies / Billing',
+        section_title='Billing',
+        section_level=1,
+        sort_order=0,
+    )
+    document = SimpleNamespace(document_id='doc_1', source_file_name='refund-policy.md')
+
+    class _Db:
+        def __init__(self):
+            self._call = 0
+            self.flush_calls = []
+            self.added = []
+
+        def execute(self, _stmt):
+            self._call += 1
+            if self._call == 1:
+                return _FakeResult([section])
+            if self._call == 2:
+                return _FakeResult([document])
+            if self._call == 3:
+                return _FakeResult([])
+            raise AssertionError(f'unexpected execute call {self._call}')
+
+        def add(self, value):
+            self.added.append(value)
+
+        def flush(self):
+            self.flush_calls.append(len(self.added))
+
+    db = _Db()
+    service = DocumentGraphService()
+    service.remove_document_graph = lambda *_args, **_kwargs: None
+
+    service.publish_document_graph(
+        db,
+        user_id='user_123',
+        namespace='default',
+        document_id='doc_1',
+        job_result_id='result_123',
+    )
+
+    # One flush must happen after node/contains creation and before peer-document queries.
+    assert db.flush_calls
+    assert db.flush_calls[0] == 3
+
+
+def test_publish_document_graph_removes_old_namespace_rows_for_same_document():
+    from shared.services.retrieval.graph_service import DocumentGraphService
+
+    class _Db:
+        def __init__(self):
+            self.delete_calls = []
+
+        def execute(self, stmt):
+            self.delete_calls.append(str(stmt))
+            return _FakeResult([])
+
+        def flush(self):
+            return None
+
+    db = _Db()
+    service = DocumentGraphService()
+    service.remove_document_graph(db, scope=None, document_id='doc_1')
+
+    assert len(db.delete_calls) == 2
+    assert all('owner_document_id' in call for call in db.delete_calls)
+    assert all('namespace' not in call for call in db.delete_calls)

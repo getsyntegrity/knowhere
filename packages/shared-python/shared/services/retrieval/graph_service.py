@@ -90,6 +90,8 @@ class DocumentGraphService:
                 )
             )
 
+        db.flush()
+
         other_documents: Sequence[Document] = list(
             db.execute(
                 select(Document)
@@ -124,19 +126,14 @@ class DocumentGraphService:
 
         db.flush()
 
-    def remove_document_graph(self, db: Session, *, scope: GraphScope, document_id: str) -> None:
-        db.execute(
-            delete(GraphEdge)
-            .where(GraphEdge.user_id == scope.user_id)
-            .where(GraphEdge.namespace == scope.namespace)
-            .where(GraphEdge.owner_document_id == document_id)
-        )
-        db.execute(
-            delete(GraphNode)
-            .where(GraphNode.user_id == scope.user_id)
-            .where(GraphNode.namespace == scope.namespace)
-            .where(GraphNode.owner_document_id == document_id)
-        )
+    def remove_document_graph(self, db: Session, *, scope: GraphScope | None, document_id: str) -> None:
+        edge_delete = delete(GraphEdge).where(GraphEdge.owner_document_id == document_id)
+        node_delete = delete(GraphNode).where(GraphNode.owner_document_id == document_id)
+        if scope is not None:
+            edge_delete = edge_delete.where(GraphEdge.user_id == scope.user_id)
+            node_delete = node_delete.where(GraphNode.user_id == scope.user_id)
+        db.execute(edge_delete)
+        db.execute(node_delete)
         db.flush()
 
 
