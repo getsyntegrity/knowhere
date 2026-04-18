@@ -54,6 +54,7 @@ class DocumentGraphService:
             )
         )
 
+        contains_edges = []
         for section in sections:
             section_node_id = f"sec:{section.section_id}"
             db.add(
@@ -74,6 +75,12 @@ class DocumentGraphService:
                 )
             )
             parent_node_id = f"sec:{section.parent_section_id}" if section.parent_section_id else document_node_id
+            contains_edges.append((parent_node_id, section_node_id))
+
+        # Persist nodes before any edge rows can be flushed.
+        db.flush()
+
+        for parent_node_id, section_node_id in contains_edges:
             db.add(
                 GraphEdge(
                     edge_id=f"contains:{parent_node_id}->{section_node_id}",
@@ -89,8 +96,6 @@ class DocumentGraphService:
                     properties={},
                 )
             )
-
-        db.flush()
 
         other_documents: Sequence[Document] = list(
             db.execute(

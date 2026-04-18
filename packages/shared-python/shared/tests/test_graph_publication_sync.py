@@ -159,7 +159,7 @@ def test_publish_document_graph_skips_similar_edges_without_peer_document_node()
     assert similar_edges == []
 
 
-def test_publish_document_graph_flushes_nodes_before_querying_peers():
+def test_publish_document_graph_flushes_only_nodes_before_querying_peers():
     from types import SimpleNamespace
 
     from shared.services.retrieval.graph_service import DocumentGraphService
@@ -187,6 +187,7 @@ def test_publish_document_graph_flushes_nodes_before_querying_peers():
             if self._call == 2:
                 return _FakeResult([document])
             if self._call == 3:
+                assert self.flush_calls and self.flush_calls[0] == 2
                 return _FakeResult([])
             raise AssertionError(f'unexpected execute call {self._call}')
 
@@ -208,9 +209,8 @@ def test_publish_document_graph_flushes_nodes_before_querying_peers():
         job_result_id='result_123',
     )
 
-    # One flush must happen after node/contains creation and before peer-document queries.
     assert db.flush_calls
-    assert db.flush_calls[0] == 3
+    assert db.flush_calls[0] == 2
 
 
 def test_publish_document_graph_removes_old_namespace_rows_for_same_document():
