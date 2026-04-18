@@ -1,4 +1,4 @@
-"""Retrieval API routes for phase1 lexical baseline."""
+"""Retrieval API routes for lexical + graph-routing baseline."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.rate_limit.dependencies import with_current_user, CurrentUser
 from shared.core.database import get_db
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
+from shared.services.retrieval.graph_service import GraphQueryService
 
 router = APIRouter(tags=["Retrieval"])
 
@@ -22,6 +23,7 @@ class RetrievalQueryRequest(BaseModel):
     query: str
     top_k: int = 10
     exclude_document_ids: list[str] = Field(default_factory=list)
+    graph_enabled: bool = False
 
 
 async def list_canonical_chunks(
@@ -68,6 +70,33 @@ async def list_canonical_chunks(
     return rows
 
 
+async def list_graph_routed_chunks(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    query: str,
+    top_k: int,
+    exclude_document_ids: list[str],
+) -> list[dict[str, Any]]:
+    service = GraphQueryService()
+    entry_document_ids = await service.find_entry_documents(
+        db,
+        user_id=user_id,
+        namespace=namespace,
+        query=query,
+        exclude_document_ids=exclude_document_ids,
+    )
+    return await service.collect_candidate_chunks(
+        db,
+        user_id=user_id,
+        namespace=namespace,
+        entry_document_ids=entry_document_ids,
+        query=query,
+        top_k=top_k,
+    )
+
+
 def _with_citation(row: dict[str, Any]) -> dict[str, Any]:
     citation = {
         'document_id': row.get('document_id'),
@@ -87,19 +116,39 @@ async def query_retrieval(
     db: AsyncSession = Depends(get_db),
 ):
     namespace = payload.namespace or 'default'
-    rows = list_canonical_chunks(
-        db,
-        user_id=current_user.user_id,
-        namespace=namespace,
-        query=payload.query,
-        top_k=payload.top_k,
-        exclude_document_ids=payload.exclude_document_ids,
-    )
-    if inspect.isawaitable(rows):
-        rows = await rows
+    rows: list[dict[str, Any]] = []
+    graph_used = False
+    if payload.graph_enabled:
+        graph_rows = list_graph_routed_chunks(
+            db,
+            user_id=current_user.user_id,
+            namespace=namespace,
+            query=payload.query,
+            top_k=payload.top_k,
+            exclude_document_ids=payload.exclude_document_ids,
+        )
+        if inspect.isawaitable(graph_rows):
+            graph_rows = await graph_rows
+        if graph_rows:
+            rows = list(graph_rows)
+            graph_used = True
+
+    if not rows:
+        lexical_rows = list_canonical_chunks(
+            db,
+            user_id=current_user.user_id,
+            namespace=namespace,
+            query=payload.query,
+            top_k=payload.top_k,
+            exclude_document_ids=payload.exclude_document_ids,
+        )
+        if inspect.isawaitable(lexical_rows):
+            lexical_rows = await lexical_rows
+        rows = list(lexical_rows)
+
     return {
         'namespace': namespace,
         'query': payload.query,
         'results': [_with_citation(row) for row in rows],
-        'graph_enabled': False,
+        'graph_enabled': graph_used,
     }

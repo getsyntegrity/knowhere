@@ -21,6 +21,7 @@ from shared.core.database_sync import get_sync_db_context
 from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
+from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobChunk, JobResult
 from shared.models.database.knowledge_base import ContentBase
@@ -88,6 +89,12 @@ class SyncJobLifecycleService:
                 normalized_chunks = chunks or []
                 self._replace_chunks(db, job_result.id, normalized_chunks)
                 self._publish_document_state(
+                    db,
+                    job_id=job_id,
+                    job_result_id=job_result.id,
+                    chunks=normalized_chunks,
+                )
+                self._publish_document_graph(
                     db,
                     job_id=job_id,
                     job_result_id=job_result.id,
@@ -290,12 +297,12 @@ class SyncJobLifecycleService:
         job_id: str,
         job_result_id: str,
         chunks: List[Dict[str, Any]],
-    ) -> None:
+    ) -> Optional[Dict[str, str]]:
         """Publish canonical document, section, and chunk rows for retrieval."""
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if not job:
             logger.warning(f"Job not found for document publication: {job_id}")
-            return
+            return None
 
         metadata = job.job_metadata or {}
         namespace = metadata.get("namespace") or "default"
@@ -379,6 +386,7 @@ class SyncJobLifecycleService:
             ))
 
         db.flush()
+        return {"user_id": str(job.user_id), "namespace": namespace, "document_id": document_id}
 
     @staticmethod
     def _section_path_from_chunk_path(source_path: Optional[str]) -> str:
@@ -389,6 +397,40 @@ class SyncJobLifecycleService:
             return "Root"
         section_parts = parts[1:]
         return " / ".join(section_parts) or "Root"
+
+    def _publish_document_graph(
+        self,
+        db: Session,
+        *,
+        job_id: str,
+        job_result_id: str,
+        chunks: List[Dict[str, Any]],
+    ) -> None:
+        """Publish persisted graph routing state for the canonical document revision."""
+        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if not job:
+            logger.warning(f"Job not found for graph publication: {job_id}")
+            return
+
+        metadata = job.job_metadata or {}
+        namespace = metadata.get("namespace") or "default"
+        document_id = metadata.get("document_id")
+        if not document_id:
+            document = db.execute(
+                select(Document).where(Document.current_job_result_id == job_result_id)
+            ).scalar_one_or_none()
+            document_id = document.document_id if document else None
+        if not document_id:
+            logger.warning(f"Document not found for graph publication: {job_id}")
+            return
+
+        DocumentGraphService().publish_document_graph(
+            db,
+            user_id=str(job.user_id),
+            namespace=namespace,
+            document_id=document_id,
+            job_result_id=job_result_id,
+        )
 
     def _bulk_insert_kb_records(
         self,

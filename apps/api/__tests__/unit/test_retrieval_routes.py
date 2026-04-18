@@ -51,28 +51,28 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
 
 
 @pytest.mark.asyncio
-async def test_document_routes_return_canonical_document_state(authenticated_client):
+async def test_document_routes_return_canonical_document_state(authenticated_client, monkeypatch):
     from app.api.v1.routes import documents as document_routes
 
-    document_routes.list_canonical_documents = lambda *_args, **_kwargs: [
+    monkeypatch.setattr(document_routes, 'list_canonical_documents', lambda *_args, **_kwargs: [
         {
             'document_id': 'doc_123',
             'namespace': 'default',
             'status': 'active',
             'source_file_name': 'refund-policy.md',
         }
-    ]
-    document_routes.get_canonical_document = lambda *_args, **_kwargs: {
+    ])
+    monkeypatch.setattr(document_routes, 'get_canonical_document', lambda *_args, **_kwargs: {
         'document_id': 'doc_123',
         'namespace': 'default',
         'status': 'active',
         'source_file_name': 'refund-policy.md',
-    }
-    document_routes.archive_canonical_document = lambda *_args, **_kwargs: {
+    })
+    monkeypatch.setattr(document_routes, 'archive_canonical_document', lambda *_args, **_kwargs: {
         'document_id': 'doc_123',
         'namespace': 'default',
         'status': 'archived',
-    }
+    })
 
     list_response = await authenticated_client.get('/v1/documents')
     get_response = await authenticated_client.get('/v1/documents/doc_123')

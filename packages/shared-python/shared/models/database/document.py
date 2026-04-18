@@ -92,3 +92,55 @@ class DocumentChunk(Base):
         Index('idx_document_chunks_doc_revision', 'document_id', 'job_result_id'),
         Index('idx_document_chunks_section', 'section_id'),
     )
+
+
+class GraphNode(Base):
+    """Persisted derived graph node used for routing and expansion."""
+
+    __tablename__ = 'graph_nodes'
+
+    node_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
+    node_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    owner_document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
+    job_result_id: Mapped[str] = mapped_column(String(36), ForeignKey('job_results.id', ondelete='CASCADE'), nullable=False)
+    ref_document_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    ref_section_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    properties: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_graph_nodes_scope', 'user_id', 'namespace', 'node_kind'),
+        Index('idx_graph_nodes_owner_revision', 'owner_document_id', 'job_result_id'),
+        Index('idx_graph_nodes_ref_document', 'ref_document_id'),
+        Index('idx_graph_nodes_ref_section', 'ref_section_id'),
+    )
+
+
+class GraphEdge(Base):
+    """Persisted derived graph edge used for routing and expansion."""
+
+    __tablename__ = 'graph_edges'
+
+    edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
+    edge_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_node_id: Mapped[str] = mapped_column(String(128), ForeignKey('graph_nodes.node_id', ondelete='CASCADE'), nullable=False)
+    target_node_id: Mapped[str] = mapped_column(String(128), ForeignKey('graph_nodes.node_id', ondelete='CASCADE'), nullable=False)
+    owner_document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
+    job_result_id: Mapped[str] = mapped_column(String(36), ForeignKey('job_results.id', ondelete='CASCADE'), nullable=False)
+    is_directed: Mapped[bool] = mapped_column(nullable=False, default=True)
+    weight: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    properties: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_graph_edges_scope', 'user_id', 'namespace', 'edge_kind'),
+        Index('idx_graph_edges_owner_revision', 'owner_document_id', 'job_result_id'),
+        Index('idx_graph_edges_source', 'source_node_id'),
+        Index('idx_graph_edges_target', 'target_node_id'),
+    )

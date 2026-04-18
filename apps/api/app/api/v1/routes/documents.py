@@ -1,4 +1,4 @@
-"""Document API routes for phase1 lexical baseline."""
+"""Document API routes for canonical document lifecycle."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.rate_limit.dependencies import with_current_user, CurrentUser
 from shared.core.database import get_db
 from shared.models.database.document import Document
+from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
 
 router = APIRouter(tags=["Documents"])
 
@@ -90,6 +91,15 @@ async def archive_canonical_document(
         return None
     document.status = 'archived'
     document.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    graph_service = DocumentGraphService()
+
+    await db.run_sync(
+        lambda sync_db: graph_service.remove_document_graph(
+            sync_db,
+            scope=GraphScope(user_id=user_id, namespace=document.namespace),
+            document_id=document_id,
+        )
+    )
     await db.commit()
     return _document_payload(document)
 
