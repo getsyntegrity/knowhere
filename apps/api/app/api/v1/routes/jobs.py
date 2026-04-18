@@ -170,6 +170,8 @@ def create_job_response(
     job,
     source_type: str,
     data_id: Optional[str],
+    namespace: Optional[str] = None,
+    document_id: Optional[str] = None,
     upload_url: Optional[str] = None,
     upload_headers: Optional[dict] = None,
     expires_in: Optional[int] = None,
@@ -194,6 +196,8 @@ def create_job_response(
         status=job.status,
         source_type=source_type,
         data_id=data_id,
+        namespace=namespace,
+        document_id=document_id,
         created_at=job.created_at,
         upload_url=upload_url,
         upload_headers=upload_headers,
@@ -291,6 +295,8 @@ async def create_job(
         # 构建job_metadata（不再包含user_config）
         from shared.models.schemas.job_metadata import JobMetadataHelper
         job_metadata = JobMetadataHelper.create_from_request(payload)
+        effective_namespace = cast(str, job_metadata.get("namespace") or "default")
+        effective_document_id = cast(Optional[str], job_metadata.get("document_id"))
 
         # Enforce Layers 2-3 immediately before DB insert so the row lock
         # lifetime is limited to capacity check + create_job commit.

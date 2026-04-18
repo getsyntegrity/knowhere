@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from shared.core.database_sync import get_sync_db_context
 from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
+from shared.models.database.document import Document, DocumentChunk, DocumentSection
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobChunk, JobResult
 from shared.models.database.knowledge_base import ContentBase
@@ -84,7 +85,14 @@ class SyncJobLifecycleService:
                     result_size=zip_size,
                 )
 
-                self._replace_chunks(db, job_result.id, chunks or [])
+                normalized_chunks = chunks or []
+                self._replace_chunks(db, job_result.id, normalized_chunks)
+                self._publish_document_state(
+                    db,
+                    job_id=job_id,
+                    job_result_id=job_result.id,
+                    chunks=normalized_chunks,
+                )
 
                 transition_ok = self._state_machine.mark_completed(
                     db, job_id,
@@ -274,6 +282,112 @@ class SyncJobLifecycleService:
             ))
         db.add_all(chunk_models)
         db.flush()
+
+    def _publish_document_state(
+        self,
+        db: Session,
+        *,
+        job_id: str,
+        job_result_id: str,
+        chunks: List[Dict[str, Any]],
+    ) -> None:
+        """Publish canonical document, section, and chunk rows for retrieval."""
+        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if not job:
+            logger.warning(f"Job not found for document publication: {job_id}")
+            return
+
+        metadata = job.job_metadata or {}
+        namespace = metadata.get("namespace") or "default"
+        document_id = metadata.get("document_id")
+        source_file_name = metadata.get("source_file_name") or metadata.get("file_name")
+
+        document = None
+        if document_id:
+            document = db.execute(
+                select(Document).where(
+                    Document.document_id == document_id,
+                    Document.user_id == str(job.user_id),
+                )
+            ).scalar_one_or_none()
+
+        if document is None:
+            document = Document(
+                document_id=document_id or f"doc_{uuid4().hex[:12]}",
+                user_id=str(job.user_id),
+                namespace=namespace,
+                status="active",
+                current_job_result_id=job_result_id,
+                source_file_name=source_file_name,
+            )
+            db.add(document)
+        else:
+            document.namespace = namespace
+            document.status = "active"
+            document.current_job_result_id = job_result_id
+            document.source_file_name = source_file_name or document.source_file_name
+            document.updated_at = _utc_now_naive()
+
+        db.flush()
+        document_id = document.document_id
+        result = db.execute(select(JobResult).where(JobResult.id == job_result_id))
+        job_result = result.scalar_one_or_none()
+        if job_result:
+            job_result.document_id = document_id
+
+        db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+        db.execute(delete(DocumentSection).where(DocumentSection.document_id == document_id))
+        db.flush()
+
+        sections_by_path: Dict[str, DocumentSection] = {}
+        for index, chunk in enumerate(chunks):
+            metadata = chunk.get("metadata") or {}
+            source_path = metadata.get("path") or chunk.get("path")
+            section_path = self._section_path_from_chunk_path(source_path)
+            section = sections_by_path.get(section_path)
+            if section is None:
+                section = DocumentSection(
+                    user_id=str(job.user_id),
+                    namespace=namespace,
+                    document_id=document_id,
+                    job_result_id=job_result_id,
+                    section_path=section_path,
+                    section_title=section_path.split(" / ")[-1] if section_path else None,
+                    section_level=len([part for part in section_path.split(" / ") if part]),
+                    section_metadata={},
+                    sort_order=len(sections_by_path),
+                )
+                db.add(section)
+                db.flush()
+                sections_by_path[section_path] = section
+
+            chunk_id = chunk.get("chunk_id") or f"chunk_{uuid4().hex[:12]}"
+            db.add(DocumentChunk(
+                chunk_id=chunk_id,
+                user_id=str(job.user_id),
+                namespace=namespace,
+                document_id=document_id,
+                job_result_id=job_result_id,
+                section_id=section.section_id,
+                chunk_type=chunk.get("type") or chunk.get("chunk_type") or "text",
+                text=chunk.get("text") or chunk.get("content"),
+                source_chunk_path=source_path,
+                file_path=metadata.get("file_path") or chunk.get("file_path"),
+                chunk_metadata=metadata,
+                sort_order=chunk.get("order", index),
+            ))
+
+        db.flush()
+
+    @staticmethod
+    def _section_path_from_chunk_path(source_path: Optional[str]) -> str:
+        if not source_path:
+            return "Root"
+        parts = [part.strip() for part in source_path.split("-->") if part.strip()]
+        if len(parts) <= 1:
+            return "Root"
+        section_parts = parts[1:]
+        return " / ".join(section_parts) or "Root"
 
     def _bulk_insert_kb_records(
         self,

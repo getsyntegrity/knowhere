@@ -9,6 +9,7 @@ from .guest_device import GuestDevice
 from .credits_transaction import CreditsTransaction
 from .job import Job
 from .job_result import JobChunk, JobResult
+from .document import Document, DocumentChunk, DocumentSection
 
 from .user_balance import UserBalance 
 from .stripe_price_config import StripePriceConfig
@@ -40,6 +41,9 @@ __all__ = [
     "Job",
     "JobResult",
     "JobChunk",
+    "Document",
+    "DocumentSection",
+    "DocumentChunk",
     "StripePriceConfig",
     "PaymentRecord",
     "JobStateAuditLog",

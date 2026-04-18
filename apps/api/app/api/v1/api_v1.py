@@ -2,8 +2,8 @@
 API v1 route registry.
 """
 from app.api.v1 import health
-from app.api.v1.routes import (api_key, billing, guest, jobs, knowledge_base,
-                               qstash_callbacks, s3_events, version,
+from app.api.v1.routes import (api_key, billing, documents, guest, jobs, knowledge_base,
+                               qstash_callbacks, retrieval, s3_events, version,
                                webhook, webhook_secrets)
 from fastapi import APIRouter
 
@@ -24,6 +24,12 @@ api_router.include_router(knowledge_base.router, prefix="/kb", tags=["知识库"
 
 # Unified Jobs routes
 api_router.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
+
+# Retrieval
+api_router.include_router(retrieval.router, prefix="/retrieval", tags=["Retrieval"])
+
+# Documents
+api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 
 # S3 event webhook (internal)
 api_router.include_router(s3_events.router, prefix="/internal", tags=["Internal"])
