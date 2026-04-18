@@ -62,7 +62,7 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
     lexical_calls = []
 
     async def fake_get_cached_retrieval_query_result(**_kwargs):
-        return {
+        return 4, {
             'namespace': 'default',
             'query': 'refund policy',
             'results': [
@@ -161,7 +161,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
     cached_write = {}
 
     async def fake_get_cached_retrieval_query_result(**_kwargs):
-        return None
+        return 3, None
 
     async def fake_list_canonical_chunks(*_args, **_kwargs):
         return [
@@ -197,6 +197,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
     )
 
     assert result['results'][0]['chunk_id'] == 'chunk_456'
+    assert cached_write['version'] == 3
     assert cached_write['user_id'] == 'user_123'
     assert cached_write['namespace'] == 'default'
     assert cached_write['query'] == 'refund policy'
@@ -204,3 +205,36 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
     assert cached_write['exclude_document_ids'] == ['doc_skip']
     assert cached_write['graph_enabled'] is False
     assert cached_write['response']['results'][0]['chunk_id'] == 'chunk_456'
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    cached_write = {}
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 9, None
+
+    async def fake_list_canonical_chunks(*_args, **_kwargs):
+        return []
+
+    async def fake_set_cached_retrieval_query_result(**kwargs):
+        cached_write.update(kwargs)
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=[],
+        graph_enabled=False,
+    )
+
+    assert cached_write['version'] == 9

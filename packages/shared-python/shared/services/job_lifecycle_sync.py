@@ -106,7 +106,7 @@ class SyncJobLifecycleService:
                     job_result_id=job_result.id,
                     chunks=normalized_chunks,
                 )
-                self._invalidate_retrieval_cache_for_job(
+                cache_invalidation = self._build_retrieval_cache_invalidation(
                     db,
                     job_id=job_id,
                     published_document_state=published_document_state,
@@ -133,6 +133,7 @@ class SyncJobLifecycleService:
                 db.commit()
                 logger.info(f"Job {job_id} success transaction committed")
 
+                self._post_commit_invalidate_retrieval_cache(cache_invalidation)
                 self._post_commit_enqueue_webhook(webhook_event)
 
                 return {
@@ -279,7 +280,7 @@ class SyncJobLifecycleService:
         db: Session,
         job_result_id: str,
         chunks: List[Dict[str, Any]],
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Delete existing chunks and insert new ones."""
         db.execute(delete(JobChunk).where(JobChunk.job_result_id == job_result_id))
 
@@ -422,7 +423,7 @@ class SyncJobLifecycleService:
         return {"document_id": document.document_id, "namespace": document.namespace}
 
 
-    def _invalidate_retrieval_cache_for_job(
+    def _build_retrieval_cache_invalidation(
         self,
         db: Session,
         *,
@@ -432,7 +433,7 @@ class SyncJobLifecycleService:
     ) -> None:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if not job:
-            return
+            return None
 
         namespaces: list[str] = []
         metadata = job.job_metadata or {}
@@ -444,13 +445,21 @@ class SyncJobLifecycleService:
         if published_document_state and published_document_state.get("namespace"):
             namespaces.append(published_document_state["namespace"])
 
+        return {"user_id": str(job.user_id), "namespaces": namespaces, "job_id": job_id}
+
+    def _post_commit_invalidate_retrieval_cache(self, cache_invalidation: Optional[Dict[str, Any]]) -> None:
+        if not cache_invalidation:
+            return
         try:
             asyncio.run(invalidate_retrieval_cache_namespaces(
-                user_id=str(job.user_id),
-                namespaces=namespaces,
+                user_id=cache_invalidation["user_id"],
+                namespaces=cache_invalidation["namespaces"],
             ))
         except Exception as exc:
-            logger.warning(f"Failed to invalidate retrieval cache after publication (ignored): job_id={job_id}, error={exc}")
+            logger.warning(
+                f"Failed to invalidate retrieval cache after publication (ignored): job_id={cache_invalidation.get('job_id')}, error={exc}"
+            )
+
 
     @staticmethod
     def _section_path_from_chunk_path(source_path: Optional[str]) -> str:

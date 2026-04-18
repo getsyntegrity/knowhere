@@ -21,6 +21,16 @@ def _cache_shape_digest(*, query: str, top_k: int, exclude_document_ids: list[st
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
+def _query_cache_key(*, user_id: str, namespace: str, version: int, query: str, top_k: int, exclude_document_ids: list[str], graph_enabled: bool) -> str:
+    digest = _cache_shape_digest(
+        query=query,
+        top_k=top_k,
+        exclude_document_ids=exclude_document_ids,
+        graph_enabled=graph_enabled,
+    )
+    return f"retrieval:query:{user_id}:{namespace}:v{version}:{digest}"
+
+
 async def get_retrieval_namespace_cache_version(*, user_id: str, namespace: str) -> int:
     redis_service = RedisServiceFactory.get_service()
     raw = await redis_service.get(_namespace_version_key(user_id=user_id, namespace=namespace), default=_VERSION_FALLBACK)
@@ -32,10 +42,7 @@ async def get_retrieval_namespace_cache_version(*, user_id: str, namespace: str)
 
 async def bump_retrieval_namespace_cache_version(*, user_id: str, namespace: str) -> int:
     redis_service = RedisServiceFactory.get_service()
-    current = await get_retrieval_namespace_cache_version(user_id=user_id, namespace=namespace)
-    next_version = current + 1
-    await redis_service.set(_namespace_version_key(user_id=user_id, namespace=namespace), next_version)
-    return next_version
+    return await redis_service.incr(_namespace_version_key(user_id=user_id, namespace=namespace))
 
 
 async def invalidate_retrieval_cache_namespaces(*, user_id: str, namespaces: list[str]) -> None:
@@ -50,16 +57,6 @@ async def invalidate_retrieval_cache_namespaces(*, user_id: str, namespaces: lis
             logger.warning(f"Failed to invalidate retrieval cache namespace (ignored): user_id={user_id}, namespace={namespace}, error={exc}")
 
 
-def _query_cache_key(*, user_id: str, namespace: str, version: int, query: str, top_k: int, exclude_document_ids: list[str], graph_enabled: bool) -> str:
-    digest = _cache_shape_digest(
-        query=query,
-        top_k=top_k,
-        exclude_document_ids=exclude_document_ids,
-        graph_enabled=graph_enabled,
-    )
-    return f"retrieval:query:{user_id}:{namespace}:v{version}:{digest}"
-
-
 async def get_cached_retrieval_query_result(
     *,
     user_id: str,
@@ -68,10 +65,10 @@ async def get_cached_retrieval_query_result(
     top_k: int,
     exclude_document_ids: list[str],
     graph_enabled: bool,
-) -> dict[str, Any] | None:
+) -> tuple[int, dict[str, Any] | None]:
     version = await get_retrieval_namespace_cache_version(user_id=user_id, namespace=namespace)
     redis_service = RedisServiceFactory.get_service()
-    return await redis_service.get(
+    cached = await redis_service.get(
         _query_cache_key(
             user_id=user_id,
             namespace=namespace,
@@ -83,19 +80,20 @@ async def get_cached_retrieval_query_result(
         ),
         default=None,
     )
+    return version, cached
 
 
 async def set_cached_retrieval_query_result(
     *,
     user_id: str,
     namespace: str,
+    version: int,
     query: str,
     top_k: int,
     exclude_document_ids: list[str],
     graph_enabled: bool,
     response: dict[str, Any],
 ) -> None:
-    version = await get_retrieval_namespace_cache_version(user_id=user_id, namespace=namespace)
     redis_service = RedisServiceFactory.get_service()
     await redis_service.set(
         _query_cache_key(

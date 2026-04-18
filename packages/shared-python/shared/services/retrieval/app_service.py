@@ -132,7 +132,7 @@ async def run_retrieval_query(
     graph_enabled: bool,
 ) -> dict[str, Any]:
     try:
-        cached = await get_cached_retrieval_query_result(
+        cache_version, cached = await get_cached_retrieval_query_result(
             user_id=user_id,
             namespace=namespace,
             query=query,
@@ -195,6 +195,7 @@ async def run_retrieval_query(
         await set_cached_retrieval_query_result(
             user_id=user_id,
             namespace=namespace,
+            version=cache_version,
             query=query,
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
