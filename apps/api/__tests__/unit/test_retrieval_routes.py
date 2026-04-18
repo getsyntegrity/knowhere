@@ -84,3 +84,62 @@ async def test_document_routes_return_canonical_document_state(authenticated_cli
     assert get_response.json()['document_id'] == 'doc_123'
     assert archive_response.status_code == 200
     assert archive_response.json()['status'] == 'archived'
+
+
+@pytest.mark.asyncio
+async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticated_client, monkeypatch):
+    from app.api.v1.routes import retrieval as retrieval_routes
+
+    scheduled = {}
+
+    monkeypatch.setattr(retrieval_routes, 'list_canonical_chunks', lambda *_args, **_kwargs: [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_456',
+            'section_id': 'sec_12',
+            'section_path': 'Policies / Billing / Refunds',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'text': 'Annual plans may be refunded within 30 days of purchase...',
+            'score': 1.0,
+            'file_path': None,
+        }
+    ])
+    monkeypatch.setattr(retrieval_routes, 'schedule_retrieval_hit_stats_update', lambda **kwargs: scheduled.update(kwargs))
+
+    response = await authenticated_client.post('/v1/retrieval/query', json={'query': 'refund policy', 'top_k': 5})
+
+    assert response.status_code == 200
+    assert scheduled['user_id']
+    assert scheduled['namespace'] == 'default'
+    assert scheduled['results'][0]['document_id'] == 'doc_123'
+    assert scheduled['results'][0]['chunk_id'] == 'chunk_456'
+
+
+@pytest.mark.asyncio
+async def test_retrieval_query_ignores_usage_analytics_schedule_failure(authenticated_client, monkeypatch):
+    from app.api.v1.routes import retrieval as retrieval_routes
+
+    monkeypatch.setattr(retrieval_routes, 'list_canonical_chunks', lambda *_args, **_kwargs: [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_456',
+            'section_id': 'sec_12',
+            'section_path': 'Policies / Billing / Refunds',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'text': 'Annual plans may be refunded within 30 days of purchase...',
+            'score': 1.0,
+            'file_path': None,
+        }
+    ])
+
+    def boom(**_kwargs):
+        raise RuntimeError('stats down')
+
+    monkeypatch.setattr(retrieval_routes, 'schedule_retrieval_hit_stats_update', boom)
+
+    response = await authenticated_client.post('/v1/retrieval/query', json={'query': 'refund policy', 'top_k': 5})
+
+    assert response.status_code == 200
+    assert response.json()['results'][0]['chunk_id'] == 'chunk_456'

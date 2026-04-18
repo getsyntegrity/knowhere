@@ -9,7 +9,7 @@ from .guest_device import GuestDevice
 from .credits_transaction import CreditsTransaction
 from .job import Job
 from .job_result import JobChunk, JobResult
-from .document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode
+from .document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode, RetrievalHitStat
 
 from .user_balance import UserBalance 
 from .stripe_price_config import StripePriceConfig
@@ -22,6 +22,7 @@ from .user import User
 # 3. Job-related log models
 from .job_state_audit_log import JobStateAuditLog
 from .job_state_history import JobStateHistory
+from .webhook import WebhookEvent, WebhookEventStatus
 from .webhook_log import WebhookLog
 
 # 4. Rate limit configuration models
@@ -46,10 +47,13 @@ __all__ = [
     "DocumentChunk",
     "GraphNode",
     "GraphEdge",
+    "RetrievalHitStat",
     "StripePriceConfig",
     "PaymentRecord",
     "JobStateAuditLog",
     "JobStateHistory",
+    "WebhookEvent",
+    "WebhookEventStatus",
     "WebhookLog",
     "TierLimit",
     "SystemLimit",

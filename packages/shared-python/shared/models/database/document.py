@@ -144,3 +144,26 @@ class GraphEdge(Base):
         Index('idx_graph_edges_source', 'source_node_id'),
         Index('idx_graph_edges_target', 'target_node_id'),
     )
+
+
+class RetrievalHitStat(Base):
+    """Append-only retrieval usage analytics row."""
+
+    __tablename__ = 'retrieval_hit_stats'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'rhs_{uuid4().hex[:12]}')
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
+    hit_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
+    chunk_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_hit_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_retrieval_hit_stats_scope_kind', 'user_id', 'namespace', 'hit_kind'),
+        Index('idx_retrieval_hit_stats_document', 'document_id'),
+        Index('idx_retrieval_hit_stats_chunk', 'chunk_id'),
+    )

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 import inspect
+
+from loguru import logger
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -14,6 +17,8 @@ from app.services.rate_limit.dependencies import with_current_user, CurrentUser
 from shared.core.database import get_db
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
 from shared.services.retrieval.graph_service import GraphQueryService
+from shared.services.retrieval.hit_stats_service import record_retrieval_hits
+from shared.core.database import get_db_context
 
 router = APIRouter(tags=["Retrieval"])
 
@@ -97,6 +102,29 @@ async def list_graph_routed_chunks(
     )
 
 
+def schedule_retrieval_hit_stats_update(*, user_id: str, namespace: str, results: list[dict[str, Any]]) -> None:
+    try:
+        asyncio.create_task(
+            _record_retrieval_hit_stats_best_effort(
+                user_id=user_id,
+                namespace=namespace,
+                results=results,
+            ),
+            name=f"retrieval_hit_stats:{user_id}:{namespace}",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to schedule retrieval hit stats update (ignored): {e}")
+
+
+async def _record_retrieval_hit_stats_best_effort(*, user_id: str, namespace: str, results: list[dict[str, Any]]) -> None:
+    try:
+        async with get_db_context() as db:
+            await record_retrieval_hits(db, user_id=user_id, namespace=namespace, results=results)
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to record retrieval hit stats (ignored): {e}")
+
+
 def _with_citation(row: dict[str, Any]) -> dict[str, Any]:
     citation = {
         'document_id': row.get('document_id'),
@@ -146,9 +174,19 @@ async def query_retrieval(
             lexical_rows = await lexical_rows
         rows = list(lexical_rows)
 
+    results = [_with_citation(row) for row in rows]
+    try:
+        schedule_retrieval_hit_stats_update(
+            user_id=current_user.user_id,
+            namespace=namespace,
+            results=results,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
+
     return {
         'namespace': namespace,
         'query': payload.query,
-        'results': [_with_citation(row) for row in rows],
+        'results': results,
         'graph_enabled': graph_used,
     }
