@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.rate_limit.dependencies import with_current_user, CurrentUser
 from shared.core.database import get_db
 from shared.models.database.document import Document
+from shared.services.retrieval.cache_service import invalidate_retrieval_cache_namespaces
 from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
 
 router = APIRouter(tags=["Documents"])
@@ -92,6 +93,7 @@ async def archive_canonical_document(
     document.status = 'archived'
     document.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
     graph_service = DocumentGraphService()
+    previous_namespace = document.namespace
 
     await db.run_sync(
         lambda sync_db: graph_service.remove_document_graph(
@@ -101,6 +103,10 @@ async def archive_canonical_document(
         )
     )
     await db.commit()
+    try:
+        await invalidate_retrieval_cache_namespaces(user_id=user_id, namespaces=[previous_namespace])
+    except Exception:
+        pass
     return _document_payload(document)
 
 

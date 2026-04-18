@@ -234,3 +234,55 @@ def test_publish_document_graph_removes_old_namespace_rows_for_same_document():
     assert len(db.delete_calls) == 2
     assert all('owner_document_id' in call for call in db.delete_calls)
     assert all('namespace' not in call for call in db.delete_calls)
+
+
+def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch) -> None:
+    db = MagicMock()
+    service = lifecycle_module.SyncJobLifecycleService()
+    invalidation = {}
+
+    monkeypatch.setattr(
+        lifecycle_module,
+        'get_sync_db_context',
+        lambda: _SyncDbContext(db),
+    )
+    monkeypatch.setattr(
+        service,
+        '_upsert_job_result',
+        lambda *_args, **_kwargs: SimpleNamespace(id='result_123'),
+    )
+    monkeypatch.setattr(service, '_replace_chunks', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        service,
+        '_publish_document_state',
+        lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'archive', 'document_id': 'doc_123'},
+        raising=False,
+    )
+    monkeypatch.setattr(service, '_publish_document_graph', lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(service, '_maybe_create_webhook_event', lambda *args, **kwargs: None)
+    monkeypatch.setattr(service, '_post_commit_enqueue_webhook', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service._state_machine, 'mark_completed', lambda *args, **kwargs: True)
+    monkeypatch.setattr(service, '_get_existing_document_scope', lambda *_args, **_kwargs: {'document_id': 'doc_123', 'namespace': 'default'}, raising=False)
+
+    async def fake_invalidate_retrieval_cache_namespaces(**kwargs):
+        invalidation.update(kwargs)
+
+    monkeypatch.setattr(lifecycle_module, 'invalidate_retrieval_cache_namespaces', fake_invalidate_retrieval_cache_namespaces)
+
+    job = SimpleNamespace(job_id='job_123', user_id='user_123', job_metadata={'namespace': 'archive', 'document_id': 'doc_123'})
+    db.execute.return_value.scalar_one_or_none.return_value = job
+
+    result = service.finalize_job_success(
+        job_id='job_123',
+        chunks=[],
+        result_s3_key='results/job_123.zip',
+        checksum='checksum',
+        zip_size=3,
+        stored_count=0,
+        kb_records=[],
+        delivery_mode='url',
+    )
+
+    assert result == {'status': 'success', 'job_id': 'job_123', 'stored_count': 0}
+    assert invalidation['user_id'] == 'user_123'
+    assert set(invalidation['namespaces']) == {'default', 'archive'}

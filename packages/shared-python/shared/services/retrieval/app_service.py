@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.database import get_db_context
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
 from shared.services.retrieval.graph_service import GraphQueryService
+from shared.services.retrieval.cache_service import get_cached_retrieval_query_result, set_cached_retrieval_query_result
 from shared.services.retrieval.hit_stats_service import record_retrieval_hits
 
 
@@ -130,6 +131,28 @@ async def run_retrieval_query(
     exclude_document_ids: list[str],
     graph_enabled: bool,
 ) -> dict[str, Any]:
+    try:
+        cached = await get_cached_retrieval_query_result(
+            user_id=user_id,
+            namespace=namespace,
+            query=query,
+            top_k=top_k,
+            exclude_document_ids=exclude_document_ids,
+            graph_enabled=graph_enabled,
+        )
+        if cached:
+            try:
+                schedule_retrieval_hit_stats_update(
+                    user_id=user_id,
+                    namespace=namespace,
+                    results=cached.get('results', []),
+                )
+            except Exception as e:
+                logger.warning(f'Failed to trigger retrieval hit stats update (ignored): {e}')
+            return cached
+    except Exception as e:
+        logger.warning(f'Failed to read retrieval cache (ignored): {e}')
+
     rows: list[dict[str, Any]] = []
     graph_used = False
     if graph_enabled:
@@ -161,6 +184,26 @@ async def run_retrieval_query(
         rows = list(lexical_rows)
 
     results = [_with_citation(row) for row in rows]
+    response = {
+        'namespace': namespace,
+        'query': query,
+        'results': results,
+        'graph_enabled': graph_used,
+    }
+
+    try:
+        await set_cached_retrieval_query_result(
+            user_id=user_id,
+            namespace=namespace,
+            query=query,
+            top_k=top_k,
+            exclude_document_ids=exclude_document_ids,
+            graph_enabled=graph_enabled,
+            response=response,
+        )
+    except Exception as e:
+        logger.warning(f'Failed to write retrieval cache (ignored): {e}')
+
     try:
         schedule_retrieval_hit_stats_update(
             user_id=user_id,
@@ -170,9 +213,4 @@ async def run_retrieval_query(
     except Exception as e:
         logger.warning(f'Failed to trigger retrieval hit stats update (ignored): {e}')
 
-    return {
-        'namespace': namespace,
-        'query': query,
-        'results': results,
-        'graph_enabled': graph_used,
-    }
+    return response
