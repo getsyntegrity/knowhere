@@ -17,7 +17,7 @@ class Document(Base):
     __tablename__ = 'documents'
 
     document_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'doc_{uuid4().hex[:12]}')
-    user_id: Mapped[str] = mapped_column(Text, ForeignKey('user.id', ondelete='RESTRICT'), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey('user.id', ondelete='RESTRICT'), nullable=False)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
     status: Mapped[str] = mapped_column(String(32), nullable=False, default='active')
     current_job_result_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey('job_results.id', ondelete='SET NULL'), nullable=True)
@@ -41,7 +41,7 @@ class DocumentSection(Base):
     __tablename__ = 'document_sections'
 
     section_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'sec_{uuid4().hex[:12]}')
-    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
     document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
     job_result_id: Mapped[str] = mapped_column(String(36), ForeignKey('job_results.id', ondelete='CASCADE'), nullable=False)
@@ -70,7 +70,7 @@ class DocumentChunk(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'dchk_{uuid4().hex[:12]}')
     chunk_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
     document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
     job_result_id: Mapped[str] = mapped_column(String(36), ForeignKey('job_results.id', ondelete='CASCADE'), nullable=False)
@@ -100,7 +100,7 @@ class GraphNode(Base):
     __tablename__ = 'graph_nodes'
 
     node_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
     node_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     owner_document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
@@ -125,7 +125,7 @@ class GraphEdge(Base):
     __tablename__ = 'graph_edges'
 
     edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
-    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
     edge_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     source_node_id: Mapped[str] = mapped_column(String(128), ForeignKey('graph_nodes.node_id', ondelete='CASCADE'), nullable=False)
@@ -152,7 +152,7 @@ class RetrievalHitStat(Base):
     __tablename__ = 'retrieval_hit_stats'
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'rhs_{uuid4().hex[:12]}')
-    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
     hit_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
