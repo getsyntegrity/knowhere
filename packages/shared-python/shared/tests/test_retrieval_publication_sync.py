@@ -134,3 +134,48 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
     assert len(matching_chunks) == 1
     assert matching_chunks[0].chunk_id == 'chunk_1'
     assert matching_chunks[0].id.startswith('dchk_')
+
+
+def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -> None:
+    db = MagicMock()
+    service = lifecycle_module.SyncJobLifecycleService()
+    events = []
+
+    monkeypatch.setattr(
+        lifecycle_module,
+        'get_sync_db_context',
+        lambda: _SyncDbContext(db),
+    )
+    monkeypatch.setattr(
+        service,
+        '_upsert_job_result',
+        lambda *_args, **_kwargs: SimpleNamespace(id='result_123'),
+    )
+    monkeypatch.setattr(service, '_replace_chunks', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service, '_publish_document_state', lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'default', 'document_id': 'doc_123'}, raising=False)
+    monkeypatch.setattr(service, '_publish_document_graph', lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(service, '_build_retrieval_cache_invalidation', lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespaces': ['default'], 'job_id': 'job_123'}, raising=False)
+    monkeypatch.setattr(service, '_post_commit_invalidate_retrieval_cache', lambda payload: events.append(('invalidate', payload)), raising=False)
+    monkeypatch.setattr(service._state_machine, 'mark_completed', lambda *args, **kwargs: True)
+    monkeypatch.setattr(service, '_maybe_create_webhook_event', lambda *args, **kwargs: None)
+    monkeypatch.setattr(service, '_post_commit_enqueue_webhook', lambda *_args, **_kwargs: events.append(('webhook', None)))
+
+    def commit_side_effect():
+        events.append(('commit', None))
+
+    db.commit.side_effect = commit_side_effect
+
+    result = service.finalize_job_success(
+        job_id='job_123',
+        chunks=[],
+        result_s3_key='results/job_123.zip',
+        checksum='checksum',
+        zip_size=3,
+        stored_count=0,
+        kb_records=[],
+        delivery_mode='url',
+    )
+
+    assert result == {'status': 'success', 'job_id': 'job_123', 'stored_count': 0}
+    assert events[0][0] == 'commit'
+    assert events[1][0] == 'invalidate'

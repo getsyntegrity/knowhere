@@ -8,6 +8,7 @@ using the same transactional outbox pattern for webhook events.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,7 @@ from shared.core.database_sync import get_sync_db_context
 from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
+from shared.services.retrieval.cache_service import invalidate_retrieval_cache_namespaces
 from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobChunk, JobResult
@@ -88,7 +90,11 @@ class SyncJobLifecycleService:
 
                 normalized_chunks = chunks or []
                 self._replace_chunks(db, job_result.id, normalized_chunks)
-                self._publish_document_state(
+                previous_document_scope = self._get_existing_document_scope(
+                    db,
+                    job_id=job_id,
+                )
+                published_document_state = self._publish_document_state(
                     db,
                     job_id=job_id,
                     job_result_id=job_result.id,
@@ -99,6 +105,12 @@ class SyncJobLifecycleService:
                     job_id=job_id,
                     job_result_id=job_result.id,
                     chunks=normalized_chunks,
+                )
+                cache_invalidation = self._build_retrieval_cache_invalidation(
+                    db,
+                    job_id=job_id,
+                    published_document_state=published_document_state,
+                    previous_document_scope=previous_document_scope,
                 )
 
                 transition_ok = self._state_machine.mark_completed(
@@ -121,6 +133,7 @@ class SyncJobLifecycleService:
                 db.commit()
                 logger.info(f"Job {job_id} success transaction committed")
 
+                self._post_commit_invalidate_retrieval_cache(cache_invalidation)
                 self._post_commit_enqueue_webhook(webhook_event)
 
                 return {
@@ -267,7 +280,7 @@ class SyncJobLifecycleService:
         db: Session,
         job_result_id: str,
         chunks: List[Dict[str, Any]],
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Delete existing chunks and insert new ones."""
         db.execute(delete(JobChunk).where(JobChunk.job_result_id == job_result_id))
 
@@ -387,6 +400,66 @@ class SyncJobLifecycleService:
 
         db.flush()
         return {"user_id": str(job.user_id), "namespace": namespace, "document_id": document_id}
+
+    def _get_existing_document_scope(
+        self,
+        db: Session,
+        *,
+        job_id: str,
+    ) -> Optional[Dict[str, str]]:
+        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if not job:
+            return None
+
+        metadata = job.job_metadata or {}
+        document_id = metadata.get("document_id")
+        if not document_id:
+            return None
+
+        document = db.execute(select(Document).where(Document.document_id == document_id)).scalar_one_or_none()
+        if not document:
+            return None
+
+        return {"document_id": document.document_id, "namespace": document.namespace}
+
+
+    def _build_retrieval_cache_invalidation(
+        self,
+        db: Session,
+        *,
+        job_id: str,
+        published_document_state: Optional[Dict[str, str]],
+        previous_document_scope: Optional[Dict[str, str]],
+    ) -> None:
+        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if not job:
+            return None
+
+        namespaces: list[str] = []
+        metadata = job.job_metadata or {}
+        new_namespace = metadata.get("namespace") or "default"
+        namespaces.append(new_namespace)
+
+        if previous_document_scope and previous_document_scope.get("namespace"):
+            namespaces.append(previous_document_scope["namespace"])
+        if published_document_state and published_document_state.get("namespace"):
+            namespaces.append(published_document_state["namespace"])
+
+        return {"user_id": str(job.user_id), "namespaces": namespaces, "job_id": job_id}
+
+    def _post_commit_invalidate_retrieval_cache(self, cache_invalidation: Optional[Dict[str, Any]]) -> None:
+        if not cache_invalidation:
+            return
+        try:
+            asyncio.run(invalidate_retrieval_cache_namespaces(
+                user_id=cache_invalidation["user_id"],
+                namespaces=cache_invalidation["namespaces"],
+            ))
+        except Exception as exc:
+            logger.warning(
+                f"Failed to invalidate retrieval cache after publication (ignored): job_id={cache_invalidation.get('job_id')}, error={exc}"
+            )
+
 
     @staticmethod
     def _section_path_from_chunk_path(source_path: Optional[str]) -> str:
