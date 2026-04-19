@@ -163,6 +163,25 @@ class RetrievalHitStat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     __table_args__ = (
+        Index(
+            'uq_retrieval_hit_stats_document_key',
+            'user_id',
+            'namespace',
+            'hit_kind',
+            'document_id',
+            unique=True,
+            postgresql_where=chunk_id.is_(None),
+        ),
+        Index(
+            'uq_retrieval_hit_stats_chunk_key',
+            'user_id',
+            'namespace',
+            'hit_kind',
+            'document_id',
+            'chunk_id',
+            unique=True,
+            postgresql_where=chunk_id.is_not(None),
+        ),
         Index('idx_retrieval_hit_stats_scope_kind', 'user_id', 'namespace', 'hit_kind'),
         Index('idx_retrieval_hit_stats_document', 'document_id'),
         Index('idx_retrieval_hit_stats_chunk', 'chunk_id'),

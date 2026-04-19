@@ -96,6 +96,20 @@ def upgrade() -> None:
     op.create_index('idx_retrieval_hit_stats_chunk', 'retrieval_hit_stats', ['chunk_id'], unique=False)
     op.create_index('idx_retrieval_hit_stats_document', 'retrieval_hit_stats', ['document_id'], unique=False)
     op.create_index('idx_retrieval_hit_stats_scope_kind', 'retrieval_hit_stats', ['user_id', 'namespace', 'hit_kind'], unique=False)
+    op.create_index(
+        'uq_retrieval_hit_stats_document_key',
+        'retrieval_hit_stats',
+        ['user_id', 'namespace', 'hit_kind', 'document_id'],
+        unique=True,
+        postgresql_where=sa.text('chunk_id IS NULL'),
+    )
+    op.create_index(
+        'uq_retrieval_hit_stats_chunk_key',
+        'retrieval_hit_stats',
+        ['user_id', 'namespace', 'hit_kind', 'document_id', 'chunk_id'],
+        unique=True,
+        postgresql_where=sa.text('chunk_id IS NOT NULL'),
+    )
     op.create_table('document_chunks',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('chunk_id', sa.String(length=64), nullable=False),
@@ -167,6 +181,8 @@ def downgrade() -> None:
     op.drop_index('idx_document_chunks_doc_revision', table_name='document_chunks')
     op.drop_index('idx_document_chunks_chunk_id', table_name='document_chunks')
     op.drop_table('document_chunks')
+    op.drop_index('uq_retrieval_hit_stats_chunk_key', table_name='retrieval_hit_stats', postgresql_where=sa.text('chunk_id IS NOT NULL'))
+    op.drop_index('uq_retrieval_hit_stats_document_key', table_name='retrieval_hit_stats', postgresql_where=sa.text('chunk_id IS NULL'))
     op.drop_index('idx_retrieval_hit_stats_scope_kind', table_name='retrieval_hit_stats')
     op.drop_index('idx_retrieval_hit_stats_document', table_name='retrieval_hit_stats')
     op.drop_index('idx_retrieval_hit_stats_chunk', table_name='retrieval_hit_stats')
