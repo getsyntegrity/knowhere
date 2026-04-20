@@ -537,7 +537,10 @@ def test_parse_uploads_media_assets_and_passes_asset_s3_keys_to_finalize(monkeyp
     monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
     monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
     monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
-    monkeypatch.setattr(kb_tasks, "upload_to_s3", lambda local_path, s3_key, bucket: uploads.append((local_path, s3_key, bucket)))
+    monkeypatch.setattr(
+        "app.services.storage.result_artifact_service.upload_to_s3",
+        lambda local_path, s3_key, bucket: uploads.append((local_path, s3_key, bucket)),
+    )
 
     kb_tasks._parse("job_123", "user_123")
 
