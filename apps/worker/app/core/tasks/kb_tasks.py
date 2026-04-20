@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 from loguru import logger
@@ -73,6 +74,9 @@ from app.core.tasks.task_utils import (
     create_task_workspace,
     download_s3_file_to_temp,
 )
+
+_MEDIA_CHUNK_TYPES = {"image", "table"}
+_MEDIA_ASSET_DIRS = {"images", "tables"}
 
 @celery_app.task(
     bind=True,
@@ -205,6 +209,54 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         "s3_key": s3_key,
         "file_size": file_info.get("size"),
     }
+
+
+def _normalize_media_asset_path(file_path: str | None) -> str | None:
+    if not file_path:
+        return None
+    normalized = str(file_path).strip().replace("\\", "/").lstrip("/")
+    parts = [part for part in normalized.split("/") if part and part not in {".", ".."}]
+    if len(parts) < 2 or parts[0] not in _MEDIA_ASSET_DIRS:
+        return None
+    return "/".join(parts)
+
+
+def _attach_and_upload_result_media_assets(*, job_id: str, chunks: list[dict], add_dir: str) -> list[dict]:
+    if not add_dir:
+        return chunks
+
+    results_bucket = getattr(settings, "S3_RESULTS_BUCKET", settings.S3_BUCKET_NAME)
+    enriched_chunks: list[dict] = []
+    for chunk in chunks:
+        chunk_type = str(chunk.get("type") or chunk.get("chunk_type") or "").strip().split("\n", 1)[0].lower()
+        metadata = dict(chunk.get("metadata") or {})
+        enriched_chunk = {**chunk, "metadata": metadata}
+
+        if chunk_type not in _MEDIA_CHUNK_TYPES:
+            enriched_chunks.append(enriched_chunk)
+            continue
+
+        asset_path = _normalize_media_asset_path(metadata.get("file_path") or chunk.get("file_path"))
+        if not asset_path:
+            enriched_chunks.append(enriched_chunk)
+            continue
+
+        local_asset_path = Path(add_dir) / asset_path
+        if not local_asset_path.is_file():
+            logger.warning(
+                f"Skipping retrieval media asset upload; local asset missing: "
+                f"job_id={job_id}, asset_path={asset_path}, local_path={local_asset_path}"
+            )
+            enriched_chunks.append(enriched_chunk)
+            continue
+
+        asset_s3_key = f"results/{job_id}/{asset_path}"
+        upload_to_s3(str(local_asset_path), asset_s3_key, results_bucket)
+        metadata["asset_s3_key"] = asset_s3_key
+        enriched_chunk["file_path"] = asset_s3_key
+        enriched_chunks.append(enriched_chunk)
+
+    return enriched_chunks
 
 
 @celery_app.task(
@@ -516,6 +568,11 @@ def _parse(job_id: str, user_id: str | None):
 
             # Upload ZIP to S3 (sync)
             result_s3_key = upload_zip_result(job_id, zip_file_path)
+            chunks = _attach_and_upload_result_media_assets(
+                job_id=job_id,
+                chunks=chunks,
+                add_dir=str(add_dir) if add_dir else "",
+            )
 
             stored_count = 0
             kb_records = []

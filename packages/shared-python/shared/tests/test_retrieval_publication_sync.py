@@ -136,6 +136,49 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
     assert matching_chunks[0].id.startswith('dchk_')
 
 
+def test_publish_document_state_uses_asset_s3_key_as_internal_media_reference(monkeypatch) -> None:
+    db = MagicMock()
+    service = lifecycle_module.SyncJobLifecycleService()
+
+    job = SimpleNamespace(
+        job_id='job_123',
+        user_id='user_123',
+        job_metadata={
+            'namespace': 'default',
+            'source_file_name': 'drawing.pdf',
+        },
+    )
+    db.execute.return_value.scalar_one_or_none.return_value = job
+
+    service._publish_document_state(
+        db,
+        job_id='job_123',
+        job_result_id='result_123',
+        chunks=[
+            {
+                'chunk_id': 'image_1',
+                'type': 'image',
+                'text': 'Image caption',
+                'metadata': {
+                    'path': 'Default_Root/drawing.pdf-->Images',
+                    'file_path': 'images/page-1.png',
+                    'asset_s3_key': 'results/job_123/images/page-1.png',
+                },
+                'order': 0,
+            }
+        ],
+    )
+
+    added = [call.args[0] for call in db.add.call_args_list]
+    from shared.models.database.document import DocumentChunk
+
+    matching_chunks = [obj for obj in added if isinstance(obj, DocumentChunk) and obj.chunk_id == 'image_1']
+    assert len(matching_chunks) == 1
+    assert matching_chunks[0].file_path == 'results/job_123/images/page-1.png'
+    assert matching_chunks[0].chunk_metadata['file_path'] == 'images/page-1.png'
+    assert matching_chunks[0].chunk_metadata['asset_s3_key'] == 'results/job_123/images/page-1.png'
+
+
 def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -> None:
     db = MagicMock()
     service = lifecycle_module.SyncJobLifecycleService()

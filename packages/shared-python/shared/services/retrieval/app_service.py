@@ -13,6 +13,10 @@ from shared.models.database.document import Document, DocumentChunk, DocumentSec
 from shared.services.retrieval.graph_service import GraphQueryService
 from shared.services.retrieval.cache_service import get_cached_retrieval_query_result, set_cached_retrieval_query_result
 from shared.services.retrieval.hit_stats_service import record_retrieval_hits
+from shared.services.storage.file_upload_service import FileUploadService
+
+
+_MEDIA_CHUNK_TYPES = {'image', 'table'}
 
 
 async def list_canonical_chunks(
@@ -116,9 +120,43 @@ def _with_citation(row: dict[str, Any]) -> dict[str, Any]:
         'source_file_name': row.get('source_file_name'),
         'section_path': row.get('section_path'),
     }
-    if row.get('file_path'):
-        citation['file_path'] = row['file_path']
     return {**row, 'citation': citation}
+
+
+def _is_media_chunk(row: dict[str, Any]) -> bool:
+    chunk_type = str(row.get('chunk_type') or '').strip().split('\n', 1)[0].lower()
+    return chunk_type in _MEDIA_CHUNK_TYPES
+
+
+async def generate_retrieval_asset_url(asset_s3_key: str) -> str | None:
+    url_info = await FileUploadService().generate_download_url(asset_s3_key)
+    if isinstance(url_info, dict):
+        download_url = url_info.get('download_url')
+        return str(download_url) if download_url else None
+    return str(url_info) if url_info else None
+
+
+async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
+    public_response = {key: value for key, value in response.items() if key != 'results'}
+    public_results: list[dict[str, Any]] = []
+    for row in response.get('results', []):
+        public_row = {key: value for key, value in row.items() if key != 'file_path'}
+        citation = row.get('citation')
+        if isinstance(citation, dict):
+            public_row['citation'] = {key: value for key, value in citation.items() if key != 'file_path'}
+
+        asset_s3_key = row.get('file_path')
+        if _is_media_chunk(row) and asset_s3_key:
+            try:
+                asset_url = await generate_retrieval_asset_url(str(asset_s3_key))
+                if asset_url:
+                    public_row['asset_url'] = asset_url
+            except Exception as e:
+                logger.warning(f'Failed to generate retrieval asset URL (ignored): {e}')
+        public_results.append(public_row)
+
+    public_response['results'] = public_results
+    return public_response
 
 
 async def run_retrieval_query(
@@ -149,7 +187,7 @@ async def run_retrieval_query(
                 )
             except Exception as e:
                 logger.warning(f'Failed to trigger retrieval hit stats update (ignored): {e}')
-            return cached
+            return await _to_public_response(cached)
     except Exception as e:
         logger.warning(f'Failed to read retrieval cache (ignored): {e}')
 
@@ -214,4 +252,4 @@ async def run_retrieval_query(
     except Exception as e:
         logger.warning(f'Failed to trigger retrieval hit stats update (ignored): {e}')
 
-    return response
+    return await _to_public_response(response)
