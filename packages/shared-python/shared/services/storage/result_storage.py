@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -46,7 +45,7 @@ class UploadedResultBundle:
 
 
 class ResultStorage(Protocol):
-    def upload(self, *, job_id: str, result_dir: str, temp_dir: str | None = None) -> UploadedResultBundle:
+    def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> UploadedResultBundle:
         ...
 
     def generate_artifact_url(self, *, job_id: str, artifact_ref: str, expires_in: int = 3600) -> str | None:
@@ -85,12 +84,14 @@ class ResultS3:
             return None
         return normalized
 
-    def upload(self, *, job_id: str, result_dir: str, temp_dir: str | None = None) -> UploadedResultBundle:
+    def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> UploadedResultBundle:
         result_path = Path(result_dir)
         if not result_path.is_dir():
             raise ValueError(f"Result directory does not exist: {result_dir}")
 
-        zip_path = self._create_zip(job_id=job_id, result_dir=result_path, temp_dir=temp_dir)
+        zip_path = Path(zip_file_path)
+        if not zip_path.is_file():
+            raise ValueError(f"Result ZIP file does not exist: {zip_file_path}")
         zip_key = self.build_zip_key(job_id=job_id)
         upload_to_s3(str(zip_path), zip_key, self.results_bucket)
         self._cleanup_file(zip_path)
@@ -123,15 +124,6 @@ class ResultS3:
             storage_key=self.build_raw_key(job_id=job_id, relative_path=normalized_ref),
             expires_in=expires_in,
         )
-
-    def _create_zip(self, *, job_id: str, result_dir: Path, temp_dir: str | None) -> Path:
-        output_dir = Path(temp_dir) if temp_dir else result_dir.parent
-        output_dir.mkdir(parents=True, exist_ok=True)
-        zip_path = output_dir / f"result_{job_id}.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for file_path in self._iter_raw_files(result_dir):
-                zip_file.write(file_path, file_path.relative_to(result_dir).as_posix())
-        return zip_path
 
     def _iter_raw_files(self, result_dir: Path):
         for root, dir_names, file_names in os.walk(result_dir):

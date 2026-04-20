@@ -183,7 +183,7 @@ class _FakeResultStorage:
     def __init__(self, raw_files: dict[str, str] | None = None):
         self.raw_files = raw_files or {}
 
-    def upload(self, *, job_id: str, result_dir: str, temp_dir: str | None = None):
+    def upload(self, *, job_id: str, result_dir: str, zip_file_path: str):
         return SimpleNamespace(
             zip_key=f"results/{job_id}.zip",
             raw_prefix=f"results/{job_id}/",
@@ -551,12 +551,12 @@ def test_parse_uses_result_storage_upload_and_passes_asset_refs_to_finalize(monk
     monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
 
     class FakeResultStorage:
-        def upload(self, *, job_id, result_dir, temp_dir=None):
+        def upload(self, *, job_id, result_dir, zip_file_path):
             storage_uploads.append(
                 {
                     "job_id": job_id,
                     "result_dir": result_dir,
-                    "temp_dir": temp_dir,
+                    "zip_file_path": zip_file_path,
                 }
             )
             return SimpleNamespace(
@@ -576,11 +576,11 @@ def test_parse_uses_result_storage_upload_and_passes_asset_refs_to_finalize(monk
         {
             "job_id": "job_123",
             "result_dir": storage_uploads[0]["result_dir"],
-            "temp_dir": storage_uploads[0]["temp_dir"],
+            "zip_file_path": storage_uploads[0]["zip_file_path"],
         }
     ]
     assert storage_uploads[0]["result_dir"].endswith("Default_Root/test.pdf")
-    assert storage_uploads[0]["temp_dir"] == str(Path(storage_uploads[0]["temp_dir"]))
+    assert storage_uploads[0]["zip_file_path"].endswith("result_job_123.zip")
     finalized_chunks = lifecycle_service.success_calls[0]["chunks"]
     assert finalized_chunks[0]["metadata"]["asset_ref"] == "images/page-1.png"
     assert finalized_chunks[1]["metadata"]["asset_ref"] == "tables/table-1.html"

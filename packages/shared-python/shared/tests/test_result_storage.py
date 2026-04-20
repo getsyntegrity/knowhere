@@ -27,10 +27,13 @@ def test_result_s3_upload_publishes_zip_and_raw_result_tree(monkeypatch, tmp_pat
         fake_upload_to_s3,
     )
 
+    zip_path = tmp_path / "canonical.zip"
+    zip_path.write_bytes(b"canonical-zip")
+
     bundle = ResultS3(results_bucket="results-bucket").upload(
         job_id="job_123",
         result_dir=str(result_dir),
-        temp_dir=str(tmp_path),
+        zip_file_path=str(zip_path),
     )
 
     assert bundle.zip_key == "results/job_123.zip"
@@ -40,12 +43,12 @@ def test_result_s3_upload_publishes_zip_and_raw_result_tree(monkeypatch, tmp_pat
         "images/page-1.png": "results/job_123/images/page-1.png",
         "tables/table-1.html": "results/job_123/tables/table-1.html",
     }
-    assert ("result_job_123.zip", "results/job_123.zip", "results-bucket") in uploads
+    assert ("canonical.zip", "results/job_123.zip", "results-bucket") in uploads
     assert ("page-1.png", "results/job_123/images/page-1.png", "results-bucket") in uploads
     assert ("table-1.html", "results/job_123/tables/table-1.html", "results-bucket") in uploads
     assert all(".DS_Store" not in upload[1] for upload in uploads)
     assert all("/tmp/" not in upload[1] for upload in uploads)
-    assert not (tmp_path / "result_job_123.zip").exists()
+    assert not zip_path.exists()
 
 
 def test_result_s3_generate_artifact_url_delegates_key_construction(monkeypatch):

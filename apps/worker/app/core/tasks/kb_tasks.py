@@ -536,7 +536,7 @@ def _parse(job_id: str, user_id: str | None):
             result_bundle = get_result_storage().upload(
                 job_id=job_id,
                 result_dir=str(add_dir) if add_dir else "",
-                temp_dir=task_workspace_dir,
+                zip_file_path=zip_file_path,
             )
             result_s3_key = result_bundle.zip_key
             chunks = _attach_result_artifact_refs(
