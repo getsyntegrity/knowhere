@@ -180,14 +180,11 @@ class _FakeDbContext:
 
 
 class _FakeResultStorage:
-    def __init__(self, raw_files: dict[str, str] | None = None):
-        self.raw_files = raw_files or {}
-
     def upload(self, *, job_id: str, result_dir: str, zip_file_path: str):
         return SimpleNamespace(
             zip_key=f"results/{job_id}.zip",
             raw_prefix=f"results/{job_id}/",
-            raw_files=dict(self.raw_files),
+            raw_files={},
         )
 
 
@@ -437,7 +434,7 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
     assert "chunks_job_id" not in lifecycle_service.success_calls[0]
 
 
-def test_parse_uses_result_storage_upload_and_passes_asset_refs_to_finalize(monkeypatch, tmp_path):
+def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact_refs(monkeypatch, tmp_path):
     redis_service = MagicMock()
     job = type("JobRow", (), {"billing_status": "charged"})()
     metadata_service = _FakeSuccessMetadataService(redis_service)
@@ -562,10 +559,7 @@ def test_parse_uses_result_storage_upload_and_passes_asset_refs_to_finalize(monk
             return SimpleNamespace(
                 zip_key=f"results/{job_id}.zip",
                 raw_prefix=f"results/{job_id}/",
-                raw_files={
-                    "images/page-1.png": f"results/{job_id}/images/page-1.png",
-                    "tables/table-1.html": f"results/{job_id}/tables/table-1.html",
-                },
+                raw_files={},
             )
 
     monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: FakeResultStorage())
@@ -582,8 +576,8 @@ def test_parse_uses_result_storage_upload_and_passes_asset_refs_to_finalize(monk
     assert storage_uploads[0]["result_dir"].endswith("Default_Root/test.pdf")
     assert storage_uploads[0]["zip_file_path"].endswith("result_job_123.zip")
     finalized_chunks = lifecycle_service.success_calls[0]["chunks"]
-    assert finalized_chunks[0]["metadata"]["asset_ref"] == "images/page-1.png"
-    assert finalized_chunks[1]["metadata"]["asset_ref"] == "tables/table-1.html"
+    assert finalized_chunks[0]["metadata"]["file_path"] == "images/page-1.png"
+    assert finalized_chunks[1]["metadata"]["file_path"] == "tables/table-1.html"
 
 
 def test_parse_cleans_task_workspace_after_failure(monkeypatch, tmp_path):

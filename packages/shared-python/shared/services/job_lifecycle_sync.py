@@ -393,7 +393,7 @@ class SyncJobLifecycleService:
                 chunk_type=chunk.get("type") or chunk.get("chunk_type") or "text",
                 content=chunk.get("content") or chunk.get("text"),
                 source_chunk_path=source_path,
-                file_path=metadata.get("asset_ref") or chunk.get("asset_ref") or metadata.get("file_path") or chunk.get("file_path"),
+                file_path=metadata.get("file_path") or chunk.get("file_path"),
                 chunk_metadata=metadata,
                 sort_order=chunk.get("order", index),
             ))

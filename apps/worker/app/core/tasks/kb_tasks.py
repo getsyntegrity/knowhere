@@ -73,27 +73,6 @@ from app.core.tasks.task_utils import (
     download_s3_file_to_temp,
 )
 
-
-MEDIA_CHUNK_TYPES = {"image", "table"}
-
-
-def _attach_result_artifact_refs(*, chunks: list[dict], raw_files: dict[str, str]) -> list[dict]:
-    enriched_chunks: list[dict] = []
-    for chunk in chunks:
-        metadata = dict(chunk.get("metadata") or {})
-        enriched_chunk = {**chunk, "metadata": metadata}
-        chunk_type = str(chunk.get("type") or chunk.get("chunk_type") or "").strip().split("\n", 1)[0].lower()
-        if chunk_type not in MEDIA_CHUNK_TYPES:
-            enriched_chunks.append(enriched_chunk)
-            continue
-
-        artifact_ref = str(metadata.get("file_path") or chunk.get("file_path") or "").strip().replace("\\", "/").lstrip("/")
-        if artifact_ref in raw_files:
-            metadata["asset_ref"] = artifact_ref
-        enriched_chunks.append(enriched_chunk)
-    return enriched_chunks
-
-
 @celery_app.task(
     bind=True,
     base=KBBaseTask,
@@ -539,10 +518,6 @@ def _parse(job_id: str, user_id: str | None):
                 zip_file_path=zip_file_path,
             )
             result_s3_key = result_bundle.zip_key
-            chunks = _attach_result_artifact_refs(
-                chunks=chunks,
-                raw_files=result_bundle.raw_files,
-            )
 
             stored_count = 0
             kb_records = []
