@@ -22,6 +22,7 @@ from app.services.rate_limit.dependencies import (
     CurrentUser,
 )
 from shared.core.state_machine.states import JobStatus
+from shared.models.database.document import Document
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
                                     JobResponse, JobResultResponse, StandardErrorObject)
 from app.repositories.job_repository import JobRepository
@@ -51,6 +52,45 @@ router = APIRouter(tags=["Jobs"])
 def get_supported_formats() -> str:
     """获取所有支持的文件格式字符串"""
     return ", ".join(sorted(settings.get_supported_extensions()))
+
+
+class DocumentRepository:
+    async def get_document(self, db: AsyncSession, *, document_id: str, user_id: str):
+        result = await db.execute(
+            select(Document)
+            .where(Document.document_id == document_id)
+            .where(Document.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+
+async def resolve_effective_document_scope(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    document_id: Optional[str],
+    requested_namespace: Optional[str],
+) -> tuple[Optional[str], str]:
+    if not document_id:
+        return None, requested_namespace or "default"
+
+    document = await DocumentRepository().get_document(
+        db,
+        document_id=document_id,
+        user_id=user_id,
+    )
+    if document is None:
+        raise NotFoundException(
+            resource="Document",
+            resource_id=document_id,
+            internal_message=f"Document not found for update flow: {document_id}",
+        )
+    if requested_namespace and requested_namespace != document.namespace:
+        raise ValidationException(
+            user_message="namespace must match the existing document namespace",
+            violations=[{"field": "namespace", "description": "Does not match existing document namespace"}],
+        )
+    return document.document_id, document.namespace
 
 
 async def transition_to_uploaded(
@@ -295,8 +335,14 @@ async def create_job(
         # 构建job_metadata（不再包含user_config）
         from shared.models.schemas.job_metadata import JobMetadataHelper
         job_metadata = JobMetadataHelper.create_from_request(payload)
-        effective_namespace = cast(str, job_metadata.get("namespace") or "default")
-        effective_document_id = cast(Optional[str], job_metadata.get("document_id"))
+        effective_document_id, effective_namespace = await resolve_effective_document_scope(
+            db,
+            user_id=current_user.user_id,
+            document_id=cast(Optional[str], job_metadata.get("document_id")),
+            requested_namespace=cast(Optional[str], payload.namespace),
+        )
+        job_metadata["document_id"] = effective_document_id
+        job_metadata["namespace"] = effective_namespace
 
         # Enforce Layers 2-3 immediately before DB insert so the row lock
         # lifetime is limited to capacity check + create_job commit.

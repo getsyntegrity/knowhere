@@ -13,6 +13,14 @@ from shared.models.database.job_result import JobResult
 _SECTION_EXCLUSION_PAGE_MULTIPLIER = 2
 
 
+def _build_lexical_match_predicate(query: str):
+    like = f'%{query}%'
+    return (
+        DocumentChunk.content_lexical_text.ilike(like)
+        | DocumentChunk.path_lexical_text.ilike(like)
+    )
+
+
 def is_excluded_section(
     *,
     document_id: str | None,
@@ -233,7 +241,7 @@ class GraphQueryService:
             .where(Document.namespace == namespace)
             .where(Document.status == 'active')
             .where(Document.document_id.in_(list(entry_document_ids)))
-            .where(DocumentChunk.content.ilike(f'%{query}%'))
+            .where(_build_lexical_match_predicate(query))
             .order_by(DocumentChunk.sort_order)
         )
         rows = []

@@ -177,6 +177,93 @@ def test_publish_document_state_uses_file_path_as_internal_media_reference(monke
     assert matching_chunks[0].chunk_metadata['file_path'] == 'images/page-1.png'
 
 
+def test_publish_document_state_preserves_existing_document_namespace_when_update_omits_namespace() -> None:
+    db = MagicMock()
+    service = lifecycle_module.SyncJobLifecycleService()
+    document = SimpleNamespace(
+        document_id='doc_123',
+        user_id='user_123',
+        namespace='support-center',
+        status='active',
+        current_job_result_id='result_old',
+        source_file_name='old.md',
+        updated_at=None,
+    )
+    job = SimpleNamespace(
+        job_id='job_123',
+        user_id='user_123',
+        job_metadata={
+            'document_id': 'doc_123',
+            'source_file_name': 'refund-policy.md',
+        },
+    )
+
+    db.execute.side_effect = [
+        SimpleNamespace(scalar_one_or_none=lambda: job),
+        SimpleNamespace(scalar_one_or_none=lambda: document),
+        SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_123', document_id='doc_123')),
+    ]
+
+    service._publish_document_state(
+        db,
+        job_id='job_123',
+        job_result_id='result_123',
+        chunks=[],
+    )
+
+    assert document.namespace == 'support-center'
+    assert document.current_job_result_id == 'result_123'
+
+
+def test_publish_document_state_preserves_historical_canonical_rows() -> None:
+    db = MagicMock()
+    service = lifecycle_module.SyncJobLifecycleService()
+
+    job = SimpleNamespace(
+        job_id='job_123',
+        user_id='user_123',
+        job_metadata={
+            'namespace': 'default',
+            'document_id': 'doc_123',
+            'source_file_name': 'refund-policy.md',
+        },
+    )
+    document = SimpleNamespace(
+        document_id='doc_123',
+        user_id='user_123',
+        namespace='default',
+        status='active',
+        current_job_result_id='result_old',
+        source_file_name='refund-policy.md',
+        updated_at=None,
+    )
+
+    db.execute.side_effect = [
+        SimpleNamespace(scalar_one_or_none=lambda: job),
+        SimpleNamespace(scalar_one_or_none=lambda: document),
+        SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_123', document_id='doc_123')),
+    ]
+
+    service._publish_document_state(
+        db,
+        job_id='job_123',
+        job_result_id='result_123',
+        chunks=[
+            {
+                'chunk_id': 'chunk_1',
+                'type': 'text',
+                'content': 'Refunds within 30 days are allowed.',
+                'metadata': {'path': 'Default_Root/refund-policy.md-->Billing-->Refunds'},
+                'order': 0,
+            }
+        ],
+    )
+
+    executed_sql = ''.join(str(call.args[0]) for call in db.execute.call_args_list)
+    assert 'DELETE FROM document_chunks' not in executed_sql
+    assert 'DELETE FROM document_sections' not in executed_sql
+
+
 def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -> None:
     db = MagicMock()
     service = lifecycle_module.SyncJobLifecycleService()

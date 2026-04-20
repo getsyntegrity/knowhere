@@ -2,6 +2,7 @@ import os
 
 import pytest
 from types import SimpleNamespace
+from pathlib import Path
 
 os.environ.setdefault("DS_KEY", "test-key")
 os.environ.setdefault("DS_URL", "https://example.com")
@@ -536,6 +537,29 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
     assert 'asset_url' not in public_result
     assert 'file_path' not in public_result
     assert 'file_path' not in public_result['citation']
+
+
+def test_document_chunk_schema_has_lexical_serving_fields():
+    source = Path("packages/shared-python/shared/models/database/document.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "path_lexical_text" in source
+    assert "content_lexical_text" in source
+
+
+def test_retrieval_query_uses_lexical_serving_fields():
+    app_source = Path("packages/shared-python/shared/services/retrieval/app_service.py").read_text(
+        encoding="utf-8"
+    )
+    graph_source = Path("packages/shared-python/shared/services/retrieval/graph_service.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "DocumentChunk.content.ilike" not in app_source
+    assert "DocumentChunk.content.ilike" not in graph_source
+    assert "content_lexical_text" in app_source
+    assert "path_lexical_text" in app_source
 
 
 @pytest.mark.asyncio

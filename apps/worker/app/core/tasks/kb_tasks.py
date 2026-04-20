@@ -49,6 +49,7 @@ from app.services.storage.sync_storage_service import (
     verify_s3_file_exists,
     generate_download_url,
     download_file_from_url,
+    upload_to_s3,
 )
 
 # Base task class

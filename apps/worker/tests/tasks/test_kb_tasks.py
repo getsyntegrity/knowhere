@@ -121,6 +121,31 @@ class _FakeSuccessMetadataService:
         self.metadata.update(payload)
 
 
+def test_upload_url_file_uploads_downloaded_file_to_s3(monkeypatch, tmp_path):
+    redis_service = MagicMock()
+    lifecycle_service = _FakeLifecycleService()
+    downloaded_path = tmp_path / "downloaded.pdf"
+    downloaded_path.write_bytes(b"pdf")
+    uploads = []
+
+    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks.SyncRedisServiceFactory,
+        "get_service",
+        staticmethod(lambda: redis_service),
+    )
+    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
+    monkeypatch.setattr(kb_tasks, "download_file_from_url", lambda _url: str(downloaded_path))
+    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 123})
+    monkeypatch.setattr(kb_tasks, "upload_to_s3", lambda local_path, storage_key, bucket: uploads.append((local_path, storage_key, bucket)))
+
+    result = kb_tasks._upload_url_file("job_123", "https://example.com/test.pdf", "user_123")
+
+    assert result["status"] == "success"
+    assert uploads == [(str(downloaded_path), "uploads/test.pdf", kb_tasks.settings.S3_BUCKET_NAME)]
+    assert not downloaded_path.exists()
+
+
 class _FakeChunksRedisService:
     def __init__(self, redis_service):
         self.redis_service = redis_service

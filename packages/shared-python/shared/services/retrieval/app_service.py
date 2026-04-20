@@ -21,6 +21,14 @@ _MEDIA_CHUNK_TYPES = {'image', 'table'}
 _SECTION_EXCLUSION_PAGE_MULTIPLIER = 2
 
 
+def _build_lexical_match_predicate(query: str):
+    like = f'%{query}%'
+    return or_(
+        DocumentChunk.content_lexical_text.ilike(like),
+        DocumentChunk.path_lexical_text.ilike(like),
+    )
+
+
 def _filter_excluded_rows(
     rows: list[dict[str, Any]],
     *,
@@ -221,7 +229,7 @@ async def list_canonical_chunks(
         .where(Document.user_id == user_id)
         .where(Document.namespace == namespace)
         .where(Document.status == 'active')
-        .where(DocumentChunk.content.ilike(f'%{query}%'))
+        .where(_build_lexical_match_predicate(query))
         .order_by(DocumentChunk.sort_order)
     )
     if exclude_document_ids:

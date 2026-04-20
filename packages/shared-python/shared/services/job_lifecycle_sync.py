@@ -9,6 +9,7 @@ using the same transactional outbox pattern for webhook events.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -38,6 +39,26 @@ from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+_LEXICAL_TOKEN_RE = re.compile(r'[\u4e00-\u9fff]+|[A-Za-z0-9]+')
+
+
+def _build_lexical_text(value: str) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    tokens = []
+    seen = set()
+    for token in _LEXICAL_TOKEN_RE.findall(text):
+        normalized = token.strip()
+        if len(normalized) <= 1 or normalized in seen:
+            continue
+        seen.add(normalized)
+        tokens.append(normalized)
+    token_text = " ".join(tokens)
+    lexical_parts = [part for part in [text, token_text] if part]
+    return "\n".join(lexical_parts) if lexical_parts else text
 
 
 class SyncJobLifecycleService:
@@ -318,7 +339,7 @@ class SyncJobLifecycleService:
             return None
 
         metadata = job.job_metadata or {}
-        namespace = metadata.get("namespace") or "default"
+        namespace = metadata.get("namespace")
         document_id = metadata.get("document_id")
         source_file_name = metadata.get("source_file_name") or metadata.get("file_name")
 
@@ -335,14 +356,14 @@ class SyncJobLifecycleService:
             document = Document(
                 document_id=document_id or f"doc_{uuid4().hex[:12]}",
                 user_id=str(job.user_id),
-                namespace=namespace,
+                namespace=namespace or "default",
                 status="active",
                 current_job_result_id=job_result_id,
                 source_file_name=source_file_name,
             )
             db.add(document)
         else:
-            document.namespace = namespace
+            namespace = namespace or document.namespace
             document.status = "active"
             document.current_job_result_id = job_result_id
             document.source_file_name = source_file_name or document.source_file_name
@@ -354,10 +375,7 @@ class SyncJobLifecycleService:
         job_result = result.scalar_one_or_none()
         if job_result:
             job_result.document_id = document_id
-
-        db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
-        db.execute(delete(DocumentSection).where(DocumentSection.document_id == document_id))
-        db.flush()
+        namespace = namespace or document.namespace
 
         sections_by_path: Dict[str, DocumentSection] = {}
         for index, chunk in enumerate(chunks):
@@ -392,6 +410,8 @@ class SyncJobLifecycleService:
                 section_id=section.section_id,
                 chunk_type=chunk.get("type") or chunk.get("chunk_type") or "text",
                 content=chunk.get("content") or chunk.get("text"),
+                content_lexical_text=self._build_content_lexical_text(chunk),
+                path_lexical_text=self._build_path_lexical_text(source_path),
                 source_chunk_path=source_path,
                 file_path=metadata.get("file_path") or chunk.get("file_path"),
                 chunk_metadata=metadata,
@@ -400,6 +420,26 @@ class SyncJobLifecycleService:
 
         db.flush()
         return {"user_id": str(job.user_id), "namespace": namespace, "document_id": document_id}
+
+    def _build_content_lexical_text(self, chunk: Dict[str, Any]) -> Optional[str]:
+        content = str(chunk.get("content") or chunk.get("text") or "").strip()
+        if not content:
+            return None
+        metadata = chunk.get("metadata") or {}
+        tokens = metadata.get("tokens") if isinstance(metadata, dict) else None
+        if isinstance(tokens, list):
+            token_text = " ".join(str(token).strip() for token in tokens if str(token).strip())
+        else:
+            token_text = ""
+        lexical_parts = [part for part in [content, token_text] if part]
+        return "\n".join(lexical_parts) if lexical_parts else content
+
+    def _build_path_lexical_text(self, source_path: Optional[str]) -> Optional[str]:
+        section_path = self._section_path_from_chunk_path(source_path)
+        if not section_path:
+            return None
+        normalized_path = section_path.replace(" / ", " ")
+        return _build_lexical_text(normalized_path)
 
     def _get_existing_document_scope(
         self,

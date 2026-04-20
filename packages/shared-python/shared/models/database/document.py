@@ -77,6 +77,8 @@ class DocumentChunk(Base):
     section_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey('document_sections.section_id', ondelete='SET NULL'), nullable=True)
     chunk_type: Mapped[str] = mapped_column(String(64), nullable=False, default='text')
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_lexical_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    path_lexical_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_chunk_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     chunk_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
