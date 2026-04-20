@@ -1,12 +1,48 @@
 import json
 
+from httpx import ASGITransport, AsyncClient
 import pytest
+from starlette.routing import Route
 
 
 def test_mcp_runtime_dependency_is_installed():
     from mcp.server.fastmcp import FastMCP
 
     assert FastMCP is not None
+
+
+def test_api_app_mounts_mcp_streamable_http_endpoint():
+    import main as app_main
+
+    mcp_routes = [
+        route
+        for route in app_main.app.routes
+        if isinstance(route, Route) and getattr(route, 'path', None) == '/mcp'
+    ]
+
+    assert mcp_routes
+
+
+@pytest.mark.asyncio
+async def test_mcp_streamable_http_endpoint_reaches_protocol_handler():
+    import main as app_main
+
+    test_app = app_main.create_app()
+    mcp_server = test_app.state.retrieval_mcp_server
+
+    async with mcp_server.session_manager.run():
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(
+            transport=transport,
+            base_url='http://127.0.0.1:5005',
+        ) as client:
+            response = await client.get(
+                '/mcp',
+                headers={'accept': 'text/event-stream'},
+            )
+
+    assert response.status_code != 404
+    assert 'Missing session ID' in response.text
 
 
 @pytest.mark.asyncio

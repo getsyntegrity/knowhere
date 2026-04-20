@@ -49,13 +49,18 @@ async def resolve_mcp_user_id(*, ctx: Context | None, db: AsyncSession) -> str:
     )
 
 
-def create_retrieval_mcp_server(*, db_factory: DbFactory = get_db_context):
+def create_retrieval_mcp_server(
+    *,
+    db_factory: DbFactory = get_db_context,
+    streamable_http_path: str = '/mcp',
+):
     if FastMCP is None:
         raise RuntimeError('mcp dependency is not installed')
 
     server = FastMCP(
         'knowhere-retrieval',
         instructions='Query the published knowledge base through the shared retrieval service.',
+        streamable_http_path=streamable_http_path,
     )
 
     @server.tool(
