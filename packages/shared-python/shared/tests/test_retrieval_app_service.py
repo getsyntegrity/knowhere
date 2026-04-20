@@ -338,6 +338,65 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
 
 
 @pytest.mark.asyncio
+async def test_run_retrieval_query_keeps_legacy_media_file_path_until_asset_backfill_exists(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    generated = []
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 4, {
+            'namespace': 'default',
+            'query': 'drawing',
+            'results': [
+                {
+                    'document_id': 'doc_cached',
+                    'chunk_id': 'chunk_cached',
+                    'section_id': 'sec_cached',
+                    'section_path': 'Drawings / Images',
+                    'source_file_name': 'drawing.pdf',
+                    'chunk_type': 'image',
+                    'text': 'cached caption',
+                    'score': 1.0,
+                    'file_path': 'images/page-1.png',
+                    'citation': {
+                        'document_id': 'doc_cached',
+                        'chunk_id': 'chunk_cached',
+                        'source_file_name': 'drawing.pdf',
+                        'section_path': 'Drawings / Images',
+                        'file_path': 'images/page-1.png',
+                    },
+                }
+            ],
+            'graph_enabled': False,
+        }
+
+    async def fake_generate_asset_url(asset_s3_key):
+        generated.append(asset_s3_key)
+        return f'https://assets.test/{asset_s3_key}?signature=fresh'
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
+    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fake_generate_asset_url)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='drawing',
+        top_k=5,
+        exclude_document_ids=[],
+        graph_enabled=False,
+    )
+
+    assert generated == []
+    public_result = result['results'][0]
+    assert public_result['file_path'] == 'images/page-1.png'
+    assert public_result['citation']['file_path'] == 'images/page-1.png'
+    assert 'asset_url' not in public_result
+
+
+@pytest.mark.asyncio
 async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(monkeypatch):
     from shared.services.retrieval import app_service
 
@@ -380,7 +439,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
 
     public_result = result['results'][0]
     assert 'asset_url' not in public_result
-    assert 'file_path' not in public_result
+    assert public_result['file_path'] == 'results/job_123/images/ignored.png'
 
 
 @pytest.mark.asyncio

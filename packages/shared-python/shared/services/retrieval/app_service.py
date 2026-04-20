@@ -120,6 +120,8 @@ def _with_citation(row: dict[str, Any]) -> dict[str, Any]:
         'source_file_name': row.get('source_file_name'),
         'section_path': row.get('section_path'),
     }
+    if row.get('file_path'):
+        citation['file_path'] = row['file_path']
     return {**row, 'citation': citation}
 
 
@@ -136,21 +138,35 @@ async def generate_retrieval_asset_url(asset_s3_key: str) -> str | None:
     return str(url_info) if url_info else None
 
 
+def _is_published_asset_s3_key(asset_ref: str | None) -> bool:
+    if not asset_ref:
+        return False
+    normalized = str(asset_ref).strip().replace('\\', '/').lstrip('/')
+    return (
+        normalized.startswith('results/')
+        and ('/images/' in normalized or '/tables/' in normalized)
+    )
+
+
 async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
     public_response = {key: value for key, value in response.items() if key != 'results'}
     public_results: list[dict[str, Any]] = []
     for row in response.get('results', []):
-        public_row = {key: value for key, value in row.items() if key != 'file_path'}
+        public_row = dict(row)
         citation = row.get('citation')
         if isinstance(citation, dict):
-            public_row['citation'] = {key: value for key, value in citation.items() if key != 'file_path'}
+            public_row['citation'] = dict(citation)
 
         asset_s3_key = row.get('file_path')
-        if _is_media_chunk(row) and asset_s3_key:
+        if _is_media_chunk(row) and _is_published_asset_s3_key(asset_s3_key):
             try:
                 asset_url = await generate_retrieval_asset_url(str(asset_s3_key))
                 if asset_url:
                     public_row['asset_url'] = asset_url
+                    public_row.pop('file_path', None)
+                    citation = public_row.get('citation')
+                    if isinstance(citation, dict):
+                        citation.pop('file_path', None)
             except Exception as e:
                 logger.warning(f'Failed to generate retrieval asset URL (ignored): {e}')
         public_results.append(public_row)
