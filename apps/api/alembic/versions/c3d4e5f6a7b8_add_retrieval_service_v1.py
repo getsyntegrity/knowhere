@@ -161,6 +161,12 @@ def upgrade() -> None:
     op.create_index('idx_graph_edges_scope', 'graph_edges', ['user_id', 'namespace', 'edge_kind'], unique=False)
     op.create_index('idx_graph_edges_source', 'graph_edges', ['source_node_id'], unique=False)
     op.create_index('idx_graph_edges_target', 'graph_edges', ['target_node_id'], unique=False)
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_user_active_document "
+        "ON jobs (user_id, (job_metadata ->> 'document_id')) "
+        "WHERE status IN ('waiting-file', 'pending', 'running', 'converting') "
+        "AND job_metadata ->> 'document_id' IS NOT NULL"
+    )
     op.add_column('job_results', sa.Column('document_id', sa.String(length=36), nullable=True))
     op.create_index(op.f('ix_job_results_document_id'), 'job_results', ['document_id'], unique=False)
     op.create_foreign_key(None, 'job_results', 'documents', ['document_id'], ['document_id'], ondelete='SET NULL')
@@ -173,6 +179,7 @@ def downgrade() -> None:
     op.drop_constraint(None, 'job_results', type_='foreignkey')
     op.drop_index(op.f('ix_job_results_document_id'), table_name='job_results')
     op.drop_column('job_results', 'document_id')
+    op.drop_index('uq_jobs_user_active_document', table_name='jobs')
     op.drop_index('idx_graph_edges_target', table_name='graph_edges')
     op.drop_index('idx_graph_edges_source', table_name='graph_edges')
     op.drop_index('idx_graph_edges_scope', table_name='graph_edges')

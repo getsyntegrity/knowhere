@@ -32,6 +32,7 @@ from app.services.state_machine import JobStateMachine
 from shared.services.storage.file_upload_service import FileUploadService
 from fastapi import APIRouter, Depends, Query, Request, status
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.exceptions.domain_exceptions import (
@@ -83,13 +84,35 @@ async def find_active_job_for_document(
 ):
     if not hasattr(db, "execute"):
         return None
-    result = await db.execute(
+    result = await db.execute(build_active_job_for_document_query(user_id=user_id, document_id=document_id))
+    return result.scalar_one_or_none()
+
+
+def build_active_job_for_document_query(*, user_id: str, document_id: str):
+    return (
         select(Job)
         .where(Job.user_id == user_id)
         .where(Job.status.in_(ACTIVE_DOCUMENT_JOB_STATES))
-        .where(Job.job_metadata["document_id"].astext == document_id)
+        .where(Job.job_metadata["document_id"].as_string() == document_id)
     )
-    return result.scalar_one_or_none()
+
+
+def _is_active_document_job_unique_violation(exc: IntegrityError) -> bool:
+    text = str(getattr(exc, "orig", exc))
+    return "uq_jobs_user_active_document" in text
+
+
+def raise_document_ingestion_conflict(*, document_id: str, active_job_id: Optional[str] = None) -> None:
+    raise ConflictException(
+        user_message="Another ingestion job for this document is already in progress",
+        reason="ABORTED",
+        resource="Document",
+        resource_id=document_id,
+        internal_message=(
+            f"Concurrent ingestion blocked for document_id={document_id}; "
+            f"active_job_id={active_job_id or 'unknown'}"
+        ),
+    )
 
 
 async def resolve_effective_document_scope(
@@ -375,15 +398,9 @@ async def create_job(
             document_id=cast(str, effective_document_id),
         )
         if active_job is not None:
-            raise ConflictException(
-                user_message="Another ingestion job for this document is already in progress",
-                reason="ABORTED",
-                resource="Document",
-                resource_id=cast(str, effective_document_id),
-                internal_message=(
-                    f"Concurrent ingestion blocked for document_id={effective_document_id}; "
-                    f"active_job_id={active_job.job_id}"
-                ),
+            raise_document_ingestion_conflict(
+                document_id=cast(str, effective_document_id),
+                active_job_id=active_job.job_id,
             )
         job_metadata["document_id"] = effective_document_id
         job_metadata["namespace"] = effective_namespace
@@ -406,18 +423,23 @@ async def create_job(
 
             # 创建状态为waiting-file的job (s3_key set at creation — single INSERT)
             job_repo = JobRepository()
-            job = await job_repo.create_job(
-                db=db,
-                job_id=job_id,
-                user_id=current_user.user_id,
-                job_type=job_type,
-                source_type="file",
-                file_path=None,  # 文件还未上传
-                webhook_url=payload.webhook.url if payload.webhook else None,
-                metadata=job_metadata,
-                initial_state="waiting-file",
-                s3_key=s3_key,
-            )
+            try:
+                job = await job_repo.create_job(
+                    db=db,
+                    job_id=job_id,
+                    user_id=current_user.user_id,
+                    job_type=job_type,
+                    source_type="file",
+                    file_path=None,  # 文件还未上传
+                    webhook_url=payload.webhook.url if payload.webhook else None,
+                    metadata=job_metadata,
+                    initial_state="waiting-file",
+                    s3_key=s3_key,
+                )
+            except IntegrityError as exc:
+                if _is_active_document_job_unique_violation(exc):
+                    raise_document_ingestion_conflict(document_id=cast(str, effective_document_id))
+                raise
 
             if not job:
                 raise JobOperationException(
@@ -504,18 +526,23 @@ async def create_job(
 
                 # 创建状态为pending的job（文件将异步上传）
                 job_repo = JobRepository()
-                job = await job_repo.create_job(
-                    db=db,
-                    job_id=job_id,
-                    user_id=current_user.user_id,
-                    job_type=job_type,
-                    source_type="url",
-                    file_path=None,
-                    webhook_url=payload.webhook.url if payload.webhook else None,
-                    metadata=job_metadata,
-                    initial_state=JobStatus.WAITING_FILE.value,  # 使用pending状态
-                    s3_key=s3_key,  # 预设s3_key
-                )
+                try:
+                    job = await job_repo.create_job(
+                        db=db,
+                        job_id=job_id,
+                        user_id=current_user.user_id,
+                        job_type=job_type,
+                        source_type="url",
+                        file_path=None,
+                        webhook_url=payload.webhook.url if payload.webhook else None,
+                        metadata=job_metadata,
+                        initial_state=JobStatus.WAITING_FILE.value,  # 使用pending状态
+                        s3_key=s3_key,  # 预设s3_key
+                    )
+                except IntegrityError as exc:
+                    if _is_active_document_job_unique_violation(exc):
+                        raise_document_ingestion_conflict(document_id=cast(str, effective_document_id))
+                    raise
 
                 if not job:
                     raise JobOperationException(

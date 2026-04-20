@@ -540,7 +540,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
 
 
 def test_document_chunk_schema_has_lexical_serving_fields():
-    source = Path("packages/shared-python/shared/models/database/document.py").read_text(
+    source = (Path(__file__).parents[1] / "models/database/document.py").read_text(
         encoding="utf-8"
     )
 
@@ -549,10 +549,11 @@ def test_document_chunk_schema_has_lexical_serving_fields():
 
 
 def test_retrieval_query_uses_lexical_serving_fields():
-    app_source = Path("packages/shared-python/shared/services/retrieval/app_service.py").read_text(
+    shared_root = Path(__file__).parents[1]
+    app_source = (shared_root / "services/retrieval/app_service.py").read_text(
         encoding="utf-8"
     )
-    graph_source = Path("packages/shared-python/shared/services/retrieval/graph_service.py").read_text(
+    graph_source = (shared_root / "services/retrieval/graph_service.py").read_text(
         encoding="utf-8"
     )
 

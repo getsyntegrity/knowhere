@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import Request
+from sqlalchemy.dialects import postgresql
 
 from app.api.v1.routes import jobs
 from app.services.rate_limit.data_structures import CurrentUser
@@ -23,6 +24,30 @@ def _make_http_request() -> Request:
         "scheme": "http",
     }
     return Request(scope)
+
+
+def test_find_active_job_for_document_query_compiles_for_postgres():
+    statement = jobs.build_active_job_for_document_query(
+        user_id="u_test",
+        document_id="doc_123",
+    )
+
+    compiled = str(statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+    assert ".astext" not in compiled
+    assert "document_id" in compiled
+
+
+def test_jobs_model_defines_active_document_unique_guard():
+    from shared.models.database.job import Job
+
+    indexes = {index.name: index for index in Job.__table__.indexes}
+
+    assert "uq_jobs_user_active_document" in indexes
+    index_sql = str(indexes["uq_jobs_user_active_document"].expressions[1])
+    where_sql = str(indexes["uq_jobs_user_active_document"].dialect_options["postgresql"]["where"])
+    assert "job_metadata ->> 'document_id'" in index_sql
+    assert "job_metadata ->> 'document_id' IS NOT NULL" in where_sql
 
 
 @pytest.mark.asyncio
