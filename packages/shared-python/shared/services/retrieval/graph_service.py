@@ -11,6 +11,24 @@ from shared.models.database.document import Document, DocumentChunk, DocumentSec
 from shared.models.database.job_result import JobResult
 
 
+def is_excluded_section(
+    *,
+    document_id: str | None,
+    section_path: str | None,
+    exclude_sections: Iterable[dict[str, str]],
+) -> bool:
+    document_id = str(document_id or '').strip()
+    section_path = str(section_path or '').strip()
+    if not document_id or not section_path:
+        return False
+    for item in exclude_sections:
+        if not isinstance(item, dict):
+            continue
+        if document_id == str(item.get('document_id') or '').strip() and section_path == str(item.get('section_path') or '').strip():
+            return True
+    return False
+
+
 @dataclass
 class GraphScope:
     user_id: str
@@ -154,6 +172,7 @@ class GraphQueryService:
         namespace: str,
         query: str,
         exclude_document_ids: Iterable[str] = (),
+        exclude_sections: Iterable[dict[str, str]] = (),
     ) -> list[str]:
         query_lc = query.lower().strip()
         exclude_document_ids = set(exclude_document_ids)
@@ -169,6 +188,12 @@ class GraphQueryService:
             if node.ref_document_id in exclude_document_ids:
                 continue
             props = node.properties or {}
+            if is_excluded_section(
+                document_id=node.ref_document_id,
+                section_path=props.get('section_path'),
+                exclude_sections=exclude_sections,
+            ):
+                continue
             haystacks = [
                 str(props.get('section_title') or '').lower(),
                 str(props.get('section_path') or '').lower(),
@@ -190,6 +215,7 @@ class GraphQueryService:
         entry_document_ids: Sequence[str],
         query: str,
         top_k: int,
+        exclude_sections: Iterable[dict[str, str]] = (),
     ) -> list[dict[str, Any]]:
         if not entry_document_ids:
             return []
@@ -202,23 +228,31 @@ class GraphQueryService:
             .where(Document.namespace == namespace)
             .where(Document.status == 'active')
             .where(Document.document_id.in_(list(entry_document_ids)))
-            .where(DocumentChunk.text.ilike(f'%{query}%'))
+            .where(DocumentChunk.content.ilike(f'%{query}%'))
             .order_by(DocumentChunk.sort_order)
             .limit(top_k)
         )
         result = await db.execute(stmt)
         rows = []
         for document, chunk, section, job_result in result.all():
+            section_path = section.section_path if section else None
+            if is_excluded_section(
+                document_id=document.document_id,
+                section_path=section_path,
+                exclude_sections=exclude_sections,
+            ):
+                continue
             rows.append({
                 'document_id': document.document_id,
                 'chunk_id': chunk.chunk_id,
                 'section_id': chunk.section_id,
-                'section_path': section.section_path if section else None,
+                'section_path': section_path,
                 'source_file_name': document.source_file_name,
                 'chunk_type': chunk.chunk_type,
-                'text': chunk.text,
+                'content': chunk.content,
                 'score': 2.0,
                 'file_path': chunk.file_path,
+                'chunk_metadata': chunk.chunk_metadata or {},
                 'job_result_id': chunk.job_result_id,
                 'job_id': job_result.job_id if job_result else None,
             })

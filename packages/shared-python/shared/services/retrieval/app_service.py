@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db_context
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
-from shared.services.retrieval.graph_service import GraphQueryService
+from shared.services.retrieval.graph_service import GraphQueryService, is_excluded_section
 from shared.services.retrieval.cache_service import get_cached_retrieval_query_result, set_cached_retrieval_query_result
 from shared.services.retrieval.hit_stats_service import record_retrieval_hits
 from shared.services.storage.file_upload_service import FileUploadService
@@ -24,6 +24,92 @@ from shared.models.database.job_result import JobResult
 _MEDIA_CHUNK_TYPES = {'image', 'table'}
 
 
+def _filter_excluded_rows(
+    rows: list[dict[str, Any]],
+    *,
+    exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    excluded_documents = set(exclude_document_ids)
+    for row in rows:
+        document_id = row.get('document_id')
+        if document_id in excluded_documents:
+            continue
+        if is_excluded_section(
+            document_id=document_id,
+            section_path=row.get('section_path'),
+            exclude_sections=exclude_sections,
+        ):
+            continue
+        filtered.append(row)
+    return filtered
+
+
+async def assemble_retrieval_results(
+    *,
+    rows: list[dict[str, Any]],
+    exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    filtered_rows = _filter_excluded_rows(
+        rows,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
+    rows_by_chunk_id = {
+        str(row.get('chunk_id') or ''): row
+        for row in filtered_rows
+        if row.get('chunk_id')
+    }
+
+    embedded_targets: set[str] = set()
+    for row in filtered_rows:
+        metadata = row.get('chunk_metadata') or {}
+        if not isinstance(metadata, dict):
+            continue
+        for item in metadata.get('connect_to') or []:
+            if not isinstance(item, dict):
+                continue
+            target_id = str(item.get('target') or '').strip()
+            if target_id and target_id in rows_by_chunk_id:
+                embedded_targets.add(target_id)
+
+    assembled: list[dict[str, Any]] = []
+    for row in filtered_rows:
+        if row.get('chunk_id') in embedded_targets:
+            continue
+        metadata = row.get('chunk_metadata') or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        assembled_row = dict(row)
+        base_content = str(row.get('content') or '')
+        if str(row.get('chunk_type') or '').strip().split('\n', 1)[0].lower() == 'text':
+            related_parts: list[str] = []
+            for item in metadata.get('connect_to') or []:
+                if not isinstance(item, dict):
+                    continue
+                target_id = str(item.get('target') or '').strip()
+                if not target_id:
+                    continue
+                target_row = rows_by_chunk_id.get(target_id)
+                if not target_row:
+                    continue
+                if str(target_row.get('chunk_type') or '').strip().split('\n', 1)[0].lower() != 'table':
+                    continue
+                target_content = str(target_row.get('content') or '').strip()
+                if target_content:
+                    related_parts.append(target_content)
+            if base_content and related_parts:
+                assembled_row['content'] = '\n\n'.join([base_content, *related_parts])
+            else:
+                assembled_row['content'] = base_content
+        else:
+            assembled_row['content'] = base_content
+        assembled.append(assembled_row)
+    return assembled
+
+
 async def list_canonical_chunks(
     db: AsyncSession,
     *,
@@ -32,6 +118,7 @@ async def list_canonical_chunks(
     query: str,
     top_k: int,
     exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     stmt = (
         select(Document, DocumentChunk, DocumentSection, JobResult)
@@ -41,7 +128,7 @@ async def list_canonical_chunks(
         .where(Document.user_id == user_id)
         .where(Document.namespace == namespace)
         .where(Document.status == 'active')
-        .where(DocumentChunk.text.ilike(f'%{query}%'))
+        .where(DocumentChunk.content.ilike(f'%{query}%'))
         .order_by(DocumentChunk.sort_order)
         .limit(top_k)
     )
@@ -55,16 +142,24 @@ async def list_canonical_chunks(
         return []
     rows = []
     for document, chunk, section, job_result in result_rows:
+        section_path = section.section_path if section else None
+        if is_excluded_section(
+            document_id=document.document_id,
+            section_path=section_path,
+            exclude_sections=exclude_sections,
+        ):
+            continue
         rows.append({
             'document_id': document.document_id,
             'chunk_id': chunk.chunk_id,
             'section_id': chunk.section_id,
-            'section_path': section.section_path if section else None,
+            'section_path': section_path,
             'source_file_name': document.source_file_name,
             'chunk_type': chunk.chunk_type,
-            'text': chunk.text,
+            'content': chunk.content,
             'score': 1.0,
             'file_path': chunk.file_path,
+            'chunk_metadata': chunk.chunk_metadata or {},
             'job_result_id': chunk.job_result_id,
             'job_id': job_result.job_id if job_result else None,
         })
@@ -79,6 +174,7 @@ async def list_graph_routed_chunks(
     query: str,
     top_k: int,
     exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     service = GraphQueryService()
     entry_document_ids = await service.find_entry_documents(
@@ -87,6 +183,7 @@ async def list_graph_routed_chunks(
         namespace=namespace,
         query=query,
         exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
     )
     return await service.collect_candidate_chunks(
         db,
@@ -95,6 +192,7 @@ async def list_graph_routed_chunks(
         entry_document_ids=entry_document_ids,
         query=query,
         top_k=top_k,
+        exclude_sections=exclude_sections,
     )
 
 
@@ -189,6 +287,7 @@ async def run_retrieval_query(
     query: str,
     top_k: int,
     exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
     graph_enabled: bool,
 ) -> dict[str, Any]:
     try:
@@ -198,6 +297,7 @@ async def run_retrieval_query(
             query=query,
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
             graph_enabled=graph_enabled,
         )
         if cached:
@@ -223,6 +323,7 @@ async def run_retrieval_query(
             query=query,
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
         )
         if inspect.isawaitable(graph_rows):
             graph_rows = await graph_rows
@@ -238,12 +339,18 @@ async def run_retrieval_query(
             query=query,
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
         )
         if inspect.isawaitable(lexical_rows):
             lexical_rows = await lexical_rows
         rows = list(lexical_rows)
 
-    results = [_with_citation(row) for row in rows]
+    assembled_rows = await assemble_retrieval_results(
+        rows=rows,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
+    results = [_with_citation(row) for row in assembled_rows]
     response = {
         'namespace': namespace,
         'query': query,
@@ -259,6 +366,7 @@ async def run_retrieval_query(
             query=query,
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
             graph_enabled=graph_enabled,
             response=response,
         )

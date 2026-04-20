@@ -38,7 +38,7 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
                 "section_path": "Policies / Billing / Refunds",
                 "source_file_name": "refund-policy.md",
                 "chunk_type": "text",
-                "text": "Annual plans may be refunded within 30 days of purchase...",
+                "content": "Annual plans may be refunded within 30 days of purchase...",
                 "score": 1.0,
                 "file_path": None,
             }
@@ -59,6 +59,7 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=True,
     )
 
@@ -67,6 +68,7 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
     assert result['query'] == 'refund policy'
     assert result['graph_enabled'] is False
     assert result['results'][0]['chunk_id'] == 'chunk_456'
+    assert result['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
     assert result['results'][0]['citation']['section_path'] == 'Policies / Billing / Refunds'
     assert scheduled['user_id'] == 'user_123'
     assert scheduled['namespace'] == 'default'
@@ -90,7 +92,7 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
                     'section_path': 'Policies / Billing / Refunds',
                     'source_file_name': 'refund-policy.md',
                     'chunk_type': 'text',
-                    'text': 'cached result',
+                    'content': 'cached result',
                     'score': 1.0,
                     'citation': {
                         'document_id': 'doc_cached',
@@ -119,6 +121,7 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -147,7 +150,7 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
                 'section_path': 'Policies / Billing / Refunds',
                 'source_file_name': 'refund-policy.md',
                 'chunk_type': 'text',
-                'text': 'Annual plans may be refunded within 30 days of purchase...',
+                'content': 'Annual plans may be refunded within 30 days of purchase...',
                 'score': 1.0,
                 'file_path': None,
             }
@@ -164,6 +167,7 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -189,7 +193,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
                 'section_path': 'Policies / Billing / Refunds',
                 'source_file_name': 'refund-policy.md',
                 'chunk_type': 'text',
-                'text': 'Annual plans may be refunded within 30 days of purchase...',
+                'content': 'Annual plans may be refunded within 30 days of purchase...',
                 'score': 1.0,
                 'file_path': None,
             }
@@ -210,6 +214,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
         query='refund policy',
         top_k=5,
         exclude_document_ids=['doc_skip'],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -220,6 +225,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
     assert cached_write['query'] == 'refund policy'
     assert cached_write['top_k'] == 5
     assert cached_write['exclude_document_ids'] == ['doc_skip']
+    assert cached_write['exclude_sections'] == []
     assert cached_write['graph_enabled'] is False
     assert cached_write['response']['results'][0]['chunk_id'] == 'chunk_456'
 
@@ -242,7 +248,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
                 'section_path': 'Drawings / Images',
                 'source_file_name': 'drawing.pdf',
                 'chunk_type': 'image',
-                'text': 'OCR caption',
+                'content': 'OCR caption',
                 'score': 1.0,
                 'file_path': 'images/page-1.png',
                 'job_id': 'job_123',
@@ -268,6 +274,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
         query='drawing',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -299,7 +306,7 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
                     'section_path': 'Drawings / Images',
                     'source_file_name': 'drawing.pdf',
                     'chunk_type': 'image',
-                    'text': 'cached caption',
+                    'content': 'cached caption',
                     'score': 1.0,
                     'file_path': 'images/page-1.png',
                     'job_id': 'job_123',
@@ -330,6 +337,7 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
         query='drawing',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -356,7 +364,7 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
                     'section_path': 'Drawings / Images',
                     'source_file_name': 'drawing.pdf',
                     'chunk_type': 'image',
-                    'text': 'cached caption',
+                    'content': 'cached caption',
                     'score': 1.0,
                     'file_path': 'images/page-1.png',
                     'job_id': 'job_123',
@@ -392,6 +400,7 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
         query='drawing',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -450,6 +459,7 @@ async def test_run_retrieval_query_keeps_legacy_media_file_path_until_asset_back
         query='drawing',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -476,7 +486,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
                 'section_path': 'Policies / Billing',
                 'source_file_name': 'refund-policy.md',
                 'chunk_type': 'text',
-                'text': 'Annual plans may be refunded within 30 days.',
+                'content': 'Annual plans may be refunded within 30 days.',
                 'score': 1.0,
                 'file_path': 'results/job_123/images/ignored.png',
             }
@@ -498,12 +508,155 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
         query='refund',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
     public_result = result['results'][0]
     assert 'asset_url' not in public_result
     assert public_result['file_path'] == 'results/job_123/images/ignored.png'
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_passes_section_exclusions_to_cache_and_db_paths(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    captured = {}
+
+    async def fake_get_cached_retrieval_query_result(**kwargs):
+        captured['cache_read'] = kwargs
+        return 5, None
+
+    async def fake_list_canonical_chunks(*_args, **kwargs):
+        captured['lexical'] = kwargs
+        return []
+
+    async def fake_set_cached_retrieval_query_result(**kwargs):
+        captured['cache_write'] = kwargs
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    exclude_sections = [{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}]
+    await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=['doc_skip'],
+        exclude_sections=exclude_sections,
+        graph_enabled=False,
+    )
+
+    assert captured['cache_read']['exclude_sections'] == exclude_sections
+    assert captured['lexical']['exclude_sections'] == exclude_sections
+    assert captured['cache_write']['exclude_sections'] == exclude_sections
+
+
+@pytest.mark.asyncio
+async def test_assemble_result_content_inlines_connected_tables_after_exclusions():
+    from shared.services.retrieval import app_service
+
+    rows = [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_text',
+            'section_id': 'sec_text',
+            'section_path': 'Policies / Billing',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Base refund policy text',
+            'score': 1.0,
+            'file_path': None,
+            'chunk_metadata': {
+                'connect_to': [
+                    {'target': 'chunk_table_keep', 'relation': 'embeds'},
+                    {'target': 'chunk_table_excluded', 'relation': 'embeds'},
+                ]
+            },
+        },
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_table_keep',
+            'section_id': 'sec_table_keep',
+            'section_path': 'Policies / Billing / Refund Table',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'table',
+            'content': 'Refund table content',
+            'score': 1.0,
+            'file_path': 'tables/refunds.html',
+            'chunk_metadata': {},
+        },
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_table_excluded',
+            'section_id': 'sec_table_excluded',
+            'section_path': 'Policies / Internal Only',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'table',
+            'content': 'Excluded table content',
+            'score': 1.0,
+            'file_path': 'tables/internal.html',
+            'chunk_metadata': {},
+        },
+    ]
+
+    assembled = await app_service.assemble_retrieval_results(
+        rows=rows,
+        exclude_document_ids=[],
+        exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Internal Only'}],
+    )
+
+    assert len(assembled) == 1
+    assert assembled[0]['chunk_id'] == 'chunk_text'
+    assert assembled[0]['content'] == 'Base refund policy text\n\nRefund table content'
+
+
+@pytest.mark.asyncio
+async def test_assemble_result_content_keeps_table_chunk_content_as_self():
+    from shared.services.retrieval import app_service
+
+    rows = [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_table',
+            'section_id': 'sec_table',
+            'section_path': 'Policies / Billing / Refund Table',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'table',
+            'content': 'Refund table content',
+            'score': 1.0,
+            'file_path': 'tables/refunds.html',
+            'chunk_metadata': {
+                'connect_to': [{'target': 'chunk_text', 'relation': 'embeds'}],
+            },
+        },
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_text',
+            'section_id': 'sec_text',
+            'section_path': 'Policies / Billing',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Base refund policy text',
+            'score': 1.0,
+            'file_path': None,
+            'chunk_metadata': {},
+        },
+    ]
+
+    assembled = await app_service.assemble_retrieval_results(
+        rows=rows,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert len(assembled) == 1
+    assert assembled[0]['chunk_id'] == 'chunk_table'
+    assert assembled[0]['content'] == 'Refund table content'
 
 
 @pytest.mark.asyncio
@@ -533,6 +686,7 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 

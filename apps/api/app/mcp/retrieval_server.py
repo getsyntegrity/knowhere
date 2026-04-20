@@ -32,6 +32,10 @@ async def _db_context_from_factory(db_factory: DbFactory):
     yield resource
 
 
+async def resolve_mcp_user_id() -> str:
+    raise RuntimeError('MCP auth context resolution is not configured')
+
+
 def create_retrieval_mcp_server(*, db_factory: DbFactory = get_db_context):
     if FastMCP is None:
         raise RuntimeError('mcp dependency is not installed')
@@ -46,14 +50,15 @@ def create_retrieval_mcp_server(*, db_factory: DbFactory = get_db_context):
         description='Query the published knowledge base and return canonical retrieval results.',
     )
     async def kb_query(
-        user_id: str,
         query: str,
         namespace: str | None = None,
         top_k: int = 10,
         exclude_document_ids: list[str] | None = None,
+        exclude_sections: list[dict[str, str]] | None = None,
         graph_enabled: bool = False,
     ) -> dict:
         effective_namespace = namespace or 'default'
+        user_id = await resolve_mcp_user_id()
         async with _db_context_from_factory(db_factory) as db:
             return await run_retrieval_query(
                 db=db,
@@ -62,6 +67,7 @@ def create_retrieval_mcp_server(*, db_factory: DbFactory = get_db_context):
                 query=query,
                 top_k=top_k,
                 exclude_document_ids=exclude_document_ids or [],
+                exclude_sections=exclude_sections or [],
                 graph_enabled=graph_enabled,
             )
 

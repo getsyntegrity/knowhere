@@ -41,7 +41,7 @@ def test_finalize_job_success_publishes_canonical_document_state(monkeypatch) ->
         {
             "chunk_id": "chunk-1",
             "type": "text",
-            "text": "Annual plans may be refunded within 30 days.",
+            "content": "Annual plans may be refunded within 30 days.",
             "metadata": {
                 "path": "Default_Root/refund-policy.md-->Billing-->Refunds",
             },
@@ -118,7 +118,7 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
             {
                 'chunk_id': 'chunk_1',
                 'type': 'text',
-                'text': 'Refunds within 30 days are allowed.',
+                'content': 'Refunds within 30 days are allowed.',
                 'metadata': {'path': 'Default_Root/refund-policy.md-->Billing-->Refunds'},
                 'order': 0,
             }
@@ -130,7 +130,7 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
 
     assert any(isinstance(obj, Document) and obj.namespace == 'default' for obj in added)
     assert any(isinstance(obj, DocumentSection) and obj.section_path == 'Billing / Refunds' for obj in added)
-    matching_chunks = [obj for obj in added if isinstance(obj, DocumentChunk) and obj.text == 'Refunds within 30 days are allowed.']
+    matching_chunks = [obj for obj in added if isinstance(obj, DocumentChunk) and obj.content == 'Refunds within 30 days are allowed.']
     assert len(matching_chunks) == 1
     assert matching_chunks[0].chunk_id == 'chunk_1'
     assert matching_chunks[0].id.startswith('dchk_')
@@ -158,7 +158,7 @@ def test_publish_document_state_uses_asset_s3_key_as_internal_media_reference(mo
             {
                 'chunk_id': 'image_1',
                 'type': 'image',
-                'text': 'Image caption',
+                'content': 'Image caption',
                 'metadata': {
                     'path': 'Default_Root/drawing.pdf-->Images',
                     'file_path': 'images/page-1.png',
