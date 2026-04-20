@@ -1,6 +1,7 @@
 import os
 
 import pytest
+from types import SimpleNamespace
 
 os.environ.setdefault("DS_KEY", "test-key")
 os.environ.setdefault("DS_URL", "https://example.com")
@@ -746,3 +747,114 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
     )
 
     assert cached_write['version'] == 9
+
+
+@pytest.mark.asyncio
+async def test_list_canonical_chunks_fills_top_k_after_section_exclusion():
+    from shared.services.retrieval.app_service import list_canonical_chunks
+
+    def build_row(chunk_id, section_path):
+        document = SimpleNamespace(
+            document_id='doc_123',
+            source_file_name='refund-policy.md',
+        )
+        chunk = SimpleNamespace(
+            chunk_id=chunk_id,
+            section_id=f'sec_{chunk_id}',
+            chunk_type='text',
+            content=f'content-{chunk_id}',
+            file_path=None,
+            chunk_metadata={},
+            job_result_id='result_123',
+        )
+        section = SimpleNamespace(section_path=section_path)
+        job_result = SimpleNamespace(job_id='job_123')
+        return (document, chunk, section, job_result)
+
+    returned_rows = [
+        build_row('chunk_1', 'Excluded / One'),
+        build_row('chunk_2', 'Excluded / Two'),
+        build_row('chunk_3', 'Allowed / Three'),
+        build_row('chunk_4', 'Allowed / Four'),
+    ]
+
+    class FakeResult:
+        def all(self):
+            return returned_rows
+
+    class FakeDB:
+        async def execute(self, stmt):
+            sql = str(stmt.compile(compile_kwargs={'literal_binds': True}))
+            assert 'LIMIT 4' in sql
+            return FakeResult()
+
+    rows = await list_canonical_chunks(
+        FakeDB(),
+        user_id='user_123',
+        namespace='default',
+        query='refund',
+        top_k=2,
+        exclude_document_ids=[],
+        exclude_sections=[
+            {'document_id': 'doc_123', 'section_path': 'Excluded / One'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Two'},
+        ],
+    )
+
+    assert [row['chunk_id'] for row in rows] == ['chunk_3', 'chunk_4']
+
+
+@pytest.mark.asyncio
+async def test_list_graph_routed_chunks_fills_top_k_after_section_exclusion():
+    from shared.services.retrieval.graph_service import GraphQueryService
+
+    def build_row(chunk_id, section_path):
+        document = SimpleNamespace(
+            document_id='doc_123',
+            source_file_name='refund-policy.md',
+        )
+        chunk = SimpleNamespace(
+            chunk_id=chunk_id,
+            section_id=f'sec_{chunk_id}',
+            chunk_type='text',
+            content=f'content-{chunk_id}',
+            file_path=None,
+            chunk_metadata={},
+            job_result_id='result_123',
+            sort_order=1,
+        )
+        section = SimpleNamespace(section_path=section_path)
+        job_result = SimpleNamespace(job_id='job_123')
+        return (document, chunk, section, job_result)
+
+    returned_rows = [
+        build_row('chunk_1', 'Excluded / One'),
+        build_row('chunk_2', 'Excluded / Two'),
+        build_row('chunk_3', 'Allowed / Three'),
+        build_row('chunk_4', 'Allowed / Four'),
+    ]
+
+    class FakeResult:
+        def all(self):
+            return returned_rows
+
+    class FakeDB:
+        async def execute(self, stmt):
+            sql = str(stmt.compile(compile_kwargs={'literal_binds': True}))
+            assert 'LIMIT 4' in sql
+            return FakeResult()
+
+    rows = await GraphQueryService().collect_candidate_chunks(
+        FakeDB(),
+        user_id='user_123',
+        namespace='default',
+        entry_document_ids=['doc_123'],
+        query='refund',
+        top_k=2,
+        exclude_sections=[
+            {'document_id': 'doc_123', 'section_path': 'Excluded / One'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Two'},
+        ],
+    )
+
+    assert [row['chunk_id'] for row in rows] == ['chunk_3', 'chunk_4']

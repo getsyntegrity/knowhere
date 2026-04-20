@@ -22,6 +22,7 @@ from shared.models.database.job_result import JobResult
 
 
 _MEDIA_CHUNK_TYPES = {'image', 'table'}
+_SECTION_EXCLUSION_OVERFETCH_MULTIPLIER = 2
 
 
 def _filter_excluded_rows(
@@ -212,6 +213,10 @@ async def list_canonical_chunks(
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
+    effective_limit = top_k
+    if exclude_sections:
+        effective_limit = max(top_k, top_k * _SECTION_EXCLUSION_OVERFETCH_MULTIPLIER)
+
     stmt = (
         select(Document, DocumentChunk, DocumentSection, JobResult)
         .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
@@ -222,7 +227,7 @@ async def list_canonical_chunks(
         .where(Document.status == 'active')
         .where(DocumentChunk.content.ilike(f'%{query}%'))
         .order_by(DocumentChunk.sort_order)
-        .limit(top_k)
+        .limit(effective_limit)
     )
     if exclude_document_ids:
         stmt = stmt.where(Document.document_id.not_in(exclude_document_ids))
@@ -255,6 +260,8 @@ async def list_canonical_chunks(
             'job_result_id': chunk.job_result_id,
             'job_id': job_result.job_id if job_result else None,
         })
+        if len(rows) >= top_k:
+            break
     return rows
 
 

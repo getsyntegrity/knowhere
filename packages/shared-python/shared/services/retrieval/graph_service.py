@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from shared.models.database.document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode
 from shared.models.database.job_result import JobResult
 
+_SECTION_EXCLUSION_OVERFETCH_MULTIPLIER = 2
+
 
 def is_excluded_section(
     *,
@@ -219,6 +221,9 @@ class GraphQueryService:
     ) -> list[dict[str, Any]]:
         if not entry_document_ids:
             return []
+        effective_limit = top_k
+        if exclude_sections:
+            effective_limit = max(top_k, top_k * _SECTION_EXCLUSION_OVERFETCH_MULTIPLIER)
         stmt = (
             select(Document, DocumentChunk, DocumentSection, JobResult)
             .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
@@ -230,7 +235,7 @@ class GraphQueryService:
             .where(Document.document_id.in_(list(entry_document_ids)))
             .where(DocumentChunk.content.ilike(f'%{query}%'))
             .order_by(DocumentChunk.sort_order)
-            .limit(top_k)
+            .limit(effective_limit)
         )
         result = await db.execute(stmt)
         rows = []
@@ -256,4 +261,6 @@ class GraphQueryService:
                 'job_result_id': chunk.job_result_id,
                 'job_id': job_result.job_id if job_result else None,
             })
+            if len(rows) >= top_k:
+                break
         return rows
