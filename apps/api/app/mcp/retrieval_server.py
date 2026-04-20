@@ -1,37 +1,15 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable
+from typing import AsyncContextManager, Callable
 
+from mcp.server.fastmcp import Context, FastMCP
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user_id
 from shared.core.database import get_db_context
 from shared.services.retrieval import run_retrieval_query
 
-try:
-    from mcp.server.fastmcp import Context, FastMCP
-except ImportError:  # pragma: no cover - optional until MCP deps are installed
-    FastMCP = None
-    Context = object  # type: ignore[assignment]
-
-
-DbFactory = Callable[[], AsyncIterator[AsyncSession] | AsyncSession | object]
-
-
-@asynccontextmanager
-async def _db_context_from_factory(db_factory: DbFactory):
-    resource = db_factory()
-    if hasattr(resource, '__aenter__') and hasattr(resource, '__aexit__'):
-        async with resource as db:
-            yield db
-        return
-    if hasattr(resource, '__aiter__'):
-        async for db in resource:
-            yield db
-            break
-        return
-    yield resource
+DbFactory = Callable[[], AsyncContextManager[AsyncSession]]
 
 
 async def resolve_mcp_user_id(*, ctx: Context | None, db: AsyncSession) -> str:
@@ -54,9 +32,6 @@ def create_retrieval_mcp_server(
     db_factory: DbFactory = get_db_context,
     streamable_http_path: str = '/mcp',
 ):
-    if FastMCP is None:
-        raise RuntimeError('mcp dependency is not installed')
-
     server = FastMCP(
         'knowhere-retrieval',
         instructions='Query the published knowledge base through the shared retrieval service.',
@@ -77,7 +52,7 @@ def create_retrieval_mcp_server(
         ctx: Context | None = None,
     ) -> dict:
         effective_namespace = namespace or 'default'
-        async with _db_context_from_factory(db_factory) as db:
+        async with db_factory() as db:
             user_id = await resolve_mcp_user_id(ctx=ctx, db=db)
             return await run_retrieval_query(
                 db=db,
