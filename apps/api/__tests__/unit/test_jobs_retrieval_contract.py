@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import Request
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.routes import jobs
+from app.repositories.job_repository import JobRepository
 from app.services import job_document_scope_service
 from app.services.rate_limit.data_structures import CurrentUser
 from shared.core.exceptions.domain_exceptions import ConflictException
@@ -50,6 +52,130 @@ def test_jobs_model_defines_active_document_unique_guard():
     where_sql = str(indexes["uq_jobs_user_active_document"].dialect_options["postgresql"]["where"])
     assert "job_metadata ->> 'document_id'" in index_sql
     assert "job_metadata ->> 'document_id' IS NOT NULL" in where_sql
+
+
+def _active_document_integrity_error() -> IntegrityError:
+    return IntegrityError(
+        "INSERT INTO jobs ...",
+        {},
+        Exception("duplicate key value violates unique constraint uq_jobs_user_active_document"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_job_repository_propagates_integrity_errors_for_route_translation():
+    class _Db:
+        def add(self, _job):
+            return None
+
+        async def commit(self):
+            raise _active_document_integrity_error()
+
+        async def rollback(self):
+            self.rolled_back = True
+
+    db = _Db()
+
+    with pytest.raises(IntegrityError):
+        await JobRepository().create_job(
+            db=db,
+            user_id="u_test",
+            job_type="kb_management",
+            source_type="file",
+            metadata={"document_id": "doc_123"},
+        )
+
+    assert db.rolled_back is True
+
+
+@pytest.mark.asyncio
+async def test_create_file_job_translates_active_document_unique_race(monkeypatch):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
+    monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
+    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+
+    class _JobRepo:
+        async def create_job(self, **_kwargs):
+            raise _active_document_integrity_error()
+
+    class _DocumentRepo:
+        async def get_document(self, _db, *, document_id, user_id):
+            assert document_id == "doc_123"
+            assert user_id == "u_test"
+            return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
+
+    monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
+    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+
+    payload = JobCreate(
+        source_type="file",
+        file_name="doc.pdf",
+        document_id="doc_123",
+        parsing_params=ParsingParams(),
+    )
+
+    with pytest.raises(ConflictException) as exc_info:
+        await jobs.create_job(
+            payload=payload,
+            http_request=_make_http_request(),
+            current_user=CurrentUser(user_id="u_test", user_tier="free"),
+            db=object(),
+        )
+
+    assert exc_info.value.details == {
+        "reason": "ABORTED",
+        "resource": "Document",
+        "id": "doc_123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_url_job_translates_active_document_unique_race(monkeypatch):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
+    monkeypatch.setattr(jobs, "resolve_file_extension_async", AsyncMock(return_value=".pdf"))
+    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+
+    class _JobRepo:
+        async def create_job(self, **_kwargs):
+            raise _active_document_integrity_error()
+
+    class _DocumentRepo:
+        async def get_document(self, _db, *, document_id, user_id):
+            assert document_id == "doc_123"
+            assert user_id == "u_test"
+            return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
+
+    monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
+    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+
+    payload = JobCreate(
+        source_type="url",
+        source_url="https://example.com/doc.pdf",
+        document_id="doc_123",
+        parsing_params=ParsingParams(),
+    )
+
+    with pytest.raises(ConflictException) as exc_info:
+        await jobs.create_job(
+            payload=payload,
+            http_request=_make_http_request(),
+            current_user=CurrentUser(user_id="u_test", user_tier="free"),
+            db=object(),
+        )
+
+    assert exc_info.value.details == {
+        "reason": "ABORTED",
+        "resource": "Document",
+        "id": "doc_123",
+    }
 
 
 @pytest.mark.asyncio

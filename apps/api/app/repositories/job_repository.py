@@ -9,6 +9,7 @@ from shared.models.database.job_state_history import JobStateHistory
 from app.services.state_machine import JobStateMachine
 from loguru import logger
 from sqlalchemy import and_, desc, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -58,6 +59,10 @@ class JobRepository:
             logger.info(f"Job {job.job_id} 创建成功")
             return job
             
+        except IntegrityError as e:
+            logger.error(f"创建Job失败: {e}")
+            await db.rollback()
+            raise
         except Exception as e:
             logger.error(f"创建Job失败: {e}")
             await db.rollback()

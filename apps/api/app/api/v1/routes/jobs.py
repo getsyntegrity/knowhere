@@ -515,6 +515,8 @@ async def create_job(
                 raise
             except WebhookConfigException:
                 raise
+            except ConflictException:
+                raise
             except (RateLimitException, UnavailableException):
                 raise
             except JobOperationException:
