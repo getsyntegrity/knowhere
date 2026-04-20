@@ -8,26 +8,33 @@ from shared.models.database.document import Document
 async def test_retrieval_query_reports_graph_enabled_when_graph_branch_used(authenticated_client, monkeypatch):
     from app.api.v1.routes import retrieval as retrieval_routes
 
-    async def fake_graph_rows(*_args, **_kwargs):
-        return [
-            {
-                "document_id": "doc_graph",
-                "chunk_id": "chunk_graph",
-                "section_id": "sec_graph",
-                "section_path": "Policies / Billing",
-                "source_file_name": "refund-policy.md",
-                "chunk_type": "text",
-                "text": "Graph-routed refund chunk",
-                "score": 2.0,
-                "file_path": None,
-            }
-        ]
+    async def fake_run_retrieval_query(**kwargs):
+        assert kwargs["graph_enabled"] is True
+        return {
+            "namespace": kwargs["namespace"],
+            "query": kwargs["query"],
+            "graph_enabled": True,
+            "results": [
+                {
+                    "document_id": "doc_graph",
+                    "chunk_id": "chunk_graph",
+                    "section_id": "sec_graph",
+                    "section_path": "Policies / Billing",
+                    "source_file_name": "refund-policy.md",
+                    "chunk_type": "text",
+                    "content": "Graph-routed refund chunk",
+                    "score": 2.0,
+                    "citation": {
+                        "document_id": "doc_graph",
+                        "chunk_id": "chunk_graph",
+                        "source_file_name": "refund-policy.md",
+                        "section_path": "Policies / Billing",
+                    },
+                }
+            ],
+        }
 
-    async def fake_lexical_rows(*_args, **_kwargs):
-        return []
-
-    monkeypatch.setattr(retrieval_routes, 'list_graph_routed_chunks', fake_graph_rows)
-    monkeypatch.setattr(retrieval_routes, 'list_canonical_chunks', fake_lexical_rows)
+    monkeypatch.setattr(retrieval_routes, 'run_retrieval_query', fake_run_retrieval_query)
 
     response = await authenticated_client.post(
         "/v1/retrieval/query",
