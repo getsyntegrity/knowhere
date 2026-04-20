@@ -48,16 +48,15 @@ from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 from app.services.storage.sync_storage_service import (
     verify_s3_file_exists,
     generate_download_url,
-    upload_zip_result,
     download_file_from_url,
 )
-from app.services.storage.result_artifact_service import publish_client_result_artifacts
 
 # Base task class
 from app.core.tasks.base_task import KBBaseTask
 
 # Domain services
 from shared.models.schemas.job_metadata import JobMetadataHelper
+from shared.services.storage.result_storage import get_result_storage
 from shared.services.storage.zip_result_service import ZipResultService
 from app.services.common.job_start_service import mark_job_running
 from app.services.document_parser.stage_profiler import stage_timer
@@ -513,13 +512,12 @@ def _parse(job_id: str, user_id: str | None):
 
             lifecycle_service.update_progress(job_id, progress=90, message="Uploading results to S3...")
 
-            # Upload ZIP to S3 (sync)
-            result_s3_key = upload_zip_result(job_id, zip_file_path)
-            chunks = publish_client_result_artifacts(
+            result_bundle = get_result_storage().upload(
                 job_id=job_id,
-                chunks=chunks,
-                add_dir=str(add_dir) if add_dir else "",
+                result_dir=str(add_dir) if add_dir else "",
+                zip_file_path=zip_file_path,
             )
+            result_s3_key = result_bundle.zip_key
 
             stored_count = 0
             kb_records = []

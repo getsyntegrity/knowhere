@@ -13,11 +13,7 @@ from shared.models.database.document import Document, DocumentChunk, DocumentSec
 from shared.services.retrieval.graph_service import GraphQueryService, is_excluded_section
 from shared.services.retrieval.cache_service import get_cached_retrieval_query_result, set_cached_retrieval_query_result
 from shared.services.retrieval.hit_stats_service import record_retrieval_hits
-from shared.services.storage.file_upload_service import FileUploadService
-from shared.services.storage.result_artifact_service import (
-    build_result_artifact_storage_key,
-    normalize_client_result_artifact_path,
-)
+from shared.services.storage.result_storage import get_result_storage
 from shared.models.database.job_result import JobResult
 
 
@@ -339,16 +335,11 @@ def _is_media_chunk(row: dict[str, Any]) -> bool:
 
 
 async def generate_retrieval_asset_url(*, job_id: str, artifact_ref: str) -> str | None:
-    storage_key = build_result_artifact_storage_key(job_id=job_id, artifact_ref=artifact_ref)
-    url_info = await FileUploadService().generate_download_url(storage_key)
-    if isinstance(url_info, dict):
-        download_url = url_info.get('download_url')
-        return str(download_url) if download_url else None
-    return str(url_info) if url_info else None
+    return get_result_storage().generate_artifact_url(job_id=job_id, artifact_ref=artifact_ref)
 
 
 def _is_client_result_artifact_ref(asset_ref: str | None) -> bool:
-    return normalize_client_result_artifact_path(asset_ref) is not None
+    return get_result_storage().normalize_artifact_ref(asset_ref) is not None
 
 
 async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
