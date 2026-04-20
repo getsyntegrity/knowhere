@@ -389,6 +389,7 @@ async def run_retrieval_query(
     exclude_sections: list[dict[str, str]],
     graph_enabled: bool,
 ) -> dict[str, Any]:
+    cache_version: int | None = None
     try:
         cache_version, cached = await get_cached_retrieval_query_result(
             user_id=user_id,
@@ -458,20 +459,21 @@ async def run_retrieval_query(
         'graph_enabled': graph_used,
     }
 
-    try:
-        await set_cached_retrieval_query_result(
-            user_id=user_id,
-            namespace=namespace,
-            version=cache_version,
-            query=query,
-            top_k=top_k,
-            exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections,
-            graph_enabled=graph_enabled,
-            response=response,
-        )
-    except Exception as e:
-        logger.warning(f'Failed to write retrieval cache (ignored): {e}')
+    if cache_version is not None:
+        try:
+            await set_cached_retrieval_query_result(
+                user_id=user_id,
+                namespace=namespace,
+                version=cache_version,
+                query=query,
+                top_k=top_k,
+                exclude_document_ids=exclude_document_ids,
+                exclude_sections=exclude_sections,
+                graph_enabled=graph_enabled,
+                response=response,
+            )
+        except Exception as e:
+            logger.warning(f'Failed to write retrieval cache (ignored): {e}')
 
     try:
         schedule_retrieval_hit_stats_update(

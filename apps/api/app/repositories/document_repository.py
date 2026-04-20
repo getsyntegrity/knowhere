@@ -24,6 +24,7 @@ class DocumentRepository:
             select(Document)
             .where(Document.user_id == user_id)
             .where(Document.namespace == namespace)
+            .where(Document.status != "archived")
             .order_by(Document.updated_at.desc())
         )
         return result.scalars().all()

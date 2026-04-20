@@ -33,13 +33,14 @@ def build_content_lexical_text(chunk: dict[str, Any]) -> Optional[str]:
     return "\n".join(lexical_parts) if lexical_parts else content
 
 
-def section_path_from_chunk_path(source_path: Optional[str]) -> str:
+def section_path_from_chunk_path(source_path: Optional[str], *, separator: str = "/") -> str:
     if not source_path:
         return "Root"
-    parts = [part.strip() for part in source_path.split("-->") if part.strip()]
-    if len(parts) <= 1:
+    parts = [part.strip() for part in source_path.split(separator) if part.strip()]
+    # parts[0] is the kb_dir (e.g. "Default_Root"), parts[1] is the filename — skip both
+    if len(parts) <= 2:
         return "Root"
-    section_parts = parts[1:]
+    section_parts = parts[2:]
     return " / ".join(section_parts) or "Root"
 
 

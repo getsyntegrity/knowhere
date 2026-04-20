@@ -101,6 +101,7 @@ class RetrievalPublicationService:
                 )
                 return None
             document.status = "active"
+            document.archived_at = None
             document.current_job_result_id = job_result_id
             document.source_file_name = source_file_name or document.source_file_name
             document.updated_at = utc_now_naive()
@@ -120,14 +121,22 @@ class RetrievalPublicationService:
             section_path = section_path_from_chunk_path(source_path)
             section = sections_by_path.get(section_path)
             if section is None:
+                parent_section_id = None
+                path_parts = [p for p in section_path.split(" / ") if p]
+                if len(path_parts) > 1:
+                    parent_path = " / ".join(path_parts[:-1])
+                    parent = sections_by_path.get(parent_path)
+                    if parent is not None:
+                        parent_section_id = parent.section_id
                 section = DocumentSection(
                     user_id=str(job.user_id),
                     namespace=namespace,
                     document_id=document_id,
                     job_result_id=job_result_id,
+                    parent_section_id=parent_section_id,
                     section_path=section_path,
-                    section_title=section_path.split(" / ")[-1] if section_path else None,
-                    section_level=len([part for part in section_path.split(" / ") if part]),
+                    section_title=path_parts[-1] if path_parts else None,
+                    section_level=len(path_parts),
                     section_metadata={},
                     sort_order=len(sections_by_path),
                 )

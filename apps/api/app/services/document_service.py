@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.document_repository import DocumentRepository
@@ -95,6 +96,6 @@ class DocumentService:
                 user_id=user_id,
                 namespaces=[previous_namespace],
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Cache invalidation failed after archiving document {document_id}: {e}")
         return document_payload(document)
