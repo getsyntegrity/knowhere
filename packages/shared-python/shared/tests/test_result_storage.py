@@ -4,9 +4,8 @@ import pytest
 
 
 def test_result_storage_does_not_depend_on_app_package():
-    source = Path("packages/shared-python/shared/services/storage/result_storage.py").read_text(
-        encoding="utf-8"
-    )
+    source_path = Path(__file__).parents[1] / "services" / "storage" / "result_storage.py"
+    source = source_path.read_text(encoding="utf-8")
 
     assert "app.services" not in source
 
