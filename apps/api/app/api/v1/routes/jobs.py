@@ -15,6 +15,12 @@ from shared.core.config import settings
 from shared.utils.url_file_type import resolve_file_extension_async
 from shared.utils.error_details import normalize_error_details
 from shared.core.database import get_db
+from app.services.job_document_scope_service import (
+    find_active_job_for_document,
+    is_active_document_job_unique_violation,
+    raise_document_ingestion_conflict,
+    resolve_effective_document_scope,
+)
 from app.services.rate_limit.dependencies import (
     with_current_user,
     require_billing_limits,
@@ -22,8 +28,6 @@ from app.services.rate_limit.dependencies import (
     CurrentUser,
 )
 from shared.core.state_machine.states import JobStatus
-from shared.models.database.document import Document
-from shared.models.database.job import Job
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
                                     JobResponse, JobResultResponse, StandardErrorObject)
 from app.repositories.job_repository import JobRepository
@@ -33,7 +37,6 @@ from shared.services.storage.file_upload_service import FileUploadService
 from fastapi import APIRouter, Depends, Query, Request, status
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.exceptions.domain_exceptions import (
     ConflictException,
@@ -56,92 +59,6 @@ router = APIRouter(tags=["Jobs"])
 def get_supported_formats() -> str:
     """获取所有支持的文件格式字符串"""
     return ", ".join(sorted(settings.get_supported_extensions()))
-
-
-class DocumentRepository:
-    async def get_document(self, db: AsyncSession, *, document_id: str, user_id: str):
-        result = await db.execute(
-            select(Document)
-            .where(Document.document_id == document_id)
-            .where(Document.user_id == user_id)
-        )
-        return result.scalar_one_or_none()
-
-
-ACTIVE_DOCUMENT_JOB_STATES = (
-    JobStatus.WAITING_FILE.value,
-    JobStatus.PENDING.value,
-    JobStatus.RUNNING.value,
-    JobStatus.CONVERTING.value,
-)
-
-
-async def find_active_job_for_document(
-    db: AsyncSession,
-    *,
-    user_id: str,
-    document_id: str,
-):
-    if not hasattr(db, "execute"):
-        return None
-    result = await db.execute(build_active_job_for_document_query(user_id=user_id, document_id=document_id))
-    return result.scalar_one_or_none()
-
-
-def build_active_job_for_document_query(*, user_id: str, document_id: str):
-    return (
-        select(Job)
-        .where(Job.user_id == user_id)
-        .where(Job.status.in_(ACTIVE_DOCUMENT_JOB_STATES))
-        .where(Job.job_metadata["document_id"].as_string() == document_id)
-    )
-
-
-def _is_active_document_job_unique_violation(exc: IntegrityError) -> bool:
-    text = str(getattr(exc, "orig", exc))
-    return "uq_jobs_user_active_document" in text
-
-
-def raise_document_ingestion_conflict(*, document_id: str, active_job_id: Optional[str] = None) -> None:
-    raise ConflictException(
-        user_message="Another ingestion job for this document is already in progress",
-        reason="ABORTED",
-        resource="Document",
-        resource_id=document_id,
-        internal_message=(
-            f"Concurrent ingestion blocked for document_id={document_id}; "
-            f"active_job_id={active_job_id or 'unknown'}"
-        ),
-    )
-
-
-async def resolve_effective_document_scope(
-    db: AsyncSession,
-    *,
-    user_id: str,
-    document_id: Optional[str],
-    requested_namespace: Optional[str],
-) -> tuple[Optional[str], str]:
-    if not document_id:
-        return f"doc_{uuid.uuid4().hex[:12]}", requested_namespace or "default"
-
-    document = await DocumentRepository().get_document(
-        db,
-        document_id=document_id,
-        user_id=user_id,
-    )
-    if document is None:
-        raise NotFoundException(
-            resource="Document",
-            resource_id=document_id,
-            internal_message=f"Document not found for update flow: {document_id}",
-        )
-    if requested_namespace and requested_namespace != document.namespace:
-        raise ValidationException(
-            user_message="namespace must match the existing document namespace",
-            violations=[{"field": "namespace", "description": "Does not match existing document namespace"}],
-        )
-    return document.document_id, document.namespace
 
 
 async def transition_to_uploaded(
@@ -435,9 +352,9 @@ async def create_job(
                     metadata=job_metadata,
                     initial_state="waiting-file",
                     s3_key=s3_key,
-                )
+            )
             except IntegrityError as exc:
-                if _is_active_document_job_unique_violation(exc):
+                if is_active_document_job_unique_violation(exc):
                     raise_document_ingestion_conflict(document_id=cast(str, effective_document_id))
                 raise
 
@@ -538,9 +455,9 @@ async def create_job(
                         metadata=job_metadata,
                         initial_state=JobStatus.WAITING_FILE.value,  # 使用pending状态
                         s3_key=s3_key,  # 预设s3_key
-                    )
+                )
                 except IntegrityError as exc:
-                    if _is_active_document_job_unique_violation(exc):
+                    if is_active_document_job_unique_violation(exc):
                         raise_document_ingestion_conflict(document_id=cast(str, effective_document_id))
                     raise
 

@@ -9,7 +9,6 @@ using the same transactional outbox pattern for webhook events.
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -22,9 +21,7 @@ from sqlalchemy.orm import Session
 from shared.core.database_sync import get_sync_db_context
 from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
-from shared.models.database.document import Document, DocumentChunk, DocumentSection
 from shared.services.retrieval.cache_service import invalidate_retrieval_cache_namespaces
-from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobChunk, JobResult
 from shared.models.database.knowledge_base import ContentBase
@@ -33,32 +30,13 @@ from shared.services.billing.credits_sync_service import SyncCreditsService
 from shared.services.redis.redis_sync_service import (
     SyncRedisServiceFactory,
 )
+from shared.services.retrieval.publication_service import RetrievalPublicationService
 from shared.utils.error_details import normalize_error_details
 from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-_LEXICAL_TOKEN_RE = re.compile(r'[\u4e00-\u9fff]+|[A-Za-z0-9]+')
-
-
-def _build_lexical_text(value: str) -> str:
-    text = str(value or '').strip()
-    if not text:
-        return ''
-    tokens = []
-    seen = set()
-    for token in _LEXICAL_TOKEN_RE.findall(text):
-        normalized = token.strip()
-        if len(normalized) <= 1 or normalized in seen:
-            continue
-        seen.add(normalized)
-        tokens.append(normalized)
-    token_text = " ".join(tokens)
-    lexical_parts = [part for part in [text, token_text] if part]
-    return "\n".join(lexical_parts) if lexical_parts else text
 
 
 class SyncJobLifecycleService:
@@ -69,6 +47,7 @@ class SyncJobLifecycleService:
 
     def __init__(self) -> None:
         self._state_machine = SyncStateMachineService()
+        self._retrieval_publication = RetrievalPublicationService()
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -111,22 +90,21 @@ class SyncJobLifecycleService:
 
                 normalized_chunks = chunks or []
                 self._replace_chunks(db, job_result.id, normalized_chunks)
-                previous_document_scope = self._get_existing_document_scope(
+                previous_document_scope = self._retrieval_publication.get_existing_document_scope(
                     db,
                     job_id=job_id,
                 )
-                published_document_state = self._publish_document_state(
+                published_document_state = self._retrieval_publication.publish_document_state(
                     db,
                     job_id=job_id,
                     job_result_id=job_result.id,
                     chunks=normalized_chunks,
                 )
                 if published_document_state is not None:
-                    self._publish_document_graph(
+                    self._retrieval_publication.publish_document_graph(
                         db,
                         job_id=job_id,
                         job_result_id=job_result.id,
-                        chunks=normalized_chunks,
                     )
                 cache_invalidation = self._build_retrieval_cache_invalidation(
                     db,
@@ -325,185 +303,6 @@ class SyncJobLifecycleService:
         db.add_all(chunk_models)
         db.flush()
 
-    def _publish_document_state(
-        self,
-        db: Session,
-        *,
-        job_id: str,
-        job_result_id: str,
-        chunks: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, str]]:
-        """Publish canonical document, section, and chunk rows for retrieval."""
-        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
-        if not job:
-            logger.warning(f"Job not found for document publication: {job_id}")
-            return None
-
-        metadata = job.job_metadata or {}
-        namespace = metadata.get("namespace")
-        document_id = metadata.get("document_id")
-        source_file_name = metadata.get("source_file_name") or metadata.get("file_name")
-
-        document = None
-        if document_id:
-            document = db.execute(
-                select(Document).where(
-                    Document.document_id == document_id,
-                    Document.user_id == str(job.user_id),
-                )
-            ).scalar_one_or_none()
-
-        if document is None:
-            document = Document(
-                document_id=document_id or f"doc_{uuid4().hex[:12]}",
-                user_id=str(job.user_id),
-                namespace=namespace or "default",
-                status="active",
-                current_job_result_id=job_result_id,
-                source_file_name=source_file_name,
-            )
-            db.add(document)
-        else:
-            namespace = namespace or document.namespace
-            if self._is_stale_document_completion(
-                db,
-                document=document,
-                job=job,
-            ):
-                logger.warning(
-                    f"Skipping stale document publication: job_id={job_id}, document_id={document.document_id}"
-                )
-                return None
-            document.status = "active"
-            document.current_job_result_id = job_result_id
-            document.source_file_name = source_file_name or document.source_file_name
-            document.updated_at = _utc_now_naive()
-
-        db.flush()
-        document_id = document.document_id
-        result = db.execute(select(JobResult).where(JobResult.id == job_result_id))
-        job_result = result.scalar_one_or_none()
-        if job_result:
-            job_result.document_id = document_id
-        namespace = namespace or document.namespace
-
-        sections_by_path: Dict[str, DocumentSection] = {}
-        for index, chunk in enumerate(chunks):
-            metadata = chunk.get("metadata") or {}
-            source_path = metadata.get("path") or chunk.get("path")
-            section_path = self._section_path_from_chunk_path(source_path)
-            section = sections_by_path.get(section_path)
-            if section is None:
-                section = DocumentSection(
-                    user_id=str(job.user_id),
-                    namespace=namespace,
-                    document_id=document_id,
-                    job_result_id=job_result_id,
-                    section_path=section_path,
-                    section_title=section_path.split(" / ")[-1] if section_path else None,
-                    section_level=len([part for part in section_path.split(" / ") if part]),
-                    section_metadata={},
-                    sort_order=len(sections_by_path),
-                )
-                db.add(section)
-                db.flush()
-                sections_by_path[section_path] = section
-
-            chunk_id = chunk.get("chunk_id") or f"chunk_{uuid4().hex[:12]}"
-            db.add(DocumentChunk(
-                id=f"dchk_{uuid4().hex[:12]}",
-                chunk_id=chunk_id,
-                user_id=str(job.user_id),
-                namespace=namespace,
-                document_id=document_id,
-                job_result_id=job_result_id,
-                section_id=section.section_id,
-                chunk_type=chunk.get("type") or chunk.get("chunk_type") or "text",
-                content=chunk.get("content") or chunk.get("text"),
-                content_lexical_text=self._build_content_lexical_text(chunk),
-                path_lexical_text=self._build_path_lexical_text(source_path),
-                source_chunk_path=source_path,
-                file_path=metadata.get("file_path") or chunk.get("file_path"),
-                chunk_metadata=metadata,
-                sort_order=chunk.get("order", index),
-            ))
-
-        db.flush()
-        return {"user_id": str(job.user_id), "namespace": namespace, "document_id": document_id}
-
-    def _is_stale_document_completion(
-        self,
-        db: Session,
-        *,
-        document: Document,
-        job: Job,
-    ) -> bool:
-        current_job_result_id = getattr(document, "current_job_result_id", None)
-        if not current_job_result_id:
-            return False
-
-        current_job_result = db.execute(
-            select(JobResult).where(JobResult.id == current_job_result_id)
-        ).scalar_one_or_none()
-        current_job_id = getattr(current_job_result, "job_id", None)
-        if current_job_result is None or not current_job_id:
-            return False
-
-        current_job = db.execute(
-            select(Job).where(Job.job_id == current_job_id)
-        ).scalar_one_or_none()
-        if current_job is None:
-            return False
-
-        current_created_at = getattr(current_job, "created_at", None)
-        candidate_created_at = getattr(job, "created_at", None)
-        if current_created_at is None or candidate_created_at is None:
-            return False
-
-        return current_created_at > candidate_created_at
-
-    def _build_content_lexical_text(self, chunk: Dict[str, Any]) -> Optional[str]:
-        content = str(chunk.get("content") or chunk.get("text") or "").strip()
-        if not content:
-            return None
-        metadata = chunk.get("metadata") or {}
-        tokens = metadata.get("tokens") if isinstance(metadata, dict) else None
-        if isinstance(tokens, list):
-            token_text = " ".join(str(token).strip() for token in tokens if str(token).strip())
-        else:
-            token_text = ""
-        lexical_parts = [part for part in [content, token_text] if part]
-        return "\n".join(lexical_parts) if lexical_parts else content
-
-    def _build_path_lexical_text(self, source_path: Optional[str]) -> Optional[str]:
-        section_path = self._section_path_from_chunk_path(source_path)
-        if not section_path:
-            return None
-        normalized_path = section_path.replace(" / ", " ")
-        return _build_lexical_text(normalized_path)
-
-    def _get_existing_document_scope(
-        self,
-        db: Session,
-        *,
-        job_id: str,
-    ) -> Optional[Dict[str, str]]:
-        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
-        if not job:
-            return None
-
-        metadata = job.job_metadata or {}
-        document_id = metadata.get("document_id")
-        if not document_id:
-            return None
-
-        document = db.execute(select(Document).where(Document.document_id == document_id)).scalar_one_or_none()
-        if not document:
-            return None
-
-        return {"document_id": document.document_id, "namespace": document.namespace}
-
-
     def _build_retrieval_cache_invalidation(
         self,
         db: Session,
@@ -540,51 +339,6 @@ class SyncJobLifecycleService:
             logger.warning(
                 f"Failed to invalidate retrieval cache after publication (ignored): job_id={cache_invalidation.get('job_id')}, error={exc}"
             )
-
-
-    @staticmethod
-    def _section_path_from_chunk_path(source_path: Optional[str]) -> str:
-        if not source_path:
-            return "Root"
-        parts = [part.strip() for part in source_path.split("-->") if part.strip()]
-        if len(parts) <= 1:
-            return "Root"
-        section_parts = parts[1:]
-        return " / ".join(section_parts) or "Root"
-
-    def _publish_document_graph(
-        self,
-        db: Session,
-        *,
-        job_id: str,
-        job_result_id: str,
-        chunks: List[Dict[str, Any]],
-    ) -> None:
-        """Publish persisted graph routing state for the canonical document revision."""
-        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
-        if not job:
-            logger.warning(f"Job not found for graph publication: {job_id}")
-            return
-
-        metadata = job.job_metadata or {}
-        namespace = metadata.get("namespace") or "default"
-        document_id = metadata.get("document_id")
-        if not document_id:
-            document = db.execute(
-                select(Document).where(Document.current_job_result_id == job_result_id)
-            ).scalar_one_or_none()
-            document_id = document.document_id if document else None
-        if not document_id:
-            logger.warning(f"Document not found for graph publication: {job_id}")
-            return
-
-        DocumentGraphService().publish_document_graph(
-            db,
-            user_id=str(job.user_id),
-            namespace=namespace,
-            document_id=document_id,
-            job_result_id=job_result_id,
-        )
 
     def _bulk_insert_kb_records(
         self,

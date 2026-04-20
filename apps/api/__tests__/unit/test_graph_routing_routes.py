@@ -53,15 +53,16 @@ async def test_archive_document_route_removes_graph_state(authenticated_client, 
 
     calls = {}
 
-    async def fake_archive(*_args, **_kwargs):
-        calls["called"] = True
-        return {
-            "document_id": "doc_123",
-            "namespace": "default",
-            "status": "archived",
-        }
+    class FakeDocumentService:
+        async def archive_document(self, *_args, **_kwargs):
+            calls["called"] = True
+            return {
+                "document_id": "doc_123",
+                "namespace": "default",
+                "status": "archived",
+            }
 
-    monkeypatch.setattr(document_routes, 'archive_canonical_document', fake_archive)
+    monkeypatch.setattr(document_routes, 'DocumentService', FakeDocumentService)
 
     response = await authenticated_client.post('/v1/documents/doc_123:archive')
 
@@ -72,7 +73,7 @@ async def test_archive_document_route_removes_graph_state(authenticated_client, 
 
 @pytest.mark.asyncio
 async def test_archive_canonical_document_uses_run_sync_for_graph_removal(monkeypatch):
-    from app.api.v1.routes import documents as document_routes
+    from app.services.document_service import DocumentService
 
     document = Document(
         document_id="doc_123",
@@ -110,9 +111,9 @@ async def test_archive_canonical_document_uses_run_sync_for_graph_removal(monkey
         captured["scope"] = scope
         captured["document_id"] = document_id
 
-    monkeypatch.setattr(document_routes.DocumentGraphService, "remove_document_graph", fake_remove)
+    monkeypatch.setattr("app.services.document_service.DocumentGraphService.remove_document_graph", fake_remove)
 
-    payload = await document_routes.archive_canonical_document(
+    payload = await DocumentService().archive_document(
         db,
         user_id="user_123",
         document_id="doc_123",

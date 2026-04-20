@@ -30,6 +30,7 @@ psutil==5.9.8
 pytz==2025.2
 PyYAML==6.0.2
 typing-extensions==4.14.1
+jieba==0.42.1
 pillow==11.2.1
 gevent>=24.11.1
 psycogreen>=1.0.2

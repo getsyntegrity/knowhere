@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 
@@ -12,7 +14,21 @@ async def test_retrieval_query_route_exists(authenticated_client):
 
 
 @pytest.mark.asyncio
-async def test_document_routes_exist(authenticated_client):
+async def test_document_routes_exist(authenticated_client, monkeypatch):
+    from app.api.v1.routes import documents as document_routes
+
+    class FakeDocumentService:
+        async def list_documents(self, *_args, **_kwargs):
+            return []
+
+        async def get_document(self, *_args, **_kwargs):
+            return None
+
+        async def archive_document(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(document_routes, 'DocumentService', FakeDocumentService)
+
     list_response = await authenticated_client.get("/v1/documents")
     get_response = await authenticated_client.get("/v1/documents/doc_123")
     archive_response = await authenticated_client.post("/v1/documents/doc_123:archive")
@@ -68,25 +84,33 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
 async def test_document_routes_return_canonical_document_state(authenticated_client, monkeypatch):
     from app.api.v1.routes import documents as document_routes
 
-    monkeypatch.setattr(document_routes, 'list_canonical_documents', lambda *_args, **_kwargs: [
-        {
-            'document_id': 'doc_123',
-            'namespace': 'default',
-            'status': 'active',
-            'source_file_name': 'refund-policy.md',
-        }
-    ])
-    monkeypatch.setattr(document_routes, 'get_canonical_document', lambda *_args, **_kwargs: {
-        'document_id': 'doc_123',
-        'namespace': 'default',
-        'status': 'active',
-        'source_file_name': 'refund-policy.md',
-    })
-    monkeypatch.setattr(document_routes, 'archive_canonical_document', lambda *_args, **_kwargs: {
-        'document_id': 'doc_123',
-        'namespace': 'default',
-        'status': 'archived',
-    })
+    class FakeDocumentService:
+        async def list_documents(self, *_args, **_kwargs):
+            return [
+                {
+                    'document_id': 'doc_123',
+                    'namespace': 'default',
+                    'status': 'active',
+                    'source_file_name': 'refund-policy.md',
+                }
+            ]
+
+        async def get_document(self, *_args, **_kwargs):
+            return {
+                'document_id': 'doc_123',
+                'namespace': 'default',
+                'status': 'active',
+                'source_file_name': 'refund-policy.md',
+            }
+
+        async def archive_document(self, *_args, **_kwargs):
+            return {
+                'document_id': 'doc_123',
+                'namespace': 'default',
+                'status': 'archived',
+            }
+
+    monkeypatch.setattr(document_routes, 'DocumentService', FakeDocumentService)
 
     list_response = await authenticated_client.get('/v1/documents')
     get_response = await authenticated_client.get('/v1/documents/doc_123')
@@ -304,7 +328,7 @@ async def test_retrieval_asset_url_helper_works_in_api_runtime(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_archive_canonical_document_invalidates_namespace_cache_best_effort(monkeypatch):
-    from app.api.v1.routes import documents as document_routes
+    from app.services.document_service import DocumentService
     from shared.models.database.document import Document
 
     document = Document(
@@ -349,10 +373,10 @@ async def test_archive_canonical_document_invalidates_namespace_cache_best_effor
         invalidation['user_id'] = user_id
         invalidation['namespaces'] = namespaces
 
-    monkeypatch.setattr(document_routes, 'DocumentGraphService', FakeGraphService)
-    monkeypatch.setattr(document_routes, 'invalidate_retrieval_cache_namespaces', fake_invalidate_retrieval_cache_namespaces)
+    monkeypatch.setattr('app.services.document_service.DocumentGraphService', FakeGraphService)
+    monkeypatch.setattr('app.services.document_service.invalidate_retrieval_cache_namespaces', fake_invalidate_retrieval_cache_namespaces)
 
-    result = await document_routes.archive_canonical_document(
+    result = await DocumentService().archive_document(
         FakeDb(),
         user_id='user_123',
         document_id='doc_123',
@@ -363,3 +387,13 @@ async def test_archive_canonical_document_invalidates_namespace_cache_best_effor
     assert invalidation['namespaces'] == ['default']
     assert invalidation['graph_scope_namespace'] == 'default'
     assert invalidation['graph_document_id'] == 'doc_123'
+
+
+def test_document_routes_keep_db_logic_out_of_router():
+    source = (
+        Path(__file__).parents[2]
+        / 'app/api/v1/routes/documents.py'
+    ).read_text(encoding='utf-8')
+
+    assert 'inspect.isawaitable' not in source
+    assert 'select(Document)' not in source

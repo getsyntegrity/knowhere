@@ -48,12 +48,11 @@ def test_finalize_job_success_publishes_graph_state(monkeypatch) -> None:
     )
     monkeypatch.setattr(service, "_replace_chunks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        service,
-        "_publish_document_state",
+        service._retrieval_publication,
+        "publish_document_state",
         lambda *_args, **_kwargs: {"user_id": "user_123", "namespace": "default", "document_id": "doc_123"},
-        raising=False,
     )
-    monkeypatch.setattr(service, "_publish_document_graph", lambda _db, **kwargs: captured.update(kwargs), raising=False)
+    monkeypatch.setattr(service._retrieval_publication, "publish_document_graph", lambda _db, **kwargs: captured.update(kwargs))
     monkeypatch.setattr(service._state_machine, "mark_completed", lambda *args, **kwargs: True)
     monkeypatch.setattr(service, "_maybe_create_webhook_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(service, "_post_commit_enqueue_webhook", lambda *_args, **_kwargs: None)
@@ -84,7 +83,6 @@ def test_finalize_job_success_publishes_graph_state(monkeypatch) -> None:
     assert result == {"status": "success", "job_id": "job_123", "stored_count": 0}
     assert captured["job_id"] == "job_123"
     assert captured["job_result_id"] == "result_123"
-    assert captured["chunks"] == chunks
 
 
 class _FakeScalars:
@@ -258,16 +256,15 @@ def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch
     )
     monkeypatch.setattr(service, '_replace_chunks', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        service,
-        '_publish_document_state',
+        service._retrieval_publication,
+        'publish_document_state',
         lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'archive', 'document_id': 'doc_123'},
-        raising=False,
     )
-    monkeypatch.setattr(service, '_publish_document_graph', lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(service._retrieval_publication, 'publish_document_graph', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, '_maybe_create_webhook_event', lambda *args, **kwargs: None)
     monkeypatch.setattr(service, '_post_commit_enqueue_webhook', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service._state_machine, 'mark_completed', lambda *args, **kwargs: True)
-    monkeypatch.setattr(service, '_get_existing_document_scope', lambda *_args, **_kwargs: {'document_id': 'doc_123', 'namespace': 'default'}, raising=False)
+    monkeypatch.setattr(service._retrieval_publication, 'get_existing_document_scope', lambda *_args, **_kwargs: {'document_id': 'doc_123', 'namespace': 'default'})
 
     async def fake_invalidate_retrieval_cache_namespaces(**kwargs):
         invalidation.update(kwargs)

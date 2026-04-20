@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -19,6 +20,7 @@ os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 import shared.services.job_lifecycle_sync as lifecycle_module
+from shared.services.retrieval.publication_service import RetrievalPublicationService
 
 
 class _SyncDbContext:
@@ -65,10 +67,9 @@ def test_finalize_job_success_publishes_canonical_document_state(monkeypatch) ->
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        service,
-        "_publish_document_state",
+        service._retrieval_publication,
+        "publish_document_state",
         lambda _db, **kwargs: captured.update(kwargs),
-        raising=False,
     )
     monkeypatch.setattr(
         service._state_machine,
@@ -98,7 +99,7 @@ def test_finalize_job_success_publishes_canonical_document_state(monkeypatch) ->
 
 def test_publish_document_state_creates_default_namespace_document(monkeypatch) -> None:
     db = MagicMock()
-    service = lifecycle_module.SyncJobLifecycleService()
+    service = RetrievalPublicationService()
 
     job = SimpleNamespace(
         job_id='job_123',
@@ -110,7 +111,7 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
     )
     db.execute.return_value.scalar_one_or_none.return_value = job
 
-    service._publish_document_state(
+    service.publish_document_state(
         db,
         job_id='job_123',
         job_result_id='result_123',
@@ -138,7 +139,7 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
 
 def test_publish_document_state_uses_file_path_as_internal_media_reference(monkeypatch) -> None:
     db = MagicMock()
-    service = lifecycle_module.SyncJobLifecycleService()
+    service = RetrievalPublicationService()
 
     job = SimpleNamespace(
         job_id='job_123',
@@ -150,7 +151,7 @@ def test_publish_document_state_uses_file_path_as_internal_media_reference(monke
     )
     db.execute.return_value.scalar_one_or_none.return_value = job
 
-    service._publish_document_state(
+    service.publish_document_state(
         db,
         job_id='job_123',
         job_result_id='result_123',
@@ -179,7 +180,7 @@ def test_publish_document_state_uses_file_path_as_internal_media_reference(monke
 
 def test_publish_document_state_preserves_existing_document_namespace_when_update_omits_namespace() -> None:
     db = MagicMock()
-    service = lifecycle_module.SyncJobLifecycleService()
+    service = RetrievalPublicationService()
     document = SimpleNamespace(
         document_id='doc_123',
         user_id='user_123',
@@ -205,7 +206,7 @@ def test_publish_document_state_preserves_existing_document_namespace_when_updat
         SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_123', document_id='doc_123')),
     ]
 
-    service._publish_document_state(
+    service.publish_document_state(
         db,
         job_id='job_123',
         job_result_id='result_123',
@@ -218,7 +219,7 @@ def test_publish_document_state_preserves_existing_document_namespace_when_updat
 
 def test_publish_document_state_preserves_historical_canonical_rows() -> None:
     db = MagicMock()
-    service = lifecycle_module.SyncJobLifecycleService()
+    service = RetrievalPublicationService()
 
     job = SimpleNamespace(
         job_id='job_123',
@@ -246,7 +247,7 @@ def test_publish_document_state_preserves_historical_canonical_rows() -> None:
         SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_123', document_id='doc_123')),
     ]
 
-    service._publish_document_state(
+    service.publish_document_state(
         db,
         job_id='job_123',
         job_result_id='result_123',
@@ -268,7 +269,7 @@ def test_publish_document_state_preserves_historical_canonical_rows() -> None:
 
 def test_publish_document_state_rejects_stale_completion_for_existing_document() -> None:
     db = MagicMock()
-    service = lifecycle_module.SyncJobLifecycleService()
+    service = RetrievalPublicationService()
     newer_job = SimpleNamespace(
         job_id='job_new',
         created_at=datetime(2026, 4, 20, 9, 0, 0),
@@ -304,7 +305,7 @@ def test_publish_document_state_rejects_stale_completion_for_existing_document()
         SimpleNamespace(scalar_one_or_none=lambda: newer_job),
     ]
 
-    published = service._publish_document_state(
+    published = service.publish_document_state(
         db,
         job_id='job_old',
         job_result_id='result_old',
@@ -343,8 +344,8 @@ def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -
         lambda *_args, **_kwargs: SimpleNamespace(id='result_123'),
     )
     monkeypatch.setattr(service, '_replace_chunks', lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(service, '_publish_document_state', lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'default', 'document_id': 'doc_123'}, raising=False)
-    monkeypatch.setattr(service, '_publish_document_graph', lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(service._retrieval_publication, 'publish_document_state', lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'default', 'document_id': 'doc_123'})
+    monkeypatch.setattr(service._retrieval_publication, 'publish_document_graph', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, '_build_retrieval_cache_invalidation', lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespaces': ['default'], 'job_id': 'job_123'}, raising=False)
     monkeypatch.setattr(service, '_post_commit_invalidate_retrieval_cache', lambda payload: events.append(('invalidate', payload)), raising=False)
     monkeypatch.setattr(service._state_machine, 'mark_completed', lambda *args, **kwargs: True)
@@ -370,3 +371,15 @@ def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -
     assert result == {'status': 'success', 'job_id': 'job_123', 'stored_count': 0}
     assert events[0][0] == 'commit'
     assert events[1][0] == 'invalidate'
+
+
+def test_job_lifecycle_sync_keeps_retrieval_publication_logic_out_of_module() -> None:
+    source = (
+        Path(__file__).parents[1]
+        / 'services/job_lifecycle_sync.py'
+    ).read_text(encoding='utf-8')
+
+    assert 'def _publish_document_state' not in source
+    assert 'def _publish_document_graph' not in source
+    assert 'def _build_lexical_text' not in source
+    assert 'def _build_content_lexical_text' not in source

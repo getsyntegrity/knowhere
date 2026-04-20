@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi import Request
 from sqlalchemy.dialects import postgresql
 
 from app.api.v1.routes import jobs
+from app.services import job_document_scope_service
 from app.services.rate_limit.data_structures import CurrentUser
 from shared.core.exceptions.domain_exceptions import ConflictException
 from shared.models.schemas.job import JobCreate, ParsingParams
@@ -27,7 +29,7 @@ def _make_http_request() -> Request:
 
 
 def test_find_active_job_for_document_query_compiles_for_postgres():
-    statement = jobs.build_active_job_for_document_query(
+    statement = job_document_scope_service.build_active_job_for_document_query(
         user_id="u_test",
         document_id="doc_123",
     )
@@ -147,7 +149,7 @@ async def test_create_job_update_omitting_namespace_keeps_existing_document_name
             return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
 
     monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
-    monkeypatch.setattr(jobs, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
 
     class _UploadService:
         async def generate_upload_url(self, _job_id, _file_extension):
@@ -202,7 +204,7 @@ async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_do
             assert user_id == "u_test"
             return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
 
-    monkeypatch.setattr(jobs, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
     monkeypatch.setattr(
         jobs,
         "find_active_job_for_document",
@@ -230,3 +232,14 @@ async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_do
         "resource": "Document",
         "id": "doc_123",
     }
+
+
+def test_jobs_routes_keep_document_scope_logic_out_of_router():
+    source = (
+        Path(__file__).parents[2]
+        / "app/api/v1/routes/jobs.py"
+    ).read_text(encoding="utf-8")
+
+    assert "class DocumentRepository" not in source
+    assert "async def resolve_effective_document_scope" not in source
+    assert "async def find_active_job_for_document" not in source
