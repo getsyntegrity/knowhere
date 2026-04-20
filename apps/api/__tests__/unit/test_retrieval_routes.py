@@ -249,6 +249,28 @@ async def test_retrieval_query_route_returns_cached_result_from_shared_service(a
 
 
 @pytest.mark.asyncio
+async def test_retrieval_asset_url_helper_works_in_api_runtime(monkeypatch):
+    from shared.services.retrieval.app_service import generate_retrieval_asset_url
+    from shared.services.storage.file_upload_service import FileUploadService
+
+    async def fake_generate_download_url(self, s3_key, bucket=None, expires_in=3600):
+        assert s3_key == 'results/job_123/images/page-1.png'
+        assert bucket is None
+        assert expires_in == 3600
+        return {
+            'download_url': 'https://assets.test/results/job_123/images/page-1.png?signature=fresh',
+            'expires_in': expires_in,
+        }
+
+    monkeypatch.setattr(FileUploadService, 'generate_download_url', fake_generate_download_url)
+
+    assert (
+        await generate_retrieval_asset_url(job_id='job_123', artifact_ref='images/page-1.png')
+        == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
+    )
+
+
+@pytest.mark.asyncio
 async def test_archive_canonical_document_invalidates_namespace_cache_best_effort(monkeypatch):
     from app.api.v1.routes import documents as document_routes
     from shared.models.database.document import Document

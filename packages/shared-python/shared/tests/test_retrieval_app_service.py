@@ -340,6 +340,68 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
 
 
 @pytest.mark.asyncio
+async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtime(monkeypatch):
+    from shared.services.retrieval import app_service
+    from shared.services.storage.file_upload_service import FileUploadService
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 4, {
+            'namespace': 'default',
+            'query': 'drawing',
+            'results': [
+                {
+                    'document_id': 'doc_cached',
+                    'chunk_id': 'chunk_cached',
+                    'section_id': 'sec_cached',
+                    'section_path': 'Drawings / Images',
+                    'source_file_name': 'drawing.pdf',
+                    'chunk_type': 'image',
+                    'text': 'cached caption',
+                    'score': 1.0,
+                    'file_path': 'images/page-1.png',
+                    'job_id': 'job_123',
+                    'citation': {
+                        'document_id': 'doc_cached',
+                        'chunk_id': 'chunk_cached',
+                        'source_file_name': 'drawing.pdf',
+                        'section_path': 'Drawings / Images',
+                    },
+                }
+            ],
+            'graph_enabled': False,
+        }
+
+    async def fake_generate_download_url(self, s3_key, bucket=None, expires_in=3600):
+        assert s3_key == 'results/job_123/images/page-1.png'
+        assert bucket is None
+        assert expires_in == 3600
+        return {
+            'download_url': 'https://assets.test/results/job_123/images/page-1.png?signature=fresh',
+            'expires_in': expires_in,
+        }
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
+    monkeypatch.setattr(FileUploadService, 'generate_download_url', fake_generate_download_url)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='drawing',
+        top_k=5,
+        exclude_document_ids=[],
+        graph_enabled=False,
+    )
+
+    public_result = result['results'][0]
+    assert public_result['asset_url'] == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
+    assert 'file_path' not in public_result
+    assert 'file_path' not in public_result['citation']
+
+
+@pytest.mark.asyncio
 async def test_run_retrieval_query_keeps_legacy_media_file_path_until_asset_backfill_exists(monkeypatch):
     from shared.services.retrieval import app_service
 

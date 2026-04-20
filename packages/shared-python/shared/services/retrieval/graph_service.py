@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from shared.models.database.document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode
+from shared.models.database.job_result import JobResult
 
 
 @dataclass
@@ -193,9 +194,10 @@ class GraphQueryService:
         if not entry_document_ids:
             return []
         stmt = (
-            select(Document, DocumentChunk, DocumentSection)
+            select(Document, DocumentChunk, DocumentSection, JobResult)
             .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
             .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+            .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
             .where(Document.user_id == user_id)
             .where(Document.namespace == namespace)
             .where(Document.status == 'active')
@@ -206,7 +208,7 @@ class GraphQueryService:
         )
         result = await db.execute(stmt)
         rows = []
-        for document, chunk, section in result.all():
+        for document, chunk, section, job_result in result.all():
             rows.append({
                 'document_id': document.document_id,
                 'chunk_id': chunk.chunk_id,
@@ -217,5 +219,7 @@ class GraphQueryService:
                 'text': chunk.text,
                 'score': 2.0,
                 'file_path': chunk.file_path,
+                'job_result_id': chunk.job_result_id,
+                'job_id': job_result.job_id if job_result else None,
             })
         return rows
