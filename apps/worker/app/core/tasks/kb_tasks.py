@@ -48,16 +48,15 @@ from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 from app.services.storage.sync_storage_service import (
     verify_s3_file_exists,
     generate_download_url,
-    upload_zip_result,
     download_file_from_url,
 )
-from app.services.storage.result_artifact_service import publish_client_result_artifacts
 
 # Base task class
 from app.core.tasks.base_task import KBBaseTask
 
 # Domain services
 from shared.models.schemas.job_metadata import JobMetadataHelper
+from shared.services.storage.result_storage import get_result_storage
 from shared.services.storage.zip_result_service import ZipResultService
 from app.services.common.job_start_service import mark_job_running
 from app.services.document_parser.stage_profiler import stage_timer
@@ -73,6 +72,27 @@ from app.core.tasks.task_utils import (
     create_task_workspace,
     download_s3_file_to_temp,
 )
+
+
+MEDIA_CHUNK_TYPES = {"image", "table"}
+
+
+def _attach_result_artifact_refs(*, chunks: list[dict], raw_files: dict[str, str]) -> list[dict]:
+    enriched_chunks: list[dict] = []
+    for chunk in chunks:
+        metadata = dict(chunk.get("metadata") or {})
+        enriched_chunk = {**chunk, "metadata": metadata}
+        chunk_type = str(chunk.get("type") or chunk.get("chunk_type") or "").strip().split("\n", 1)[0].lower()
+        if chunk_type not in MEDIA_CHUNK_TYPES:
+            enriched_chunks.append(enriched_chunk)
+            continue
+
+        artifact_ref = str(metadata.get("file_path") or chunk.get("file_path") or "").strip().replace("\\", "/").lstrip("/")
+        if artifact_ref in raw_files:
+            metadata["asset_ref"] = artifact_ref
+        enriched_chunks.append(enriched_chunk)
+    return enriched_chunks
+
 
 @celery_app.task(
     bind=True,
@@ -513,12 +533,15 @@ def _parse(job_id: str, user_id: str | None):
 
             lifecycle_service.update_progress(job_id, progress=90, message="Uploading results to S3...")
 
-            # Upload ZIP to S3 (sync)
-            result_s3_key = upload_zip_result(job_id, zip_file_path)
-            chunks = publish_client_result_artifacts(
+            result_bundle = get_result_storage().upload(
                 job_id=job_id,
+                result_dir=str(add_dir) if add_dir else "",
+                temp_dir=task_workspace_dir,
+            )
+            result_s3_key = result_bundle.zip_key
+            chunks = _attach_result_artifact_refs(
                 chunks=chunks,
-                add_dir=str(add_dir) if add_dir else "",
+                raw_files=result_bundle.raw_files,
             )
 
             stored_count = 0

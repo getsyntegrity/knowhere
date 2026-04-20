@@ -236,6 +236,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
     from shared.services.retrieval import app_service
 
     cached_write = {}
+    generated = []
 
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 3, None
@@ -256,8 +257,13 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
             }
         ]
 
-    async def fake_generate_asset_url(*, job_id, artifact_ref):
-        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
+    class FakeResultStorage:
+        def normalize_artifact_ref(self, artifact_ref):
+            return artifact_ref
+
+        def generate_artifact_url(self, *, job_id, artifact_ref, expires_in=3600):
+            generated.append((job_id, artifact_ref, expires_in))
+            return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     async def fake_set_cached_retrieval_query_result(**kwargs):
         cached_write.update(kwargs)
@@ -265,7 +271,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
-    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fake_generate_asset_url)
+    monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     result = await app_service.run_retrieval_query(
@@ -281,6 +287,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
 
     public_result = result['results'][0]
     assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
+    assert generated == [('job_123', 'images/page-1.png', 3600)]
     assert 'file_path' not in public_result
     assert 'file_path' not in public_result['citation']
     cached_result = cached_write['response']['results'][0]
@@ -322,13 +329,17 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
             'graph_enabled': False,
         }
 
-    async def fake_generate_asset_url(*, job_id, artifact_ref):
-        generated.append((job_id, artifact_ref))
-        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
+    class FakeResultStorage:
+        def normalize_artifact_ref(self, artifact_ref):
+            return artifact_ref
+
+        def generate_artifact_url(self, *, job_id, artifact_ref, expires_in=3600):
+            generated.append((job_id, artifact_ref, expires_in))
+            return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
-    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fake_generate_asset_url)
+    monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     result = await app_service.run_retrieval_query(
@@ -342,7 +353,7 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
         graph_enabled=False,
     )
 
-    assert generated == [('job_123', 'images/page-1.png')]
+    assert generated == [('job_123', 'images/page-1.png', 3600)]
     public_result = result['results'][0]
     assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
     assert 'file_path' not in public_result
@@ -351,7 +362,6 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
 @pytest.mark.asyncio
 async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtime(monkeypatch):
     from shared.services.retrieval import app_service
-    from shared.services.storage.file_upload_service import FileUploadService
 
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 4, {
@@ -380,18 +390,19 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
             'graph_enabled': False,
         }
 
-    async def fake_generate_download_url(self, s3_key, bucket=None, expires_in=3600):
-        assert s3_key == 'results/job_123/images/page-1.png'
-        assert bucket is None
-        assert expires_in == 3600
-        return {
-            'download_url': 'https://assets.test/results/job_123/images/page-1.png?signature=fresh',
-            'expires_in': expires_in,
-        }
+    class FakeResultStorage:
+        def normalize_artifact_ref(self, artifact_ref):
+            return artifact_ref
+
+        def generate_artifact_url(self, *, job_id, artifact_ref, expires_in=3600):
+            assert job_id == 'job_123'
+            assert artifact_ref == 'images/page-1.png'
+            assert expires_in == 3600
+            return 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
-    monkeypatch.setattr(FileUploadService, 'generate_download_url', fake_generate_download_url)
+    monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     result = await app_service.run_retrieval_query(
@@ -444,13 +455,17 @@ async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_
             'graph_enabled': False,
         }
 
-    async def fake_generate_asset_url(*, job_id, artifact_ref):
-        generated.append((job_id, artifact_ref))
-        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
+    class FakeResultStorage:
+        def normalize_artifact_ref(self, artifact_ref):
+            return artifact_ref
+
+        def generate_artifact_url(self, *, job_id, artifact_ref, expires_in=3600):
+            generated.append((job_id, artifact_ref, expires_in))
+            return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
-    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fake_generate_asset_url)
+    monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     result = await app_service.run_retrieval_query(
@@ -493,13 +508,17 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
             }
         ]
 
-    async def fail_generate_asset_url(*, job_id, artifact_ref):
-        raise AssertionError('text chunks should not receive asset URLs')
+    class FailResultStorage:
+        def normalize_artifact_ref(self, artifact_ref):
+            raise AssertionError('text chunks should not inspect result artifacts')
+
+        def generate_artifact_url(self, *, job_id, artifact_ref, expires_in=3600):
+            raise AssertionError('text chunks should not receive asset URLs')
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
     monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
-    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fail_generate_asset_url)
+    monkeypatch.setattr(app_service, 'get_result_storage', lambda: FailResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     result = await app_service.run_retrieval_query(

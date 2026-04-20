@@ -136,7 +136,7 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
     assert matching_chunks[0].id.startswith('dchk_')
 
 
-def test_publish_document_state_uses_asset_s3_key_as_internal_media_reference(monkeypatch) -> None:
+def test_publish_document_state_uses_asset_ref_as_internal_media_reference(monkeypatch) -> None:
     db = MagicMock()
     service = lifecycle_module.SyncJobLifecycleService()
 

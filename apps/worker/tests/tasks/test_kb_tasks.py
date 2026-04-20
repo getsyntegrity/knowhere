@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 import os
 
@@ -178,6 +179,18 @@ class _FakeDbContext:
         return _FakeDbResult(self.job)
 
 
+class _FakeResultStorage:
+    def __init__(self, raw_files: dict[str, str] | None = None):
+        self.raw_files = raw_files or {}
+
+    def upload(self, *, job_id: str, result_dir: str, temp_dir: str | None = None):
+        return SimpleNamespace(
+            zip_key=f"results/{job_id}.zip",
+            raw_prefix=f"results/{job_id}/",
+            raw_files=dict(self.raw_files),
+        )
+
+
 def _find_task_workspaces(root: Path, job_id: str) -> list[Path]:
     return sorted(
         path
@@ -269,7 +282,7 @@ def test_parse_cleans_task_workspace_after_success(monkeypatch, tmp_path):
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
     monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
     monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
-    monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
+    monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: _FakeResultStorage())
 
     result = kb_tasks._parse("job_123", "user_123")
 
@@ -349,7 +362,7 @@ def test_parse_uses_s3_extension_for_internal_parse_name(monkeypatch, tmp_path):
         "generate_zip_package",
         lambda self, **kwargs: (str(Path(kwargs["temp_dir"]) / "result.zip"), {"value": "checksum"}, {"total_chunks": 1}, 3),
     )
-    monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
+    monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: _FakeResultStorage())
 
     kb_tasks._parse("job_123", "user_123")
 
@@ -416,7 +429,7 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
         "generate_zip_package",
         lambda self, **kwargs: (str(Path(kwargs["temp_dir"]) / "result.zip"), {"value": "checksum"}, {"total_chunks": 1}, 3),
     )
-    monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
+    monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: _FakeResultStorage())
 
     kb_tasks._parse("job_123", "user_123")
 
@@ -424,12 +437,12 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
     assert "chunks_job_id" not in lifecycle_service.success_calls[0]
 
 
-def test_parse_uploads_media_assets_and_passes_asset_s3_keys_to_finalize(monkeypatch, tmp_path):
+def test_parse_uses_result_storage_upload_and_passes_asset_refs_to_finalize(monkeypatch, tmp_path):
     redis_service = MagicMock()
     job = type("JobRow", (), {"billing_status": "charged"})()
     metadata_service = _FakeSuccessMetadataService(redis_service)
     lifecycle_service = _FakeLifecycleService()
-    uploads: list[tuple[str, str, str]] = []
+    storage_uploads: list[dict[str, str]] = []
 
     class FakeMediaChunksRedisService:
         def __init__(self, redis_service):
@@ -536,19 +549,38 @@ def test_parse_uploads_media_assets_and_passes_asset_s3_keys_to_finalize(monkeyp
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
     monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
     monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
-    monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
-    monkeypatch.setattr(
-        "app.services.storage.result_artifact_service.upload_to_s3",
-        lambda local_path, s3_key, bucket: uploads.append((local_path, s3_key, bucket)),
-    )
+
+    class FakeResultStorage:
+        def upload(self, *, job_id, result_dir, temp_dir=None):
+            storage_uploads.append(
+                {
+                    "job_id": job_id,
+                    "result_dir": result_dir,
+                    "temp_dir": temp_dir,
+                }
+            )
+            return SimpleNamespace(
+                zip_key=f"results/{job_id}.zip",
+                raw_prefix=f"results/{job_id}/",
+                raw_files={
+                    "images/page-1.png": f"results/{job_id}/images/page-1.png",
+                    "tables/table-1.html": f"results/{job_id}/tables/table-1.html",
+                },
+            )
+
+    monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: FakeResultStorage())
 
     kb_tasks._parse("job_123", "user_123")
 
-    assert [upload[1] for upload in uploads] == [
-        "results/job_123/images/page-1.png",
-        "results/job_123/tables/table-1.html",
+    assert storage_uploads == [
+        {
+            "job_id": "job_123",
+            "result_dir": storage_uploads[0]["result_dir"],
+            "temp_dir": storage_uploads[0]["temp_dir"],
+        }
     ]
-    assert {upload[2] for upload in uploads} == {"results-bucket"}
+    assert storage_uploads[0]["result_dir"].endswith("Default_Root/test.pdf")
+    assert storage_uploads[0]["temp_dir"] == str(Path(storage_uploads[0]["temp_dir"]))
     finalized_chunks = lifecycle_service.success_calls[0]["chunks"]
     assert finalized_chunks[0]["metadata"]["asset_ref"] == "images/page-1.png"
     assert finalized_chunks[1]["metadata"]["asset_ref"] == "tables/table-1.html"

@@ -283,23 +283,23 @@ async def test_retrieval_query_route_passes_section_exclusions(authenticated_cli
 @pytest.mark.asyncio
 async def test_retrieval_asset_url_helper_works_in_api_runtime(monkeypatch):
     from shared.services.retrieval.app_service import generate_retrieval_asset_url
-    from shared.services.storage.file_upload_service import FileUploadService
 
-    async def fake_generate_download_url(self, s3_key, bucket=None, expires_in=3600):
-        assert s3_key == 'results/job_123/images/page-1.png'
-        assert bucket is None
-        assert expires_in == 3600
-        return {
-            'download_url': 'https://assets.test/results/job_123/images/page-1.png?signature=fresh',
-            'expires_in': expires_in,
-        }
+    captured = {}
 
-    monkeypatch.setattr(FileUploadService, 'generate_download_url', fake_generate_download_url)
+    class FakeResultStorage:
+        def generate_artifact_url(self, *, job_id, artifact_ref, expires_in=3600):
+            captured.update({'job_id': job_id, 'artifact_ref': artifact_ref, 'expires_in': expires_in})
+            return 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
 
-    assert (
-        await generate_retrieval_asset_url(job_id='job_123', artifact_ref='images/page-1.png')
-        == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
+        def normalize_artifact_ref(self, artifact_ref):
+            return artifact_ref
+
+    monkeypatch.setattr('shared.services.retrieval.app_service.get_result_storage', lambda: FakeResultStorage())
+
+    assert await generate_retrieval_asset_url(job_id='job_123', artifact_ref='images/page-1.png') == (
+        'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
     )
+    assert captured == {'job_id': 'job_123', 'artifact_ref': 'images/page-1.png', 'expires_in': 3600}
 
 
 @pytest.mark.asyncio
