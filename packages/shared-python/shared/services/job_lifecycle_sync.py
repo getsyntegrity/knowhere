@@ -121,12 +121,13 @@ class SyncJobLifecycleService:
                     job_result_id=job_result.id,
                     chunks=normalized_chunks,
                 )
-                self._publish_document_graph(
-                    db,
-                    job_id=job_id,
-                    job_result_id=job_result.id,
-                    chunks=normalized_chunks,
-                )
+                if published_document_state is not None:
+                    self._publish_document_graph(
+                        db,
+                        job_id=job_id,
+                        job_result_id=job_result.id,
+                        chunks=normalized_chunks,
+                    )
                 cache_invalidation = self._build_retrieval_cache_invalidation(
                     db,
                     job_id=job_id,
@@ -364,6 +365,15 @@ class SyncJobLifecycleService:
             db.add(document)
         else:
             namespace = namespace or document.namespace
+            if self._is_stale_document_completion(
+                db,
+                document=document,
+                job=job,
+            ):
+                logger.warning(
+                    f"Skipping stale document publication: job_id={job_id}, document_id={document.document_id}"
+                )
+                return None
             document.status = "active"
             document.current_job_result_id = job_result_id
             document.source_file_name = source_file_name or document.source_file_name
@@ -420,6 +430,37 @@ class SyncJobLifecycleService:
 
         db.flush()
         return {"user_id": str(job.user_id), "namespace": namespace, "document_id": document_id}
+
+    def _is_stale_document_completion(
+        self,
+        db: Session,
+        *,
+        document: Document,
+        job: Job,
+    ) -> bool:
+        current_job_result_id = getattr(document, "current_job_result_id", None)
+        if not current_job_result_id:
+            return False
+
+        current_job_result = db.execute(
+            select(JobResult).where(JobResult.id == current_job_result_id)
+        ).scalar_one_or_none()
+        current_job_id = getattr(current_job_result, "job_id", None)
+        if current_job_result is None or not current_job_id:
+            return False
+
+        current_job = db.execute(
+            select(Job).where(Job.job_id == current_job_id)
+        ).scalar_one_or_none()
+        if current_job is None:
+            return False
+
+        current_created_at = getattr(current_job, "created_at", None)
+        candidate_created_at = getattr(job, "created_at", None)
+        if current_created_at is None or candidate_created_at is None:
+            return False
+
+        return current_created_at > candidate_created_at
 
     def _build_content_lexical_text(self, chunk: Dict[str, Any]) -> Optional[str]:
         content = str(chunk.get("content") or chunk.get("text") or "").strip()

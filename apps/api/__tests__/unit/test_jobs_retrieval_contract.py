@@ -6,6 +6,7 @@ from fastapi import Request
 
 from app.api.v1.routes import jobs
 from app.services.rate_limit.data_structures import CurrentUser
+from shared.core.exceptions.domain_exceptions import ConflictException
 from shared.models.schemas.job import JobCreate, ParsingParams
 
 
@@ -25,7 +26,7 @@ def _make_http_request() -> Request:
 
 
 @pytest.mark.asyncio
-async def test_create_job_defaults_namespace_for_new_documents(monkeypatch):
+async def test_create_job_defaults_namespace_and_generates_document_id_for_new_documents(monkeypatch):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),
@@ -84,7 +85,9 @@ async def test_create_job_defaults_namespace_for_new_documents(monkeypatch):
 
     assert response.source_type == "file"
     assert response.namespace == "default"
-    assert response.document_id is None
+    assert response.document_id is not None
+    assert response.document_id.startswith("doc_")
+    assert captured["metadata"]["document_id"] == response.document_id
     assert captured["metadata"]["namespace"] == "default"
 
 
@@ -157,3 +160,48 @@ async def test_create_job_update_omitting_namespace_keeps_existing_document_name
     assert response.namespace == "support-center"
     assert response.document_id == "doc_123"
     assert captured["metadata"]["namespace"] == "support-center"
+
+
+@pytest.mark.asyncio
+async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_document(monkeypatch):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
+    monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
+
+    class _DocumentRepo:
+        async def get_document(self, _db, *, document_id, user_id):
+            assert document_id == "doc_123"
+            assert user_id == "u_test"
+            return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
+
+    monkeypatch.setattr(jobs, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(
+        jobs,
+        "find_active_job_for_document",
+        AsyncMock(return_value=type("Job", (), {"job_id": "job_active"})()),
+    )
+
+    payload = JobCreate(
+        source_type="file",
+        file_name="doc.pdf",
+        document_id="doc_123",
+        parsing_params=ParsingParams(),
+    )
+    current_user = CurrentUser(user_id="u_test", user_tier="free")
+
+    with pytest.raises(ConflictException) as exc_info:
+        await jobs.create_job(
+            payload=payload,
+            http_request=_make_http_request(),
+            current_user=current_user,
+            db=object(),
+        )
+
+    assert exc_info.value.details == {
+        "reason": "ABORTED",
+        "resource": "Document",
+        "id": "doc_123",
+    }

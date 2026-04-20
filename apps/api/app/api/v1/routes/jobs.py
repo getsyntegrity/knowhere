@@ -23,6 +23,7 @@ from app.services.rate_limit.dependencies import (
 )
 from shared.core.state_machine.states import JobStatus
 from shared.models.database.document import Document
+from shared.models.database.job import Job
 from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
                                     JobResponse, JobResultResponse, StandardErrorObject)
 from app.repositories.job_repository import JobRepository
@@ -31,8 +32,10 @@ from app.services.state_machine import JobStateMachine
 from shared.services.storage.file_upload_service import FileUploadService
 from fastapi import APIRouter, Depends, Query, Request, status
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.exceptions.domain_exceptions import (
+    ConflictException,
     ValidationException,
     NotFoundException,
     PermissionDeniedException,
@@ -64,6 +67,31 @@ class DocumentRepository:
         return result.scalar_one_or_none()
 
 
+ACTIVE_DOCUMENT_JOB_STATES = (
+    JobStatus.WAITING_FILE.value,
+    JobStatus.PENDING.value,
+    JobStatus.RUNNING.value,
+    JobStatus.CONVERTING.value,
+)
+
+
+async def find_active_job_for_document(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    document_id: str,
+):
+    if not hasattr(db, "execute"):
+        return None
+    result = await db.execute(
+        select(Job)
+        .where(Job.user_id == user_id)
+        .where(Job.status.in_(ACTIVE_DOCUMENT_JOB_STATES))
+        .where(Job.job_metadata["document_id"].astext == document_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def resolve_effective_document_scope(
     db: AsyncSession,
     *,
@@ -72,7 +100,7 @@ async def resolve_effective_document_scope(
     requested_namespace: Optional[str],
 ) -> tuple[Optional[str], str]:
     if not document_id:
-        return None, requested_namespace or "default"
+        return f"doc_{uuid.uuid4().hex[:12]}", requested_namespace or "default"
 
     document = await DocumentRepository().get_document(
         db,
@@ -341,6 +369,22 @@ async def create_job(
             document_id=cast(Optional[str], job_metadata.get("document_id")),
             requested_namespace=cast(Optional[str], payload.namespace),
         )
+        active_job = await find_active_job_for_document(
+            db,
+            user_id=current_user.user_id,
+            document_id=cast(str, effective_document_id),
+        )
+        if active_job is not None:
+            raise ConflictException(
+                user_message="Another ingestion job for this document is already in progress",
+                reason="ABORTED",
+                resource="Document",
+                resource_id=cast(str, effective_document_id),
+                internal_message=(
+                    f"Concurrent ingestion blocked for document_id={effective_document_id}; "
+                    f"active_job_id={active_job.job_id}"
+                ),
+            )
         job_metadata["document_id"] = effective_document_id
         job_metadata["namespace"] = effective_namespace
 
@@ -538,6 +582,8 @@ async def create_job(
                 )
 
     except ValidationException:
+        raise
+    except ConflictException:
         raise
     except WebhookConfigException:
         raise

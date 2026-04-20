@@ -201,6 +201,7 @@ def test_publish_document_state_preserves_existing_document_namespace_when_updat
     db.execute.side_effect = [
         SimpleNamespace(scalar_one_or_none=lambda: job),
         SimpleNamespace(scalar_one_or_none=lambda: document),
+        SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_old', document_id='doc_123')),
         SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_123', document_id='doc_123')),
     ]
 
@@ -241,6 +242,7 @@ def test_publish_document_state_preserves_historical_canonical_rows() -> None:
     db.execute.side_effect = [
         SimpleNamespace(scalar_one_or_none=lambda: job),
         SimpleNamespace(scalar_one_or_none=lambda: document),
+        SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_old', document_id='doc_123')),
         SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_123', document_id='doc_123')),
     ]
 
@@ -262,6 +264,67 @@ def test_publish_document_state_preserves_historical_canonical_rows() -> None:
     executed_sql = ''.join(str(call.args[0]) for call in db.execute.call_args_list)
     assert 'DELETE FROM document_chunks' not in executed_sql
     assert 'DELETE FROM document_sections' not in executed_sql
+
+
+def test_publish_document_state_rejects_stale_completion_for_existing_document() -> None:
+    db = MagicMock()
+    service = lifecycle_module.SyncJobLifecycleService()
+    newer_job = SimpleNamespace(
+        job_id='job_new',
+        created_at=datetime(2026, 4, 20, 9, 0, 0),
+    )
+    current_job_result = SimpleNamespace(
+        id='result_new',
+        job_id='job_new',
+    )
+    document = SimpleNamespace(
+        document_id='doc_123',
+        user_id='user_123',
+        namespace='default',
+        status='active',
+        current_job_result_id='result_new',
+        source_file_name='refund-policy.md',
+        updated_at=None,
+    )
+    stale_job = SimpleNamespace(
+        job_id='job_old',
+        created_at=datetime(2026, 4, 20, 8, 0, 0),
+        user_id='user_123',
+        job_metadata={
+            'namespace': 'default',
+            'document_id': 'doc_123',
+            'source_file_name': 'refund-policy.md',
+        },
+    )
+
+    db.execute.side_effect = [
+        SimpleNamespace(scalar_one_or_none=lambda: stale_job),
+        SimpleNamespace(scalar_one_or_none=lambda: document),
+        SimpleNamespace(scalar_one_or_none=lambda: current_job_result),
+        SimpleNamespace(scalar_one_or_none=lambda: newer_job),
+    ]
+
+    published = service._publish_document_state(
+        db,
+        job_id='job_old',
+        job_result_id='result_old',
+        chunks=[
+            {
+                'chunk_id': 'chunk_1',
+                'type': 'text',
+                'content': 'Older revision content',
+                'metadata': {'path': 'Default_Root/refund-policy.md-->Billing-->Refunds'},
+                'order': 0,
+            }
+        ],
+    )
+
+    assert published is None
+    assert document.current_job_result_id == 'result_new'
+    added = [call.args[0] for call in db.add.call_args_list]
+    from shared.models.database.document import DocumentChunk, DocumentSection
+    assert not any(isinstance(obj, DocumentChunk) for obj in added)
+    assert not any(isinstance(obj, DocumentSection) for obj in added)
 
 
 def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -> None:

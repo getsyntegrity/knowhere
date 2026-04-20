@@ -47,7 +47,12 @@ def test_finalize_job_success_publishes_graph_state(monkeypatch) -> None:
         lambda *_args, **_kwargs: SimpleNamespace(id="result_123"),
     )
     monkeypatch.setattr(service, "_replace_chunks", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(service, "_publish_document_state", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(
+        service,
+        "_publish_document_state",
+        lambda *_args, **_kwargs: {"user_id": "user_123", "namespace": "default", "document_id": "doc_123"},
+        raising=False,
+    )
     monkeypatch.setattr(service, "_publish_document_graph", lambda _db, **kwargs: captured.update(kwargs), raising=False)
     monkeypatch.setattr(service._state_machine, "mark_completed", lambda *args, **kwargs: True)
     monkeypatch.setattr(service, "_maybe_create_webhook_event", lambda *args, **kwargs: None)
