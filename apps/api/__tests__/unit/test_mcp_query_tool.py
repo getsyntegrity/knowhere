@@ -6,7 +6,6 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
     from app.mcp import retrieval_server
 
     registered = {}
-    resolved_user_ids = []
 
     class FakeServer:
         def __init__(self, name, instructions=None, **_kwargs):
@@ -46,19 +45,39 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
             ],
         }
 
-    async def fake_resolve_user_id():
-        resolved_user_ids.append('user_123')
-        return 'user_123'
-
     monkeypatch.setattr(retrieval_server, 'FastMCP', FakeServer)
     monkeypatch.setattr(retrieval_server, 'run_retrieval_query', fake_run_retrieval_query)
-    monkeypatch.setattr(retrieval_server, 'resolve_mcp_user_id', fake_resolve_user_id)
+
+    captured_auth = {}
+
+    async def fake_get_current_user_id(*, request, authorization, db):
+        captured_auth['authorization'] = authorization
+        captured_auth['db'] = db
+        captured_auth['path'] = getattr(getattr(request, 'url', None), 'path', None)
+        return 'user_123'
+
+    monkeypatch.setattr(retrieval_server, 'get_current_user_id', fake_get_current_user_id)
 
     server = retrieval_server.create_retrieval_mcp_server(db_factory=lambda: object())
 
     assert server.name == 'knowhere-retrieval'
     assert registered['name'] == 'kb.query'
     assert 'Query the published knowledge base' in registered['description']
+
+    class FakeRequestContext:
+        def __init__(self):
+            self.request = type(
+                'Req',
+                (),
+                {
+                    'headers': {'authorization': 'Bearer sk_test'},
+                    'url': type('Url', (), {'path': '/mcp'})(),
+                },
+            )()
+
+    class FakeContext:
+        def __init__(self):
+            self.request_context = FakeRequestContext()
 
     response = await registered['fn'](
         query='refund policy',
@@ -67,9 +86,10 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
         exclude_document_ids=['doc_skip'],
         exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}],
         graph_enabled=False,
+        ctx=FakeContext(),
     )
 
     assert response['namespace'] == 'default'
     assert response['results'][0]['chunk_id'] == 'chunk_456'
     assert response['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
-    assert resolved_user_ids == ['user_123']
+    assert captured_auth['authorization'] == 'Bearer sk_test'

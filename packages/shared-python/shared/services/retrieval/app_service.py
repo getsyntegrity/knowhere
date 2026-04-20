@@ -5,7 +5,7 @@ import inspect
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db_context
@@ -46,8 +46,105 @@ def _filter_excluded_rows(
     return filtered
 
 
+def _iter_connected_target_ids(row: dict[str, Any]) -> list[str]:
+    metadata = row.get('chunk_metadata') or {}
+    if not isinstance(metadata, dict):
+        return []
+
+    target_ids: list[str] = []
+    for item in metadata.get('connect_to') or []:
+        if not isinstance(item, dict):
+            continue
+        target_id = str(item.get('target') or '').strip()
+        if target_id:
+            target_ids.append(target_id)
+    return target_ids
+
+
+async def hydrate_connected_target_rows(
+    *,
+    db: AsyncSession | None,
+    rows: list[dict[str, Any]],
+    exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    if db is None:
+        return []
+
+    existing_chunk_ids = {
+        str(row.get('chunk_id') or '').strip()
+        for row in rows
+        if row.get('chunk_id')
+    }
+    target_ids_by_revision: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        chunk_type = str(row.get('chunk_type') or '').strip().split('\n', 1)[0].lower()
+        if chunk_type != 'text':
+            continue
+        document_id = str(row.get('document_id') or '').strip()
+        job_result_id = str(row.get('job_result_id') or '').strip()
+        if not document_id or not job_result_id:
+            continue
+        for target_id in _iter_connected_target_ids(row):
+            if target_id in existing_chunk_ids:
+                continue
+            target_ids_by_revision.setdefault((document_id, job_result_id), set()).add(target_id)
+
+    if not target_ids_by_revision:
+        return []
+
+    revision_filters = [
+        and_(
+            DocumentChunk.document_id == document_id,
+            DocumentChunk.job_result_id == job_result_id,
+            DocumentChunk.chunk_id.in_(sorted(target_ids)),
+        )
+        for (document_id, job_result_id), target_ids in target_ids_by_revision.items()
+        if target_ids
+    ]
+    if not revision_filters:
+        return []
+
+    stmt = (
+        select(Document, DocumentChunk, DocumentSection, JobResult)
+        .join(DocumentChunk, DocumentChunk.document_id == Document.document_id)
+        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
+        .where(or_(*revision_filters))
+        .order_by(DocumentChunk.sort_order)
+    )
+    result = await db.execute(stmt)
+
+    hydrated_rows: list[dict[str, Any]] = []
+    for document, chunk, section, job_result in result.all():
+        section_path = section.section_path if section else None
+        hydrated_rows.append(
+            {
+                'document_id': document.document_id,
+                'chunk_id': chunk.chunk_id,
+                'section_id': chunk.section_id,
+                'section_path': section_path,
+                'source_file_name': document.source_file_name,
+                'chunk_type': chunk.chunk_type,
+                'content': chunk.content,
+                'score': 0.0,
+                'file_path': chunk.file_path,
+                'chunk_metadata': chunk.chunk_metadata or {},
+                'job_result_id': chunk.job_result_id,
+                'job_id': job_result.job_id if job_result else None,
+            }
+        )
+
+    return _filter_excluded_rows(
+        hydrated_rows,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
+
+
 async def assemble_retrieval_results(
     *,
+    db: AsyncSession | None = None,
     rows: list[dict[str, Any]],
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
@@ -57,22 +154,22 @@ async def assemble_retrieval_results(
         exclude_document_ids=exclude_document_ids,
         exclude_sections=exclude_sections,
     )
+    hydrated_rows = await hydrate_connected_target_rows(
+        db=db,
+        rows=filtered_rows,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
     rows_by_chunk_id = {
         str(row.get('chunk_id') or ''): row
-        for row in filtered_rows
+        for row in [*filtered_rows, *hydrated_rows]
         if row.get('chunk_id')
     }
 
     embedded_targets: set[str] = set()
     for row in filtered_rows:
-        metadata = row.get('chunk_metadata') or {}
-        if not isinstance(metadata, dict):
-            continue
-        for item in metadata.get('connect_to') or []:
-            if not isinstance(item, dict):
-                continue
-            target_id = str(item.get('target') or '').strip()
-            if target_id and target_id in rows_by_chunk_id:
+        for target_id in _iter_connected_target_ids(row):
+            if target_id in rows_by_chunk_id:
                 embedded_targets.add(target_id)
 
     assembled: list[dict[str, Any]] = []
@@ -86,12 +183,7 @@ async def assemble_retrieval_results(
         base_content = str(row.get('content') or '')
         if str(row.get('chunk_type') or '').strip().split('\n', 1)[0].lower() == 'text':
             related_parts: list[str] = []
-            for item in metadata.get('connect_to') or []:
-                if not isinstance(item, dict):
-                    continue
-                target_id = str(item.get('target') or '').strip()
-                if not target_id:
-                    continue
+            for target_id in _iter_connected_target_ids(row):
                 target_row = rows_by_chunk_id.get(target_id)
                 if not target_row:
                     continue
@@ -226,8 +318,6 @@ def _with_citation(row: dict[str, Any]) -> dict[str, Any]:
         'source_file_name': row.get('source_file_name'),
         'section_path': row.get('section_path'),
     }
-    if row.get('file_path'):
-        citation['file_path'] = row['file_path']
     return {**row, 'citation': citation}
 
 
@@ -254,9 +344,11 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
     public_results: list[dict[str, Any]] = []
     for row in response.get('results', []):
         public_row = dict(row)
+        public_row.pop('file_path', None)
         citation = row.get('citation')
         if isinstance(citation, dict):
             public_row['citation'] = dict(citation)
+            public_row['citation'].pop('file_path', None)
 
         artifact_ref = row.get('file_path')
         if _is_media_chunk(row) and _is_client_result_artifact_ref(artifact_ref) and row.get('job_id'):
@@ -267,10 +359,6 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
                 )
                 if asset_url:
                     public_row['asset_url'] = asset_url
-                    public_row.pop('file_path', None)
-                    citation = public_row.get('citation')
-                    if isinstance(citation, dict):
-                        citation.pop('file_path', None)
             except Exception as e:
                 logger.warning(f'Failed to generate retrieval asset URL (ignored): {e}')
         public_results.append(public_row)
@@ -346,6 +434,7 @@ async def run_retrieval_query(
         rows = list(lexical_rows)
 
     assembled_rows = await assemble_retrieval_results(
+        db=db,
         rows=rows,
         exclude_document_ids=exclude_document_ids,
         exclude_sections=exclude_sections,

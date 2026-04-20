@@ -5,13 +5,15 @@ from typing import AsyncIterator, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.dependencies import get_current_user_id
 from shared.core.database import get_db_context
 from shared.services.retrieval import run_retrieval_query
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp import Context, FastMCP
 except ImportError:  # pragma: no cover - optional until MCP deps are installed
     FastMCP = None
+    Context = object  # type: ignore[assignment]
 
 
 DbFactory = Callable[[], AsyncIterator[AsyncSession] | AsyncSession | object]
@@ -32,8 +34,19 @@ async def _db_context_from_factory(db_factory: DbFactory):
     yield resource
 
 
-async def resolve_mcp_user_id() -> str:
-    raise RuntimeError('MCP auth context resolution is not configured')
+async def resolve_mcp_user_id(*, ctx: Context | None, db: AsyncSession) -> str:
+    request_context = getattr(ctx, 'request_context', None)
+    request = getattr(request_context, 'request', None)
+    if request is None:
+        raise RuntimeError('MCP auth context request is not available')
+
+    headers = getattr(request, 'headers', {}) or {}
+    authorization = headers.get('authorization')
+    return await get_current_user_id(
+        request=request,
+        authorization=authorization,
+        db=db,
+    )
 
 
 def create_retrieval_mcp_server(*, db_factory: DbFactory = get_db_context):
@@ -56,10 +69,11 @@ def create_retrieval_mcp_server(*, db_factory: DbFactory = get_db_context):
         exclude_document_ids: list[str] | None = None,
         exclude_sections: list[dict[str, str]] | None = None,
         graph_enabled: bool = False,
+        ctx: Context | None = None,
     ) -> dict:
         effective_namespace = namespace or 'default'
-        user_id = await resolve_mcp_user_id()
         async with _db_context_from_factory(db_factory) as db:
+            user_id = await resolve_mcp_user_id(ctx=ctx, db=db)
             return await run_retrieval_query(
                 db=db,
                 user_id=user_id,

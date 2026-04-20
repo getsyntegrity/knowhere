@@ -411,7 +411,7 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
 
 
 @pytest.mark.asyncio
-async def test_run_retrieval_query_keeps_legacy_media_file_path_until_asset_backfill_exists(monkeypatch):
+async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_is_unavailable(monkeypatch):
     from shared.services.retrieval import app_service
 
     generated = []
@@ -428,7 +428,7 @@ async def test_run_retrieval_query_keeps_legacy_media_file_path_until_asset_back
                     'section_path': 'Drawings / Images',
                     'source_file_name': 'drawing.pdf',
                     'chunk_type': 'image',
-                    'text': 'cached caption',
+                    'content': 'cached caption',
                     'score': 1.0,
                     'file_path': 'images/page-1.png',
                     'citation': {
@@ -465,9 +465,9 @@ async def test_run_retrieval_query_keeps_legacy_media_file_path_until_asset_back
 
     assert generated == []
     public_result = result['results'][0]
-    assert public_result['file_path'] == 'images/page-1.png'
-    assert public_result['citation']['file_path'] == 'images/page-1.png'
     assert 'asset_url' not in public_result
+    assert 'file_path' not in public_result
+    assert 'file_path' not in public_result['citation']
 
 
 @pytest.mark.asyncio
@@ -492,7 +492,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
             }
         ]
 
-    async def fail_generate_asset_url(_asset_s3_key):
+    async def fail_generate_asset_url(*, job_id, artifact_ref):
         raise AssertionError('text chunks should not receive asset URLs')
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
@@ -514,7 +514,8 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
 
     public_result = result['results'][0]
     assert 'asset_url' not in public_result
-    assert public_result['file_path'] == 'results/job_123/images/ignored.png'
+    assert 'file_path' not in public_result
+    assert 'file_path' not in public_result['citation']
 
 
 @pytest.mark.asyncio
@@ -612,6 +613,60 @@ async def test_assemble_result_content_inlines_connected_tables_after_exclusions
 
     assert len(assembled) == 1
     assert assembled[0]['chunk_id'] == 'chunk_text'
+    assert assembled[0]['content'] == 'Base refund policy text\n\nRefund table content'
+
+
+@pytest.mark.asyncio
+async def test_assemble_result_content_hydrates_missing_connected_table_from_canonical_state(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    async def fake_hydrate(*, db, rows, exclude_document_ids, exclude_sections):
+        return [
+            {
+                'document_id': 'doc_123',
+                'chunk_id': 'chunk_table_keep',
+                'section_id': 'sec_table_keep',
+                'section_path': 'Policies / Billing / Refund Table',
+                'source_file_name': 'refund-policy.md',
+                'chunk_type': 'table',
+                'content': 'Refund table content',
+                'score': 1.0,
+                'file_path': 'tables/refunds.html',
+                'chunk_metadata': {},
+                'job_result_id': 'result_123',
+            }
+        ]
+
+    monkeypatch.setattr(app_service, 'hydrate_connected_target_rows', fake_hydrate)
+
+    rows = [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_text',
+            'section_id': 'sec_text',
+            'section_path': 'Policies / Billing',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Base refund policy text',
+            'score': 1.0,
+            'file_path': None,
+            'chunk_metadata': {
+                'connect_to': [
+                    {'target': 'chunk_table_keep', 'relation': 'embeds'},
+                ]
+            },
+            'job_result_id': 'result_123',
+        },
+    ]
+
+    assembled = await app_service.assemble_retrieval_results(
+        db=object(),
+        rows=rows,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert len(assembled) == 1
     assert assembled[0]['content'] == 'Base refund policy text\n\nRefund table content'
 
 
