@@ -33,7 +33,7 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
                     'section_path': 'Policies / Billing / Refunds',
                     'source_file_name': 'refund-policy.md',
                     'chunk_type': 'text',
-                    'text': 'Annual plans may be refunded within 30 days of purchase...',
+                    'content': 'Annual plans may be refunded within 30 days of purchase...',
                     'score': 1.0,
                     'citation': {
                         'document_id': 'doc_123',
@@ -48,20 +48,48 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
     monkeypatch.setattr(retrieval_server, 'FastMCP', FakeServer)
     monkeypatch.setattr(retrieval_server, 'run_retrieval_query', fake_run_retrieval_query)
 
+    captured_auth = {}
+
+    async def fake_get_current_user_id(*, request, authorization, db):
+        captured_auth['authorization'] = authorization
+        captured_auth['db'] = db
+        captured_auth['path'] = getattr(getattr(request, 'url', None), 'path', None)
+        return 'user_123'
+
+    monkeypatch.setattr(retrieval_server, 'get_current_user_id', fake_get_current_user_id)
+
     server = retrieval_server.create_retrieval_mcp_server(db_factory=lambda: object())
 
     assert server.name == 'knowhere-retrieval'
     assert registered['name'] == 'kb.query'
     assert 'Query the published knowledge base' in registered['description']
 
+    class FakeRequestContext:
+        def __init__(self):
+            self.request = type(
+                'Req',
+                (),
+                {
+                    'headers': {'authorization': 'Bearer sk_test'},
+                    'url': type('Url', (), {'path': '/mcp'})(),
+                },
+            )()
+
+    class FakeContext:
+        def __init__(self):
+            self.request_context = FakeRequestContext()
+
     response = await registered['fn'](
-        user_id='user_123',
         query='refund policy',
         namespace=None,
         top_k=5,
         exclude_document_ids=['doc_skip'],
+        exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}],
         graph_enabled=False,
+        ctx=FakeContext(),
     )
 
     assert response['namespace'] == 'default'
     assert response['results'][0]['chunk_id'] == 'chunk_456'
+    assert response['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
+    assert captured_auth['authorization'] == 'Bearer sk_test'

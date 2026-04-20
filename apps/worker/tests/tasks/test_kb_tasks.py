@@ -1,8 +1,24 @@
 from pathlib import Path
 from unittest.mock import MagicMock
+import os
 
 import pandas as pd
 import pytest
+
+os.environ.setdefault("DS_KEY", "test-key")
+os.environ.setdefault("DS_URL", "https://example.com")
+os.environ.setdefault("S3_BUCKET_NAME", "test-bucket")
+os.environ.setdefault("S3_ACCESS_KEY_ID", "test-access-key")
+os.environ.setdefault("S3_SECRET_ACCESS_KEY", "test-secret-key")
+os.environ.setdefault("S3_TEMP_PATH", "/tmp")
+os.environ.setdefault("USERS_DATA_PATH", "/tmp")
+os.environ.setdefault(
+    "DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb"
+)
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("TMP_PATH", "/tmp")
+os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
+os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 from app.core.tasks import kb_tasks
 from app.services.document_parser import parse_service
@@ -406,6 +422,136 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
 
     assert lifecycle_service.success_calls[0]["chunks"] == _FailOnSaveChunksRedisService.expected_chunks
     assert "chunks_job_id" not in lifecycle_service.success_calls[0]
+
+
+def test_parse_uploads_media_assets_and_passes_asset_s3_keys_to_finalize(monkeypatch, tmp_path):
+    redis_service = MagicMock()
+    job = type("JobRow", (), {"billing_status": "charged"})()
+    metadata_service = _FakeSuccessMetadataService(redis_service)
+    lifecycle_service = _FakeLifecycleService()
+    uploads: list[tuple[str, str, str]] = []
+
+    class FakeMediaChunksRedisService:
+        def __init__(self, redis_service):
+            self.redis_service = redis_service
+
+        def dataframe_to_chunks(self, dataframe: pd.DataFrame):
+            return [
+                {
+                    "chunk_id": "image-1",
+                    "type": "image",
+                    "path": "doc/images/page-1.png",
+                    "content": "image caption",
+                    "metadata": {"file_path": "images/page-1.png"},
+                    "text": "image caption",
+                    "order": 0,
+                    "know_id": "image-1",
+                },
+                {
+                    "chunk_id": "table-1",
+                    "type": "table",
+                    "path": "doc/tables/table-1.html",
+                    "content": "table content",
+                    "metadata": {"file_path": "tables/table-1.html"},
+                    "text": "table content",
+                    "order": 1,
+                    "know_id": "table-1",
+                },
+            ]
+
+    def fake_checkerboard_inject_parse(**kwargs):
+        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        (output_dir / "images").mkdir(parents=True, exist_ok=True)
+        (output_dir / "tables").mkdir(parents=True, exist_ok=True)
+        (output_dir / "images" / "page-1.png").write_bytes(b"png")
+        (output_dir / "tables" / "table-1.html").write_text("<table></table>", encoding="utf-8")
+        return str(output_dir), pd.DataFrame(
+            [
+                {
+                    "content": "image caption",
+                    "path": "doc/images/page-1.png",
+                    "type": "image",
+                    "length": 13,
+                    "keywords": "",
+                    "summary": "",
+                    "know_id": "image-1",
+                    "tokens": "",
+                    "connectto": "",
+                    "addtime": "now",
+                    "page_nums": "1",
+                },
+                {
+                    "content": "table content",
+                    "path": "doc/tables/table-1.html",
+                    "type": "table",
+                    "length": 13,
+                    "keywords": "",
+                    "summary": "",
+                    "know_id": "table-1",
+                    "tokens": "",
+                    "connectto": "",
+                    "addtime": "now",
+                    "page_nums": "1",
+                },
+            ]
+        )
+
+    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+        source_path = Path(temp_dir) / f"downloaded{file_ext}"
+        source_path.write_bytes(b"pdf")
+        return str(source_path)
+
+    def fake_generate_zip_package(
+        self,
+        job_id: str,
+        chunks,
+        add_dir: str,
+        source_file_name: str,
+        data_id,
+        job_metadata,
+        parsed_df=None,
+        temp_dir: str | None = None,
+    ):
+        zip_path = Path(temp_dir) / f"result_{job_id}.zip"
+        zip_path.write_bytes(b"zip")
+        return str(zip_path), {"value": "checksum"}, {"total_chunks": 2}, 3
+
+    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks.SyncRedisServiceFactory,
+        "get_service",
+        staticmethod(lambda: redis_service),
+    )
+    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
+    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", FakeMediaChunksRedisService)
+    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks.settings, "S3_RESULTS_BUCKET", "results-bucket", raising=False)
+    monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
+    monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
+    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
+    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
+    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
+    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+    monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
+    monkeypatch.setattr(kb_tasks, "upload_zip_result", lambda job_id, zip_file_path: f"results/{job_id}.zip")
+    monkeypatch.setattr(
+        "app.services.storage.result_artifact_service.upload_to_s3",
+        lambda local_path, s3_key, bucket: uploads.append((local_path, s3_key, bucket)),
+    )
+
+    kb_tasks._parse("job_123", "user_123")
+
+    assert [upload[1] for upload in uploads] == [
+        "results/job_123/images/page-1.png",
+        "results/job_123/tables/table-1.html",
+    ]
+    assert {upload[2] for upload in uploads} == {"results-bucket"}
+    finalized_chunks = lifecycle_service.success_calls[0]["chunks"]
+    assert finalized_chunks[0]["metadata"]["asset_ref"] == "images/page-1.png"
+    assert finalized_chunks[1]["metadata"]["asset_ref"] == "tables/table-1.html"
 
 
 def test_parse_cleans_task_workspace_after_failure(monkeypatch, tmp_path):

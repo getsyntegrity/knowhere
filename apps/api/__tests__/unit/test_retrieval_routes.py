@@ -37,7 +37,7 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
                     'section_path': 'Policies / Billing / Refunds',
                     'source_file_name': 'refund-policy.md',
                     'chunk_type': 'text',
-                    'text': 'Annual plans may be refunded within 30 days of purchase...',
+                    'content': 'Annual plans may be refunded within 30 days of purchase...',
                     'score': 1.0,
                     'citation': {
                         'document_id': 'doc_123',
@@ -60,6 +60,7 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
     body = response.json()
     assert body['namespace'] == 'default'
     assert body['results'][0]['chunk_id'] == 'chunk_456'
+    assert body['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
     assert body['results'][0]['citation']['section_path'] == 'Policies / Billing / Refunds'
 
 
@@ -119,7 +120,7 @@ async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticat
                     'section_path': 'Policies / Billing / Refunds',
                     'source_file_name': 'refund-policy.md',
                     'chunk_type': 'text',
-                    'text': 'Annual plans may be refunded within 30 days of purchase...',
+                    'content': 'Annual plans may be refunded within 30 days of purchase...',
                     'score': 1.0,
                     'citation': {
                         'document_id': 'doc_123',
@@ -139,6 +140,7 @@ async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticat
     assert scheduled['user_id']
     assert scheduled['namespace'] == 'default'
     assert scheduled['exclude_document_ids'] == []
+    assert scheduled['exclude_sections'] == []
     assert scheduled['query'] == 'refund policy'
     assert scheduled['top_k'] == 5
     assert scheduled['graph_enabled'] is False
@@ -161,7 +163,7 @@ async def test_retrieval_query_ignores_usage_analytics_schedule_failure(authenti
                     'section_path': 'Policies / Billing / Refunds',
                     'source_file_name': 'refund-policy.md',
                     'chunk_type': 'text',
-                    'text': 'Annual plans may be refunded within 30 days of purchase...',
+                    'content': 'Annual plans may be refunded within 30 days of purchase...',
                     'score': 1.0,
                     'citation': {
                         'document_id': 'doc_123',
@@ -228,7 +230,7 @@ async def test_retrieval_query_route_returns_cached_result_from_shared_service(a
                     'section_path': 'Policies / Billing / Refunds',
                     'source_file_name': 'refund-policy.md',
                     'chunk_type': 'text',
-                    'text': 'cached result',
+                    'content': 'cached result',
                     'score': 1.0,
                     'citation': {
                         'document_id': 'doc_cached',
@@ -246,6 +248,58 @@ async def test_retrieval_query_route_returns_cached_result_from_shared_service(a
 
     assert response.status_code == 200
     assert response.json()['results'][0]['chunk_id'] == 'chunk_cached'
+
+
+@pytest.mark.asyncio
+async def test_retrieval_query_route_passes_section_exclusions(authenticated_client, monkeypatch):
+    from app.api.v1.routes import retrieval as retrieval_routes
+
+    captured = {}
+
+    async def fake_run_retrieval_query(**kwargs):
+        captured.update(kwargs)
+        return {
+            'namespace': kwargs['namespace'],
+            'query': kwargs['query'],
+            'graph_enabled': kwargs['graph_enabled'],
+            'results': [],
+        }
+
+    monkeypatch.setattr(retrieval_routes, 'run_retrieval_query', fake_run_retrieval_query)
+
+    response = await authenticated_client.post(
+        '/v1/retrieval/query',
+        json={
+            'query': 'refund policy',
+            'top_k': 5,
+            'exclude_sections': [{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured['exclude_sections'] == [{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}]
+
+
+@pytest.mark.asyncio
+async def test_retrieval_asset_url_helper_works_in_api_runtime(monkeypatch):
+    from shared.services.retrieval.app_service import generate_retrieval_asset_url
+    from shared.services.storage.file_upload_service import FileUploadService
+
+    async def fake_generate_download_url(self, s3_key, bucket=None, expires_in=3600):
+        assert s3_key == 'results/job_123/images/page-1.png'
+        assert bucket is None
+        assert expires_in == 3600
+        return {
+            'download_url': 'https://assets.test/results/job_123/images/page-1.png?signature=fresh',
+            'expires_in': expires_in,
+        }
+
+    monkeypatch.setattr(FileUploadService, 'generate_download_url', fake_generate_download_url)
+
+    assert (
+        await generate_retrieval_asset_url(job_id='job_123', artifact_ref='images/page-1.png')
+        == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
+    )
 
 
 @pytest.mark.asyncio

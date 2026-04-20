@@ -15,17 +15,49 @@ def _namespace_version_key(*, user_id: str, namespace: str) -> str:
     return f"retrieval:version:{user_id}:{namespace}"
 
 
-def _cache_shape_digest(*, query: str, top_k: int, exclude_document_ids: list[str], graph_enabled: bool) -> str:
+def _normalize_exclude_sections(exclude_sections: list[dict[str, str]]) -> list[str]:
+    normalized: list[str] = []
+    for item in exclude_sections:
+        if not isinstance(item, dict):
+            continue
+        document_id = str(item.get('document_id') or '').strip()
+        section_path = str(item.get('section_path') or '').strip()
+        if not document_id or not section_path:
+            continue
+        normalized.append(f'{document_id}:{section_path}')
+    return sorted(set(normalized))
+
+
+def _cache_shape_digest(
+    *,
+    query: str,
+    top_k: int,
+    exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
+    graph_enabled: bool,
+) -> str:
     normalized_excludes = sorted(exclude_document_ids)
-    payload = f"{query}|{top_k}|{graph_enabled}|{'|'.join(normalized_excludes)}"
+    normalized_sections = _normalize_exclude_sections(exclude_sections)
+    payload = f"{query}|{top_k}|{graph_enabled}|{'|'.join(normalized_excludes)}|{'|'.join(normalized_sections)}"
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
-def _query_cache_key(*, user_id: str, namespace: str, version: int, query: str, top_k: int, exclude_document_ids: list[str], graph_enabled: bool) -> str:
+def _query_cache_key(
+    *,
+    user_id: str,
+    namespace: str,
+    version: int,
+    query: str,
+    top_k: int,
+    exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
+    graph_enabled: bool,
+) -> str:
     digest = _cache_shape_digest(
         query=query,
         top_k=top_k,
         exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
         graph_enabled=graph_enabled,
     )
     return f"retrieval:query:{user_id}:{namespace}:v{version}:{digest}"
@@ -64,6 +96,7 @@ async def get_cached_retrieval_query_result(
     query: str,
     top_k: int,
     exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
     graph_enabled: bool,
 ) -> tuple[int, dict[str, Any] | None]:
     version = await get_retrieval_namespace_cache_version(user_id=user_id, namespace=namespace)
@@ -76,6 +109,7 @@ async def get_cached_retrieval_query_result(
             query=query,
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
             graph_enabled=graph_enabled,
         ),
         default=None,
@@ -91,6 +125,7 @@ async def set_cached_retrieval_query_result(
     query: str,
     top_k: int,
     exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
     graph_enabled: bool,
     response: dict[str, Any],
 ) -> None:
@@ -103,6 +138,7 @@ async def set_cached_retrieval_query_result(
             query=query,
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
             graph_enabled=graph_enabled,
         ),
         response,

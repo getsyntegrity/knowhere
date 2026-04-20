@@ -48,10 +48,10 @@ from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 from app.services.storage.sync_storage_service import (
     verify_s3_file_exists,
     generate_download_url,
-    upload_to_s3,
     upload_zip_result,
     download_file_from_url,
 )
+from app.services.storage.result_artifact_service import publish_client_result_artifacts
 
 # Base task class
 from app.core.tasks.base_task import KBBaseTask
@@ -205,7 +205,6 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         "s3_key": s3_key,
         "file_size": file_info.get("size"),
     }
-
 
 @celery_app.task(
     bind=True,
@@ -516,6 +515,11 @@ def _parse(job_id: str, user_id: str | None):
 
             # Upload ZIP to S3 (sync)
             result_s3_key = upload_zip_result(job_id, zip_file_path)
+            chunks = publish_client_result_artifacts(
+                job_id=job_id,
+                chunks=chunks,
+                add_dir=str(add_dir) if add_dir else "",
+            )
 
             stored_count = 0
             kb_records = []

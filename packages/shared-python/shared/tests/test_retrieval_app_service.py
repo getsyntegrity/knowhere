@@ -1,4 +1,22 @@
+import os
+
 import pytest
+from types import SimpleNamespace
+
+os.environ.setdefault("DS_KEY", "test-key")
+os.environ.setdefault("DS_URL", "https://example.com")
+os.environ.setdefault("S3_BUCKET_NAME", "test-bucket")
+os.environ.setdefault("S3_ACCESS_KEY_ID", "test-access-key")
+os.environ.setdefault("S3_SECRET_ACCESS_KEY", "test-secret-key")
+os.environ.setdefault("S3_TEMP_PATH", "/tmp")
+os.environ.setdefault("USERS_DATA_PATH", "/tmp")
+os.environ.setdefault(
+    "DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb"
+)
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("TMP_PATH", "/tmp")
+os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
+os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 
 @pytest.mark.asyncio
@@ -21,7 +39,7 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
                 "section_path": "Policies / Billing / Refunds",
                 "source_file_name": "refund-policy.md",
                 "chunk_type": "text",
-                "text": "Annual plans may be refunded within 30 days of purchase...",
+                "content": "Annual plans may be refunded within 30 days of purchase...",
                 "score": 1.0,
                 "file_path": None,
             }
@@ -42,6 +60,7 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=True,
     )
 
@@ -50,6 +69,7 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
     assert result['query'] == 'refund policy'
     assert result['graph_enabled'] is False
     assert result['results'][0]['chunk_id'] == 'chunk_456'
+    assert result['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
     assert result['results'][0]['citation']['section_path'] == 'Policies / Billing / Refunds'
     assert scheduled['user_id'] == 'user_123'
     assert scheduled['namespace'] == 'default'
@@ -73,7 +93,7 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
                     'section_path': 'Policies / Billing / Refunds',
                     'source_file_name': 'refund-policy.md',
                     'chunk_type': 'text',
-                    'text': 'cached result',
+                    'content': 'cached result',
                     'score': 1.0,
                     'citation': {
                         'document_id': 'doc_cached',
@@ -102,6 +122,7 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -130,7 +151,7 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
                 'section_path': 'Policies / Billing / Refunds',
                 'source_file_name': 'refund-policy.md',
                 'chunk_type': 'text',
-                'text': 'Annual plans may be refunded within 30 days of purchase...',
+                'content': 'Annual plans may be refunded within 30 days of purchase...',
                 'score': 1.0,
                 'file_path': None,
             }
@@ -147,6 +168,7 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -172,7 +194,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
                 'section_path': 'Policies / Billing / Refunds',
                 'source_file_name': 'refund-policy.md',
                 'chunk_type': 'text',
-                'text': 'Annual plans may be refunded within 30 days of purchase...',
+                'content': 'Annual plans may be refunded within 30 days of purchase...',
                 'score': 1.0,
                 'file_path': None,
             }
@@ -193,6 +215,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
         query='refund policy',
         top_k=5,
         exclude_document_ids=['doc_skip'],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -203,8 +226,493 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
     assert cached_write['query'] == 'refund policy'
     assert cached_write['top_k'] == 5
     assert cached_write['exclude_document_ids'] == ['doc_skip']
+    assert cached_write['exclude_sections'] == []
     assert cached_write['graph_enabled'] is False
     assert cached_write['response']['results'][0]['chunk_id'] == 'chunk_456'
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    cached_write = {}
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 3, None
+
+    async def fake_list_canonical_chunks(*_args, **_kwargs):
+        return [
+            {
+                'document_id': 'doc_123',
+                'chunk_id': 'chunk_image',
+                'section_id': 'sec_12',
+                'section_path': 'Drawings / Images',
+                'source_file_name': 'drawing.pdf',
+                'chunk_type': 'image',
+                'content': 'OCR caption',
+                'score': 1.0,
+                'file_path': 'images/page-1.png',
+                'job_id': 'job_123',
+            }
+        ]
+
+    async def fake_generate_asset_url(*, job_id, artifact_ref):
+        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
+
+    async def fake_set_cached_retrieval_query_result(**kwargs):
+        cached_write.update(kwargs)
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fake_generate_asset_url)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='drawing',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+        graph_enabled=False,
+    )
+
+    public_result = result['results'][0]
+    assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
+    assert 'file_path' not in public_result
+    assert 'file_path' not in public_result['citation']
+    cached_result = cached_write['response']['results'][0]
+    assert cached_result['file_path'] == 'images/page-1.png'
+    assert 'asset_url' not in cached_result
+    assert 'asset_url' not in cached_result['citation']
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    generated = []
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 4, {
+            'namespace': 'default',
+            'query': 'drawing',
+            'results': [
+                {
+                    'document_id': 'doc_cached',
+                    'chunk_id': 'chunk_cached',
+                    'section_id': 'sec_cached',
+                    'section_path': 'Drawings / Images',
+                    'source_file_name': 'drawing.pdf',
+                    'chunk_type': 'image',
+                    'content': 'cached caption',
+                    'score': 1.0,
+                    'file_path': 'images/page-1.png',
+                    'job_id': 'job_123',
+                    'citation': {
+                        'document_id': 'doc_cached',
+                        'chunk_id': 'chunk_cached',
+                        'source_file_name': 'drawing.pdf',
+                        'section_path': 'Drawings / Images',
+                    },
+                }
+            ],
+            'graph_enabled': False,
+        }
+
+    async def fake_generate_asset_url(*, job_id, artifact_ref):
+        generated.append((job_id, artifact_ref))
+        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
+    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fake_generate_asset_url)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='drawing',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+        graph_enabled=False,
+    )
+
+    assert generated == [('job_123', 'images/page-1.png')]
+    public_result = result['results'][0]
+    assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
+    assert 'file_path' not in public_result
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtime(monkeypatch):
+    from shared.services.retrieval import app_service
+    from shared.services.storage.file_upload_service import FileUploadService
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 4, {
+            'namespace': 'default',
+            'query': 'drawing',
+            'results': [
+                {
+                    'document_id': 'doc_cached',
+                    'chunk_id': 'chunk_cached',
+                    'section_id': 'sec_cached',
+                    'section_path': 'Drawings / Images',
+                    'source_file_name': 'drawing.pdf',
+                    'chunk_type': 'image',
+                    'content': 'cached caption',
+                    'score': 1.0,
+                    'file_path': 'images/page-1.png',
+                    'job_id': 'job_123',
+                    'citation': {
+                        'document_id': 'doc_cached',
+                        'chunk_id': 'chunk_cached',
+                        'source_file_name': 'drawing.pdf',
+                        'section_path': 'Drawings / Images',
+                    },
+                }
+            ],
+            'graph_enabled': False,
+        }
+
+    async def fake_generate_download_url(self, s3_key, bucket=None, expires_in=3600):
+        assert s3_key == 'results/job_123/images/page-1.png'
+        assert bucket is None
+        assert expires_in == 3600
+        return {
+            'download_url': 'https://assets.test/results/job_123/images/page-1.png?signature=fresh',
+            'expires_in': expires_in,
+        }
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
+    monkeypatch.setattr(FileUploadService, 'generate_download_url', fake_generate_download_url)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='drawing',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+        graph_enabled=False,
+    )
+
+    public_result = result['results'][0]
+    assert public_result['asset_url'] == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
+    assert 'file_path' not in public_result
+    assert 'file_path' not in public_result['citation']
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_is_unavailable(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    generated = []
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 4, {
+            'namespace': 'default',
+            'query': 'drawing',
+            'results': [
+                {
+                    'document_id': 'doc_cached',
+                    'chunk_id': 'chunk_cached',
+                    'section_id': 'sec_cached',
+                    'section_path': 'Drawings / Images',
+                    'source_file_name': 'drawing.pdf',
+                    'chunk_type': 'image',
+                    'content': 'cached caption',
+                    'score': 1.0,
+                    'file_path': 'images/page-1.png',
+                    'citation': {
+                        'document_id': 'doc_cached',
+                        'chunk_id': 'chunk_cached',
+                        'source_file_name': 'drawing.pdf',
+                        'section_path': 'Drawings / Images',
+                        'file_path': 'images/page-1.png',
+                    },
+                }
+            ],
+            'graph_enabled': False,
+        }
+
+    async def fake_generate_asset_url(*, job_id, artifact_ref):
+        generated.append((job_id, artifact_ref))
+        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
+    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fake_generate_asset_url)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='drawing',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+        graph_enabled=False,
+    )
+
+    assert generated == []
+    public_result = result['results'][0]
+    assert 'asset_url' not in public_result
+    assert 'file_path' not in public_result
+    assert 'file_path' not in public_result['citation']
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 3, None
+
+    async def fake_list_canonical_chunks(*_args, **_kwargs):
+        return [
+            {
+                'document_id': 'doc_123',
+                'chunk_id': 'chunk_text',
+                'section_id': 'sec_12',
+                'section_path': 'Policies / Billing',
+                'source_file_name': 'refund-policy.md',
+                'chunk_type': 'text',
+                'content': 'Annual plans may be refunded within 30 days.',
+                'score': 1.0,
+                'file_path': 'results/job_123/images/ignored.png',
+            }
+        ]
+
+    async def fail_generate_asset_url(*, job_id, artifact_ref):
+        raise AssertionError('text chunks should not receive asset URLs')
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'generate_retrieval_asset_url', fail_generate_asset_url)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='refund',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+        graph_enabled=False,
+    )
+
+    public_result = result['results'][0]
+    assert 'asset_url' not in public_result
+    assert 'file_path' not in public_result
+    assert 'file_path' not in public_result['citation']
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_passes_section_exclusions_to_cache_and_db_paths(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    captured = {}
+
+    async def fake_get_cached_retrieval_query_result(**kwargs):
+        captured['cache_read'] = kwargs
+        return 5, None
+
+    async def fake_list_canonical_chunks(*_args, **kwargs):
+        captured['lexical'] = kwargs
+        return []
+
+    async def fake_set_cached_retrieval_query_result(**kwargs):
+        captured['cache_write'] = kwargs
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    exclude_sections = [{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}]
+    await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=['doc_skip'],
+        exclude_sections=exclude_sections,
+        graph_enabled=False,
+    )
+
+    assert captured['cache_read']['exclude_sections'] == exclude_sections
+    assert captured['lexical']['exclude_sections'] == exclude_sections
+    assert captured['cache_write']['exclude_sections'] == exclude_sections
+
+
+@pytest.mark.asyncio
+async def test_assemble_result_content_inlines_connected_tables_after_exclusions():
+    from shared.services.retrieval import app_service
+
+    rows = [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_text',
+            'section_id': 'sec_text',
+            'section_path': 'Policies / Billing',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Base refund policy text',
+            'score': 1.0,
+            'file_path': None,
+            'chunk_metadata': {
+                'connect_to': [
+                    {'target': 'chunk_table_keep', 'relation': 'embeds'},
+                    {'target': 'chunk_table_excluded', 'relation': 'embeds'},
+                ]
+            },
+        },
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_table_keep',
+            'section_id': 'sec_table_keep',
+            'section_path': 'Policies / Billing / Refund Table',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'table',
+            'content': 'Refund table content',
+            'score': 1.0,
+            'file_path': 'tables/refunds.html',
+            'chunk_metadata': {},
+        },
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_table_excluded',
+            'section_id': 'sec_table_excluded',
+            'section_path': 'Policies / Internal Only',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'table',
+            'content': 'Excluded table content',
+            'score': 1.0,
+            'file_path': 'tables/internal.html',
+            'chunk_metadata': {},
+        },
+    ]
+
+    assembled = await app_service.assemble_retrieval_results(
+        rows=rows,
+        exclude_document_ids=[],
+        exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Internal Only'}],
+    )
+
+    assert len(assembled) == 1
+    assert assembled[0]['chunk_id'] == 'chunk_text'
+    assert assembled[0]['content'] == 'Base refund policy text\n\nRefund table content'
+
+
+@pytest.mark.asyncio
+async def test_assemble_result_content_hydrates_missing_connected_table_from_canonical_state(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    async def fake_hydrate(*, db, rows, exclude_document_ids, exclude_sections):
+        return [
+            {
+                'document_id': 'doc_123',
+                'chunk_id': 'chunk_table_keep',
+                'section_id': 'sec_table_keep',
+                'section_path': 'Policies / Billing / Refund Table',
+                'source_file_name': 'refund-policy.md',
+                'chunk_type': 'table',
+                'content': 'Refund table content',
+                'score': 1.0,
+                'file_path': 'tables/refunds.html',
+                'chunk_metadata': {},
+                'job_result_id': 'result_123',
+            }
+        ]
+
+    monkeypatch.setattr(app_service, 'hydrate_connected_target_rows', fake_hydrate)
+
+    rows = [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_text',
+            'section_id': 'sec_text',
+            'section_path': 'Policies / Billing',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Base refund policy text',
+            'score': 1.0,
+            'file_path': None,
+            'chunk_metadata': {
+                'connect_to': [
+                    {'target': 'chunk_table_keep', 'relation': 'embeds'},
+                ]
+            },
+            'job_result_id': 'result_123',
+        },
+    ]
+
+    assembled = await app_service.assemble_retrieval_results(
+        db=object(),
+        rows=rows,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert len(assembled) == 1
+    assert assembled[0]['content'] == 'Base refund policy text\n\nRefund table content'
+
+
+@pytest.mark.asyncio
+async def test_assemble_result_content_keeps_table_chunk_content_as_self():
+    from shared.services.retrieval import app_service
+
+    rows = [
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_table',
+            'section_id': 'sec_table',
+            'section_path': 'Policies / Billing / Refund Table',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'table',
+            'content': 'Refund table content',
+            'score': 1.0,
+            'file_path': 'tables/refunds.html',
+            'chunk_metadata': {
+                'connect_to': [{'target': 'chunk_text', 'relation': 'embeds'}],
+            },
+        },
+        {
+            'document_id': 'doc_123',
+            'chunk_id': 'chunk_text',
+            'section_id': 'sec_text',
+            'section_path': 'Policies / Billing',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Base refund policy text',
+            'score': 1.0,
+            'file_path': None,
+            'chunk_metadata': {},
+        },
+    ]
+
+    assembled = await app_service.assemble_retrieval_results(
+        rows=rows,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert len(assembled) == 1
+    assert assembled[0]['chunk_id'] == 'chunk_table'
+    assert assembled[0]['content'] == 'Refund table content'
 
 
 @pytest.mark.asyncio
@@ -234,7 +742,153 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
     assert cached_write['version'] == 9
+
+
+@pytest.mark.asyncio
+async def test_list_canonical_chunks_fills_top_k_after_section_exclusion():
+    from shared.services.retrieval.app_service import list_canonical_chunks
+
+    def build_row(chunk_id, section_path):
+        document = SimpleNamespace(
+            document_id='doc_123',
+            source_file_name='refund-policy.md',
+        )
+        chunk = SimpleNamespace(
+            chunk_id=chunk_id,
+            section_id=f'sec_{chunk_id}',
+            chunk_type='text',
+            content=f'content-{chunk_id}',
+            file_path=None,
+            chunk_metadata={},
+            job_result_id='result_123',
+        )
+        section = SimpleNamespace(section_path=section_path)
+        job_result = SimpleNamespace(job_id='job_123')
+        return (document, chunk, section, job_result)
+
+    returned_rows = [
+        build_row('chunk_1', 'Excluded / One'),
+        build_row('chunk_2', 'Excluded / Two'),
+        build_row('chunk_3', 'Excluded / Three'),
+        build_row('chunk_4', 'Allowed / Four'),
+        build_row('chunk_5', 'Allowed / Five'),
+    ]
+
+    class FakeResult:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def all(self):
+            return self.rows
+
+    class FakeDB:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute(self, stmt):
+            self.calls += 1
+            sql = str(stmt.compile(compile_kwargs={'literal_binds': True}))
+            if self.calls == 1:
+                assert 'LIMIT 4' in sql
+                assert 'OFFSET 0' in sql or ' OFFSET ' not in sql
+                return FakeResult(returned_rows[:4])
+            assert 'LIMIT 4' in sql
+            assert 'OFFSET 4' in sql
+            return FakeResult(returned_rows[4:])
+
+    fake_db = FakeDB()
+
+    rows = await list_canonical_chunks(
+        fake_db,
+        user_id='user_123',
+        namespace='default',
+        query='refund',
+        top_k=2,
+        exclude_document_ids=[],
+        exclude_sections=[
+            {'document_id': 'doc_123', 'section_path': 'Excluded / One'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Two'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Three'},
+        ],
+    )
+
+    assert fake_db.calls == 2
+    assert [row['chunk_id'] for row in rows] == ['chunk_4', 'chunk_5']
+
+
+@pytest.mark.asyncio
+async def test_list_graph_routed_chunks_fills_top_k_after_section_exclusion():
+    from shared.services.retrieval.graph_service import GraphQueryService
+
+    def build_row(chunk_id, section_path):
+        document = SimpleNamespace(
+            document_id='doc_123',
+            source_file_name='refund-policy.md',
+        )
+        chunk = SimpleNamespace(
+            chunk_id=chunk_id,
+            section_id=f'sec_{chunk_id}',
+            chunk_type='text',
+            content=f'content-{chunk_id}',
+            file_path=None,
+            chunk_metadata={},
+            job_result_id='result_123',
+            sort_order=1,
+        )
+        section = SimpleNamespace(section_path=section_path)
+        job_result = SimpleNamespace(job_id='job_123')
+        return (document, chunk, section, job_result)
+
+    returned_rows = [
+        build_row('chunk_1', 'Excluded / One'),
+        build_row('chunk_2', 'Excluded / Two'),
+        build_row('chunk_3', 'Excluded / Three'),
+        build_row('chunk_4', 'Allowed / Four'),
+        build_row('chunk_5', 'Allowed / Five'),
+    ]
+
+    class FakeResult:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def all(self):
+            return self.rows
+
+    class FakeDB:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute(self, stmt):
+            self.calls += 1
+            sql = str(stmt.compile(compile_kwargs={'literal_binds': True}))
+            if self.calls == 1:
+                assert 'LIMIT 4' in sql
+                assert 'OFFSET 0' in sql or ' OFFSET ' not in sql
+                return FakeResult(returned_rows[:4])
+            assert 'LIMIT 4' in sql
+            assert 'OFFSET 4' in sql
+            return FakeResult(returned_rows[4:])
+
+    fake_db = FakeDB()
+
+    rows = await GraphQueryService().collect_candidate_chunks(
+        fake_db,
+        user_id='user_123',
+        namespace='default',
+        entry_document_ids=['doc_123'],
+        query='refund',
+        top_k=2,
+        exclude_sections=[
+            {'document_id': 'doc_123', 'section_path': 'Excluded / One'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Two'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Three'},
+        ],
+    )
+
+    assert fake_db.calls == 2
+    assert [row['chunk_id'] for row in rows] == ['chunk_4', 'chunk_5']

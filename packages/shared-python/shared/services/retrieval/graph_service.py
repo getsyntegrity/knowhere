@@ -8,6 +8,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from shared.models.database.document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode
+from shared.models.database.job_result import JobResult
+
+_SECTION_EXCLUSION_PAGE_MULTIPLIER = 2
+
+
+def is_excluded_section(
+    *,
+    document_id: str | None,
+    section_path: str | None,
+    exclude_sections: Iterable[dict[str, str]],
+) -> bool:
+    document_id = str(document_id or '').strip()
+    section_path = str(section_path or '').strip()
+    if not document_id or not section_path:
+        return False
+    for item in exclude_sections:
+        if not isinstance(item, dict):
+            continue
+        if document_id == str(item.get('document_id') or '').strip() and section_path == str(item.get('section_path') or '').strip():
+            return True
+    return False
 
 
 @dataclass
@@ -153,6 +174,7 @@ class GraphQueryService:
         namespace: str,
         query: str,
         exclude_document_ids: Iterable[str] = (),
+        exclude_sections: Iterable[dict[str, str]] = (),
     ) -> list[str]:
         query_lc = query.lower().strip()
         exclude_document_ids = set(exclude_document_ids)
@@ -168,6 +190,12 @@ class GraphQueryService:
             if node.ref_document_id in exclude_document_ids:
                 continue
             props = node.properties or {}
+            if is_excluded_section(
+                document_id=node.ref_document_id,
+                section_path=props.get('section_path'),
+                exclude_sections=exclude_sections,
+            ):
+                continue
             haystacks = [
                 str(props.get('section_title') or '').lower(),
                 str(props.get('section_path') or '').lower(),
@@ -189,33 +217,57 @@ class GraphQueryService:
         entry_document_ids: Sequence[str],
         query: str,
         top_k: int,
+        exclude_sections: Iterable[dict[str, str]] = (),
     ) -> list[dict[str, Any]]:
         if not entry_document_ids:
             return []
-        stmt = (
-            select(Document, DocumentChunk, DocumentSection)
+        page_size = top_k
+        if exclude_sections:
+            page_size = max(top_k, top_k * _SECTION_EXCLUSION_PAGE_MULTIPLIER)
+        base_stmt = (
+            select(Document, DocumentChunk, DocumentSection, JobResult)
             .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
             .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+            .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
             .where(Document.user_id == user_id)
             .where(Document.namespace == namespace)
             .where(Document.status == 'active')
             .where(Document.document_id.in_(list(entry_document_ids)))
-            .where(DocumentChunk.text.ilike(f'%{query}%'))
+            .where(DocumentChunk.content.ilike(f'%{query}%'))
             .order_by(DocumentChunk.sort_order)
-            .limit(top_k)
         )
-        result = await db.execute(stmt)
         rows = []
-        for document, chunk, section in result.all():
-            rows.append({
-                'document_id': document.document_id,
-                'chunk_id': chunk.chunk_id,
-                'section_id': chunk.section_id,
-                'section_path': section.section_path if section else None,
-                'source_file_name': document.source_file_name,
-                'chunk_type': chunk.chunk_type,
-                'text': chunk.text,
-                'score': 2.0,
-                'file_path': chunk.file_path,
-            })
+        offset = 0
+        while len(rows) < top_k:
+            result = await db.execute(base_stmt.limit(page_size).offset(offset))
+            result_rows = result.all()
+            if not result_rows:
+                break
+            for document, chunk, section, job_result in result_rows:
+                section_path = section.section_path if section else None
+                if is_excluded_section(
+                    document_id=document.document_id,
+                    section_path=section_path,
+                    exclude_sections=exclude_sections,
+                ):
+                    continue
+                rows.append({
+                    'document_id': document.document_id,
+                    'chunk_id': chunk.chunk_id,
+                    'section_id': chunk.section_id,
+                    'section_path': section_path,
+                    'source_file_name': document.source_file_name,
+                    'chunk_type': chunk.chunk_type,
+                    'content': chunk.content,
+                    'score': 2.0,
+                    'file_path': chunk.file_path,
+                    'chunk_metadata': chunk.chunk_metadata or {},
+                    'job_result_id': chunk.job_result_id,
+                    'job_id': job_result.job_id if job_result else None,
+                })
+                if len(rows) >= top_k:
+                    break
+            if len(result_rows) < page_size:
+                break
+            offset += page_size
         return rows

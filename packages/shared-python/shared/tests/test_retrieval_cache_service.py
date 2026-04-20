@@ -1,4 +1,21 @@
+import os
+
 import pytest
+
+os.environ.setdefault("DS_KEY", "test-key")
+os.environ.setdefault("DS_URL", "https://example.com")
+os.environ.setdefault("S3_BUCKET_NAME", "test-bucket")
+os.environ.setdefault("S3_ACCESS_KEY_ID", "test-access-key")
+os.environ.setdefault("S3_SECRET_ACCESS_KEY", "test-secret-key")
+os.environ.setdefault("S3_TEMP_PATH", "/tmp")
+os.environ.setdefault("USERS_DATA_PATH", "/tmp")
+os.environ.setdefault(
+    "DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb"
+)
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("TMP_PATH", "/tmp")
+os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
+os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 
 @pytest.mark.asyncio
@@ -58,6 +75,7 @@ async def test_cache_key_scope_changes_with_query_shape(monkeypatch):
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
         response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': False},
     )
@@ -68,6 +86,7 @@ async def test_cache_key_scope_changes_with_query_shape(monkeypatch):
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
     _, different_shape = await cache_service.get_cached_retrieval_query_result(
@@ -76,6 +95,7 @@ async def test_cache_key_scope_changes_with_query_shape(monkeypatch):
         query='refund policy',
         top_k=10,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
     )
 
@@ -113,8 +133,30 @@ async def test_set_cached_retrieval_query_result_uses_pinned_version(monkeypatch
         query='refund policy',
         top_k=5,
         exclude_document_ids=[],
+        exclude_sections=[],
         graph_enabled=False,
         response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': False},
     )
 
     assert any(':v7:' in key for key in fake_redis.values.keys())
+
+
+def test_cache_shape_digest_changes_with_section_exclusions():
+    from shared.services.retrieval.cache_service import _cache_shape_digest
+
+    baseline = _cache_shape_digest(
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=['doc_skip'],
+        exclude_sections=[],
+        graph_enabled=False,
+    )
+    changed = _cache_shape_digest(
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=['doc_skip'],
+        exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}],
+        graph_enabled=False,
+    )
+
+    assert baseline != changed

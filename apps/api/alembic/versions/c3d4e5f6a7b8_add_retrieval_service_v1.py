@@ -119,7 +119,7 @@ def upgrade() -> None:
     sa.Column('job_result_id', sa.String(length=36), nullable=False),
     sa.Column('section_id', sa.String(length=36), nullable=True),
     sa.Column('chunk_type', sa.String(length=64), nullable=False),
-    sa.Column('text', sa.Text(), nullable=True),
+    sa.Column('content', sa.Text(), nullable=True),
     sa.Column('source_chunk_path', sa.Text(), nullable=True),
     sa.Column('file_path', sa.Text(), nullable=True),
     sa.Column('chunk_metadata', sa.JSON(), nullable=True),
