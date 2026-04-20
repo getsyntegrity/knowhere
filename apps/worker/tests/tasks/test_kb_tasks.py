@@ -550,8 +550,8 @@ def test_parse_uploads_media_assets_and_passes_asset_s3_keys_to_finalize(monkeyp
     ]
     assert {upload[2] for upload in uploads} == {"results-bucket"}
     finalized_chunks = lifecycle_service.success_calls[0]["chunks"]
-    assert finalized_chunks[0]["metadata"]["asset_s3_key"] == "results/job_123/images/page-1.png"
-    assert finalized_chunks[1]["metadata"]["asset_s3_key"] == "results/job_123/tables/table-1.html"
+    assert finalized_chunks[0]["metadata"]["asset_ref"] == "images/page-1.png"
+    assert finalized_chunks[1]["metadata"]["asset_ref"] == "tables/table-1.html"
 
 
 def test_parse_cleans_task_workspace_after_failure(monkeypatch, tmp_path):

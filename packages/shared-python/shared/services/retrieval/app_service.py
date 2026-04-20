@@ -14,6 +14,7 @@ from shared.services.retrieval.graph_service import GraphQueryService
 from shared.services.retrieval.cache_service import get_cached_retrieval_query_result, set_cached_retrieval_query_result
 from shared.services.retrieval.hit_stats_service import record_retrieval_hits
 from shared.services.storage.file_upload_service import FileUploadService
+from shared.models.database.job_result import JobResult
 
 
 _MEDIA_CHUNK_TYPES = {'image', 'table'}
@@ -29,9 +30,10 @@ async def list_canonical_chunks(
     exclude_document_ids: list[str],
 ) -> list[dict[str, Any]]:
     stmt = (
-        select(Document, DocumentChunk, DocumentSection)
+        select(Document, DocumentChunk, DocumentSection, JobResult)
         .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
         .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
         .where(Document.user_id == user_id)
         .where(Document.namespace == namespace)
         .where(Document.status == 'active')
@@ -48,7 +50,7 @@ async def list_canonical_chunks(
     if not isinstance(result_rows, (list, tuple)):
         return []
     rows = []
-    for document, chunk, section in result_rows:
+    for document, chunk, section, job_result in result_rows:
         rows.append({
             'document_id': document.document_id,
             'chunk_id': chunk.chunk_id,
@@ -59,6 +61,8 @@ async def list_canonical_chunks(
             'text': chunk.text,
             'score': 1.0,
             'file_path': chunk.file_path,
+            'job_result_id': chunk.job_result_id,
+            'job_id': job_result.job_id if job_result else None,
         })
     return rows
 
@@ -130,22 +134,22 @@ def _is_media_chunk(row: dict[str, Any]) -> bool:
     return chunk_type in _MEDIA_CHUNK_TYPES
 
 
-async def generate_retrieval_asset_url(asset_s3_key: str) -> str | None:
-    url_info = await FileUploadService().generate_download_url(asset_s3_key)
+async def generate_retrieval_asset_url(*, job_id: str, artifact_ref: str) -> str | None:
+    from app.services.storage.result_artifact_service import build_result_artifact_storage_key
+
+    storage_key = build_result_artifact_storage_key(job_id=job_id, artifact_ref=artifact_ref)
+    url_info = await FileUploadService().generate_download_url(storage_key)
     if isinstance(url_info, dict):
         download_url = url_info.get('download_url')
         return str(download_url) if download_url else None
     return str(url_info) if url_info else None
 
 
-def _is_published_asset_s3_key(asset_ref: str | None) -> bool:
+def _is_client_result_artifact_ref(asset_ref: str | None) -> bool:
     if not asset_ref:
         return False
     normalized = str(asset_ref).strip().replace('\\', '/').lstrip('/')
-    return (
-        normalized.startswith('results/')
-        and ('/images/' in normalized or '/tables/' in normalized)
-    )
+    return normalized.startswith('images/') or normalized.startswith('tables/')
 
 
 async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
@@ -157,10 +161,13 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
         if isinstance(citation, dict):
             public_row['citation'] = dict(citation)
 
-        asset_s3_key = row.get('file_path')
-        if _is_media_chunk(row) and _is_published_asset_s3_key(asset_s3_key):
+        artifact_ref = row.get('file_path')
+        if _is_media_chunk(row) and _is_client_result_artifact_ref(artifact_ref) and row.get('job_id'):
             try:
-                asset_url = await generate_retrieval_asset_url(str(asset_s3_key))
+                asset_url = await generate_retrieval_asset_url(
+                    job_id=str(row['job_id']),
+                    artifact_ref=str(artifact_ref),
+                )
                 if asset_url:
                     public_row['asset_url'] = asset_url
                     public_row.pop('file_path', None)

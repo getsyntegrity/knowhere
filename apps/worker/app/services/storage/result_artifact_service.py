@@ -23,6 +23,13 @@ def normalize_client_result_artifact_path(file_path: str | None) -> str | None:
     return "/".join(parts)
 
 
+def build_result_artifact_storage_key(*, job_id: str, artifact_ref: str) -> str:
+    normalized_ref = normalize_client_result_artifact_path(artifact_ref)
+    if not normalized_ref:
+        raise ValueError(f"Invalid client result artifact ref: {artifact_ref}")
+    return f"results/{job_id}/{normalized_ref}"
+
+
 def publish_client_result_artifacts(*, job_id: str, chunks: list[dict[str, Any]], add_dir: str) -> list[dict[str, Any]]:
     """Publish client-facing result artifacts and attach canonical asset object keys.
 
@@ -60,10 +67,9 @@ def publish_client_result_artifacts(*, job_id: str, chunks: list[dict[str, Any]]
             enriched_chunks.append(enriched_chunk)
             continue
 
-        asset_s3_key = f"results/{job_id}/{artifact_path}"
-        upload_to_s3(str(local_artifact_path), asset_s3_key, results_bucket)
-        metadata["asset_s3_key"] = asset_s3_key
-        enriched_chunk["file_path"] = asset_s3_key
+        storage_key = build_result_artifact_storage_key(job_id=job_id, artifact_ref=artifact_path)
+        upload_to_s3(str(local_artifact_path), storage_key, results_bucket)
+        metadata["asset_ref"] = artifact_path
         enriched_chunks.append(enriched_chunk)
 
     return enriched_chunks

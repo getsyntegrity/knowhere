@@ -162,7 +162,7 @@ def test_publish_document_state_uses_asset_s3_key_as_internal_media_reference(mo
                 'metadata': {
                     'path': 'Default_Root/drawing.pdf-->Images',
                     'file_path': 'images/page-1.png',
-                    'asset_s3_key': 'results/job_123/images/page-1.png',
+                    'asset_ref': 'images/page-1.png',
                 },
                 'order': 0,
             }
@@ -174,9 +174,9 @@ def test_publish_document_state_uses_asset_s3_key_as_internal_media_reference(mo
 
     matching_chunks = [obj for obj in added if isinstance(obj, DocumentChunk) and obj.chunk_id == 'image_1']
     assert len(matching_chunks) == 1
-    assert matching_chunks[0].file_path == 'results/job_123/images/page-1.png'
+    assert matching_chunks[0].file_path == 'images/page-1.png'
     assert matching_chunks[0].chunk_metadata['file_path'] == 'images/page-1.png'
-    assert matching_chunks[0].chunk_metadata['asset_s3_key'] == 'results/job_123/images/page-1.png'
+    assert matching_chunks[0].chunk_metadata['asset_ref'] == 'images/page-1.png'
 
 
 def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -> None:

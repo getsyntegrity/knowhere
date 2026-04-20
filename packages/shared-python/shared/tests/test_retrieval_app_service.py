@@ -244,12 +244,13 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
                 'chunk_type': 'image',
                 'text': 'OCR caption',
                 'score': 1.0,
-                'file_path': 'results/job_123/images/page-1.png',
+                'file_path': 'images/page-1.png',
+                'job_id': 'job_123',
             }
         ]
 
-    async def fake_generate_asset_url(asset_s3_key):
-        return f'https://assets.test/{asset_s3_key}?signature=fresh'
+    async def fake_generate_asset_url(*, job_id, artifact_ref):
+        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     async def fake_set_cached_retrieval_query_result(**kwargs):
         cached_write.update(kwargs)
@@ -271,11 +272,11 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
     )
 
     public_result = result['results'][0]
-    assert public_result['asset_url'] == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
+    assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
     assert 'file_path' not in public_result
     assert 'file_path' not in public_result['citation']
     cached_result = cached_write['response']['results'][0]
-    assert cached_result['file_path'] == 'results/job_123/images/page-1.png'
+    assert cached_result['file_path'] == 'images/page-1.png'
     assert 'asset_url' not in cached_result
     assert 'asset_url' not in cached_result['citation']
 
@@ -300,7 +301,8 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
                     'chunk_type': 'image',
                     'text': 'cached caption',
                     'score': 1.0,
-                    'file_path': 'results/job_123/images/page-1.png',
+                    'file_path': 'images/page-1.png',
+                    'job_id': 'job_123',
                     'citation': {
                         'document_id': 'doc_cached',
                         'chunk_id': 'chunk_cached',
@@ -312,9 +314,9 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
             'graph_enabled': False,
         }
 
-    async def fake_generate_asset_url(asset_s3_key):
-        generated.append(asset_s3_key)
-        return f'https://assets.test/{asset_s3_key}?signature=fresh'
+    async def fake_generate_asset_url(*, job_id, artifact_ref):
+        generated.append((job_id, artifact_ref))
+        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
@@ -331,9 +333,9 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
         graph_enabled=False,
     )
 
-    assert generated == ['results/job_123/images/page-1.png']
+    assert generated == [('job_123', 'images/page-1.png')]
     public_result = result['results'][0]
-    assert public_result['asset_url'] == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
+    assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
     assert 'file_path' not in public_result
 
 
@@ -370,9 +372,9 @@ async def test_run_retrieval_query_keeps_legacy_media_file_path_until_asset_back
             'graph_enabled': False,
         }
 
-    async def fake_generate_asset_url(asset_s3_key):
-        generated.append(asset_s3_key)
-        return f'https://assets.test/{asset_s3_key}?signature=fresh'
+    async def fake_generate_asset_url(*, job_id, artifact_ref):
+        generated.append((job_id, artifact_ref))
+        return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
