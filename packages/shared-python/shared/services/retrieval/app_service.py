@@ -22,7 +22,7 @@ from shared.models.database.job_result import JobResult
 
 
 _MEDIA_CHUNK_TYPES = {'image', 'table'}
-_SECTION_EXCLUSION_OVERFETCH_MULTIPLIER = 2
+_SECTION_EXCLUSION_PAGE_MULTIPLIER = 2
 
 
 def _filter_excluded_rows(
@@ -213,11 +213,11 @@ async def list_canonical_chunks(
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
-    effective_limit = top_k
+    page_size = top_k
     if exclude_sections:
-        effective_limit = max(top_k, top_k * _SECTION_EXCLUSION_OVERFETCH_MULTIPLIER)
+        page_size = max(top_k, top_k * _SECTION_EXCLUSION_PAGE_MULTIPLIER)
 
-    stmt = (
+    base_stmt = (
         select(Document, DocumentChunk, DocumentSection, JobResult)
         .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
         .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
@@ -227,41 +227,46 @@ async def list_canonical_chunks(
         .where(Document.status == 'active')
         .where(DocumentChunk.content.ilike(f'%{query}%'))
         .order_by(DocumentChunk.sort_order)
-        .limit(effective_limit)
     )
     if exclude_document_ids:
-        stmt = stmt.where(Document.document_id.not_in(exclude_document_ids))
-    result = await db.execute(stmt)
-    result_rows = result.all()
-    if inspect.isawaitable(result_rows):
-        result_rows = await result_rows
-    if not isinstance(result_rows, (list, tuple)):
-        return []
+        base_stmt = base_stmt.where(Document.document_id.not_in(exclude_document_ids))
+
     rows = []
-    for document, chunk, section, job_result in result_rows:
-        section_path = section.section_path if section else None
-        if is_excluded_section(
-            document_id=document.document_id,
-            section_path=section_path,
-            exclude_sections=exclude_sections,
-        ):
-            continue
-        rows.append({
-            'document_id': document.document_id,
-            'chunk_id': chunk.chunk_id,
-            'section_id': chunk.section_id,
-            'section_path': section_path,
-            'source_file_name': document.source_file_name,
-            'chunk_type': chunk.chunk_type,
-            'content': chunk.content,
-            'score': 1.0,
-            'file_path': chunk.file_path,
-            'chunk_metadata': chunk.chunk_metadata or {},
-            'job_result_id': chunk.job_result_id,
-            'job_id': job_result.job_id if job_result else None,
-        })
-        if len(rows) >= top_k:
+    offset = 0
+    while len(rows) < top_k:
+        result = await db.execute(base_stmt.limit(page_size).offset(offset))
+        result_rows = result.all()
+        if inspect.isawaitable(result_rows):
+            result_rows = await result_rows
+        if not isinstance(result_rows, (list, tuple)) or not result_rows:
             break
+        for document, chunk, section, job_result in result_rows:
+            section_path = section.section_path if section else None
+            if is_excluded_section(
+                document_id=document.document_id,
+                section_path=section_path,
+                exclude_sections=exclude_sections,
+            ):
+                continue
+            rows.append({
+                'document_id': document.document_id,
+                'chunk_id': chunk.chunk_id,
+                'section_id': chunk.section_id,
+                'section_path': section_path,
+                'source_file_name': document.source_file_name,
+                'chunk_type': chunk.chunk_type,
+                'content': chunk.content,
+                'score': 1.0,
+                'file_path': chunk.file_path,
+                'chunk_metadata': chunk.chunk_metadata or {},
+                'job_result_id': chunk.job_result_id,
+                'job_id': job_result.job_id if job_result else None,
+            })
+            if len(rows) >= top_k:
+                break
+        if len(result_rows) < page_size:
+            break
+        offset += page_size
     return rows
 
 

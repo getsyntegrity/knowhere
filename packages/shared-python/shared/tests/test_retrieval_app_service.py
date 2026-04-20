@@ -774,22 +774,37 @@ async def test_list_canonical_chunks_fills_top_k_after_section_exclusion():
     returned_rows = [
         build_row('chunk_1', 'Excluded / One'),
         build_row('chunk_2', 'Excluded / Two'),
-        build_row('chunk_3', 'Allowed / Three'),
+        build_row('chunk_3', 'Excluded / Three'),
         build_row('chunk_4', 'Allowed / Four'),
+        build_row('chunk_5', 'Allowed / Five'),
     ]
 
     class FakeResult:
+        def __init__(self, rows):
+            self.rows = rows
+
         def all(self):
-            return returned_rows
+            return self.rows
 
     class FakeDB:
+        def __init__(self):
+            self.calls = 0
+
         async def execute(self, stmt):
+            self.calls += 1
             sql = str(stmt.compile(compile_kwargs={'literal_binds': True}))
+            if self.calls == 1:
+                assert 'LIMIT 4' in sql
+                assert 'OFFSET 0' in sql or ' OFFSET ' not in sql
+                return FakeResult(returned_rows[:4])
             assert 'LIMIT 4' in sql
-            return FakeResult()
+            assert 'OFFSET 4' in sql
+            return FakeResult(returned_rows[4:])
+
+    fake_db = FakeDB()
 
     rows = await list_canonical_chunks(
-        FakeDB(),
+        fake_db,
         user_id='user_123',
         namespace='default',
         query='refund',
@@ -798,10 +813,12 @@ async def test_list_canonical_chunks_fills_top_k_after_section_exclusion():
         exclude_sections=[
             {'document_id': 'doc_123', 'section_path': 'Excluded / One'},
             {'document_id': 'doc_123', 'section_path': 'Excluded / Two'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Three'},
         ],
     )
 
-    assert [row['chunk_id'] for row in rows] == ['chunk_3', 'chunk_4']
+    assert fake_db.calls == 2
+    assert [row['chunk_id'] for row in rows] == ['chunk_4', 'chunk_5']
 
 
 @pytest.mark.asyncio
@@ -830,22 +847,37 @@ async def test_list_graph_routed_chunks_fills_top_k_after_section_exclusion():
     returned_rows = [
         build_row('chunk_1', 'Excluded / One'),
         build_row('chunk_2', 'Excluded / Two'),
-        build_row('chunk_3', 'Allowed / Three'),
+        build_row('chunk_3', 'Excluded / Three'),
         build_row('chunk_4', 'Allowed / Four'),
+        build_row('chunk_5', 'Allowed / Five'),
     ]
 
     class FakeResult:
+        def __init__(self, rows):
+            self.rows = rows
+
         def all(self):
-            return returned_rows
+            return self.rows
 
     class FakeDB:
+        def __init__(self):
+            self.calls = 0
+
         async def execute(self, stmt):
+            self.calls += 1
             sql = str(stmt.compile(compile_kwargs={'literal_binds': True}))
+            if self.calls == 1:
+                assert 'LIMIT 4' in sql
+                assert 'OFFSET 0' in sql or ' OFFSET ' not in sql
+                return FakeResult(returned_rows[:4])
             assert 'LIMIT 4' in sql
-            return FakeResult()
+            assert 'OFFSET 4' in sql
+            return FakeResult(returned_rows[4:])
+
+    fake_db = FakeDB()
 
     rows = await GraphQueryService().collect_candidate_chunks(
-        FakeDB(),
+        fake_db,
         user_id='user_123',
         namespace='default',
         entry_document_ids=['doc_123'],
@@ -854,7 +886,9 @@ async def test_list_graph_routed_chunks_fills_top_k_after_section_exclusion():
         exclude_sections=[
             {'document_id': 'doc_123', 'section_path': 'Excluded / One'},
             {'document_id': 'doc_123', 'section_path': 'Excluded / Two'},
+            {'document_id': 'doc_123', 'section_path': 'Excluded / Three'},
         ],
     )
 
-    assert [row['chunk_id'] for row in rows] == ['chunk_3', 'chunk_4']
+    assert fake_db.calls == 2
+    assert [row['chunk_id'] for row in rows] == ['chunk_4', 'chunk_5']
