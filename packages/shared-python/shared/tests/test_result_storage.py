@@ -3,6 +3,14 @@ from pathlib import Path
 import pytest
 
 
+def test_result_storage_does_not_depend_on_app_package():
+    source = Path("packages/shared-python/shared/services/storage/result_storage.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "app.services" not in source
+
+
 def test_result_s3_upload_publishes_zip_and_raw_result_tree(monkeypatch, tmp_path):
     from shared.services.storage.result_storage import ResultS3
 
@@ -17,20 +25,19 @@ def test_result_s3_upload_publishes_zip_and_raw_result_tree(monkeypatch, tmp_pat
     (result_dir / "tmp").mkdir()
     (result_dir / "tmp" / "scratch.txt").write_text("ignored", encoding="utf-8")
 
-    uploads: list[tuple[str, str, str]] = []
+    class FakeStorageAdapter:
+        def __init__(self) -> None:
+            self.uploads: list[tuple[str, str, str]] = []
 
-    def fake_upload_to_s3(local_path, storage_key, bucket):
-        uploads.append((Path(local_path).name, storage_key, bucket))
-
-    monkeypatch.setattr(
-        "shared.services.storage.result_storage.upload_to_s3",
-        fake_upload_to_s3,
-    )
+        def upload_file(self, local_path, storage_key, bucket=None):
+            self.uploads.append((Path(local_path).name, storage_key, bucket))
+            return {"status": "success"}
 
     zip_path = tmp_path / "canonical.zip"
     zip_path.write_bytes(b"canonical-zip")
+    adapter = FakeStorageAdapter()
 
-    bundle = ResultS3(results_bucket="results-bucket").upload(
+    bundle = ResultS3(results_bucket="results-bucket", storage_adapter=adapter).upload(
         job_id="job_123",
         result_dir=str(result_dir),
         zip_file_path=str(zip_path),
@@ -43,45 +50,46 @@ def test_result_s3_upload_publishes_zip_and_raw_result_tree(monkeypatch, tmp_pat
         "images/page-1.png": "results/job_123/images/page-1.png",
         "tables/table-1.html": "results/job_123/tables/table-1.html",
     }
-    assert ("canonical.zip", "results/job_123.zip", "results-bucket") in uploads
-    assert ("page-1.png", "results/job_123/images/page-1.png", "results-bucket") in uploads
-    assert ("table-1.html", "results/job_123/tables/table-1.html", "results-bucket") in uploads
-    assert all(".DS_Store" not in upload[1] for upload in uploads)
-    assert all("/tmp/" not in upload[1] for upload in uploads)
+    assert ("canonical.zip", "results/job_123.zip", "results-bucket") in adapter.uploads
+    assert ("page-1.png", "results/job_123/images/page-1.png", "results-bucket") in adapter.uploads
+    assert ("table-1.html", "results/job_123/tables/table-1.html", "results-bucket") in adapter.uploads
+    assert all(".DS_Store" not in upload[1] for upload in adapter.uploads)
+    assert all("/tmp/" not in upload[1] for upload in adapter.uploads)
     assert not zip_path.exists()
 
 
-def test_result_s3_generate_artifact_url_delegates_key_construction(monkeypatch):
+def test_result_s3_generate_artifact_url_delegates_key_construction():
     from shared.services.storage.result_storage import ResultS3
 
-    generated = {}
+    class FakeStorageAdapter:
+        def __init__(self) -> None:
+            self.generated = {}
 
-    def fake_generate_download_url(storage_key, bucket=None, expires_in=3600):
-        generated.update(
-            {
-                "storage_key": storage_key,
-                "bucket": bucket,
-                "expires_in": expires_in,
-            }
-        )
-        return {"download_url": f"https://assets.test/{storage_key}", "expires_in": expires_in}
+        def generate_presigned_url(self, storage_key, expiration=3600, bucket=None, method="GET"):
+            self.generated.update(
+                {
+                    "storage_key": storage_key,
+                    "bucket": bucket,
+                    "expires_in": expiration,
+                    "method": method,
+                }
+            )
+            return f"https://assets.test/{storage_key}"
 
-    monkeypatch.setattr(
-        "shared.services.storage.result_storage.generate_download_url",
-        fake_generate_download_url,
-    )
+    adapter = FakeStorageAdapter()
 
-    url = ResultS3(results_bucket="results-bucket").generate_artifact_url(
+    url = ResultS3(results_bucket="results-bucket", storage_adapter=adapter).generate_artifact_url(
         job_id="job_123",
         artifact_ref="images/page-1.png",
         expires_in=600,
     )
 
     assert url == "https://assets.test/results/job_123/images/page-1.png"
-    assert generated == {
+    assert adapter.generated == {
         "storage_key": "results/job_123/images/page-1.png",
         "bucket": "results-bucket",
         "expires_in": 600,
+        "method": "GET",
     }
 
 

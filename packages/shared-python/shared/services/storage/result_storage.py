@@ -5,32 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-try:
-    from app.services.storage.sync_storage_service import generate_download_url, upload_to_s3
-except ImportError:  # pragma: no cover - API/runtime fallback
-    def upload_to_s3(local_file_path: str, storage_key: str, bucket: str) -> None:
-        from shared.core.config.storage import get_cached_storage_adapter
-
-        get_cached_storage_adapter().upload_file(local_file_path, storage_key, bucket)
-
-    def generate_download_url(storage_key: str, bucket: str | None = None, expires_in: int = 3600) -> dict[str, object]:
-        from shared.services.storage.file_upload_service import FileUploadService
-
-        # Keep the module-level function patchable in tests while sharing the
-        # same implementation surface in API processes.
-        service = FileUploadService()
-        adapter = service.adapter
-        bucket_name = bucket or service.results_bucket
-        return {
-            "download_url": adapter.generate_presigned_url(
-                storage_key,
-                expiration=expires_in,
-                bucket=bucket_name,
-                method="GET",
-            ),
-            "expires_in": expires_in,
-        }
-
 
 _EXCLUDED_FILE_NAMES = {".DS_Store", "Thumbs.db"}
 _EXCLUDED_DIR_NAMES = {"tmp", "temp", "__pycache__"}
@@ -56,12 +30,21 @@ class ResultStorage(Protocol):
 
 
 class ResultS3:
-    def __init__(self, *, results_bucket: str | None = None) -> None:
+    def __init__(self, *, results_bucket: str | None = None, storage_adapter=None) -> None:
         if results_bucket is None:
             from shared.core.config import settings
 
             results_bucket = getattr(settings, "S3_RESULTS_BUCKET", settings.S3_BUCKET_NAME)
         self.results_bucket = results_bucket
+        self._storage_adapter = storage_adapter
+
+    @property
+    def storage_adapter(self):
+        if self._storage_adapter is None:
+            from shared.core.config.storage import get_cached_storage_adapter
+
+            self._storage_adapter = get_cached_storage_adapter()
+        return self._storage_adapter
 
     def build_zip_key(self, *, job_id: str) -> str:
         return f"results/{job_id}.zip"
@@ -93,14 +76,14 @@ class ResultS3:
         if not zip_path.is_file():
             raise ValueError(f"Result ZIP file does not exist: {zip_file_path}")
         zip_key = self.build_zip_key(job_id=job_id)
-        upload_to_s3(str(zip_path), zip_key, self.results_bucket)
+        self.storage_adapter.upload_file(str(zip_path), zip_key, self.results_bucket)
         self._cleanup_file(zip_path)
 
         raw_files: dict[str, str] = {}
         for file_path in self._iter_raw_files(result_path):
             relative_path = file_path.relative_to(result_path).as_posix()
             raw_key = self.build_raw_key(job_id=job_id, relative_path=relative_path)
-            upload_to_s3(str(file_path), raw_key, self.results_bucket)
+            self.storage_adapter.upload_file(str(file_path), raw_key, self.results_bucket)
             raw_files[relative_path] = raw_key
 
         return UploadedResultBundle(
@@ -110,11 +93,12 @@ class ResultS3:
         )
 
     def generate_url(self, *, storage_key: str, expires_in: int = 3600) -> str | None:
-        url_info = generate_download_url(storage_key, bucket=self.results_bucket, expires_in=expires_in)
-        if isinstance(url_info, dict):
-            download_url = url_info.get("download_url")
-            return str(download_url) if download_url else None
-        return str(url_info) if url_info else None
+        return self.storage_adapter.generate_presigned_url(
+            storage_key,
+            expiration=expires_in,
+            bucket=self.results_bucket,
+            method="GET",
+        )
 
     def generate_artifact_url(self, *, job_id: str, artifact_ref: str, expires_in: int = 3600) -> str | None:
         normalized_ref = self.normalize_artifact_ref(artifact_ref)
