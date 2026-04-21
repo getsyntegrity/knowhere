@@ -36,6 +36,8 @@ class JobMetadataHelper:
         """从JobCreate请求创建metadata（精简版，不再包含user_config）"""
         metadata = {
             "original_request": request.model_dump(),
+            "namespace": request.namespace or "default",
+            "document_id": request.document_id,
             "parsing_params": request.parsing_params.model_dump() if request.parsing_params else None,
             "data_id": request.data_id,
             "webhook": request.webhook.model_dump() if request.webhook else None,

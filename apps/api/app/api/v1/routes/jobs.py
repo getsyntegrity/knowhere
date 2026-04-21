@@ -15,6 +15,12 @@ from shared.core.config import settings
 from shared.utils.url_file_type import resolve_file_extension_async
 from shared.utils.error_details import normalize_error_details
 from shared.core.database import get_db
+from app.services.job_document_scope_service import (
+    find_active_job_for_document,
+    is_active_document_job_unique_violation,
+    raise_document_ingestion_conflict,
+    resolve_effective_document_scope,
+)
 from app.services.rate_limit.dependencies import (
     with_current_user,
     require_billing_limits,
@@ -30,8 +36,10 @@ from app.services.state_machine import JobStateMachine
 from shared.services.storage.file_upload_service import FileUploadService
 from fastapi import APIRouter, Depends, Query, Request, status
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.exceptions.domain_exceptions import (
+    ConflictException,
     ValidationException,
     NotFoundException,
     PermissionDeniedException,
@@ -170,6 +178,8 @@ def create_job_response(
     job,
     source_type: str,
     data_id: Optional[str],
+    namespace: Optional[str] = None,
+    document_id: Optional[str] = None,
     upload_url: Optional[str] = None,
     upload_headers: Optional[dict] = None,
     expires_in: Optional[int] = None,
@@ -194,6 +204,8 @@ def create_job_response(
         status=job.status,
         source_type=source_type,
         data_id=data_id,
+        namespace=namespace,
+        document_id=document_id,
         created_at=job.created_at,
         upload_url=upload_url,
         upload_headers=upload_headers,
@@ -291,6 +303,37 @@ async def create_job(
         # 构建job_metadata（不再包含user_config）
         from shared.models.schemas.job_metadata import JobMetadataHelper
         job_metadata = JobMetadataHelper.create_from_request(payload)
+        requested_document_id = cast(Optional[str], job_metadata.get("document_id"))
+        if requested_document_id:
+            active_job = await find_active_job_for_document(
+                db,
+                user_id=current_user.user_id,
+                document_id=requested_document_id,
+            )
+            if active_job is not None:
+                raise_document_ingestion_conflict(
+                    document_id=requested_document_id,
+                    active_job_id=active_job.job_id,
+                )
+        effective_document_id, effective_namespace = await resolve_effective_document_scope(
+            db,
+            user_id=current_user.user_id,
+            document_id=requested_document_id,
+            requested_namespace=cast(Optional[str], payload.namespace),
+        )
+        if not requested_document_id:
+            active_job = await find_active_job_for_document(
+                db,
+                user_id=current_user.user_id,
+                document_id=effective_document_id,
+            )
+            if active_job is not None:
+                raise_document_ingestion_conflict(
+                    document_id=effective_document_id,
+                    active_job_id=active_job.job_id,
+                )
+        job_metadata["document_id"] = effective_document_id
+        job_metadata["namespace"] = effective_namespace
 
         # Enforce Layers 2-3 immediately before DB insert so the row lock
         # lifetime is limited to capacity check + create_job commit.
@@ -310,18 +353,23 @@ async def create_job(
 
             # 创建状态为waiting-file的job (s3_key set at creation — single INSERT)
             job_repo = JobRepository()
-            job = await job_repo.create_job(
-                db=db,
-                job_id=job_id,
-                user_id=current_user.user_id,
-                job_type=job_type,
-                source_type="file",
-                file_path=None,  # 文件还未上传
-                webhook_url=payload.webhook.url if payload.webhook else None,
-                metadata=job_metadata,
-                initial_state="waiting-file",
-                s3_key=s3_key,
-            )
+            try:
+                job = await job_repo.create_job(
+                    db=db,
+                    job_id=job_id,
+                    user_id=current_user.user_id,
+                    job_type=job_type,
+                    source_type="file",
+                    file_path=None,  # 文件还未上传
+                    webhook_url=payload.webhook.url if payload.webhook else None,
+                    metadata=job_metadata,
+                    initial_state="waiting-file",
+                    s3_key=s3_key,
+                )
+            except IntegrityError as exc:
+                if is_active_document_job_unique_violation(exc):
+                    raise_document_ingestion_conflict(document_id=effective_document_id)
+                raise
 
             if not job:
                 raise JobOperationException(
@@ -364,6 +412,8 @@ async def create_job(
                 job=job,
                 source_type="file",
                 data_id=payload.data_id,
+                namespace=effective_namespace,
+                document_id=effective_document_id,
                 upload_url=upload_info["upload_url"],
                 upload_headers=upload_info["upload_headers"],
                 expires_in=upload_info["expires_in"],
@@ -406,18 +456,23 @@ async def create_job(
 
                 # 创建状态为pending的job（文件将异步上传）
                 job_repo = JobRepository()
-                job = await job_repo.create_job(
-                    db=db,
-                    job_id=job_id,
-                    user_id=current_user.user_id,
-                    job_type=job_type,
-                    source_type="url",
-                    file_path=None,
-                    webhook_url=payload.webhook.url if payload.webhook else None,
-                    metadata=job_metadata,
-                    initial_state=JobStatus.WAITING_FILE.value,  # 使用pending状态
-                    s3_key=s3_key,  # 预设s3_key
-                )
+                try:
+                    job = await job_repo.create_job(
+                        db=db,
+                        job_id=job_id,
+                        user_id=current_user.user_id,
+                        job_type=job_type,
+                        source_type="url",
+                        file_path=None,
+                        webhook_url=payload.webhook.url if payload.webhook else None,
+                        metadata=job_metadata,
+                        initial_state=JobStatus.WAITING_FILE.value,  # 使用pending状态
+                        s3_key=s3_key,  # 预设s3_key
+                    )
+                except IntegrityError as exc:
+                    if is_active_document_job_unique_violation(exc):
+                        raise_document_ingestion_conflict(document_id=effective_document_id)
+                    raise
 
                 if not job:
                     raise JobOperationException(
@@ -463,6 +518,8 @@ async def create_job(
                     job=job,
                     source_type="url",
                     data_id=payload.data_id,
+                    namespace=effective_namespace,
+                    document_id=effective_document_id,
                 )
 
                 return response
@@ -470,6 +527,8 @@ async def create_job(
             except ValidationException:
                 raise
             except WebhookConfigException:
+                raise
+            except ConflictException:
                 raise
             except (RateLimitException, UnavailableException):
                 raise
@@ -481,7 +540,11 @@ async def create_job(
                     internal_message=f"URL job creation failed: {str(e)}"
                 )
 
+    except NotFoundException:
+        raise
     except ValidationException:
+        raise
+    except ConflictException:
         raise
     except WebhookConfigException:
         raise
@@ -496,7 +559,8 @@ async def create_job(
         )
 
 
-@router.get("/page", response_model=JobList, summary="获取任务列表")
+@router.get("", response_model=JobList, summary="获取任务列表")
+@router.get("/page", response_model=JobList, include_in_schema=False)
 async def list_jobs(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
@@ -738,6 +802,8 @@ async def get_job_result(
         
         response_data = JobResultResponse(
             job_id=job.job_id,
+            namespace=JobMetadataHelper.get_field(job_metadata, "namespace"),
+            document_id=JobMetadataHelper.get_field(job_metadata, "document_id"),
             status=status_for_api,
             source_type=job.source_type,
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),

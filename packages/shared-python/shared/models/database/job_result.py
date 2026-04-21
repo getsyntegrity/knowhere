@@ -19,6 +19,7 @@ class JobResult(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False, unique=True)
+    document_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("documents.document_id", ondelete="SET NULL"), nullable=True, index=True)
 
     delivery_mode: Mapped[str] = mapped_column(String(20), nullable=False)  # inline/url
     document_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
