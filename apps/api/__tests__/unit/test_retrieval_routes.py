@@ -57,17 +57,11 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
             'query': 'refund policy',
             'results': [
                 {
-                    'document_id': 'doc_123',
-                    'chunk_id': 'chunk_456',
-                    'section_id': 'sec_12',
-                    'section_path': 'Policies / Billing / Refunds',
-                    'source_file_name': 'refund-policy.md',
-                    'chunk_type': 'text',
                     'content': 'Annual plans may be refunded within 30 days of purchase...',
+                    'chunk_type': 'text',
                     'score': 1.0,
-                    'citation': {
+                    'source': {
                         'document_id': 'doc_123',
-                        'chunk_id': 'chunk_456',
                         'source_file_name': 'refund-policy.md',
                         'section_path': 'Policies / Billing / Refunds',
                     },
@@ -85,9 +79,16 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
     assert response.status_code == 200
     body = response.json()
     assert body['namespace'] == 'default'
-    assert body['results'][0]['chunk_id'] == 'chunk_456'
-    assert body['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
-    assert body['results'][0]['citation']['section_path'] == 'Policies / Billing / Refunds'
+    assert body['results'][0] == {
+        'content': 'Annual plans may be refunded within 30 days of purchase...',
+        'chunk_type': 'text',
+        'score': 1.0,
+        'source': {
+            'document_id': 'doc_123',
+            'source_file_name': 'refund-policy.md',
+            'section_path': 'Policies / Billing / Refunds',
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -217,17 +218,11 @@ async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticat
             'query': kwargs['query'],
             'results': [
                 {
-                    'document_id': 'doc_123',
-                    'chunk_id': 'chunk_456',
-                    'section_id': 'sec_12',
-                    'section_path': 'Policies / Billing / Refunds',
-                    'source_file_name': 'refund-policy.md',
-                    'chunk_type': 'text',
                     'content': 'Annual plans may be refunded within 30 days of purchase...',
+                    'chunk_type': 'text',
                     'score': 1.0,
-                    'citation': {
+                    'source': {
                         'document_id': 'doc_123',
-                        'chunk_id': 'chunk_456',
                         'source_file_name': 'refund-policy.md',
                         'section_path': 'Policies / Billing / Refunds',
                     },
@@ -258,17 +253,11 @@ async def test_retrieval_query_ignores_usage_analytics_schedule_failure(authenti
             'query': 'refund policy',
             'results': [
                 {
-                    'document_id': 'doc_123',
-                    'chunk_id': 'chunk_456',
-                    'section_id': 'sec_12',
-                    'section_path': 'Policies / Billing / Refunds',
-                    'source_file_name': 'refund-policy.md',
-                    'chunk_type': 'text',
                     'content': 'Annual plans may be refunded within 30 days of purchase...',
+                    'chunk_type': 'text',
                     'score': 1.0,
-                    'citation': {
+                    'source': {
                         'document_id': 'doc_123',
-                        'chunk_id': 'chunk_456',
                         'source_file_name': 'refund-policy.md',
                         'section_path': 'Policies / Billing / Refunds',
                     },
@@ -281,7 +270,7 @@ async def test_retrieval_query_ignores_usage_analytics_schedule_failure(authenti
     response = await authenticated_client.post('/v1/retrieval/query', json={'query': 'refund policy', 'top_k': 5})
 
     assert response.status_code == 200
-    assert response.json()['results'][0]['chunk_id'] == 'chunk_456'
+    assert response.json()['results'][0]['source']['document_id'] == 'doc_123'
 
 
 @pytest.mark.asyncio
@@ -322,17 +311,11 @@ async def test_retrieval_query_route_returns_cached_result_from_shared_service(a
             'query': 'refund policy',
             'results': [
                 {
-                    'document_id': 'doc_cached',
-                    'chunk_id': 'chunk_cached',
-                    'section_id': 'sec_12',
-                    'section_path': 'Policies / Billing / Refunds',
-                    'source_file_name': 'refund-policy.md',
-                    'chunk_type': 'text',
                     'content': 'cached result',
+                    'chunk_type': 'text',
                     'score': 1.0,
-                    'citation': {
+                    'source': {
                         'document_id': 'doc_cached',
-                        'chunk_id': 'chunk_cached',
                         'source_file_name': 'refund-policy.md',
                         'section_path': 'Policies / Billing / Refunds',
                     },
@@ -345,7 +328,7 @@ async def test_retrieval_query_route_returns_cached_result_from_shared_service(a
     response = await authenticated_client.post('/v1/retrieval/query', json={'query': 'refund policy', 'top_k': 5})
 
     assert response.status_code == 200
-    assert response.json()['results'][0]['chunk_id'] == 'chunk_cached'
+    assert response.json()['results'][0]['source']['document_id'] == 'doc_cached'
 
 
 @pytest.mark.asyncio

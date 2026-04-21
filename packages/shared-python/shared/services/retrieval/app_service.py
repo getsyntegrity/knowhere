@@ -25,9 +25,11 @@ _CHANNEL_WEIGHT_TERM = 1.5
 _INTERNAL_RECALL_K_MULTIPLIER = 2
 
 _PUBLIC_RESULT_FIELDS = {
-    'document_id', 'chunk_id', 'section_id', 'section_path',
-    'source_file_name', 'chunk_type', 'content', 'score',
-    'asset_url', 'citation',
+    'chunk_type', 'content', 'score', 'asset_url',
+}
+
+_PUBLIC_SOURCE_FIELDS = {
+    'document_id', 'source_file_name', 'section_path',
 }
 
 
@@ -392,6 +394,10 @@ def _with_citation(row: dict[str, Any]) -> dict[str, Any]:
     return {**row, 'citation': citation}
 
 
+def _to_public_source(row: dict[str, Any]) -> dict[str, Any]:
+    return {field: row.get(field) for field in _PUBLIC_SOURCE_FIELDS}
+
+
 def _is_media_chunk(row: dict[str, Any]) -> bool:
     return _normalize_chunk_type(row.get('chunk_type')) in _MEDIA_CHUNK_TYPES
 
@@ -428,17 +434,9 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
             if field == 'asset_url':
                 if asset_url:
                     public_row['asset_url'] = asset_url
-            elif field == 'citation':
-                citation = row.get('citation')
-                if isinstance(citation, dict):
-                    public_row['citation'] = {
-                        'document_id': citation.get('document_id'),
-                        'chunk_id': citation.get('chunk_id'),
-                        'source_file_name': citation.get('source_file_name'),
-                        'section_path': citation.get('section_path'),
-                    }
             elif field in row:
                 public_row[field] = row[field]
+        public_row['source'] = _to_public_source(row)
         public_results.append(public_row)
 
     public_response['results'] = public_results

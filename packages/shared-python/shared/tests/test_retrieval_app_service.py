@@ -156,9 +156,15 @@ async def test_run_retrieval_query_always_uses_graph_routing(monkeypatch):
     assert [name for name, _ in calls] == ['graph']
     assert result['namespace'] == 'default'
     assert result['query'] == 'refund policy'
-    assert result['results'][0]['chunk_id'] == 'chunk_456'
-    assert result['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
-    assert result['results'][0]['citation']['section_path'] == 'Policies / Billing / Refunds'
+    public_result = result['results'][0]
+    assert public_result['content'] == 'Annual plans may be refunded within 30 days of purchase...'
+    assert public_result['source'] == {
+        'document_id': 'doc_123',
+        'source_file_name': 'refund-policy.md',
+        'section_path': 'Policies / Billing / Refunds',
+    }
+    assert 'chunk_id' not in public_result
+    assert 'citation' not in public_result
     assert scheduled['user_id'] == 'user_123'
     assert scheduled['namespace'] == 'default'
 
@@ -205,7 +211,7 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
         exclude_sections=[],
     )
 
-    assert result['results'][0]['chunk_id'] == 'chunk_cached'
+    assert result['results'][0]['source']['document_id'] == 'doc_cached'
     assert scheduled['user_id'] == 'user_123'
     assert scheduled['namespace'] == 'default'
 
@@ -254,7 +260,8 @@ async def test_run_retrieval_query_falls_back_to_lexical_when_graph_fails(monkey
     )
 
     assert graph_calls == ['graph']
-    assert result['results'][0]['chunk_id'] == 'chunk_lexical'
+    assert result['results'][0]['source']['document_id'] == 'doc_123'
+    assert result['results'][0]['source']['section_path'] == 'Policies / Billing / Refunds'
 
 
 def test_merge_channels_rrf_applies_plan_scores_and_ranking():
@@ -401,7 +408,7 @@ async def test_run_retrieval_query_uses_plan_channel_weights_for_graph_content_p
     assert captured['channels'] == [graph_rows, content_rows, path_rows, term_rows]
     assert captured['weights'] == [2.0, 2.0, 1.0, 1.5]
     assert captured['top_k'] == 5
-    assert result['results'][0]['chunk_id'] == 'chunk_graph'
+    assert result['results'][0]['source']['document_id'] == 'doc_graph'
 
 
 @pytest.mark.asyncio
@@ -447,7 +454,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
         exclude_sections=[],
     )
 
-    assert result['results'][0]['chunk_id'] == 'chunk_456'
+    assert result['results'][0]['source']['document_id'] == 'doc_123'
     assert cached_write['version'] == 3
     assert cached_write['user_id'] == 'user_123'
     assert cached_write['namespace'] == 'default'
@@ -516,7 +523,12 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
     assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
     assert generated == [('job_123', 'images/page-1.png', 3600)]
     assert 'file_path' not in public_result
-    assert 'file_path' not in public_result['citation']
+    assert 'citation' not in public_result
+    assert public_result['source'] == {
+        'document_id': 'doc_123',
+        'source_file_name': 'drawing.pdf',
+        'section_path': 'Drawings / Images',
+    }
     cached_result = cached_write['response']['results'][0]
     assert cached_result['file_path'] == 'images/page-1.png'
     assert 'asset_url' not in cached_result
@@ -637,21 +649,15 @@ async def test_run_retrieval_query_cached_public_response_strips_all_internal_fi
 
     public_result = result['results'][0]
     assert set(public_result.keys()) == {
-        'document_id',
-        'chunk_id',
-        'section_id',
-        'section_path',
-        'source_file_name',
         'chunk_type',
         'content',
         'score',
-        'citation',
+        'source',
     }
-    assert set(public_result['citation'].keys()) == {
-        'document_id',
-        'chunk_id',
-        'source_file_name',
-        'section_path',
+    assert public_result['source'] == {
+        'document_id': 'doc_cached',
+        'source_file_name': 'refund-policy.md',
+        'section_path': 'Policies / Billing / Refunds',
     }
 
 
@@ -712,7 +718,7 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
     public_result = result['results'][0]
     assert public_result['asset_url'] == 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
     assert 'file_path' not in public_result
-    assert 'file_path' not in public_result['citation']
+    assert 'citation' not in public_result
 
 
 @pytest.mark.asyncio
@@ -773,7 +779,7 @@ async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_
     public_result = result['results'][0]
     assert 'asset_url' not in public_result
     assert 'file_path' not in public_result
-    assert 'file_path' not in public_result['citation']
+    assert 'citation' not in public_result
 
 
 @pytest.mark.asyncio
@@ -825,7 +831,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
     public_result = result['results'][0]
     assert 'asset_url' not in public_result
     assert 'file_path' not in public_result
-    assert 'file_path' not in public_result['citation']
+    assert 'citation' not in public_result
 
 
 def test_document_chunk_schema_has_lexical_serving_fields():

@@ -48,10 +48,11 @@ def to_mcp_query_response(response: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(row, dict):
             continue
 
+        source = row.get('source') if isinstance(row.get('source'), dict) else row
         result: dict[str, Any] = {
             'content': row.get('content'),
-            'source_file_name': row.get('source_file_name'),
-            'section_path': row.get('section_path'),
+            'source_file_name': source.get('source_file_name'),
+            'section_path': source.get('section_path'),
             'chunk_type': row.get('chunk_type'),
         }
         if row.get('asset_url'):
