@@ -72,6 +72,8 @@ async def test_mcp_streamable_http_endpoint_reaches_protocol_handler():
 async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
     from app.mcp import retrieval_server
 
+    captured = {}
+
     class FakeDbContext:
         async def __aenter__(self):
             return 'db_resource'
@@ -80,6 +82,7 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
             return None
 
     async def fake_run_retrieval_query(**kwargs):
+        captured.update(kwargs)
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
@@ -130,10 +133,29 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_real_mcp_runtime_exposes_only_kb_query_tool():
+    from app.mcp import retrieval_server
+
+    class FakeDbContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    server = retrieval_server.create_retrieval_mcp_server(db_factory=FakeDbContext)
+
+    tools = await server.list_tools()
+
+    assert [tool.name for tool in tools] == ['kb.query']
+
+
+@pytest.mark.asyncio
 async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
     from app.mcp import retrieval_server
 
     registered = {}
+    captured = {}
 
     class FakeServer:
         def __init__(self, name, instructions=None, **_kwargs):
@@ -156,6 +178,7 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
             return None
 
     async def fake_run_retrieval_query(**kwargs):
+        captured.update(kwargs)
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],

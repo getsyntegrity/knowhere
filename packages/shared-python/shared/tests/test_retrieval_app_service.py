@@ -211,7 +211,7 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
 
 
 @pytest.mark.asyncio
-async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkeypatch):
+async def test_run_retrieval_query_falls_back_to_lexical_when_graph_fails(monkeypatch):
     from shared.services.retrieval import app_service
 
     graph_calls = []
@@ -219,24 +219,27 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         raise RuntimeError('redis down')
 
-    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
-        graph_calls.append('graph')
+    async def fake_list_lexical_chunks(*_args, **_kwargs):
         return [
             {
                 'document_id': 'doc_123',
-                'chunk_id': 'chunk_456',
+                'chunk_id': 'chunk_lexical',
                 'section_id': 'sec_12',
                 'section_path': 'Policies / Billing / Refunds',
                 'source_file_name': 'refund-policy.md',
                 'chunk_type': 'text',
-                'content': 'Annual plans may be refunded within 30 days of purchase...',
+                'content': 'Lexical fallback result',
                 'score': 1.0,
                 'file_path': None,
             }
-        ]
+        ], []
+
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
+        graph_calls.append('graph')
+        raise RuntimeError('graph unavailable')
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', fake_list_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -251,7 +254,154 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
     )
 
     assert graph_calls == ['graph']
-    assert result['results'][0]['chunk_id'] == 'chunk_456'
+    assert result['results'][0]['chunk_id'] == 'chunk_lexical'
+
+
+def test_merge_channels_rrf_applies_plan_scores_and_ranking():
+    from shared.services.retrieval import app_service
+
+    channels = [
+        [
+            {'chunk_id': 'chunk_shared', 'content': 'shared'},
+            {'chunk_id': 'chunk_graph_only', 'content': 'graph only'},
+        ],
+        [
+            {'chunk_id': 'chunk_shared', 'content': 'shared'},
+        ],
+        [
+            {'chunk_id': 'chunk_path_only', 'content': 'path only'},
+        ],
+        [
+            {'chunk_id': 'chunk_shared', 'content': 'shared'},
+        ],
+    ]
+
+    results = app_service.merge_channels_rrf(
+        channels,
+        [
+            2.0,  # graph
+            2.0,  # content
+            1.0,  # path
+            1.5,  # term/grep
+        ],
+        top_k=3,
+    )
+
+    assert [row['chunk_id'] for row in results] == [
+        'chunk_shared',
+        'chunk_graph_only',
+        'chunk_path_only',
+    ]
+    assert results[0]['score'] == 0.090164
+    assert results[1]['score'] == 0.032258
+    assert results[2]['score'] == 0.016393
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_uses_plan_channel_weights_for_graph_content_path_and_term(
+    monkeypatch,
+):
+    from shared.services.retrieval import app_service
+
+    captured = {}
+
+    graph_rows = [
+        {
+            'document_id': 'doc_graph',
+            'chunk_id': 'chunk_graph',
+            'section_id': 'sec_graph',
+            'section_path': 'Policies / Billing',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Graph-routed refund content',
+            'score': 1.0,
+            'file_path': None,
+        }
+    ]
+    content_rows = [
+        {
+            'document_id': 'doc_content',
+            'chunk_id': 'chunk_content',
+            'section_id': 'sec_content',
+            'section_path': 'Policies / Refunds',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Lexical content match',
+            'score': 1.0,
+            'file_path': None,
+        }
+    ]
+    path_rows = [
+        {
+            'document_id': 'doc_path',
+            'chunk_id': 'chunk_path',
+            'section_id': 'sec_path',
+            'section_path': 'Policies / Billing / Refunds',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Lexical path match',
+            'score': 1.0,
+            'file_path': None,
+        }
+    ]
+    term_rows = [
+        {
+            'document_id': 'doc_term',
+            'chunk_id': 'chunk_term',
+            'section_id': 'sec_term',
+            'section_path': 'Policies / Refunds',
+            'source_file_name': 'refund-policy.md',
+            'chunk_type': 'text',
+            'content': 'Exact term match',
+            'score': 100.0,
+            'file_path': None,
+        }
+    ]
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 1, None
+
+    async def fake_list_lexical_chunks(*_args, **_kwargs):
+        return content_rows, path_rows
+
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
+        return graph_rows
+
+    def fake_grep_search_rows(_rows, _query):
+        return term_rows
+
+    def fake_merge_channels_rrf(channels, weights, top_k):
+        captured['channels'] = channels
+        captured['weights'] = weights
+        captured['top_k'] = top_k
+        return [graph_rows[0]]
+
+    async def fake_assemble_retrieval_results(**kwargs):
+        return kwargs['rows']
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', fake_list_lexical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
+    monkeypatch.setattr(app_service, '_grep_search_rows', fake_grep_search_rows)
+    monkeypatch.setattr(app_service, 'merge_channels_rrf', fake_merge_channels_rrf)
+    monkeypatch.setattr(app_service, 'assemble_retrieval_results', fake_assemble_retrieval_results)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert captured['channels'] == [graph_rows, content_rows, path_rows, term_rows]
+    assert captured['weights'] == [2.0, 2.0, 1.0, 1.5]
+    assert captured['top_k'] == 5
+    assert result['results'][0]['chunk_id'] == 'chunk_graph'
 
 
 @pytest.mark.asyncio
@@ -431,6 +581,78 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
     public_result = result['results'][0]
     assert public_result['asset_url'] == 'https://assets.test/job_123/images/page-1.png?signature=fresh'
     assert 'file_path' not in public_result
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_cached_public_response_strips_all_internal_fields(
+    monkeypatch,
+):
+    from shared.services.retrieval import app_service
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 4, {
+            'namespace': 'default',
+            'query': 'refund policy',
+            'results': [
+                {
+                    'document_id': 'doc_cached',
+                    'chunk_id': 'chunk_cached',
+                    'section_id': 'sec_cached',
+                    'section_path': 'Policies / Billing / Refunds',
+                    'source_file_name': 'refund-policy.md',
+                    'chunk_type': 'text',
+                    'content': 'cached result',
+                    'score': 1.0,
+                    'file_path': 'images/private.png',
+                    'job_id': 'job_123',
+                    'job_result_id': 'result_123',
+                    'chunk_metadata': {'private': True},
+                    'sort_order': 9,
+                    'unexpected_field': 'should-not-leak',
+                    'citation': {
+                        'document_id': 'doc_cached',
+                        'chunk_id': 'chunk_cached',
+                        'source_file_name': 'refund-policy.md',
+                        'section_path': 'Policies / Billing / Refunds',
+                        'file_path': 'images/private.png',
+                        'job_id': 'job_123',
+                        'chunk_metadata': {'private': True},
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    public_result = result['results'][0]
+    assert set(public_result.keys()) == {
+        'document_id',
+        'chunk_id',
+        'section_id',
+        'section_path',
+        'source_file_name',
+        'chunk_type',
+        'content',
+        'score',
+        'citation',
+    }
+    assert set(public_result['citation'].keys()) == {
+        'document_id',
+        'chunk_id',
+        'source_file_name',
+        'section_path',
+    }
 
 
 @pytest.mark.asyncio

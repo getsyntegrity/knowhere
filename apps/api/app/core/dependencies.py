@@ -33,6 +33,17 @@ _GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS: tuple[str, ...] = (
     "/v1/jobs",
     "/v1/jobs/*",
     "/v1/billing/credits",
+    "/v1/retrieval/query",
+    "/v1/documents",
+    "/v1/documents/*",
+    "/mcp",
+)
+_GUEST_API_KEY_REQUIRED_PERMISSION: str = (
+    "jobs_documents_retrieval_mcp_or_billing_credits"
+)
+_GUEST_API_KEY_SCOPE_MESSAGE: str = (
+    "Guest API keys can only access job, document, retrieval, MCP query, "
+    "and billing credits APIs"
 )
 
 
@@ -122,10 +133,17 @@ def _get_route_path(request: Request) -> str:
     return scope_path
 
 
+def _normalize_route_path(route_path: str) -> str:
+    """Normalize guest route checks across slash-redirect variants."""
+    normalized_path = route_path.rstrip("/")
+    return normalized_path or "/"
+
+
 def _is_guest_api_key_route_allowed(route_path: str) -> bool:
     """Return whether a guest API key may access the given route."""
+    normalized_path = _normalize_route_path(route_path)
     return any(
-        fnmatch(route_path, pattern)
+        fnmatch(normalized_path, pattern)
         for pattern in _GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS
     )
 
@@ -139,10 +157,8 @@ def _enforce_guest_api_key_scope(route_path: str, user_tier: str) -> None:
         return
 
     raise PermissionDeniedException(
-        user_message=(
-            "Guest API keys can only access job APIs and the billing credits API"
-        ),
-        required_permission="jobs_or_billing_credits",
+        user_message=_GUEST_API_KEY_SCOPE_MESSAGE,
+        required_permission=_GUEST_API_KEY_REQUIRED_PERMISSION,
     )
 
 

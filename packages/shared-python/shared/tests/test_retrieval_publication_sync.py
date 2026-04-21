@@ -21,6 +21,7 @@ os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 import shared.services.job_lifecycle_sync as lifecycle_module
 from shared.services.retrieval.publication_service import RetrievalPublicationService
+from sqlalchemy.dialects import postgresql
 
 
 class _SyncDbContext:
@@ -217,6 +218,63 @@ def test_publish_document_state_preserves_existing_document_namespace_when_updat
 
     assert document.namespace == 'support-center'
     assert document.current_job_result_id == 'result_123'
+
+
+def test_publish_document_state_locks_existing_document_row_for_update() -> None:
+    captured_statements = []
+    service = RetrievalPublicationService()
+    document = SimpleNamespace(
+        document_id='doc_123',
+        user_id='user_123',
+        namespace='support-center',
+        status='active',
+        current_job_result_id='result_old',
+        source_file_name='old.md',
+        updated_at=None,
+    )
+    job = SimpleNamespace(
+        job_id='job_123',
+        user_id='user_123',
+        job_metadata={
+            'document_id': 'doc_123',
+            'source_file_name': 'refund-policy.md',
+        },
+    )
+
+    responses = iter([
+        SimpleNamespace(scalar_one_or_none=lambda: job),
+        SimpleNamespace(scalar_one_or_none=lambda: document),
+        SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_old', document_id='doc_123')),
+        SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id='result_123', document_id='doc_123')),
+        None,
+        None,
+    ])
+
+    class FakeDb:
+        def add(self, _value) -> None:
+            return None
+
+        def flush(self) -> None:
+            return None
+
+        def execute(self, statement):
+            captured_statements.append(statement)
+            return next(responses)
+
+    service.publish_document_state(
+        FakeDb(),
+        job_id='job_123',
+        job_result_id='result_123',
+        chunks=[],
+    )
+
+    document_lookup_sql = str(
+        captured_statements[1].compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={'literal_binds': True},
+        )
+    )
+    assert 'FOR UPDATE' in document_lookup_sql
 
 
 def test_publish_document_state_preserves_historical_canonical_rows() -> None:

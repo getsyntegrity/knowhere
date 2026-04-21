@@ -135,6 +135,76 @@ async def test_document_routes_return_canonical_document_state(authenticated_cli
 
 
 @pytest.mark.asyncio
+async def test_document_list_defaults_namespace_when_omitted(authenticated_client, monkeypatch):
+    from app.api.v1.routes import documents as document_routes
+
+    captured = {}
+
+    class FakeDocumentService:
+        async def list_documents(self, *_args, **kwargs):
+            captured.update(kwargs)
+            return []
+
+    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
+
+    response = await authenticated_client.get('/v1/documents')
+
+    assert response.status_code == 200
+    assert response.json()['namespace'] == 'default'
+    assert captured['namespace'] == 'default'
+
+
+@pytest.mark.asyncio
+async def test_document_archive_route_supports_slash_action_alias(authenticated_client, monkeypatch):
+    from app.api.v1.routes import documents as document_routes
+
+    class FakeDocumentService:
+        async def archive_document(self, *_args, **_kwargs):
+            return {
+                'document_id': 'doc_123',
+                'namespace': 'default',
+                'status': 'archived',
+            }
+
+    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
+
+    response = await authenticated_client.post('/v1/documents/doc_123/archive')
+
+    assert response.status_code == 200
+    assert response.json()['status'] == 'archived'
+
+
+@pytest.mark.asyncio
+async def test_document_get_route_returns_404_when_document_is_missing(authenticated_client, monkeypatch):
+    from app.api.v1.routes import documents as document_routes
+
+    class FakeDocumentService:
+        async def get_document(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
+
+    response = await authenticated_client.get('/v1/documents/doc_missing')
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_document_archive_route_returns_404_when_document_is_missing(authenticated_client, monkeypatch):
+    from app.api.v1.routes import documents as document_routes
+
+    class FakeDocumentService:
+        async def archive_document(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
+
+    response = await authenticated_client.post('/v1/documents/doc_missing/archive')
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticated_client, monkeypatch):
     from app.api.v1.routes import retrieval as retrieval_routes
 
@@ -390,6 +460,49 @@ async def test_archive_canonical_document_invalidates_namespace_cache_best_effor
     assert invalidation['namespaces'] == ['default']
     assert invalidation['graph_scope_namespace'] == 'default'
     assert invalidation['graph_document_id'] == 'doc_123'
+
+
+@pytest.mark.asyncio
+async def test_archive_canonical_document_is_idempotent(monkeypatch):
+    from app.services.document_service import DocumentService
+    from shared.models.database.document import Document
+
+    document = Document(
+        document_id='doc_123',
+        user_id='user_123',
+        namespace='default',
+        status='archived',
+        current_job_result_id='result_123',
+        source_file_name='refund-policy.md',
+    )
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return document
+
+    class FakeDb:
+        async def execute(self, _stmt):
+            return FakeResult()
+
+        async def run_sync(self, _fn):
+            raise AssertionError('graph removal should not run for an already archived document')
+
+        async def commit(self):
+            raise AssertionError('commit should not run for an already archived document')
+
+    class FakeGraphService:
+        def remove_document_graph(self, *_args, **_kwargs):
+            raise AssertionError('graph removal should not run for an already archived document')
+
+    monkeypatch.setattr('app.services.document_service.DocumentGraphService', FakeGraphService)
+
+    result = await DocumentService().archive_document(
+        FakeDb(),
+        user_id='user_123',
+        document_id='doc_123',
+    )
+
+    assert result['status'] == 'archived'
 
 
 def test_document_routes_keep_db_logic_out_of_router():

@@ -90,16 +90,6 @@ class Job(Base):
                 "status IN ('waiting-file', 'pending', 'running', 'converting')"
             ),
         ),
-        Index(
-            'uq_jobs_user_active_document',
-            'user_id',
-            text("(job_metadata ->> 'document_id')"),
-            unique=True,
-            postgresql_where=text(
-                "status IN ('waiting-file', 'pending', 'running', 'converting') "
-                "AND job_metadata ->> 'document_id' IS NOT NULL"
-            ),
-        ),
     )
     
     def __repr__(self):

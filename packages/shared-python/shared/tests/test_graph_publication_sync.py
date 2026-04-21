@@ -2,6 +2,8 @@ import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 os.environ.setdefault("DS_KEY", "test-key")
 os.environ.setdefault("DS_URL", "https://example.com")
 os.environ.setdefault("S3_BUCKET_NAME", "test-bucket")
@@ -290,3 +292,55 @@ def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch
     assert result == {'status': 'success', 'job_id': 'job_123', 'stored_count': 0}
     invalidated_namespaces = {k.split(':')[-1] for k in incremented_keys}
     assert invalidated_namespaces == {'default', 'archive'}
+
+
+def test_finalize_job_success_rolls_back_when_graph_publication_fails(monkeypatch) -> None:
+    db = MagicMock()
+    service = lifecycle_module.SyncJobLifecycleService()
+
+    monkeypatch.setattr(
+        lifecycle_module,
+        'get_sync_db_context',
+        lambda: _SyncDbContext(db),
+    )
+    monkeypatch.setattr(
+        service,
+        '_upsert_job_result',
+        lambda *_args, **_kwargs: SimpleNamespace(id='result_123'),
+    )
+    monkeypatch.setattr(service, '_replace_chunks', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        service._retrieval_publication,
+        'publish_document_state',
+        lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'default', 'document_id': 'doc_123'},
+    )
+    monkeypatch.setattr(
+        service._retrieval_publication,
+        'publish_document_graph',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError('graph publication failed')),
+    )
+    monkeypatch.setattr(
+        service._state_machine,
+        'mark_completed',
+        lambda *_args, **_kwargs: pytest.fail('mark_completed should not run after graph publication failure'),
+    )
+    monkeypatch.setattr(
+        service,
+        '_post_commit_enqueue_webhook',
+        lambda *_args, **_kwargs: pytest.fail('post-commit hooks should not run after graph publication failure'),
+    )
+
+    with pytest.raises(RuntimeError, match='graph publication failed'):
+        service.finalize_job_success(
+            job_id='job_123',
+            chunks=[],
+            result_s3_key='results/job_123.zip',
+            checksum='checksum',
+            zip_size=3,
+            stored_count=0,
+            kb_records=[],
+            delivery_mode='url',
+        )
+
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
