@@ -24,7 +24,6 @@ class RetrievalQueryRequest(BaseModel):
     top_k: int = 10
     exclude_document_ids: list[str] = Field(default_factory=list)
     exclude_sections: list[ExcludeSection] = Field(default_factory=list)
-    graph_enabled: bool = False
 
 
 @router.post('/query')
@@ -41,5 +40,4 @@ async def query_retrieval(
         top_k=payload.top_k,
         exclude_document_ids=payload.exclude_document_ids,
         exclude_sections=[item.model_dump() for item in payload.exclude_sections],
-        graph_enabled=payload.graph_enabled,
     )

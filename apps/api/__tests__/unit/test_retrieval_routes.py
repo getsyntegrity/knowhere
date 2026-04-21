@@ -44,7 +44,7 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
         return {
             'namespace': 'default',
             'query': 'refund policy',
-            'graph_enabled': False,
+            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -135,7 +135,7 @@ async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticat
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': kwargs['graph_enabled'],
+            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -167,7 +167,6 @@ async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticat
     assert scheduled['exclude_sections'] == []
     assert scheduled['query'] == 'refund policy'
     assert scheduled['top_k'] == 5
-    assert scheduled['graph_enabled'] is False
 
 
 @pytest.mark.asyncio
@@ -178,7 +177,7 @@ async def test_retrieval_query_ignores_usage_analytics_schedule_failure(authenti
         return {
             'namespace': 'default',
             'query': 'refund policy',
-            'graph_enabled': False,
+            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -218,7 +217,7 @@ async def test_retrieval_query_route_uses_shared_app_service(authenticated_clien
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': kwargs['graph_enabled'],
+            'graph_enabled': True,
             'results': [],
         }
 
@@ -226,7 +225,7 @@ async def test_retrieval_query_route_uses_shared_app_service(authenticated_clien
 
     response = await authenticated_client.post(
         '/v1/retrieval/query',
-        json={'query': 'refund policy', 'top_k': 5, 'graph_enabled': True},
+        json={'query': 'refund policy', 'top_k': 5},
     )
 
     assert response.status_code == 200
@@ -234,7 +233,6 @@ async def test_retrieval_query_route_uses_shared_app_service(authenticated_clien
     assert captured['namespace'] == 'default'
     assert captured['query'] == 'refund policy'
     assert captured['top_k'] == 5
-    assert captured['graph_enabled'] is True
 
 
 @pytest.mark.asyncio
@@ -245,7 +243,7 @@ async def test_retrieval_query_route_returns_cached_result_from_shared_service(a
         return {
             'namespace': 'default',
             'query': 'refund policy',
-            'graph_enabled': False,
+            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_cached',
@@ -285,7 +283,7 @@ async def test_retrieval_query_route_passes_section_exclusions(authenticated_cli
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': kwargs['graph_enabled'],
+            'graph_enabled': True,
             'results': [],
         }
 

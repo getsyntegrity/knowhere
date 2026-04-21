@@ -34,11 +34,10 @@ def _cache_shape_digest(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
-    graph_enabled: bool,
 ) -> str:
     normalized_excludes = sorted(exclude_document_ids)
     normalized_sections = _normalize_exclude_sections(exclude_sections)
-    payload = f"{query}|{top_k}|{graph_enabled}|{'|'.join(normalized_excludes)}|{'|'.join(normalized_sections)}"
+    payload = f"{query}|{top_k}|{'|'.join(normalized_excludes)}|{'|'.join(normalized_sections)}"
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
@@ -51,14 +50,12 @@ def _query_cache_key(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
-    graph_enabled: bool,
 ) -> str:
     digest = _cache_shape_digest(
         query=query,
         top_k=top_k,
         exclude_document_ids=exclude_document_ids,
         exclude_sections=exclude_sections,
-        graph_enabled=graph_enabled,
     )
     return f"retrieval:query:{user_id}:{namespace}:v{version}:{digest}"
 
@@ -97,7 +94,6 @@ async def get_cached_retrieval_query_result(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
-    graph_enabled: bool,
 ) -> tuple[int, dict[str, Any] | None]:
     version = await get_retrieval_namespace_cache_version(user_id=user_id, namespace=namespace)
     redis_service = RedisServiceFactory.get_service()
@@ -110,7 +106,6 @@ async def get_cached_retrieval_query_result(
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
             exclude_sections=exclude_sections,
-            graph_enabled=graph_enabled,
         ),
         default=None,
     )
@@ -126,7 +121,6 @@ async def set_cached_retrieval_query_result(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
-    graph_enabled: bool,
     response: dict[str, Any],
 ) -> None:
     redis_service = RedisServiceFactory.get_service()
@@ -139,7 +133,6 @@ async def set_cached_retrieval_query_result(
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
             exclude_sections=exclude_sections,
-            graph_enabled=graph_enabled,
         ),
         response,
         ex=_RETRIEVAL_CACHE_TTL_SECONDS,

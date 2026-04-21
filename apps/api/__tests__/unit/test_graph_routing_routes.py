@@ -5,11 +5,10 @@ from shared.models.database.document import Document
 
 
 @pytest.mark.asyncio
-async def test_retrieval_query_reports_graph_enabled_when_graph_branch_used(authenticated_client, monkeypatch):
+async def test_retrieval_query_always_uses_graph_routing(authenticated_client, monkeypatch):
     from app.api.v1.routes import retrieval as retrieval_routes
 
     async def fake_run_retrieval_query(**kwargs):
-        assert kwargs["graph_enabled"] is True
         return {
             "namespace": kwargs["namespace"],
             "query": kwargs["query"],
@@ -38,7 +37,7 @@ async def test_retrieval_query_reports_graph_enabled_when_graph_branch_used(auth
 
     response = await authenticated_client.post(
         "/v1/retrieval/query",
-        json={"query": "refund policy", "top_k": 5, "graph_enabled": True},
+        json={"query": "refund policy", "top_k": 5},
     )
 
     assert response.status_code == 200

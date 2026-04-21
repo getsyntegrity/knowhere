@@ -175,8 +175,7 @@ class RetrievalPublicationService:
     ) -> None:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if not job:
-            logger.warning(f"Job not found for graph publication: {job_id}")
-            return
+            raise RuntimeError(f"Job not found for graph publication: {job_id}")
 
         metadata = job.job_metadata or {}
         namespace = metadata.get("namespace") or "default"
@@ -187,8 +186,7 @@ class RetrievalPublicationService:
             ).scalar_one_or_none()
             document_id = document.document_id if document else None
         if not document_id:
-            logger.warning(f"Document not found for graph publication: {job_id}")
-            return
+            raise RuntimeError(f"Document not found for graph publication: job_id={job_id}")
 
         DocumentGraphService().publish_document_graph(
             db,

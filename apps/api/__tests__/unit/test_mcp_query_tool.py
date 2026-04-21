@@ -83,7 +83,7 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': kwargs['graph_enabled'],
+            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -121,7 +121,6 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
         {
             'query': 'refund policy',
             'top_k': 5,
-            'graph_enabled': False,
         },
     )
     response = json.loads(content_blocks[0].text)
@@ -161,7 +160,7 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': kwargs['graph_enabled'],
+            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -222,7 +221,6 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
         top_k=5,
         exclude_document_ids=['doc_skip'],
         exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}],
-        graph_enabled=False,
         ctx=FakeContext(),
     )
 
@@ -267,6 +265,5 @@ async def test_kb_query_requires_db_factory_to_return_async_context_manager(monk
             top_k=5,
             exclude_document_ids=None,
             exclude_sections=None,
-            graph_enabled=False,
             ctx=None,
         )

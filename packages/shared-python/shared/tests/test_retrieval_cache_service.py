@@ -76,8 +76,7 @@ async def test_cache_key_scope_changes_with_query_shape(monkeypatch):
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
-        response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': False},
+        response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': True},
     )
 
     _, same_shape = await cache_service.get_cached_retrieval_query_result(
@@ -87,7 +86,6 @@ async def test_cache_key_scope_changes_with_query_shape(monkeypatch):
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
     _, different_shape = await cache_service.get_cached_retrieval_query_result(
         user_id='user_123',
@@ -96,7 +94,6 @@ async def test_cache_key_scope_changes_with_query_shape(monkeypatch):
         top_k=10,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     assert same_shape is not None
@@ -134,8 +131,7 @@ async def test_set_cached_retrieval_query_result_uses_pinned_version(monkeypatch
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
-        response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': False},
+        response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': True},
     )
 
     assert any(':v7:' in key for key in fake_redis.values.keys())
@@ -149,14 +145,12 @@ def test_cache_shape_digest_changes_with_section_exclusions():
         top_k=5,
         exclude_document_ids=['doc_skip'],
         exclude_sections=[],
-        graph_enabled=False,
     )
     changed = _cache_shape_digest(
         query='refund policy',
         top_k=5,
         exclude_document_ids=['doc_skip'],
         exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}],
-        graph_enabled=False,
     )
 
     assert baseline != changed

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from typing import Any
 
 from loguru import logger
@@ -18,15 +17,6 @@ from shared.models.database.job_result import JobResult
 
 
 _MEDIA_CHUNK_TYPES = {'image', 'table'}
-_SECTION_EXCLUSION_PAGE_MULTIPLIER = 2
-
-
-def _build_lexical_match_predicate(query: str):
-    like = f'%{query}%'
-    return or_(
-        DocumentChunk.content_lexical_text.ilike(like),
-        DocumentChunk.path_lexical_text.ilike(like),
-    )
 
 
 def _filter_excluded_rows(
@@ -207,73 +197,6 @@ async def assemble_retrieval_results(
     return assembled
 
 
-async def list_canonical_chunks(
-    db: AsyncSession,
-    *,
-    user_id: str,
-    namespace: str,
-    query: str,
-    top_k: int,
-    exclude_document_ids: list[str],
-    exclude_sections: list[dict[str, str]],
-) -> list[dict[str, Any]]:
-    page_size = top_k
-    if exclude_sections:
-        page_size = max(top_k, top_k * _SECTION_EXCLUSION_PAGE_MULTIPLIER)
-
-    base_stmt = (
-        select(Document, DocumentChunk, DocumentSection, JobResult)
-        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
-        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
-        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
-        .where(Document.user_id == user_id)
-        .where(Document.namespace == namespace)
-        .where(Document.status == 'active')
-        .where(_build_lexical_match_predicate(query))
-        .order_by(DocumentChunk.sort_order)
-    )
-    if exclude_document_ids:
-        base_stmt = base_stmt.where(Document.document_id.not_in(exclude_document_ids))
-
-    rows = []
-    offset = 0
-    while len(rows) < top_k:
-        result = await db.execute(base_stmt.limit(page_size).offset(offset))
-        result_rows = result.all()
-        if inspect.isawaitable(result_rows):
-            result_rows = await result_rows
-        if not isinstance(result_rows, (list, tuple)) or not result_rows:
-            break
-        for document, chunk, section, job_result in result_rows:
-            section_path = section.section_path if section else None
-            if is_excluded_section(
-                document_id=document.document_id,
-                section_path=section_path,
-                exclude_sections=exclude_sections,
-            ):
-                continue
-            rows.append({
-                'document_id': document.document_id,
-                'chunk_id': chunk.chunk_id,
-                'section_id': chunk.section_id,
-                'section_path': section_path,
-                'source_file_name': document.source_file_name,
-                'chunk_type': chunk.chunk_type,
-                'content': chunk.content,
-                'score': 1.0,
-                'file_path': chunk.file_path,
-                'chunk_metadata': chunk.chunk_metadata or {},
-                'job_result_id': chunk.job_result_id,
-                'job_id': job_result.job_id if job_result else None,
-            })
-            if len(rows) >= top_k:
-                break
-        if len(result_rows) < page_size:
-            break
-        offset += page_size
-    return rows
-
-
 async def list_graph_routed_chunks(
     db: AsyncSession,
     *,
@@ -387,7 +310,6 @@ async def run_retrieval_query(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
-    graph_enabled: bool,
 ) -> dict[str, Any]:
     cache_version: int | None = None
     try:
@@ -398,7 +320,6 @@ async def run_retrieval_query(
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
             exclude_sections=exclude_sections,
-            graph_enabled=graph_enabled,
         )
         if cached:
             try:
@@ -413,37 +334,15 @@ async def run_retrieval_query(
     except Exception as e:
         logger.warning(f'Failed to read retrieval cache (ignored): {e}')
 
-    rows: list[dict[str, Any]] = []
-    graph_used = False
-    if graph_enabled:
-        graph_rows = list_graph_routed_chunks(
-            db,
-            user_id=user_id,
-            namespace=namespace,
-            query=query,
-            top_k=top_k,
-            exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections,
-        )
-        if inspect.isawaitable(graph_rows):
-            graph_rows = await graph_rows
-        if graph_rows:
-            rows = list(graph_rows)
-            graph_used = True
-
-    if not rows:
-        lexical_rows = list_canonical_chunks(
-            db,
-            user_id=user_id,
-            namespace=namespace,
-            query=query,
-            top_k=top_k,
-            exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections,
-        )
-        if inspect.isawaitable(lexical_rows):
-            lexical_rows = await lexical_rows
-        rows = list(lexical_rows)
+    rows = await list_graph_routed_chunks(
+        db,
+        user_id=user_id,
+        namespace=namespace,
+        query=query,
+        top_k=top_k,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
 
     assembled_rows = await assemble_retrieval_results(
         db=db,
@@ -456,7 +355,7 @@ async def run_retrieval_query(
         'namespace': namespace,
         'query': query,
         'results': results,
-        'graph_enabled': graph_used,
+        'graph_enabled': True,
     }
 
     if cache_version is not None:
@@ -469,7 +368,6 @@ async def run_retrieval_query(
                 top_k=top_k,
                 exclude_document_ids=exclude_document_ids,
                 exclude_sections=exclude_sections,
-                graph_enabled=graph_enabled,
                 response=response,
             )
         except Exception as e:

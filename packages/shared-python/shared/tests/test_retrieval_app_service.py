@@ -21,17 +21,13 @@ os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 
 @pytest.mark.asyncio
-async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeypatch):
+async def test_run_retrieval_query_always_uses_graph_routing(monkeypatch):
     from shared.services.retrieval import app_service
 
     calls = []
 
     async def fake_graph(*_args, **kwargs):
         calls.append(('graph', kwargs))
-        return []
-
-    async def fake_lexical(*_args, **kwargs):
-        calls.append(('lexical', kwargs))
         return [
             {
                 "document_id": "doc_123",
@@ -51,7 +47,6 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', lambda **_kwargs: None)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_graph)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_lexical)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **kwargs: scheduled.update(kwargs))
 
     result = await app_service.run_retrieval_query(
@@ -62,13 +57,12 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=True,
     )
 
-    assert [name for name, _ in calls] == ['graph', 'lexical']
+    assert [name for name, _ in calls] == ['graph']
     assert result['namespace'] == 'default'
     assert result['query'] == 'refund policy'
-    assert result['graph_enabled'] is False
+    assert result['graph_enabled'] is True
     assert result['results'][0]['chunk_id'] == 'chunk_456'
     assert result['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
     assert result['results'][0]['citation']['section_path'] == 'Policies / Billing / Refunds'
@@ -79,8 +73,6 @@ async def test_run_retrieval_query_uses_graph_then_falls_back_to_lexical(monkeyp
 @pytest.mark.asyncio
 async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(monkeypatch):
     from shared.services.retrieval import app_service
-
-    lexical_calls = []
 
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 4, {
@@ -104,15 +96,10 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
                     },
                 }
             ],
-            'graph_enabled': False,
+            'graph_enabled': True,
         }
 
-    async def fake_list_canonical_chunks(*_args, **_kwargs):
-        lexical_calls.append('lexical')
-        return []
-
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
     scheduled = {}
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **kwargs: scheduled.update(kwargs))
 
@@ -124,10 +111,8 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
-    assert lexical_calls == []
     assert result['results'][0]['chunk_id'] == 'chunk_cached'
     assert scheduled['user_id'] == 'user_123'
     assert scheduled['namespace'] == 'default'
@@ -137,13 +122,13 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
 async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkeypatch):
     from shared.services.retrieval import app_service
 
-    lexical_calls = []
+    graph_calls = []
 
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         raise RuntimeError('redis down')
 
-    async def fake_list_canonical_chunks(*_args, **_kwargs):
-        lexical_calls.append('lexical')
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
+        graph_calls.append('graph')
         return [
             {
                 'document_id': 'doc_123',
@@ -159,7 +144,7 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
         ]
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     result = await app_service.run_retrieval_query(
@@ -170,10 +155,9 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
-    assert lexical_calls == ['lexical']
+    assert graph_calls == ['graph']
     assert result['results'][0]['chunk_id'] == 'chunk_456'
 
 
@@ -186,7 +170,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 3, None
 
-    async def fake_list_canonical_chunks(*_args, **_kwargs):
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
         return [
             {
                 'document_id': 'doc_123',
@@ -206,7 +190,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     result = await app_service.run_retrieval_query(
@@ -217,7 +201,6 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
         top_k=5,
         exclude_document_ids=['doc_skip'],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     assert result['results'][0]['chunk_id'] == 'chunk_456'
@@ -228,7 +211,6 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
     assert cached_write['top_k'] == 5
     assert cached_write['exclude_document_ids'] == ['doc_skip']
     assert cached_write['exclude_sections'] == []
-    assert cached_write['graph_enabled'] is False
     assert cached_write['response']['results'][0]['chunk_id'] == 'chunk_456'
 
 
@@ -242,7 +224,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 3, None
 
-    async def fake_list_canonical_chunks(*_args, **_kwargs):
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
         return [
             {
                 'document_id': 'doc_123',
@@ -271,7 +253,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -283,7 +265,6 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     public_result = result['results'][0]
@@ -327,7 +308,7 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
                     },
                 }
             ],
-            'graph_enabled': False,
+            'graph_enabled': True,
         }
 
     class FakeResultStorage:
@@ -339,7 +320,6 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
             return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -351,7 +331,6 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     assert generated == [('job_123', 'images/page-1.png', 3600)]
@@ -388,7 +367,7 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
                     },
                 }
             ],
-            'graph_enabled': False,
+            'graph_enabled': True,
         }
 
     class FakeResultStorage:
@@ -402,7 +381,6 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
             return 'https://assets.test/results/job_123/images/page-1.png?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -414,7 +392,6 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     public_result = result['results'][0]
@@ -453,7 +430,7 @@ async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_
                     },
                 }
             ],
-            'graph_enabled': False,
+            'graph_enabled': True,
         }
 
     class FakeResultStorage:
@@ -465,7 +442,6 @@ async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_
             return f'https://assets.test/{job_id}/{artifact_ref}?signature=fresh'
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', lambda *_args, **_kwargs: pytest.fail('should not hit DB path'))
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -477,7 +453,6 @@ async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     assert generated == []
@@ -494,7 +469,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 3, None
 
-    async def fake_list_canonical_chunks(*_args, **_kwargs):
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
         return [
             {
                 'document_id': 'doc_123',
@@ -518,7 +493,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FailResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -530,7 +505,6 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     public_result = result['results'][0]
@@ -550,17 +524,13 @@ def test_document_chunk_schema_has_lexical_serving_fields():
 
 def test_retrieval_query_uses_lexical_serving_fields():
     shared_root = Path(__file__).parents[1]
-    app_source = (shared_root / "services/retrieval/app_service.py").read_text(
-        encoding="utf-8"
-    )
     graph_source = (shared_root / "services/retrieval/graph_service.py").read_text(
         encoding="utf-8"
     )
 
-    assert "DocumentChunk.content.ilike" not in app_source
     assert "DocumentChunk.content.ilike" not in graph_source
-    assert "content_lexical_text" in app_source
-    assert "path_lexical_text" in app_source
+    assert "content_lexical_text" in graph_source
+    assert "path_lexical_text" in graph_source
 
 
 @pytest.mark.asyncio
@@ -573,15 +543,15 @@ async def test_run_retrieval_query_passes_section_exclusions_to_cache_and_db_pat
         captured['cache_read'] = kwargs
         return 5, None
 
-    async def fake_list_canonical_chunks(*_args, **kwargs):
-        captured['lexical'] = kwargs
+    async def fake_list_graph_routed_chunks(*_args, **kwargs):
+        captured['graph'] = kwargs
         return []
 
     async def fake_set_cached_retrieval_query_result(**kwargs):
         captured['cache_write'] = kwargs
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -594,11 +564,10 @@ async def test_run_retrieval_query_passes_section_exclusions_to_cache_and_db_pat
         top_k=5,
         exclude_document_ids=['doc_skip'],
         exclude_sections=exclude_sections,
-        graph_enabled=False,
     )
 
     assert captured['cache_read']['exclude_sections'] == exclude_sections
-    assert captured['lexical']['exclude_sections'] == exclude_sections
+    assert captured['graph']['exclude_sections'] == exclude_sections
     assert captured['cache_write']['exclude_sections'] == exclude_sections
 
 
@@ -768,7 +737,7 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 9, None
 
-    async def fake_list_canonical_chunks(*_args, **_kwargs):
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
         return []
 
     async def fake_set_cached_retrieval_query_result(**kwargs):
@@ -776,7 +745,7 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_canonical_chunks', fake_list_canonical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
     await app_service.run_retrieval_query(
@@ -787,82 +756,9 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        graph_enabled=False,
     )
 
     assert cached_write['version'] == 9
-
-
-@pytest.mark.asyncio
-async def test_list_canonical_chunks_fills_top_k_after_section_exclusion():
-    from shared.services.retrieval.app_service import list_canonical_chunks
-
-    def build_row(chunk_id, section_path):
-        document = SimpleNamespace(
-            document_id='doc_123',
-            source_file_name='refund-policy.md',
-        )
-        chunk = SimpleNamespace(
-            chunk_id=chunk_id,
-            section_id=f'sec_{chunk_id}',
-            chunk_type='text',
-            content=f'content-{chunk_id}',
-            file_path=None,
-            chunk_metadata={},
-            job_result_id='result_123',
-        )
-        section = SimpleNamespace(section_path=section_path)
-        job_result = SimpleNamespace(job_id='job_123')
-        return (document, chunk, section, job_result)
-
-    returned_rows = [
-        build_row('chunk_1', 'Excluded / One'),
-        build_row('chunk_2', 'Excluded / Two'),
-        build_row('chunk_3', 'Excluded / Three'),
-        build_row('chunk_4', 'Allowed / Four'),
-        build_row('chunk_5', 'Allowed / Five'),
-    ]
-
-    class FakeResult:
-        def __init__(self, rows):
-            self.rows = rows
-
-        def all(self):
-            return self.rows
-
-    class FakeDB:
-        def __init__(self):
-            self.calls = 0
-
-        async def execute(self, stmt):
-            self.calls += 1
-            sql = str(stmt.compile(compile_kwargs={'literal_binds': True}))
-            if self.calls == 1:
-                assert 'LIMIT 4' in sql
-                assert 'OFFSET 0' in sql or ' OFFSET ' not in sql
-                return FakeResult(returned_rows[:4])
-            assert 'LIMIT 4' in sql
-            assert 'OFFSET 4' in sql
-            return FakeResult(returned_rows[4:])
-
-    fake_db = FakeDB()
-
-    rows = await list_canonical_chunks(
-        fake_db,
-        user_id='user_123',
-        namespace='default',
-        query='refund',
-        top_k=2,
-        exclude_document_ids=[],
-        exclude_sections=[
-            {'document_id': 'doc_123', 'section_path': 'Excluded / One'},
-            {'document_id': 'doc_123', 'section_path': 'Excluded / Two'},
-            {'document_id': 'doc_123', 'section_path': 'Excluded / Three'},
-        ],
-    )
-
-    assert fake_db.calls == 2
-    assert [row['chunk_id'] for row in rows] == ['chunk_4', 'chunk_5']
 
 
 @pytest.mark.asyncio
