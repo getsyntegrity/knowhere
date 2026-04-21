@@ -65,6 +65,22 @@ class RetrievalPublicationService:
             logger.warning(f"Job not found for document publication: {job_id}")
             return None
 
+        return self._publish_document_state_for_job(
+            db,
+            job=job,
+            job_result_id=job_result_id,
+            chunks=chunks,
+        )
+
+    def _publish_document_state_for_job(
+        self,
+        db: Session,
+        *,
+        job: Job,
+        job_result_id: str,
+        chunks: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, str]]:
+
         metadata = job.job_metadata or {}
         namespace = metadata.get("namespace")
         document_id = metadata.get("document_id")
@@ -97,7 +113,7 @@ class RetrievalPublicationService:
                 job=job,
             ):
                 logger.warning(
-                    f"Skipping stale document publication: job_id={job_id}, document_id={document.document_id}"
+                    f"Skipping stale document publication: job_id={job.job_id}, document_id={document.document_id}"
                 )
                 return None
             document.status = "active"
@@ -188,6 +204,16 @@ class RetrievalPublicationService:
         if not job:
             raise RuntimeError(f"Job not found for graph publication: {job_id}")
 
+        self._publish_document_graph_for_job(db, job=job, job_result_id=job_result_id)
+
+    def _publish_document_graph_for_job(
+        self,
+        db: Session,
+        *,
+        job: Job,
+        job_result_id: str,
+    ) -> None:
+
         metadata = job.job_metadata or {}
         namespace = metadata.get("namespace") or "default"
         document_id = metadata.get("document_id")
@@ -197,7 +223,7 @@ class RetrievalPublicationService:
             ).scalar_one_or_none()
             document_id = document.document_id if document else None
         if not document_id:
-            raise RuntimeError(f"Document not found for graph publication: job_id={job_id}")
+            raise RuntimeError(f"Document not found for graph publication: job_id={job.job_id}")
 
         DocumentGraphService().publish_document_graph(
             db,

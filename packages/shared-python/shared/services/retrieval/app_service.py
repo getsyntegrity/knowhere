@@ -19,6 +19,10 @@ from shared.models.database.job_result import JobResult
 _MEDIA_CHUNK_TYPES = {'image', 'table'}
 
 
+def _normalize_chunk_type(raw: str | None) -> str:
+    return str(raw or '').strip().split('\n', 1)[0].lower()
+
+
 def _filter_excluded_rows(
     rows: list[dict[str, Any]],
     *,
@@ -73,8 +77,7 @@ async def hydrate_connected_target_rows(
     }
     target_ids_by_revision: dict[tuple[str, str], set[str]] = {}
     for row in rows:
-        chunk_type = str(row.get('chunk_type') or '').strip().split('\n', 1)[0].lower()
-        if chunk_type != 'text':
+        if _normalize_chunk_type(row.get('chunk_type')) != 'text':
             continue
         document_id = str(row.get('document_id') or '').strip()
         job_result_id = str(row.get('job_result_id') or '').strip()
@@ -176,13 +179,13 @@ async def assemble_retrieval_results(
             metadata = {}
         assembled_row = dict(row)
         base_content = str(row.get('content') or '')
-        if str(row.get('chunk_type') or '').strip().split('\n', 1)[0].lower() == 'text':
+        if _normalize_chunk_type(row.get('chunk_type')) == 'text':
             related_parts: list[str] = []
             for target_id in _iter_connected_target_ids(row):
                 target_row = rows_by_chunk_id.get(target_id)
                 if not target_row:
                     continue
-                if str(target_row.get('chunk_type') or '').strip().split('\n', 1)[0].lower() != 'table':
+                if _normalize_chunk_type(target_row.get('chunk_type')) != 'table':
                     continue
                 target_content = str(target_row.get('content') or '').strip()
                 if target_content:
@@ -261,8 +264,7 @@ def _with_citation(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _is_media_chunk(row: dict[str, Any]) -> bool:
-    chunk_type = str(row.get('chunk_type') or '').strip().split('\n', 1)[0].lower()
-    return chunk_type in _MEDIA_CHUNK_TYPES
+    return _normalize_chunk_type(row.get('chunk_type')) in _MEDIA_CHUNK_TYPES
 
 
 async def generate_retrieval_asset_url(*, job_id: str, artifact_ref: str) -> str | None:

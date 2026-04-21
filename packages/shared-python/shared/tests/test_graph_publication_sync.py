@@ -242,7 +242,6 @@ def test_publish_document_graph_removes_old_namespace_rows_for_same_document():
 def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch) -> None:
     db = MagicMock()
     service = lifecycle_module.SyncJobLifecycleService()
-    invalidation = {}
 
     monkeypatch.setattr(
         lifecycle_module,
@@ -266,10 +265,13 @@ def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch
     monkeypatch.setattr(service._state_machine, 'mark_completed', lambda *args, **kwargs: True)
     monkeypatch.setattr(service._retrieval_publication, 'get_existing_document_scope', lambda *_args, **_kwargs: {'document_id': 'doc_123', 'namespace': 'default'})
 
-    async def fake_invalidate_retrieval_cache_namespaces(**kwargs):
-        invalidation.update(kwargs)
-
-    monkeypatch.setattr(lifecycle_module, 'invalidate_retrieval_cache_namespaces', fake_invalidate_retrieval_cache_namespaces)
+    incremented_keys: list[str] = []
+    mock_pipeline = MagicMock()
+    mock_pipeline.incr = lambda key: incremented_keys.append(key)
+    mock_pipeline.execute = lambda: None
+    mock_redis_service = MagicMock()
+    mock_redis_service.pipeline.return_value = mock_pipeline
+    monkeypatch.setattr(lifecycle_module, 'SyncRedisServiceFactory', type('F', (), {'get_service': staticmethod(lambda: mock_redis_service)}))
 
     job = SimpleNamespace(job_id='job_123', user_id='user_123', job_metadata={'namespace': 'archive', 'document_id': 'doc_123'})
     db.execute.return_value.scalar_one_or_none.return_value = job
@@ -286,5 +288,5 @@ def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch
     )
 
     assert result == {'status': 'success', 'job_id': 'job_123', 'stored_count': 0}
-    assert invalidation['user_id'] == 'user_123'
-    assert set(invalidation['namespaces']) == {'default', 'archive'}
+    invalidated_namespaces = {k.split(':')[-1] for k in incremented_keys}
+    assert invalidated_namespaces == {'default', 'archive'}

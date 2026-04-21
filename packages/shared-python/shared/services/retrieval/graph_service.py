@@ -135,12 +135,17 @@ class DocumentGraphService:
                 .where(Document.document_id != document_id)
             ).scalars()
         )
+        peer_node_ids = [f"doc:{other.document_id}" for other in other_documents]
+        existing_peer_nodes: set[str] = set()
+        if peer_node_ids:
+            existing_peer_nodes = set(
+                db.execute(
+                    select(GraphNode.node_id).where(GraphNode.node_id.in_(peer_node_ids))
+                ).scalars()
+            )
         for other in other_documents:
             peer_node_id = f"doc:{other.document_id}"
-            peer_node = db.execute(
-                select(GraphNode).where(GraphNode.node_id == peer_node_id)
-            ).scalar_one_or_none()
-            if peer_node is None:
+            if peer_node_id not in existing_peer_nodes:
                 continue
             db.add(
                 GraphEdge(
@@ -192,11 +197,11 @@ class GraphQueryService:
             .where(GraphNode.namespace == namespace)
             .where(GraphNode.node_kind == 'section')
         )
+        if exclude_document_ids:
+            stmt = stmt.where(GraphNode.ref_document_id.notin_(list(exclude_document_ids)))
         result = await db.execute(stmt)
         candidates = []
         for node in result.scalars().all():
-            if node.ref_document_id in exclude_document_ids:
-                continue
             props = node.properties or {}
             if is_excluded_section(
                 document_id=node.ref_document_id,
@@ -210,10 +215,7 @@ class GraphQueryService:
             ]
             if any(query_lc and query_lc in haystack for haystack in haystacks):
                 candidates.append(node.ref_document_id)
-        seen = []
-        for doc_id in candidates:
-            if doc_id and doc_id not in seen:
-                seen.append(doc_id)
+        seen = list(dict.fromkeys(c for c in candidates if c))
 
         if seen:
             return seen

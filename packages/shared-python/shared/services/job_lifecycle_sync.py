@@ -8,7 +8,6 @@ using the same transactional outbox pattern for webhook events.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -21,7 +20,6 @@ from sqlalchemy.orm import Session
 from shared.core.database_sync import get_sync_db_context
 from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
-from shared.services.retrieval.cache_service import invalidate_retrieval_cache_namespaces
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobChunk, JobResult
 from shared.models.database.knowledge_base import ContentBase
@@ -331,10 +329,16 @@ class SyncJobLifecycleService:
         if not cache_invalidation:
             return
         try:
-            asyncio.run(invalidate_retrieval_cache_namespaces(
-                user_id=cache_invalidation["user_id"],
-                namespaces=cache_invalidation["namespaces"],
-            ))
+            redis_service = SyncRedisServiceFactory.get_service()
+            client = redis_service.pipeline(transaction=False)
+            user_id = cache_invalidation["user_id"]
+            seen: set[str] = set()
+            for namespace in cache_invalidation["namespaces"]:
+                if not namespace or namespace in seen:
+                    continue
+                seen.add(namespace)
+                client.incr(f"retrieval:version:{user_id}:{namespace}")
+            client.execute()
         except Exception as exc:
             logger.warning(
                 f"Failed to invalidate retrieval cache after publication (ignored): job_id={cache_invalidation.get('job_id')}, error={exc}"
