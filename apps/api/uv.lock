@@ -1279,6 +1279,7 @@ dependencies = [
     { name = "pytz" },
     { name = "pyyaml" },
     { name = "qstash" },
+    { name = "rank-bm25" },
     { name = "redis" },
     { name = "requests" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -1321,6 +1322,7 @@ requires-dist = [
     { name = "pytz", specifier = "==2025.2" },
     { name = "pyyaml", specifier = "==6.0.2" },
     { name = "qstash", specifier = "==3.2.0" },
+    { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "redis", specifier = "==5.3.1" },
     { name = "requests", specifier = "==2.32.4" },
     { name = "sqlalchemy", specifier = "==2.0.42" },
@@ -2553,6 +2555,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2f/e0/ffe901e104fc34186b25a61734c21d17bef38780ae30b20bf96a6585a499/qstash-3.2.0.tar.gz", hash = "sha256:3519d4cefb956703022a790531ccc31d13e68ad0d9e7d6ffe95459ae304210e9", size = 26666, upload-time = "2025-09-18T09:28:13.42Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/89/e2929b953d4a145b4487be4fe051ea7926557e454a3cbbf961fd10a62937/qstash-3.2.0-py3-none-any.whl", hash = "sha256:c5cb3f4521dc57108232dc80c3bf178a85b6787dc919087cef133073e764f0b4", size = 37196, upload-time = "2025-09-18T09:28:12.201Z" },
+]
+
+[[package]]
+name = "rank-bm25"
+version = "0.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/0a/f9579384aa017d8b4c15613f86954b92a95a93d641cc849182467cf0bb3b/rank_bm25-0.2.2.tar.gz", hash = "sha256:096ccef76f8188563419aaf384a02f0ea459503fdf77901378d4fd9d87e5e51d", size = 8347, upload-time = "2022-02-16T12:10:52.196Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/21/f691fb2613100a62b3fa91e9988c991e9ca5b89ea31c0d3152a3210344f9/rank_bm25-0.2.2-py3-none-any.whl", hash = "sha256:7bd4a95571adadfc271746fa146a4bcfd89c0cf731e49c3d1ad863290adbe8ae", size = 8584, upload-time = "2022-02-16T12:10:50.626Z" },
 ]
 
 [[package]]

@@ -118,6 +118,7 @@ shared/services/redis/user_redis_service.py
 shared/services/retrieval/__init__.py
 shared/services/retrieval/app_service.py
 shared/services/retrieval/cache_service.py
+shared/services/retrieval/channels.py
 shared/services/retrieval/graph_service.py
 shared/services/retrieval/hit_stats_service.py
 shared/services/retrieval/lexical_text.py
