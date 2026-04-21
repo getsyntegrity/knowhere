@@ -7,7 +7,7 @@ from gevent.pool import Pool as GeventPool
 
 import pandas as pd
 from collections import Counter, defaultdict
-from app.services.common.kb_utils import count_cn_en, truncate_text
+from app.services.common.kb_utils import count_cn_en, truncate_text, truncate_text_by_tokens
 from app.services.document_parser.stage_profiler import stage_timer
 from app.services.document_parser.table_parser import df2md
 from docx.oxml.ns import qn
@@ -582,7 +582,7 @@ def get_max_lvl(code_str: str):
 
 def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
     raw_headings = df['heading'].tolist()
-    df["heading"] = df["heading"].apply(lambda x: truncate_text(x, max_start, max_end))
+    df["heading"] = df["heading"].apply(lambda x: truncate_text_by_tokens(x, max_start, max_end))
 
     sub_dfs = []
     current_rows = []
@@ -982,6 +982,7 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
     ot_limit = int(len(level_md) * 1.2)
     ot_limit = min(ot_limit, max_len)
     formatted_toc_context = format_toc_context_for_llm(toc_context)
+    print(formatted_toc_context)
 
     paras = {
         "max_tokens": ot_limit,
@@ -1339,7 +1340,11 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
 
     full_preds = []
     level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
-    logger.info(f"smart parse => {len(level_dfs)} chunks, LLM on chunk 0, mapping on the rest")
+    chunk_sizes = [len(d) for d in level_dfs]
+    logger.info(
+        f"smart parse => {len(level_dfs)} chunk(s) | rows per chunk: {chunk_sizes} | "
+        f"threshold={prompt_limt} | max_start={max_len}"
+    )
 
     basic_df = level_dfs[0]
     try:
