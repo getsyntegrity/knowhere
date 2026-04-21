@@ -191,34 +191,36 @@ class GraphQueryService:
     ) -> list[str]:
         query_lc = query.lower().strip()
         exclude_document_ids = set(exclude_document_ids)
-        stmt = (
-            select(GraphNode)
-            .where(GraphNode.user_id == user_id)
-            .where(GraphNode.namespace == namespace)
-            .where(GraphNode.node_kind == 'section')
-        )
-        if exclude_document_ids:
-            stmt = stmt.where(GraphNode.ref_document_id.notin_(list(exclude_document_ids)))
-        result = await db.execute(stmt)
-        candidates = []
-        for node in result.scalars().all():
-            props = node.properties or {}
-            if is_excluded_section(
-                document_id=node.ref_document_id,
-                section_path=props.get('section_path'),
-                exclude_sections=exclude_sections,
-            ):
-                continue
-            haystacks = [
-                str(props.get('section_title') or '').lower(),
-                str(props.get('section_path') or '').lower(),
-            ]
-            if any(query_lc and query_lc in haystack for haystack in haystacks):
-                candidates.append(node.ref_document_id)
-        seen = list(dict.fromkeys(c for c in candidates if c))
 
-        if seen:
-            return seen
+        if query_lc:
+            like = f'%{query_lc}%'
+            stmt = (
+                select(DocumentSection.document_id)
+                .join(Document, (Document.document_id == DocumentSection.document_id) & (Document.current_job_result_id == DocumentSection.job_result_id))
+                .where(Document.user_id == user_id)
+                .where(Document.namespace == namespace)
+                .where(Document.status == 'active')
+                .where(
+                    DocumentSection.section_title.ilike(like)
+                    | DocumentSection.section_path.ilike(like)
+                )
+                .distinct()
+            )
+            if exclude_document_ids:
+                stmt = stmt.where(Document.document_id.notin_(list(exclude_document_ids)))
+            for exc in (exclude_sections or ()):
+                if not isinstance(exc, dict):
+                    continue
+                exc_doc = str(exc.get('document_id') or '').strip()
+                exc_path = str(exc.get('section_path') or '').strip()
+                if exc_doc and exc_path:
+                    stmt = stmt.where(
+                        ~((DocumentSection.document_id == exc_doc) & (DocumentSection.section_path == exc_path))
+                    )
+            result = await db.execute(stmt)
+            seen = [row[0] for row in result.all()]
+            if seen:
+                return seen
 
         return await self._find_documents_by_content(
             db,
