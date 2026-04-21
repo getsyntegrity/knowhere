@@ -4,6 +4,8 @@ import json
 import sys
 
 from httpx import ASGITransport, AsyncClient
+from mcp.client.session import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 import pytest
 from starlette.routing import Route
 
@@ -66,6 +68,31 @@ async def test_mcp_streamable_http_endpoint_reaches_protocol_handler():
 
     assert response.status_code != 404
     assert 'Missing session ID' in response.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_streamable_http_endpoint_initializes_with_public_host():
+    import main as app_main
+
+    test_app = app_main.create_app()
+    mcp_server = test_app.state.retrieval_mcp_server
+
+    async with mcp_server.session_manager.run():
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(
+            transport=transport,
+            base_url='https://api-staging.knowhereto.ai',
+        ) as http_client:
+            async with streamable_http_client(
+                'https://api-staging.knowhereto.ai/mcp',
+                http_client=http_client,
+                terminate_on_close=False,
+            ) as (read_stream, write_stream, get_session_id):
+                async with ClientSession(read_stream, write_stream) as session:
+                    result = await session.initialize()
+
+    assert result.serverInfo.name == 'knowhere-retrieval'
+    assert get_session_id() is not None
 
 
 @pytest.mark.asyncio
@@ -214,6 +241,7 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
         def __init__(self, name, instructions=None, **_kwargs):
             self.name = name
             self.instructions = instructions
+            self.kwargs = _kwargs
 
         def tool(self, name=None, description=None, **_kwargs):
             def decorator(fn):
@@ -275,6 +303,7 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
         'Use this server to search knowledge. '
         'If you need information before answering, try searching with this tool.'
     )
+    assert server.kwargs['transport_security'].enable_dns_rebinding_protection is False
     assert registered['name'] == 'kb.query'
     assert registered['description'] == 'Search for information and return relevant knowledge snippets.'
 

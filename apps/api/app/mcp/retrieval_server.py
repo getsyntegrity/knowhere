@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Any, AsyncContextManager, Callable
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,11 @@ from shared.services.retrieval import run_retrieval_query
 DbFactory = Callable[[], AsyncContextManager[AsyncSession]]
 KNOWHERE_NAMESPACE_HEADER = 'x-knowhere-namespace'
 DEFAULT_NAMESPACE = 'default'
+
+
+def create_public_mcp_transport_security() -> TransportSecuritySettings:
+    """Match the public API ingress posture for the mounted MCP endpoint."""
+    return TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 
 def get_header(headers: Any, name: str) -> str | None:
@@ -88,6 +94,7 @@ def create_retrieval_mcp_server(
             'If you need information before answering, try searching with this tool.'
         ),
         streamable_http_path=streamable_http_path,
+        transport_security=create_public_mcp_transport_security(),
     )
 
     @server.tool(
