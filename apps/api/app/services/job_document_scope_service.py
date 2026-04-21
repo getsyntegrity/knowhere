@@ -31,7 +31,7 @@ async def resolve_effective_document_scope(
         document_id=document_id,
         user_id=user_id,
     )
-    if document is None:
+    if document is None or getattr(document, "status", None) == "archived":
         raise NotFoundException(
             resource="Document",
             resource_id=document_id,

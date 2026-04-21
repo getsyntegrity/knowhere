@@ -510,6 +510,8 @@ async def create_job(
                     internal_message=f"URL job creation failed: {str(e)}"
                 )
 
+    except NotFoundException:
+        raise
     except ValidationException:
         raise
     except ConflictException:

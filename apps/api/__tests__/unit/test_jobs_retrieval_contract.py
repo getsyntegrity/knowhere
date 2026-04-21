@@ -10,6 +10,7 @@ from app.api.v1.routes import jobs
 from app.repositories.job_repository import JobRepository
 from app.services import job_document_scope_service
 from app.services.rate_limit.data_structures import CurrentUser
+from shared.core.exceptions.domain_exceptions import NotFoundException
 from shared.models.schemas.job import JobCreate, ParsingParams
 
 
@@ -293,6 +294,145 @@ async def test_create_job_update_omitting_namespace_keeps_existing_document_name
     assert response.namespace == "support-center"
     assert response.document_id == "doc_123"
     assert captured["metadata"]["namespace"] == "support-center"
+
+
+@pytest.mark.asyncio
+async def test_resolve_effective_document_scope_rejects_archived_document_update_target():
+    class _DocumentRepo:
+        async def get_document(self, _db, *, document_id, user_id):
+            assert document_id == "doc_123"
+            assert user_id == "u_test"
+            return type(
+                "Document",
+                (),
+                {
+                    "document_id": "doc_123",
+                    "namespace": "support-center",
+                    "status": "archived",
+                },
+            )()
+
+    with pytest.raises(NotFoundException) as exc_info:
+        await job_document_scope_service.resolve_effective_document_scope(
+            object(),
+            user_id="u_test",
+            document_id="doc_123",
+            requested_namespace=None,
+            repository=_DocumentRepo(),
+        )
+
+    assert exc_info.value.details == {"resource": "Document", "id": "doc_123"}
+
+
+@pytest.mark.asyncio
+async def test_create_job_returns_404_when_update_target_document_is_missing(
+    authenticated_client,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
+
+    class _DocumentRepo:
+        async def get_document(self, _db, *, document_id, user_id):
+            assert document_id == "doc_123"
+            assert user_id
+            return None
+
+    monkeypatch.setattr(
+        job_document_scope_service,
+        "DocumentRepository",
+        lambda: _DocumentRepo(),
+    )
+
+    response = await authenticated_client.post(
+        "/v1/jobs",
+        json={
+            "source_type": "file",
+            "file_name": "doc.pdf",
+            "document_id": "doc_123",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["message"] == "Document not found"
+
+
+@pytest.mark.asyncio
+async def test_create_job_returns_404_when_update_target_document_is_archived(
+    authenticated_client,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
+    monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
+
+    class _DocumentRepo:
+        async def get_document(self, _db, *, document_id, user_id):
+            assert document_id == "doc_123"
+            assert user_id
+            return type(
+                "Document",
+                (),
+                {
+                    "document_id": "doc_123",
+                    "namespace": "support-center",
+                    "status": "archived",
+                },
+            )()
+
+    class _JobRepo:
+        async def create_job(self, **kwargs):
+            return type(
+                "Job",
+                (),
+                {
+                    "job_id": kwargs["job_id"],
+                    "status": kwargs["initial_state"],
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )()
+
+    class _UploadService:
+        async def generate_upload_url(self, _job_id, _file_extension):
+            return {
+                "upload_url": "https://example.com/upload",
+                "upload_headers": {},
+                "expires_in": 3600,
+            }
+
+    monkeypatch.setattr(
+        job_document_scope_service,
+        "DocumentRepository",
+        lambda: _DocumentRepo(),
+    )
+    monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
+    monkeypatch.setattr(jobs, "FileUploadService", lambda: _UploadService())
+    monkeypatch.setattr(
+        "shared.services.redis.job_metadata_service.JobMetadataService.save_metadata",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "shared.services.redis.JobInfoRedisService.save_job_info",
+        AsyncMock(),
+    )
+
+    response = await authenticated_client.post(
+        "/v1/jobs",
+        json={
+            "source_type": "file",
+            "file_name": "doc.pdf",
+            "document_id": "doc_123",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["message"] == "Document not found"
 
 
 def test_jobs_routes_keep_document_scope_logic_out_of_router():
