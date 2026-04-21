@@ -102,6 +102,23 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
                         'source_file_name': 'refund-policy.md',
                         'section_path': 'Policies / Billing / Refunds',
                     },
+                },
+                {
+                    'document_id': 'doc_123',
+                    'chunk_id': 'chunk_789',
+                    'section_id': 'sec_12',
+                    'section_path': 'Policies / Billing / Refunds',
+                    'source_file_name': 'refund-policy.md',
+                    'chunk_type': 'image',
+                    'content': 'Image showing the refund policy table.',
+                    'score': 0.9,
+                    'asset_url': 'https://assets.test/refund-policy/page-1.png?signature=fresh',
+                    'citation': {
+                        'document_id': 'doc_123',
+                        'chunk_id': 'chunk_789',
+                        'source_file_name': 'refund-policy.md',
+                        'section_path': 'Policies / Billing / Refunds',
+                    },
                 }
             ],
         }
@@ -116,7 +133,22 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
     server = retrieval_server.create_retrieval_mcp_server(db_factory=FakeDbContext)
 
     tools = await server.list_tools()
-    assert any(tool.name == 'kb.query' for tool in tools)
+    query_tool = next(tool for tool in tools if tool.name == 'kb.query')
+    assert query_tool.description == 'Search for information and return relevant knowledge snippets.'
+    assert query_tool.inputSchema['properties'] == {
+        'query': {
+            'description': 'What you want to search for.',
+            'title': 'Query',
+            'type': 'string',
+        },
+        'top_k': {
+            'default': 5,
+            'description': 'Maximum number of results to return.',
+            'title': 'Top K',
+            'type': 'integer',
+        },
+    }
+    assert query_tool.inputSchema['required'] == ['query']
 
     content_blocks = await server.call_tool(
         'kb.query',
@@ -127,9 +159,30 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
     )
     response = json.loads(content_blocks[0].text)
 
-    assert response['namespace'] == 'default'
-    assert response['results'][0]['chunk_id'] == 'chunk_456'
-    assert response['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
+    assert response == {
+        'query': 'refund policy',
+        'results': [
+            {
+                'content': 'Annual plans may be refunded within 30 days of purchase...',
+                'source_file_name': 'refund-policy.md',
+                'section_path': 'Policies / Billing / Refunds',
+                'chunk_type': 'text',
+            },
+            {
+                'content': 'Image showing the refund policy table.',
+                'source_file_name': 'refund-policy.md',
+                'section_path': 'Policies / Billing / Refunds',
+                'chunk_type': 'image',
+                'asset_url': 'https://assets.test/refund-policy/page-1.png?signature=fresh',
+            }
+        ],
+    }
+    assert 'chunk_id' not in response['results'][0]
+    assert 'score' not in response['results'][0]
+    assert 'citation' not in response['results'][0]
+    assert captured['namespace'] == 'default'
+    assert captured['exclude_document_ids'] == []
+    assert captured['exclude_sections'] == []
 
 
 @pytest.mark.asyncio
@@ -218,8 +271,12 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
     server = retrieval_server.create_retrieval_mcp_server(db_factory=FakeDbContext)
 
     assert server.name == 'knowhere-retrieval'
+    assert server.instructions == (
+        'Use this server to search knowledge. '
+        'If you need information before answering, try searching with this tool.'
+    )
     assert registered['name'] == 'kb.query'
-    assert 'Query the published knowledge base' in registered['description']
+    assert registered['description'] == 'Search for information and return relevant knowledge snippets.'
 
     class FakeRequestContext:
         def __init__(self):
@@ -227,7 +284,10 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
                 'Req',
                 (),
                 {
-                    'headers': {'authorization': 'Bearer sk_test'},
+                    'headers': {
+                        'Authorization': 'Bearer sk_test',
+                        'X-Knowhere-Namespace': 'enterprise',
+                    },
                     'url': type('Url', (), {'path': '/mcp'})(),
                 },
             )()
@@ -238,17 +298,25 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
 
     response = await registered['fn'](
         query='refund policy',
-        namespace=None,
         top_k=5,
-        exclude_document_ids=['doc_skip'],
-        exclude_sections=[{'document_id': 'doc_123', 'section_path': 'Policies / Billing'}],
         ctx=FakeContext(),
     )
 
-    assert response['namespace'] == 'default'
-    assert response['results'][0]['chunk_id'] == 'chunk_456'
-    assert response['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
+    assert response == {
+        'query': 'refund policy',
+        'results': [
+            {
+                'content': 'Annual plans may be refunded within 30 days of purchase...',
+                'source_file_name': 'refund-policy.md',
+                'section_path': 'Policies / Billing / Refunds',
+                'chunk_type': 'text',
+            }
+        ],
+    }
     assert captured_auth['authorization'] == 'Bearer sk_test'
+    assert captured['namespace'] == 'enterprise'
+    assert captured['exclude_document_ids'] == []
+    assert captured['exclude_sections'] == []
 
 
 @pytest.mark.asyncio
@@ -282,9 +350,6 @@ async def test_kb_query_requires_db_factory_to_return_async_context_manager(monk
     with pytest.raises(TypeError, match='asynchronous context manager'):
         await registered['fn'](
             query='refund policy',
-            namespace=None,
             top_k=5,
-            exclude_document_ids=None,
-            exclude_sections=None,
             ctx=None,
         )
