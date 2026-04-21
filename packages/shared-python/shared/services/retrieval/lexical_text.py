@@ -60,3 +60,52 @@ def build_path_lexical_text(source_path: Optional[str]) -> Optional[str]:
         return None
     normalized_path = section_path.replace(" / ", " ")
     return build_lexical_text(normalized_path)
+
+
+def build_content_search_text(
+    chunk: dict[str, Any],
+    *,
+    section_summary: Optional[str] = None,
+) -> Optional[str]:
+    """Pre-tokenized content field for FTS: content + section summary, jieba space-separated."""
+    content = str(chunk.get("content") or chunk.get("text") or "").strip()
+    if not content:
+        return None
+    parts = [content]
+    if section_summary and str(section_summary).strip():
+        parts.append(str(section_summary).strip())
+    raw = " ".join(parts)
+    tokens = tokenize2stw_remove([raw], stopwords=[], link_char=" ")
+    return tokens[0] if tokens else raw
+
+
+def build_path_search_text(
+    *,
+    source_file_name: Optional[str],
+    section_path: Optional[str],
+    section_title: Optional[str],
+    section_summary: Optional[str],
+) -> Optional[str]:
+    """Pre-tokenized path field for FTS: filename + path + title + summary, jieba space-separated."""
+    parts = [
+        str(v).strip()
+        for v in [source_file_name, section_path, section_title, section_summary]
+        if v and str(v).strip()
+    ]
+    if not parts:
+        return None
+    raw = " ".join(parts)
+    tokens = tokenize2stw_remove([raw], stopwords=[], link_char=" ")
+    return tokens[0] if tokens else raw
+
+
+def build_term_search_text(
+    chunk: dict[str, Any],
+    *,
+    path_text: Optional[str] = None,
+) -> Optional[str]:
+    """Raw combined field for grep channel: content + path (not tokenized)."""
+    content = str(chunk.get("content") or chunk.get("text") or "").strip()
+    path = str(path_text or "").strip()
+    combined = f"{content} {path}".strip()
+    return combined if combined else None

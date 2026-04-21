@@ -12,6 +12,7 @@ from shared.models.database.document import Document, DocumentChunk, DocumentSec
 from shared.services.retrieval.graph_service import GraphQueryService, is_excluded_section
 from shared.services.retrieval.cache_service import get_cached_retrieval_query_result, set_cached_retrieval_query_result
 from shared.services.retrieval.hit_stats_service import record_retrieval_hits
+from shared.services.retrieval.channels import path_channel, content_channel, term_channel
 from shared.services.storage.result_storage import get_result_storage
 from shared.models.database.job_result import JobResult
 
@@ -443,6 +444,21 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
     return public_response
 
 
+def _union_graph_results(
+    fused_rows: list[dict[str, Any]],
+    graph_rows: list[dict[str, Any]],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    """Union graph-discovered chunks after RRF fusion (original KB pattern)."""
+    existing_ids = {str(row.get("chunk_id") or "") for row in fused_rows}
+    for row in graph_rows:
+        chunk_id = str(row.get("chunk_id") or "")
+        if chunk_id and chunk_id not in existing_ids:
+            existing_ids.add(chunk_id)
+            fused_rows.append(row)
+    return fused_rows[:top_k]
+
+
 async def run_retrieval_query(
     *,
     db: AsyncSession,
@@ -453,6 +469,7 @@ async def run_retrieval_query(
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
 ) -> dict[str, Any]:
+    """Checkerboard retrieval: 3 independent channels -> RRF -> graph union -> assembly."""
     cache_version: int | None = None
     try:
         cache_version, cached = await get_cached_retrieval_query_result(
@@ -468,67 +485,53 @@ async def run_retrieval_query(
                 schedule_retrieval_hit_stats_update(
                     user_id=user_id,
                     namespace=namespace,
-                    results=cached.get('results', []),
+                    results=cached.get("results", []),
                 )
             except Exception as e:
-                logger.warning(f'Failed to trigger retrieval hit stats update (ignored): {e}')
+                logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
             return await _to_public_response(cached)
     except Exception as e:
-        logger.warning(f'Failed to read retrieval cache (ignored): {e}')
+        logger.warning(f"Failed to read retrieval cache (ignored): {e}")
+
+    channel_kwargs = dict(
+        user_id=user_id,
+        namespace=namespace,
+        query=query,
+        top_k=top_k,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
+
+    path_rows = await path_channel(db, **channel_kwargs)
+    content_rows = await content_channel(db, **channel_kwargs)
+    term_rows = await term_channel(db, **channel_kwargs)
 
     channels: list[list[dict[str, Any]]] = []
     channel_weights: list[float] = []
 
-    content_rows: list[dict[str, Any]] = []
-    path_rows: list[dict[str, Any]] = []
-
-    async def _run_lexical() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        return await list_lexical_chunks(
-            db,
-            user_id=user_id,
-            namespace=namespace,
-            query=query,
-            top_k=top_k,
-            exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections,
-        )
-
-    content_rows, path_rows = await _run_lexical()
-    try:
-        graph_rows = await list_graph_routed_chunks(
-            db,
-            user_id=user_id,
-            namespace=namespace,
-            query=query,
-            top_k=top_k,
-            exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections,
-        )
-        if graph_rows:
-            channels.append(graph_rows)
-            channel_weights.append(_CHANNEL_WEIGHT_CONTENT)
-    except Exception as e:
-        logger.warning(f'Graph retrieval failed, falling back to lexical only: {e}')
-
-    channels.append(content_rows)
-    channel_weights.append(_CHANNEL_WEIGHT_CONTENT)
-    channels.append(path_rows)
-    channel_weights.append(_CHANNEL_WEIGHT_PATH)
-
-    all_lexical_rows = [*content_rows, *path_rows]
-    seen_chunk_ids: set[str] = set()
-    deduped_rows: list[dict[str, Any]] = []
-    for row in all_lexical_rows:
-        cid = str(row.get('chunk_id') or '')
-        if cid and cid not in seen_chunk_ids:
-            seen_chunk_ids.add(cid)
-            deduped_rows.append(row)
-    term_rows = _grep_search_rows(deduped_rows, query)
+    if path_rows:
+        channels.append(path_rows)
+        channel_weights.append(_CHANNEL_WEIGHT_PATH)
+    if content_rows:
+        channels.append(content_rows)
+        channel_weights.append(_CHANNEL_WEIGHT_CONTENT)
     if term_rows:
         channels.append(term_rows)
         channel_weights.append(_CHANNEL_WEIGHT_TERM)
 
-    fused_rows = merge_channels_rrf(channels, channel_weights, top_k)
+    fused_rows = merge_channels_rrf(channels, channel_weights, top_k) if channels else []
+
+    graph_rows = await list_graph_routed_chunks(
+        db,
+        user_id=user_id,
+        namespace=namespace,
+        query=query,
+        top_k=top_k,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
+    if graph_rows:
+        fused_rows = _union_graph_results(fused_rows, graph_rows, top_k)
 
     assembled_rows = await assemble_retrieval_results(
         db=db,
@@ -538,9 +541,9 @@ async def run_retrieval_query(
     )
     results = [_with_citation(row) for row in assembled_rows]
     response = {
-        'namespace': namespace,
-        'query': query,
-        'results': results,
+        "namespace": namespace,
+        "query": query,
+        "results": results,
     }
 
     if cache_version is not None:
@@ -556,7 +559,7 @@ async def run_retrieval_query(
                 response=response,
             )
         except Exception as e:
-            logger.warning(f'Failed to write retrieval cache (ignored): {e}')
+            logger.warning(f"Failed to write retrieval cache (ignored): {e}")
 
     try:
         schedule_retrieval_hit_stats_update(
@@ -565,6 +568,6 @@ async def run_retrieval_query(
             results=results,
         )
     except Exception as e:
-        logger.warning(f'Failed to trigger retrieval hit stats update (ignored): {e}')
+        logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
 
     return await _to_public_response(response)

@@ -21,7 +21,10 @@ from shared.models.database.job_result import JobResult
 from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
 from shared.services.retrieval.lexical_text import (
     build_content_lexical_text,
+    build_content_search_text,
     build_path_lexical_text,
+    build_path_search_text,
+    build_term_search_text,
     section_path_from_chunk_path,
 )
 
@@ -173,6 +176,11 @@ class RetrievalPublicationService:
                 sections_by_path[section_path] = section
 
             chunk_id = chunk.get("chunk_id") or f"chunk_{uuid4().hex[:12]}"
+            section_summary = section.summary if section else None
+            section_path_str = section.section_path if section else "Root"
+            section_title_str = section.section_title if section else None
+            path_text = f"{source_file_name or ''} {section_path_str}".strip()
+
             db.add(DocumentChunk(
                 id=f"dchk_{uuid4().hex[:12]}",
                 chunk_id=chunk_id,
@@ -185,6 +193,14 @@ class RetrievalPublicationService:
                 content=chunk.get("content") or chunk.get("text"),
                 content_lexical_text=build_content_lexical_text(chunk),
                 path_lexical_text=build_path_lexical_text(source_path),
+                content_search_text=build_content_search_text(chunk, section_summary=section_summary),
+                path_search_text=build_path_search_text(
+                    source_file_name=source_file_name,
+                    section_path=section_path_str,
+                    section_title=section_title_str,
+                    section_summary=section_summary,
+                ),
+                term_search_text=build_term_search_text(chunk, path_text=path_text),
                 source_chunk_path=source_path,
                 file_path=metadata.get("file_path") or chunk.get("file_path"),
                 chunk_metadata=metadata,
