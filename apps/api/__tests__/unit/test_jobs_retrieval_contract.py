@@ -383,6 +383,51 @@ async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_do
 
 
 @pytest.mark.asyncio
+async def test_create_job_rejects_prepublication_active_document_id_before_document_exists(monkeypatch):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+    monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
+    monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
+
+    class _DocumentRepo:
+        async def get_document(self, _db, *, document_id, user_id):
+            assert document_id == "doc_prepub"
+            assert user_id == "u_test"
+            return None
+
+    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(
+        jobs,
+        "find_active_job_for_document",
+        AsyncMock(return_value=type("Job", (), {"job_id": "job_waiting"})()),
+    )
+
+    payload = JobCreate(
+        source_type="file",
+        file_name="doc.pdf",
+        document_id="doc_prepub",
+        parsing_params=ParsingParams(),
+    )
+    current_user = CurrentUser(user_id="u_test", user_tier="free")
+
+    with pytest.raises(ConflictException) as exc_info:
+        await jobs.create_job(
+            payload=payload,
+            http_request=_make_http_request(),
+            current_user=current_user,
+            db=object(),
+        )
+
+    assert exc_info.value.details == {
+        "reason": "ABORTED",
+        "resource": "Document",
+        "id": "doc_prepub",
+    }
+
+
+@pytest.mark.asyncio
 async def test_resolve_effective_document_scope_rejects_archived_document_update_target():
     class _DocumentRepo:
         async def get_document(self, _db, *, document_id, user_id):
@@ -420,6 +465,7 @@ async def test_create_job_returns_404_when_update_target_document_is_missing(
         lambda: object(),
     )
     monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
+    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
 
     class _DocumentRepo:
         async def get_document(self, _db, *, document_id, user_id):
@@ -457,6 +503,7 @@ async def test_create_job_returns_404_when_update_target_document_is_archived(
     )
     monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
     monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
+    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
 
     class _DocumentRepo:
         async def get_document(self, _db, *, document_id, user_id):

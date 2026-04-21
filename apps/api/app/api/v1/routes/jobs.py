@@ -303,22 +303,35 @@ async def create_job(
         # 构建job_metadata（不再包含user_config）
         from shared.models.schemas.job_metadata import JobMetadataHelper
         job_metadata = JobMetadataHelper.create_from_request(payload)
+        requested_document_id = cast(Optional[str], job_metadata.get("document_id"))
+        if requested_document_id:
+            active_job = await find_active_job_for_document(
+                db,
+                user_id=current_user.user_id,
+                document_id=requested_document_id,
+            )
+            if active_job is not None:
+                raise_document_ingestion_conflict(
+                    document_id=requested_document_id,
+                    active_job_id=active_job.job_id,
+                )
         effective_document_id, effective_namespace = await resolve_effective_document_scope(
             db,
             user_id=current_user.user_id,
-            document_id=cast(Optional[str], job_metadata.get("document_id")),
+            document_id=requested_document_id,
             requested_namespace=cast(Optional[str], payload.namespace),
         )
-        active_job = await find_active_job_for_document(
-            db,
-            user_id=current_user.user_id,
-            document_id=effective_document_id,
-        )
-        if active_job is not None:
-            raise_document_ingestion_conflict(
+        if not requested_document_id:
+            active_job = await find_active_job_for_document(
+                db,
+                user_id=current_user.user_id,
                 document_id=effective_document_id,
-                active_job_id=active_job.job_id,
             )
+            if active_job is not None:
+                raise_document_ingestion_conflict(
+                    document_id=effective_document_id,
+                    active_job_id=active_job.job_id,
+                )
         job_metadata["document_id"] = effective_document_id
         job_metadata["namespace"] = effective_namespace
 
