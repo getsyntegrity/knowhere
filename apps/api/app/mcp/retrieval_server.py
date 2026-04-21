@@ -94,6 +94,7 @@ def create_retrieval_mcp_server(
             'If you need information before answering, try searching with this tool.'
         ),
         streamable_http_path=streamable_http_path,
+        stateless_http=True,
         transport_security=create_public_mcp_transport_security(),
     )
 
