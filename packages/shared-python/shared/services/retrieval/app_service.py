@@ -246,10 +246,9 @@ async def list_lexical_chunks(
     content_stmt = base_stmt.where(DocumentChunk.content_lexical_text.ilike(like)).order_by(DocumentChunk.sort_order).limit(recall_k)
     path_stmt = base_stmt.where(DocumentChunk.path_lexical_text.ilike(like)).order_by(DocumentChunk.sort_order).limit(recall_k)
 
-    content_result, path_result = await asyncio.gather(
-        db.execute(content_stmt),
-        db.execute(path_stmt),
-    )
+    # AsyncSession is stateful and should not be shared across concurrent tasks.
+    content_result = await db.execute(content_stmt)
+    path_result = await db.execute(path_stmt)
 
     def _to_rows(result, channel_score: float) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -496,26 +495,22 @@ async def run_retrieval_query(
             exclude_sections=exclude_sections,
         )
 
-    graph_coro = list_graph_routed_chunks(
-        db,
-        user_id=user_id,
-        namespace=namespace,
-        query=query,
-        top_k=top_k,
-        exclude_document_ids=exclude_document_ids,
-        exclude_sections=exclude_sections,
-    )
+    content_rows, path_rows = await _run_lexical()
     try:
-        (content_rows, path_rows), graph_rows = await asyncio.gather(
-            _run_lexical(),
-            graph_coro,
+        graph_rows = await list_graph_routed_chunks(
+            db,
+            user_id=user_id,
+            namespace=namespace,
+            query=query,
+            top_k=top_k,
+            exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
         )
         if graph_rows:
             channels.append(graph_rows)
             channel_weights.append(_CHANNEL_WEIGHT_CONTENT)
     except Exception as e:
         logger.warning(f'Graph retrieval failed, falling back to lexical only: {e}')
-        content_rows, path_rows = await _run_lexical()
 
     channels.append(content_rows)
     channel_weights.append(_CHANNEL_WEIGHT_CONTENT)

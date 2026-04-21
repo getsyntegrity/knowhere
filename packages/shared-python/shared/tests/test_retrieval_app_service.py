@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import pytest
@@ -18,6 +19,98 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("TMP_PATH", "/tmp")
 os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
+
+
+async def _empty_lexical_chunks(*_args, **_kwargs):
+    return [], []
+
+
+@pytest.mark.asyncio
+async def test_list_lexical_chunks_does_not_overlap_db_execute_calls(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    class FakeResult:
+        def all(self) -> list[tuple[object, object, object, object]]:
+            return []
+
+    class FakeDB:
+        def __init__(self) -> None:
+            self.active_calls = 0
+            self.max_active_calls = 0
+
+        async def execute(self, _stmt) -> FakeResult:
+            self.active_calls += 1
+            self.max_active_calls = max(self.max_active_calls, self.active_calls)
+            await asyncio.sleep(0)
+            self.active_calls -= 1
+            return FakeResult()
+
+    db = FakeDB()
+
+    await app_service.list_lexical_chunks(
+        db,
+        user_id='user_123',
+        namespace='default',
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert db.max_active_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_does_not_overlap_lexical_and_graph_db_work(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    tracker = {
+        'active_calls': 0,
+        'max_active_calls': 0,
+    }
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 1, None
+
+    async def fake_set_cached_retrieval_query_result(**_kwargs):
+        return None
+
+    async def fake_list_lexical_chunks(*_args, **_kwargs):
+        tracker['active_calls'] += 1
+        tracker['max_active_calls'] = max(tracker['max_active_calls'], tracker['active_calls'])
+        await asyncio.sleep(0)
+        tracker['active_calls'] -= 1
+        return [], []
+
+    async def fake_list_graph_routed_chunks(*_args, **_kwargs):
+        tracker['active_calls'] += 1
+        tracker['max_active_calls'] = max(tracker['max_active_calls'], tracker['active_calls'])
+        await asyncio.sleep(0)
+        tracker['active_calls'] -= 1
+        return []
+
+    async def fake_assemble_retrieval_results(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', fake_list_lexical_chunks)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
+    monkeypatch.setattr(app_service, 'assemble_retrieval_results', fake_assemble_retrieval_results)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='refund policy',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert result['results'] == []
+    assert tracker['max_active_calls'] == 1
 
 
 @pytest.mark.asyncio
@@ -46,6 +139,7 @@ async def test_run_retrieval_query_always_uses_graph_routing(monkeypatch):
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', lambda **_kwargs: None)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_graph)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **kwargs: scheduled.update(kwargs))
 
@@ -142,6 +236,7 @@ async def test_run_retrieval_query_falls_back_to_db_when_cache_read_fails(monkey
         ]
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -188,6 +283,7 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -251,6 +347,7 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -488,6 +585,7 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FailResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -546,6 +644,7 @@ async def test_run_retrieval_query_passes_section_exclusions_to_cache_and_db_pat
         captured['cache_write'] = kwargs
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -740,6 +839,7 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 

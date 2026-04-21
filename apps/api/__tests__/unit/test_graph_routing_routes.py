@@ -59,7 +59,7 @@ async def test_archive_document_route_removes_graph_state(authenticated_client, 
                 "status": "archived",
             }
 
-    monkeypatch.setattr(document_routes, 'DocumentService', FakeDocumentService)
+    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
 
     response = await authenticated_client.post('/v1/documents/doc_123:archive')
 

@@ -4,7 +4,18 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_retrieval_query_route_exists(authenticated_client):
+async def test_retrieval_query_route_exists(authenticated_client, monkeypatch):
+    from app.api.v1.routes import retrieval as retrieval_routes
+
+    async def fake_run_retrieval_query(**_kwargs):
+        return {
+            'namespace': 'default',
+            'query': 'refund policy',
+            'results': [],
+        }
+
+    monkeypatch.setattr(retrieval_routes, 'run_retrieval_query', fake_run_retrieval_query)
+
     response = await authenticated_client.post(
         "/v1/retrieval/query",
         json={"query": "refund policy", "top_k": 5},
@@ -27,7 +38,7 @@ async def test_document_routes_exist(authenticated_client, monkeypatch):
         async def archive_document(self, *_args, **_kwargs):
             return None
 
-    monkeypatch.setattr(document_routes, 'DocumentService', FakeDocumentService)
+    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
 
     list_response = await authenticated_client.get("/v1/documents")
     get_response = await authenticated_client.get("/v1/documents/doc_123")
@@ -109,7 +120,7 @@ async def test_document_routes_return_canonical_document_state(authenticated_cli
                 'status': 'archived',
             }
 
-    monkeypatch.setattr(document_routes, 'DocumentService', FakeDocumentService)
+    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
 
     list_response = await authenticated_client.get('/v1/documents')
     get_response = await authenticated_client.get('/v1/documents/doc_123')
