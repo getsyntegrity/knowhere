@@ -436,6 +436,35 @@ def test_finalize_job_success_invalidates_cache_only_after_commit(monkeypatch) -
     assert events[1][0] == 'invalidate'
 
 
+def test_post_commit_invalidate_retrieval_cache_uses_prefixed_sync_redis_keys(monkeypatch) -> None:
+    service = lifecycle_module.SyncJobLifecycleService()
+    incremented_keys: list[str] = []
+
+    class FakeRedisService:
+        def incr(self, key: str) -> int:
+            incremented_keys.append(f"knowhere-api:{key}")
+            return len(incremented_keys)
+
+    monkeypatch.setattr(
+        lifecycle_module.SyncRedisServiceFactory,
+        "get_service",
+        lambda: FakeRedisService(),
+    )
+
+    service._post_commit_invalidate_retrieval_cache(
+        {
+            "user_id": "user_123",
+            "namespaces": ["default", "support", "default"],
+            "job_id": "job_123",
+        }
+    )
+
+    assert incremented_keys == [
+        "knowhere-api:retrieval:version:user_123:default",
+        "knowhere-api:retrieval:version:user_123:support",
+    ]
+
+
 def test_job_lifecycle_sync_keeps_retrieval_publication_logic_out_of_module() -> None:
     source = (
         Path(__file__).parents[1]

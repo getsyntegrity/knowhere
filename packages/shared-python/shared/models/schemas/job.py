@@ -78,6 +78,8 @@ class JobResultResponse(BaseModel):
     """Job status query response (for GET /jobs/{job_id}/result)"""
 
     job_id: str = Field(..., description="Job ID")
+    namespace: Optional[str] = Field(None, description="Effective retrieval namespace")
+    document_id: Optional[str] = Field(None, description="Linked document ID")
     status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="Job status")
     source_type: str = Field(..., description="File source type")
     data_id: Optional[str] = Field(None, description="User-defined ID")

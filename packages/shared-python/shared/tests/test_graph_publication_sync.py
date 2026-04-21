@@ -268,12 +268,17 @@ def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch
     monkeypatch.setattr(service._retrieval_publication, 'get_existing_document_scope', lambda *_args, **_kwargs: {'document_id': 'doc_123', 'namespace': 'default'})
 
     incremented_keys: list[str] = []
-    mock_pipeline = MagicMock()
-    mock_pipeline.incr = lambda key: incremented_keys.append(key)
-    mock_pipeline.execute = lambda: None
-    mock_redis_service = MagicMock()
-    mock_redis_service.pipeline.return_value = mock_pipeline
-    monkeypatch.setattr(lifecycle_module, 'SyncRedisServiceFactory', type('F', (), {'get_service': staticmethod(lambda: mock_redis_service)}))
+
+    class _FakeRedisService:
+        def incr(self, key: str) -> int:
+            incremented_keys.append(f'knowhere-api:{key}')
+            return len(incremented_keys)
+
+    monkeypatch.setattr(
+        lifecycle_module,
+        'SyncRedisServiceFactory',
+        type('F', (), {'get_service': staticmethod(lambda: _FakeRedisService())}),
+    )
 
     job = SimpleNamespace(job_id='job_123', user_id='user_123', job_metadata={'namespace': 'archive', 'document_id': 'doc_123'})
     db.execute.return_value.scalar_one_or_none.return_value = job
@@ -292,6 +297,7 @@ def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch
     assert result == {'status': 'success', 'job_id': 'job_123', 'stored_count': 0}
     invalidated_namespaces = {k.split(':')[-1] for k in incremented_keys}
     assert invalidated_namespaces == {'default', 'archive'}
+    assert all(key.startswith('knowhere-api:retrieval:version:') for key in incremented_keys)
 
 
 def test_finalize_job_success_rolls_back_when_graph_publication_fails(monkeypatch) -> None:

@@ -16,6 +16,9 @@ from shared.utils.url_file_type import resolve_file_extension_async
 from shared.utils.error_details import normalize_error_details
 from shared.core.database import get_db
 from app.services.job_document_scope_service import (
+    find_active_job_for_document,
+    is_active_document_job_unique_violation,
+    raise_document_ingestion_conflict,
     resolve_effective_document_scope,
 )
 from app.services.rate_limit.dependencies import (
@@ -306,6 +309,16 @@ async def create_job(
             document_id=cast(Optional[str], job_metadata.get("document_id")),
             requested_namespace=cast(Optional[str], payload.namespace),
         )
+        active_job = await find_active_job_for_document(
+            db,
+            user_id=current_user.user_id,
+            document_id=effective_document_id,
+        )
+        if active_job is not None:
+            raise_document_ingestion_conflict(
+                document_id=effective_document_id,
+                active_job_id=active_job.job_id,
+            )
         job_metadata["document_id"] = effective_document_id
         job_metadata["namespace"] = effective_namespace
 
@@ -339,8 +352,10 @@ async def create_job(
                     metadata=job_metadata,
                     initial_state="waiting-file",
                     s3_key=s3_key,
-            )
+                )
             except IntegrityError as exc:
+                if is_active_document_job_unique_violation(exc):
+                    raise_document_ingestion_conflict(document_id=effective_document_id)
                 raise
 
             if not job:
@@ -442,6 +457,8 @@ async def create_job(
                         s3_key=s3_key,  # 预设s3_key
                     )
                 except IntegrityError as exc:
+                    if is_active_document_job_unique_violation(exc):
+                        raise_document_ingestion_conflict(document_id=effective_document_id)
                     raise
 
                 if not job:
@@ -772,6 +789,8 @@ async def get_job_result(
         
         response_data = JobResultResponse(
             job_id=job.job_id,
+            namespace=JobMetadataHelper.get_field(job_metadata, "namespace"),
+            document_id=JobMetadataHelper.get_field(job_metadata, "document_id"),
             status=status_for_api,
             source_type=job.source_type,
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),

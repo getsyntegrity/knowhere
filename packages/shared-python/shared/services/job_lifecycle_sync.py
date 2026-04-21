@@ -330,15 +330,13 @@ class SyncJobLifecycleService:
             return
         try:
             redis_service = SyncRedisServiceFactory.get_service()
-            client = redis_service.pipeline(transaction=False)
             user_id = cache_invalidation["user_id"]
             seen: set[str] = set()
             for namespace in cache_invalidation["namespaces"]:
                 if not namespace or namespace in seen:
                     continue
                 seen.add(namespace)
-                client.incr(f"retrieval:version:{user_id}:{namespace}")
-            client.execute()
+                redis_service.incr(f"retrieval:version:{user_id}:{namespace}")
         except Exception as exc:
             logger.warning(
                 f"Failed to invalidate retrieval cache after publication (ignored): job_id={cache_invalidation.get('job_id')}, error={exc}"
