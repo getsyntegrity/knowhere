@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
@@ -113,6 +113,17 @@ class RetrievalPublicationService:
         if job_result:
             job_result.document_id = document_id
         namespace = namespace or document.namespace
+
+        db.execute(
+            delete(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.job_result_id == job_result_id)
+        )
+        db.execute(
+            delete(DocumentSection)
+            .where(DocumentSection.document_id == document_id)
+            .where(DocumentSection.job_result_id == job_result_id)
+        )
 
         sections_by_path: Dict[str, DocumentSection] = {}
         for index, chunk in enumerate(chunks):

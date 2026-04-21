@@ -214,6 +214,43 @@ class GraphQueryService:
         for doc_id in candidates:
             if doc_id and doc_id not in seen:
                 seen.append(doc_id)
+
+        if seen:
+            return seen
+
+        return await self._find_documents_by_content(
+            db,
+            user_id=user_id,
+            namespace=namespace,
+            query=query_lc,
+            exclude_document_ids=exclude_document_ids,
+        )
+
+    async def _find_documents_by_content(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: str,
+        namespace: str,
+        query: str,
+        exclude_document_ids: set[str],
+    ) -> list[str]:
+        like = f'%{query}%'
+        stmt = (
+            select(Document.document_id)
+            .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
+            .where(Document.user_id == user_id)
+            .where(Document.namespace == namespace)
+            .where(Document.status == 'active')
+            .where(DocumentChunk.content_lexical_text.ilike(like))
+        )
+        if exclude_document_ids:
+            stmt = stmt.where(Document.document_id.notin_(list(exclude_document_ids)))
+        result = await db.execute(stmt)
+        seen: list[str] = []
+        for (doc_id,) in result.all():
+            if doc_id and doc_id not in seen:
+                seen.append(doc_id)
         return seen
 
     async def collect_candidate_chunks(

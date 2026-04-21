@@ -33,15 +33,25 @@ def build_content_lexical_text(chunk: dict[str, Any]) -> Optional[str]:
     return "\n".join(lexical_parts) if lexical_parts else content
 
 
-def section_path_from_chunk_path(source_path: Optional[str], *, separator: str = "/") -> str:
+def section_path_from_chunk_path(source_path: Optional[str]) -> str:
     if not source_path:
         return "Root"
-    parts = [part.strip() for part in source_path.split(separator) if part.strip()]
-    # parts[0] is the kb_dir (e.g. "Default_Root"), parts[1] is the filename — skip both
-    if len(parts) <= 2:
+
+    # Primary format: "Default_Root/file.md-->Section-->Subsection"
+    # Legacy format:  "Default_Root-->file.md-->Section"
+    if "/" in source_path:
+        _, _, section_tail = source_path.partition("/")
+        # section_tail is "file.md-->Section-->Subsection"; split on "-->" and skip filename
+        arrow_parts = [p.strip() for p in section_tail.split("-->") if p.strip()]
+        section_parts = arrow_parts[1:]  # skip filename
+    else:
+        # Legacy all-arrow format: "Default_Root-->file.md-->Section"
+        arrow_parts = [p.strip() for p in source_path.split("-->") if p.strip()]
+        section_parts = arrow_parts[2:]  # skip root dir and filename
+
+    if not section_parts:
         return "Root"
-    section_parts = parts[2:]
-    return " / ".join(section_parts) or "Root"
+    return " / ".join(section_parts)
 
 
 def build_path_lexical_text(source_path: Optional[str]) -> Optional[str]:
