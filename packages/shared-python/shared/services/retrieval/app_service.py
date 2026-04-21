@@ -409,7 +409,6 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
     public_response = {
         'namespace': response.get('namespace'),
         'query': response.get('query'),
-        'graph_enabled': response.get('graph_enabled', True),
         'results': [],
     }
     public_results: list[dict[str, Any]] = []
@@ -456,7 +455,6 @@ async def run_retrieval_query(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
-    graph_enabled: bool = True,
 ) -> dict[str, Any]:
     cache_version: int | None = None
     try:
@@ -481,7 +479,6 @@ async def run_retrieval_query(
     except Exception as e:
         logger.warning(f'Failed to read retrieval cache (ignored): {e}')
 
-    graph_actually_used = False
     channels: list[list[dict[str, Any]]] = []
     channel_weights: list[float] = []
 
@@ -499,29 +496,25 @@ async def run_retrieval_query(
             exclude_sections=exclude_sections,
         )
 
-    if graph_enabled:
-        graph_coro = list_graph_routed_chunks(
-            db,
-            user_id=user_id,
-            namespace=namespace,
-            query=query,
-            top_k=top_k,
-            exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections,
+    graph_coro = list_graph_routed_chunks(
+        db,
+        user_id=user_id,
+        namespace=namespace,
+        query=query,
+        top_k=top_k,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+    )
+    try:
+        (content_rows, path_rows), graph_rows = await asyncio.gather(
+            _run_lexical(),
+            graph_coro,
         )
-        try:
-            (content_rows, path_rows), graph_rows = await asyncio.gather(
-                _run_lexical(),
-                graph_coro,
-            )
-            if graph_rows:
-                graph_actually_used = True
-                channels.append(graph_rows)
-                channel_weights.append(_CHANNEL_WEIGHT_CONTENT)
-        except Exception as e:
-            logger.warning(f'Graph retrieval failed, falling back to lexical only: {e}')
-            content_rows, path_rows = await _run_lexical()
-    else:
+        if graph_rows:
+            channels.append(graph_rows)
+            channel_weights.append(_CHANNEL_WEIGHT_CONTENT)
+    except Exception as e:
+        logger.warning(f'Graph retrieval failed, falling back to lexical only: {e}')
         content_rows, path_rows = await _run_lexical()
 
     channels.append(content_rows)
@@ -555,7 +548,6 @@ async def run_retrieval_query(
         'namespace': namespace,
         'query': query,
         'results': results,
-        'graph_enabled': graph_actually_used,
     }
 
     if cache_version is not None:

@@ -12,7 +12,6 @@ async def test_retrieval_query_always_uses_graph_routing(authenticated_client, m
         return {
             "namespace": kwargs["namespace"],
             "query": kwargs["query"],
-            "graph_enabled": True,
             "results": [
                 {
                     "document_id": "doc_graph",
@@ -42,7 +41,6 @@ async def test_retrieval_query_always_uses_graph_routing(authenticated_client, m
 
     assert response.status_code == 200
     body = response.json()
-    assert body["graph_enabled"] is True
     assert body["results"][0]["chunk_id"] == "chunk_graph"
 
 

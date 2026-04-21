@@ -12,6 +12,8 @@ from shared.core.exceptions.domain_exceptions import NotFoundException
 
 router = APIRouter(tags=["Documents"])
 
+_document_service = DocumentService()
+
 
 @router.get("")
 async def list_documents(
@@ -20,7 +22,7 @@ async def list_documents(
     db: AsyncSession = Depends(get_db),
 ):
     effective_namespace = namespace or "default"
-    documents = await DocumentService().list_documents(
+    documents = await _document_service.list_documents(
         db,
         user_id=current_user.user_id,
         namespace=effective_namespace,
@@ -37,7 +39,7 @@ async def get_document(
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    document = await DocumentService().get_document(
+    document = await _document_service.get_document(
         db,
         user_id=current_user.user_id,
         document_id=document_id,
@@ -57,7 +59,7 @@ async def archive_document(
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    document = await DocumentService().archive_document(
+    document = await _document_service.archive_document(
         db,
         user_id=current_user.user_id,
         document_id=document_id,

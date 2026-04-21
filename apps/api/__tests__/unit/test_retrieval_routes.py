@@ -44,7 +44,6 @@ async def test_retrieval_query_returns_canonical_chunk_results(authenticated_cli
         return {
             'namespace': 'default',
             'query': 'refund policy',
-            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -135,7 +134,6 @@ async def test_retrieval_query_schedules_usage_analytics_best_effort(authenticat
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -177,7 +175,6 @@ async def test_retrieval_query_ignores_usage_analytics_schedule_failure(authenti
         return {
             'namespace': 'default',
             'query': 'refund policy',
-            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -217,7 +214,6 @@ async def test_retrieval_query_route_uses_shared_app_service(authenticated_clien
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': True,
             'results': [],
         }
 
@@ -243,7 +239,6 @@ async def test_retrieval_query_route_returns_cached_result_from_shared_service(a
         return {
             'namespace': 'default',
             'query': 'refund policy',
-            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_cached',
@@ -283,7 +278,6 @@ async def test_retrieval_query_route_passes_section_exclusions(authenticated_cli
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': True,
             'results': [],
         }
 

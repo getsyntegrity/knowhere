@@ -83,7 +83,6 @@ async def test_real_mcp_runtime_registers_and_calls_kb_query(monkeypatch):
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',
@@ -160,7 +159,6 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
         return {
             'namespace': kwargs['namespace'],
             'query': kwargs['query'],
-            'graph_enabled': True,
             'results': [
                 {
                     'document_id': 'doc_123',

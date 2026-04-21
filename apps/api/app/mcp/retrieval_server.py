@@ -48,7 +48,6 @@ def create_retrieval_mcp_server(
         top_k: int = 10,
         exclude_document_ids: list[str] | None = None,
         exclude_sections: list[dict[str, str]] | None = None,
-        graph_enabled: bool = True,
         ctx: Context | None = None,
     ) -> dict:
         effective_namespace = namespace or 'default'
@@ -62,7 +61,6 @@ def create_retrieval_mcp_server(
                 top_k=top_k,
                 exclude_document_ids=exclude_document_ids or [],
                 exclude_sections=exclude_sections or [],
-                graph_enabled=graph_enabled,
             )
 
     return server

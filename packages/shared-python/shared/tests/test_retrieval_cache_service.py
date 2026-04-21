@@ -76,7 +76,7 @@ async def test_cache_key_scope_changes_with_query_shape(monkeypatch):
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': True},
+        response={'namespace': 'default', 'query': 'refund policy', 'results': []},
     )
 
     _, same_shape = await cache_service.get_cached_retrieval_query_result(
@@ -131,7 +131,7 @@ async def test_set_cached_retrieval_query_result_uses_pinned_version(monkeypatch
         top_k=5,
         exclude_document_ids=[],
         exclude_sections=[],
-        response={'namespace': 'default', 'query': 'refund policy', 'results': [], 'graph_enabled': True},
+        response={'namespace': 'default', 'query': 'refund policy', 'results': []},
     )
 
     assert any(':v7:' in key for key in fake_redis.values.keys())

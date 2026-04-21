@@ -62,7 +62,6 @@ async def test_run_retrieval_query_always_uses_graph_routing(monkeypatch):
     assert [name for name, _ in calls] == ['graph']
     assert result['namespace'] == 'default'
     assert result['query'] == 'refund policy'
-    assert result['graph_enabled'] is True
     assert result['results'][0]['chunk_id'] == 'chunk_456'
     assert result['results'][0]['content'] == 'Annual plans may be refunded within 30 days of purchase...'
     assert result['results'][0]['citation']['section_path'] == 'Policies / Billing / Refunds'
@@ -96,7 +95,6 @@ async def test_run_retrieval_query_serves_cached_result_without_hitting_db_path(
                     },
                 }
             ],
-            'graph_enabled': True,
         }
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
@@ -308,7 +306,6 @@ async def test_run_retrieval_query_adds_fresh_asset_url_to_cached_media_result(m
                     },
                 }
             ],
-            'graph_enabled': True,
         }
 
     class FakeResultStorage:
@@ -367,7 +364,6 @@ async def test_run_retrieval_query_real_helper_generates_asset_url_in_api_runtim
                     },
                 }
             ],
-            'graph_enabled': True,
         }
 
     class FakeResultStorage:
@@ -430,7 +426,6 @@ async def test_run_retrieval_query_does_not_expose_raw_file_path_when_asset_url_
                     },
                 }
             ],
-            'graph_enabled': True,
         }
 
     class FakeResultStorage:
