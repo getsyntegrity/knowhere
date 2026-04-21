@@ -61,13 +61,30 @@ async def test_mcp_streamable_http_endpoint_reaches_protocol_handler():
             transport=transport,
             base_url='http://127.0.0.1:5005',
         ) as client:
-            response = await client.get(
+            response = await client.post(
                 '/mcp',
-                headers={'accept': 'text/event-stream'},
+                headers={
+                    'accept': 'application/json, text/event-stream',
+                    'content-type': 'application/json',
+                },
+                json={
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'method': 'initialize',
+                    'params': {
+                        'protocolVersion': '2025-11-25',
+                        'capabilities': {},
+                        'clientInfo': {
+                            'name': 'codex-test',
+                            'version': '0.1.0',
+                        },
+                    },
+                },
             )
 
-    assert response.status_code != 404
-    assert 'Missing session ID' in response.text
+    assert response.status_code == 200
+    assert '"name":"knowhere-retrieval"' in response.text
+    assert response.headers.get('mcp-session-id') is None
 
 
 @pytest.mark.asyncio
@@ -86,13 +103,65 @@ async def test_mcp_streamable_http_endpoint_initializes_with_public_host():
             async with streamable_http_client(
                 'https://api-staging.knowhereto.ai/mcp',
                 http_client=http_client,
-                terminate_on_close=False,
             ) as (read_stream, write_stream, get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
                     result = await session.initialize()
 
     assert result.serverInfo.name == 'knowhere-retrieval'
-    assert get_session_id() is not None
+    assert get_session_id() is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_streamable_http_endpoint_handles_follow_up_requests_without_sticky_sessions():
+    import main as app_main
+
+    test_app = app_main.create_app()
+    mcp_server = test_app.state.retrieval_mcp_server
+
+    async with mcp_server.session_manager.run():
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(
+            transport=transport,
+            base_url='https://api-staging.knowhereto.ai',
+        ) as client:
+            initialize_response = await client.post(
+                '/mcp',
+                headers={
+                    'accept': 'application/json, text/event-stream',
+                    'content-type': 'application/json',
+                },
+                json={
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'method': 'initialize',
+                    'params': {
+                        'protocolVersion': '2025-11-25',
+                        'capabilities': {},
+                        'clientInfo': {
+                            'name': 'codex-test',
+                            'version': '0.1.0',
+                        },
+                    },
+                },
+            )
+            tools_response = await client.post(
+                '/mcp',
+                headers={
+                    'accept': 'application/json, text/event-stream',
+                    'content-type': 'application/json',
+                    'mcp-session-id': 'cross-pod-session-id',
+                },
+                json={
+                    'jsonrpc': '2.0',
+                    'id': 2,
+                    'method': 'tools/list',
+                    'params': {},
+                },
+            )
+
+    assert initialize_response.status_code == 200
+    assert tools_response.status_code == 200
+    assert '"name":"kb.query"' in tools_response.text
 
 
 @pytest.mark.asyncio
@@ -303,6 +372,7 @@ async def test_create_retrieval_mcp_server_registers_kb_query_tool(monkeypatch):
         'Use this server to search knowledge. '
         'If you need information before answering, try searching with this tool.'
     )
+    assert server.kwargs['stateless_http'] is True
     assert server.kwargs['transport_security'].enable_dns_rebinding_protection is False
     assert registered['name'] == 'kb.query'
     assert registered['description'] == 'Search for information and return relevant knowledge snippets.'
