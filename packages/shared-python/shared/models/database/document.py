@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
@@ -135,7 +135,7 @@ class GraphEdge(Base):
     owner_document_id: Mapped[str] = mapped_column(String(36), ForeignKey('documents.document_id', ondelete='CASCADE'), nullable=False)
     job_result_id: Mapped[str] = mapped_column(String(36), ForeignKey('job_results.id', ondelete='CASCADE'), nullable=False)
     is_directed: Mapped[bool] = mapped_column(nullable=False, default=True)
-    weight: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     properties: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

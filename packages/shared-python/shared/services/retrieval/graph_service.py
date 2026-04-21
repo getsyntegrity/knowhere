@@ -121,7 +121,7 @@ class DocumentGraphService:
                     owner_document_id=document_id,
                     job_result_id=job_result_id,
                     is_directed=True,
-                    weight=1,
+                    weight=1.0,
                     properties={},
                 )
             )
@@ -158,7 +158,7 @@ class DocumentGraphService:
                     owner_document_id=document_id,
                     job_result_id=job_result_id,
                     is_directed=False,
-                    weight=1,
+                    weight=1.0,
                     properties={},
                 )
             )

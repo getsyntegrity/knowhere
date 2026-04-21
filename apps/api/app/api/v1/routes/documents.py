@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.document_service import DocumentService
 from app.services.rate_limit.dependencies import CurrentUser, with_current_user
 from shared.core.database import get_db
+from shared.core.exceptions.domain_exceptions import NotFoundException
 
 router = APIRouter(tags=["Documents"])
 
@@ -42,7 +43,11 @@ async def get_document(
         document_id=document_id,
     )
     if document is None:
-        return {"document_id": document_id, "status": "not_found"}
+        raise NotFoundException(
+            resource="Document",
+            resource_id=document_id,
+            internal_message="Document not found",
+        )
     return document
 
 
@@ -58,5 +63,9 @@ async def archive_document(
         document_id=document_id,
     )
     if document is None:
-        return {"document_id": document_id, "status": "not_found"}
+        raise NotFoundException(
+            resource="Document",
+            resource_id=document_id,
+            internal_message="Document not found",
+        )
     return document

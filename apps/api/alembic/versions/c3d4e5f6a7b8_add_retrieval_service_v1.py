@@ -147,7 +147,7 @@ def upgrade() -> None:
     sa.Column('owner_document_id', sa.String(length=36), nullable=False),
     sa.Column('job_result_id', sa.String(length=36), nullable=False),
     sa.Column('is_directed', sa.Boolean(), nullable=False),
-    sa.Column('weight', sa.Integer(), nullable=True),
+    sa.Column('weight', sa.Float(), nullable=True),
     sa.Column('properties', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),

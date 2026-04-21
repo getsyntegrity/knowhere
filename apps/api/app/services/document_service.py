@@ -81,6 +81,9 @@ class DocumentService:
         if document is None:
             return None
 
+        if document.status == "archived":
+            return document_payload(document)
+
         previous_namespace = document.namespace
         await self._repository.archive_document(db, document=document)
         await db.run_sync(
