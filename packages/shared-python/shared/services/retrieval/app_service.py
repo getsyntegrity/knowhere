@@ -341,7 +341,11 @@ def _merge_same_section_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     groups: dict[str, list[dict[str, Any]]] = {}
     order: list[str] = []
     for row in rows:
-        key = row.get('section_path') or row.get('chunk_id', '')
+        sp = row.get('section_path')
+        if sp:
+            key = f"{row.get('document_id', '')}::{sp}"
+        else:
+            key = row.get('chunk_id', '')
         if key not in groups:
             groups[key] = []
             order.append(key)
