@@ -148,45 +148,23 @@ async def path_channel(
     signal_paths: list[str] | None = None,
     filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
-    """Path channel: full-text search on path_search_tsv using ts_rank."""
-    tokenized_query = tokenize_query_for_fts(query)
-    if not tokenized_query.strip():
-        return []
+    """Path channel: semantic vector similarity on path embeddings.
 
-    recall_k = top_k * 2
-    exclude_clause = _build_exclude_clause(exclude_document_ids)
-    extra_sql, extra_params = _build_extra_filters(
-        allowed_chunk_types=allowed_chunk_types,
-        signal_paths=signal_paths or [],
-        filter_mode=filter_mode,
-    )
-    params = _build_base_params(
-        user_id=user_id,
-        namespace=namespace,
-        exclude_document_ids=exclude_document_ids,
-    )
-    params.update(extra_params)
-    params["tokenized_query"] = tokenized_query
-    params["recall_k"] = recall_k
+    Aligned with KB checkerboard_find() path channel which uses:
+        cos_sim(q_vec, path_vecs) — cosine similarity on path embeddings.
 
-    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + """
-    SELECT
-        sc.*,
-        ts_rank(sc.path_search_tsv, plainto_tsquery('simple', :tokenized_query)) AS rank_score
-    FROM scoped_chunks sc
-    WHERE sc.path_search_tsv @@ plainto_tsquery('simple', :tokenized_query)
-    ORDER BY rank_score DESC
-    LIMIT :recall_k
+    NOTE: Currently returns [] because embedding index is not yet available.
+    When pgvector infrastructure is ready, this will:
+        1. Embed the query via do_embedding()
+        2. SELECT ... ORDER BY path_embedding <=> :query_vec LIMIT :recall_k
+        3. Optionally combine with BM25 (hybrid=True in KB)
+
+    The RRF merger in app_service automatically skips empty channels,
+    so this has no functional impact on current retrieval quality.
     """
-
-    result = await db.execute(text(sql), params)
-    rows = [_row_to_dict(r) for r in result.all()]
-    rows = _filter_excluded_sections(rows, exclude_sections)
-
-    for row in rows:
-        row["score"] = row.get("rank_score", 0.0)
-
-    return rows
+    # TODO: Implement vector search when embedding infrastructure is ready
+    # KB reference: find_closest(all_paths, path_vecs, q_vector, internal_recall_k)
+    return []
 
 
 async def content_channel(
@@ -202,12 +180,21 @@ async def content_channel(
     signal_paths: list[str] | None = None,
     filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
-    """Content channel: FTS recall on content_search_tsv, then BM25 re-rank in Python."""
+    """Content channel: FTS recall on content_search_tsv, then BM25 re-rank in Python.
+
+    Aligned with KB checkerboard_find() content channel which uses:
+        cos_sim(q_vec, content_vecs) + BM25 hybrid scoring.
+    API uses FTS recall (keyword match) + BM25 re-rank as an interim
+    approximation until vector search is available.
+
+    Note: top_k is already effective_recall_k from app_service (= final_topk * 2),
+    matching KB's internal_recall_k = 12 when final_topk = 6.
+    """
     tokenized_query = tokenize_query_for_fts(query)
     if not tokenized_query.strip():
         return []
 
-    recall_k = top_k * 3
+    recall_k = top_k  # Already effective_recall_k from app_service (aligned with KB)
     exclude_clause = _build_exclude_clause(exclude_document_ids)
     extra_sql, extra_params = _build_extra_filters(
         allowed_chunk_types=allowed_chunk_types,
@@ -288,7 +275,13 @@ async def term_channel(
     signal_paths: list[str] | None = None,
     filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
-    """Term/grep channel: independent search over full corpus with substring matching."""
+    """Term/grep channel: substring matching on term_search_text.
+
+    Aligned with KB checkerboard_find() term channel (grep_search()):
+    exact substring match on content + path, scoring by hit count.
+
+    Note: top_k is already effective_recall_k from app_service.
+    """
     query_lower = query.lower().strip()
     if not query_lower:
         return []
@@ -323,7 +316,7 @@ async def term_channel(
         params["full_query"] = f"%{query_lower}%"
 
     where_clause = " OR ".join(ilike_conditions)
-    recall_k = top_k * 3
+    recall_k = top_k  # Already effective_recall_k from app_service (aligned with KB)
     params["recall_k"] = recall_k
 
     sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + f"""
