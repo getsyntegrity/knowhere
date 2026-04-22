@@ -56,14 +56,15 @@ uv sync
 Start local infrastructure services:
 
 ```bash
-pnpm dev:services
+cd deploy/local-dev
+./start-dev.sh
 ```
 
-Or run the helper directly:
+Initialize the local user/auth state too when needed:
 
 ```bash
 cd deploy/local-dev
-./start-dev.sh
+./start-dev.sh --init-user
 ```
 
 Start application processes in separate terminals:
@@ -77,11 +78,13 @@ pnpm dev:docs
 
 Local API development bootstrap:
 
-- `pnpm dev:services` now runs `deploy/local-dev/start-dev.sh`, not raw `docker-compose` directly.
+- Use the shell helpers under `deploy/local-dev/` for start/stop instead of calling Compose directly from docs.
 - Pass `--init-user` when you want the helper to prepare local API auth state:
-  - `pnpm dev:services -- --init-user`
+  - `cd deploy/local-dev && ./start-dev.sh --init-user`
 - The `--init-user` path is idempotent. It can be rerun safely against an existing local database.
 - The `--init-user` path now prepares the local API database before you start the API process:
+  - forces `DATABASE_URL=postgresql+asyncpg://root:root123@localhost:5432/Knowhere` for the bootstrap commands even if `apps/api/.env` is stale
+  - forces `DB_SSL_MODE=disable` for the same bootstrap path
   - creates a dashboard-compatible local `user` table needed by API foreign keys
   - runs local API Alembic migrations
   - seeds one deterministic local developer account
@@ -96,7 +99,8 @@ Deterministic local developer account:
 Stop local infrastructure services:
 
 ```bash
-pnpm dev:services:down
+cd deploy/local-dev
+./stop-dev.sh
 ```
 
 Common local endpoints:
