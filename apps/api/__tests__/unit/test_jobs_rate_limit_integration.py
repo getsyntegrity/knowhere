@@ -43,6 +43,7 @@ async def test_create_job_reraises_capacity_errors(monkeypatch, error):
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),
     )
+    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
     enforcer = AsyncMock(side_effect=error)
     monkeypatch.setattr(jobs, "enforce_job_creation_capacity", enforcer)
 

@@ -259,9 +259,9 @@ async def test_create_job_defaults_namespace_and_generates_document_id_for_new_d
 
     assert response.source_type == "file"
     assert response.namespace == "default"
-    assert response.document_id is not None
-    assert response.document_id.startswith("doc_")
-    assert captured["metadata"]["document_id"] == response.document_id
+    assert response.document_id is None
+    assert isinstance(captured["metadata"]["document_id"], str)
+    assert captured["metadata"]["document_id"].startswith("doc_")
     assert captured["metadata"]["namespace"] == "default"
 
 
@@ -333,7 +333,7 @@ async def test_create_job_update_omitting_namespace_keeps_existing_document_name
     )
 
     assert response.namespace == "support-center"
-    assert response.document_id == "doc_123"
+    assert response.document_id is None
     assert captured["metadata"]["namespace"] == "support-center"
 
 
@@ -581,7 +581,9 @@ def test_jobs_routes_keep_document_scope_logic_out_of_router():
 
 
 @pytest.mark.asyncio
-async def test_get_job_result_returns_document_scope_from_metadata(authenticated_client, mock_user_id, monkeypatch):
+async def test_get_job_result_omits_reserved_document_id_for_new_ingestion_until_publication(
+    authenticated_client, mock_user_id, monkeypatch,
+):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),
@@ -630,7 +632,128 @@ async def test_get_job_result_returns_document_scope_from_metadata(authenticated
     assert response.status_code == 200
     payload = response.json()
     assert payload["namespace"] == "support-center"
+    assert payload["document_id"] is None
+    assert payload["data_id"] == "caller-data"
+
+
+@pytest.mark.asyncio
+async def test_get_job_result_returns_published_document_id_after_success(
+    authenticated_client, mock_user_id, monkeypatch,
+):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+
+    created_at = datetime.now(timezone.utc)
+
+    class _JobRepo:
+        async def get_job_by_id(self, _db, job_id):
+            assert job_id == "job_123"
+            return type(
+                "Job",
+                (),
+                {
+                    "job_id": "job_123",
+                    "user_id": mock_user_id,
+                    "status": "done",
+                    "source_type": "url",
+                    "job_result": type(
+                        "JobResult",
+                        (),
+                        {
+                            "document_id": "doc_123",
+                            "result_s3_key": None,
+                            "inline_payload": None,
+                        },
+                    )(),
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                    "credits_charged": 0,
+                    "error_code": None,
+                    "error_message": None,
+                },
+            )()
+
+        async def get_job_metadata(self, _db, _job_id, _redis_service):
+            return {
+                "namespace": "support-center",
+                "document_id": "doc_123",
+                "data_id": "caller-data",
+                "original_request": {
+                    "source_url": "https://example.com/doc.pdf",
+                    "parsing_params": {
+                        "model": "base",
+                        "ocr_enabled": False,
+                    },
+                },
+            }
+
+    monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
+
+    response = await authenticated_client.get("/v1/jobs/job_123")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["namespace"] == "support-center"
     assert payload["document_id"] == "doc_123"
+    assert payload["data_id"] == "caller-data"
+
+
+@pytest.mark.asyncio
+async def test_get_job_result_hides_existing_document_id_for_update_flow_until_publication(
+    authenticated_client, mock_user_id, monkeypatch,
+):
+    monkeypatch.setattr(
+        "shared.services.redis.RedisServiceFactory.get_service",
+        lambda: object(),
+    )
+
+    created_at = datetime.now(timezone.utc)
+
+    class _JobRepo:
+        async def get_job_by_id(self, _db, job_id):
+            assert job_id == "job_123"
+            return type(
+                "Job",
+                (),
+                {
+                    "job_id": "job_123",
+                    "user_id": mock_user_id,
+                    "status": "running",
+                    "source_type": "url",
+                    "job_result": None,
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                    "credits_charged": 0,
+                    "error_code": None,
+                    "error_message": None,
+                },
+            )()
+
+        async def get_job_metadata(self, _db, _job_id, _redis_service):
+            return {
+                "namespace": "support-center",
+                "document_id": "doc_123",
+                "data_id": "caller-data",
+                "original_request": {
+                    "source_url": "https://example.com/doc.pdf",
+                    "document_id": "doc_123",
+                    "parsing_params": {
+                        "model": "base",
+                        "ocr_enabled": False,
+                    },
+                },
+            }
+
+    monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
+
+    response = await authenticated_client.get("/v1/jobs/job_123")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["namespace"] == "support-center"
+    assert payload["document_id"] is None
     assert payload["data_id"] == "caller-data"
 
 
