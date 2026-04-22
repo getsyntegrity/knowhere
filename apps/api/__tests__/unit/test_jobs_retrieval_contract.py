@@ -333,7 +333,7 @@ async def test_create_job_update_omitting_namespace_keeps_existing_document_name
     )
 
     assert response.namespace == "support-center"
-    assert response.document_id == "doc_123"
+    assert response.document_id is None
     assert captured["metadata"]["namespace"] == "support-center"
 
 
@@ -701,7 +701,7 @@ async def test_get_job_result_returns_published_document_id_after_success(
 
 
 @pytest.mark.asyncio
-async def test_get_job_result_returns_existing_document_id_for_update_flow(
+async def test_get_job_result_hides_existing_document_id_for_update_flow_until_publication(
     authenticated_client, mock_user_id, monkeypatch,
 ):
     monkeypatch.setattr(
@@ -753,7 +753,7 @@ async def test_get_job_result_returns_existing_document_id_for_update_flow(
     assert response.status_code == 200
     payload = response.json()
     assert payload["namespace"] == "support-center"
-    assert payload["document_id"] == "doc_123"
+    assert payload["document_id"] is None
     assert payload["data_id"] == "caller-data"
 
 

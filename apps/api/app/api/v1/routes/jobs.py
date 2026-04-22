@@ -213,16 +213,8 @@ def create_job_response(
     )
 
 
-def resolve_public_document_id(job, job_metadata: Optional[dict]) -> Optional[str]:
-    """Expose document_id only for existing-document updates or published results."""
-    original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
-    requested_document_id = (
-        original_request.get("document_id") if isinstance(original_request, dict) else None
-    )
-    if isinstance(requested_document_id, str) and requested_document_id:
-        public_document_id = job_metadata.get("document_id") if isinstance(job_metadata, dict) else None
-        return public_document_id if isinstance(public_document_id, str) and public_document_id else None
-
+def resolve_public_document_id(job) -> Optional[str]:
+    """Expose document_id only after it is published in the persisted job result."""
     job_result = getattr(job, "job_result", None)
     published_document_id = getattr(job_result, "document_id", None)
     if isinstance(published_document_id, str) and published_document_id:
@@ -431,7 +423,6 @@ async def create_job(
                 source_type="file",
                 data_id=payload.data_id,
                 namespace=effective_namespace,
-                document_id=requested_document_id,
                 upload_url=upload_info["upload_url"],
                 upload_headers=upload_info["upload_headers"],
                 expires_in=upload_info["expires_in"],
@@ -537,7 +528,6 @@ async def create_job(
                     source_type="url",
                     data_id=payload.data_id,
                     namespace=effective_namespace,
-                    document_id=requested_document_id,
                 )
 
                 return response
@@ -821,7 +811,7 @@ async def get_job_result(
         response_data = JobResultResponse(
             job_id=job.job_id,
             namespace=JobMetadataHelper.get_field(job_metadata, "namespace"),
-            document_id=resolve_public_document_id(job, job_metadata),
+            document_id=resolve_public_document_id(job),
             status=status_for_api,
             source_type=job.source_type,
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
