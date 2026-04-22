@@ -16,7 +16,7 @@ from shared.models.database.user_balance import UserBalance
 
 
 class LocalDevelopmentBootstrapService:
-    """Bootstrap the local-only user/table state required by the API."""
+    """Bootstrap local-only user and billing state for development."""
 
     LOCAL_DEV_USER_ID: str = "local-dev-user"
     LOCAL_DEV_USER_NAME: str = "Local Development User"
@@ -56,32 +56,9 @@ class LocalDevelopmentBootstrapService:
         await self._upsert_api_key(session)
         await session.flush()
 
-    async def schema_is_ready_for_seed(self, session: AsyncSession) -> bool:
-        """Return whether the migration-owned seed target tables exist."""
-        result = await session.execute(
-            text(
-                """
-                SELECT
-                    to_regclass('public.user_balances') IS NOT NULL
-                    AND to_regclass('public.payment_records') IS NOT NULL
-                    AND to_regclass('public.credits_transactions') IS NOT NULL
-                    AND to_regclass('public.api_keys') IS NOT NULL
-                """
-            )
-        )
-        return bool(result.scalar_one())
-
-    async def seed_local_developer_if_ready(self, session: AsyncSession) -> bool:
-        """Seed the local developer only when the migration-owned tables exist."""
-        if not await self.schema_is_ready_for_seed(session):
-            return False
-
-        await self.seed_local_developer(session)
-        return True
-
     @classmethod
     def get_local_developer_profile(cls) -> dict[str, str | int]:
-        """Expose the deterministic local developer credentials for CLI/log output."""
+        """Expose deterministic local developer credentials for local tooling."""
         return {
             "user_id": cls.LOCAL_DEV_USER_ID,
             "name": cls.LOCAL_DEV_USER_NAME,

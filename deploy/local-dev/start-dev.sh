@@ -20,6 +20,13 @@ warn() {
     printf 'Warning: %s\n' "$1"
 }
 
+require_uv() {
+    if ! command -v uv >/dev/null 2>&1; then
+        printf 'uv is required for local bootstrap. Install uv first.\n' >&2
+        exit 1
+    fi
+}
+
 require_docker() {
     if ! docker info >/dev/null 2>&1; then
         printf 'Docker is not running. Start Docker first.\n' >&2
@@ -70,37 +77,52 @@ wait_for_localstack() {
 }
 
 prepare_api_env() {
-    if [[ -f "${API_DIR}/.env" ]]; then
-        return 0
+    if [[ ! -f "${API_DIR}/.env" ]]; then
+        cp "${API_DIR}/env.example" "${API_DIR}/.env"
+        warn "Created apps/api/.env from env.example for local development."
     fi
 
-    cp "${API_DIR}/env.example" "${API_DIR}/.env"
-    warn "Created apps/api/.env from env.example. Review local values before relying on external integrations."
-    warn "For the local Postgres container, set DB_SSL_MODE=disable in apps/api/.env if it is still set to prefer."
+    if grep -q '^DB_SSL_MODE=' "${API_DIR}/.env"; then
+        python3 - <<'PY' "${API_DIR}/.env"
+from pathlib import Path
+import sys
+
+env_path = Path(sys.argv[1])
+lines = env_path.read_text().splitlines()
+updated_lines = []
+for line in lines:
+    if line.startswith("DB_SSL_MODE="):
+        updated_lines.append("DB_SSL_MODE=disable")
+    else:
+        updated_lines.append(line)
+env_path.write_text("\n".join(updated_lines) + "\n")
+PY
+    else
+        printf '\nDB_SSL_MODE=disable\n' >> "${API_DIR}/.env"
+    fi
 }
 
 run_local_bootstrap() {
-    if ! command -v uv >/dev/null 2>&1; then
-        warn "uv is not installed, so the local bootstrap helper was skipped."
-        return 0
-    fi
-
+    require_uv
     prepare_api_env
 
-    if ! (
+    log_step "Ensuring local development user table..."
+    (
         cd "${API_DIR}" &&
         uv run --python 3.11 python scripts/bootstrap_local_dev.py --mode ensure-user-table
-    ); then
-        warn "Failed to ensure the local development user table via the bootstrap helper. API startup will retry this in development mode."
-        return 0
-    fi
+    )
 
-    if ! (
+    log_step "Running local API migrations..."
+    (
         cd "${API_DIR}" &&
-        uv run --python 3.11 python scripts/bootstrap_local_dev.py --mode seed-if-ready
-    ); then
-        warn "Failed to seed the local development user via the bootstrap helper. API startup will retry this after migrations."
-    fi
+        uv run --python 3.11 python -m alembic upgrade heads
+    )
+
+    log_step "Seeding deterministic local development user..."
+    (
+        cd "${API_DIR}" &&
+        uv run --python 3.11 python scripts/bootstrap_local_dev.py --mode seed
+    )
 }
 
 print_summary() {
@@ -125,7 +147,8 @@ Deterministic local developer account:
 
 The helper is idempotent:
   - rerunning this script will safely re-check the local user table
-  - after API migrations complete, reruns will also refresh the same dev account instead of creating duplicates
+  - rerunning this script will reapply local API migrations safely
+  - rerunning this script will refresh the same dev account instead of creating duplicates
 
 Stop services:
   docker-compose -f ${COMPOSE_FILE} down

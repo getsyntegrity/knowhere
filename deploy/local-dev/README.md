@@ -27,7 +27,8 @@ The helper is idempotent and can be rerun safely. It now:
 
 - waits for PostgreSQL, Redis, and LocalStack
 - ensures the minimal local `user` table needed by API migrations exists without relying on dashboard migrations
-- refreshes the deterministic local developer account when the API schema is already present
+- runs API Alembic migrations in the local environment
+- seeds the deterministic local developer account after the local schema is ready
 
 Deterministic local developer account:
 

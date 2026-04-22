@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.local_dev.bootstrap_service import LocalDevelopmentBootstrapService
+from scripts.local_dev_bootstrap_service import LocalDevelopmentBootstrapService
 from shared.models.database.api_key import APIKey
 from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.payment_record import PaymentRecord
@@ -28,7 +28,7 @@ async def test_ensure_user_table_exists_creates_minimal_local_user_table(monkeyp
     connection = AsyncMock()
 
     monkeypatch.setattr(
-        "app.services.local_dev.bootstrap_service.engine",
+        "scripts.local_dev_bootstrap_service.engine",
         SimpleNamespace(begin=lambda: _EngineBeginContext(connection)),
     )
 

@@ -77,9 +77,12 @@ pnpm dev:docs
 
 Local API development bootstrap:
 
-- `pnpm dev:services` now runs the local helper at [deploy/local-dev/start-dev.sh](/home/suguan/.slock/agents/021f994f-81f3-4135-957e-7804cdedebec/knowhere-api/deploy/local-dev/start-dev.sh), not raw `docker-compose` directly.
+- `pnpm dev:services` now runs `deploy/local-dev/start-dev.sh`, not raw `docker-compose` directly.
 - The helper is idempotent. It can be rerun safely against an existing local database.
-- In `ENVIRONMENT=development`, API startup now ensures the minimal local `user` table before migrations and seeds one deterministic local developer account after migrations.
+- The helper now prepares the local API database before you start the API process:
+  - creates the minimal local `user` table needed by API foreign keys
+  - runs local API Alembic migrations
+  - seeds one deterministic local developer account
 
 Deterministic local developer account:
 

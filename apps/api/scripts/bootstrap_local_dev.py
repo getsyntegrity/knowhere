@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.local_dev import LocalDevelopmentBootstrapService
+from scripts.local_dev_bootstrap_service import LocalDevelopmentBootstrapService
 from shared.core.database import get_db_context
 
 
@@ -17,7 +17,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("ensure-user-table", "seed", "seed-if-ready", "print-profile"),
+        choices=("ensure-user-table", "seed", "print-profile"),
         required=True,
         help="Bootstrap mode to run.",
     )
@@ -37,13 +37,7 @@ async def _run(mode: str) -> int:
         return 0
 
     async with get_db_context() as session:
-        if mode == "seed-if-ready":
-            seeded = await service.seed_local_developer_if_ready(session)
-            if not seeded:
-                print("Skipped local development seed because migration-owned tables are not ready yet.")
-                return 0
-        else:
-            await service.seed_local_developer(session)
+        await service.seed_local_developer(session)
 
     print("Ensured local development developer account.")
     _print_profile()
