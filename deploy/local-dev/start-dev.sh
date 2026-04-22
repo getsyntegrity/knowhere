@@ -11,6 +11,8 @@ LOCAL_DEV_USER_ID="local-dev-user"
 LOCAL_DEV_USER_EMAIL="local-dev-user@knowhere.local"
 LOCAL_DEV_USER_TIER="tier_5"
 LOCAL_DEV_API_KEY="sk_local_dev_tier5_full_access"
+LOCAL_DEV_DATABASE_URL="postgresql+asyncpg://root:root123@localhost:5432/Knowhere"
+LOCAL_DEV_DB_SSL_MODE="disable"
 RUN_USER_INIT=0
 
 log_step() {
@@ -122,30 +124,17 @@ prepare_api_env() {
         cp "${API_DIR}/env.example" "${API_DIR}/.env"
         warn "Created apps/api/.env from env.example for local development."
     fi
+}
 
-    if grep -q '^DB_SSL_MODE=' "${API_DIR}/.env"; then
-        python3 - <<'PY' "${API_DIR}/.env"
-from pathlib import Path
-import sys
-
-env_path = Path(sys.argv[1])
-lines = env_path.read_text().splitlines()
-updated_lines = []
-for line in lines:
-    if line.startswith("DB_SSL_MODE="):
-        updated_lines.append("DB_SSL_MODE=disable")
-    else:
-        updated_lines.append(line)
-env_path.write_text("\n".join(updated_lines) + "\n")
-PY
-    else
-        printf '\nDB_SSL_MODE=disable\n' >> "${API_DIR}/.env"
-    fi
+configure_local_bootstrap_env() {
+    export DATABASE_URL="${LOCAL_DEV_DATABASE_URL}"
+    export DB_SSL_MODE="${LOCAL_DEV_DB_SSL_MODE}"
 }
 
 run_local_bootstrap() {
     require_uv
     prepare_api_env
+    configure_local_bootstrap_env
 
     log_step "Ensuring local development user table..."
     (
@@ -193,7 +182,7 @@ The helper is idempotent:
   - rerunning this script will refresh the same dev account instead of creating duplicates
 
 Stop services:
-  docker-compose -f ${COMPOSE_FILE} down
+  ${SCRIPT_DIR}/stop-dev.sh
 EOF
         return 0
     fi
@@ -216,7 +205,7 @@ Optional user bootstrap:
   - the same --init-user path also runs API migrations and seeds the deterministic local developer account
 
 Stop services:
-  docker-compose -f ${COMPOSE_FILE} down
+  ${SCRIPT_DIR}/stop-dev.sh
 EOF
 }
 

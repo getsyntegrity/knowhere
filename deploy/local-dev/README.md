@@ -13,7 +13,8 @@ This directory contains the Docker Compose stack used for local development.
 From the repository root:
 
 ```bash
-pnpm dev:services
+cd deploy/local-dev
+./start-dev.sh
 ```
 
 Or run the helper directly:
@@ -33,6 +34,8 @@ cd deploy/local-dev
 The `--init-user` path is idempotent and can be rerun safely. It now:
 
 - waits for PostgreSQL, Redis, and LocalStack
+- forces the bootstrap connection to the local PostgreSQL DSN even if `apps/api/.env` still points somewhere else
+- forces `DB_SSL_MODE=disable` for the local bootstrap path
 - ensures the local `user` table matches the dashboard-owned schema needed by API migrations
 - runs API Alembic migrations in the local environment
 - seeds the deterministic local developer account after the local schema is ready
@@ -49,14 +52,15 @@ Deterministic local developer account:
 From the repository root:
 
 ```bash
-pnpm dev:services:down
+cd deploy/local-dev
+./stop-dev.sh
 ```
 
-Or run Docker Compose directly:
+Or run the helper directly:
 
 ```bash
 cd deploy/local-dev
-docker-compose -f docker-compose.dev.yml down
+./stop-dev.sh
 ```
 
 ## Service Endpoints
@@ -68,4 +72,5 @@ docker-compose -f docker-compose.dev.yml down
 ## Notes
 
 - The Compose file is `deploy/local-dev/docker-compose.dev.yml`.
+- `stop-dev.sh` automatically uses `docker-compose` when available and falls back to `docker compose` otherwise.
 - Local development infrastructure belongs here; remote deployment assets do not.
