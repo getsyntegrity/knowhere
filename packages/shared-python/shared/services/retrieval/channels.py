@@ -58,6 +58,7 @@ WITH scoped_chunks AS (
         AND d.namespace = :namespace
         AND d.status = 'active'
         {exclude_clause}
+        {extra_filters}
 )
 """
 
@@ -81,6 +82,37 @@ def _build_base_params(
     if exclude_document_ids:
         params["excluded_doc_ids"] = tuple(exclude_document_ids)
     return params
+
+
+def _build_extra_filters(
+    *,
+    allowed_chunk_types: set[str] | None,
+    signal_paths: list[str],
+    filter_mode: str,
+) -> tuple[str, dict[str, Any]]:
+    """Build additional SQL WHERE clauses for data_type and signal_path filtering."""
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+
+    if allowed_chunk_types is not None:
+        placeholders = ', '.join(f':_act_{i}' for i in range(len(allowed_chunk_types)))
+        clauses.append(f'AND LOWER(dc.chunk_type) IN ({placeholders})')
+        for i, ct in enumerate(sorted(allowed_chunk_types)):
+            params[f'_act_{i}'] = ct
+
+    if signal_paths:
+        ilike_parts = []
+        for i, kw in enumerate(signal_paths):
+            key = f'_sig_{i}'
+            ilike_parts.append(f"LOWER(COALESCE(ds.section_path, '')) LIKE :{key}")
+            params[key] = f'%{kw.lower()}%'
+        combined = ' OR '.join(ilike_parts)
+        if filter_mode == 'keep':
+            clauses.append(f'AND ({combined})')
+        else:
+            clauses.append(f'AND NOT ({combined})')
+
+    return '\n        '.join(clauses), params
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
@@ -112,6 +144,9 @@ async def path_channel(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    allowed_chunk_types: set[str] | None = None,
+    signal_paths: list[str] | None = None,
+    filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
     """Path channel: full-text search on path_search_tsv using ts_rank."""
     tokenized_query = tokenize_query_for_fts(query)
@@ -120,15 +155,21 @@ async def path_channel(
 
     recall_k = top_k * 2
     exclude_clause = _build_exclude_clause(exclude_document_ids)
+    extra_sql, extra_params = _build_extra_filters(
+        allowed_chunk_types=allowed_chunk_types,
+        signal_paths=signal_paths or [],
+        filter_mode=filter_mode,
+    )
     params = _build_base_params(
         user_id=user_id,
         namespace=namespace,
         exclude_document_ids=exclude_document_ids,
     )
+    params.update(extra_params)
     params["tokenized_query"] = tokenized_query
     params["recall_k"] = recall_k
 
-    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause) + """
+    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + """
     SELECT
         sc.*,
         ts_rank(sc.path_search_tsv, plainto_tsquery('simple', :tokenized_query)) AS rank_score
@@ -157,6 +198,9 @@ async def content_channel(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    allowed_chunk_types: set[str] | None = None,
+    signal_paths: list[str] | None = None,
+    filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
     """Content channel: FTS recall on content_search_tsv, then BM25 re-rank in Python."""
     tokenized_query = tokenize_query_for_fts(query)
@@ -165,15 +209,21 @@ async def content_channel(
 
     recall_k = top_k * 3
     exclude_clause = _build_exclude_clause(exclude_document_ids)
+    extra_sql, extra_params = _build_extra_filters(
+        allowed_chunk_types=allowed_chunk_types,
+        signal_paths=signal_paths or [],
+        filter_mode=filter_mode,
+    )
     params = _build_base_params(
         user_id=user_id,
         namespace=namespace,
         exclude_document_ids=exclude_document_ids,
     )
+    params.update(extra_params)
     params["tokenized_query"] = tokenized_query
     params["recall_k"] = recall_k
 
-    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause) + """
+    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + """
     SELECT
         sc.*,
         ts_rank(sc.content_search_tsv, plainto_tsquery('simple', :tokenized_query)) AS rank_score
@@ -234,6 +284,9 @@ async def term_channel(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    allowed_chunk_types: set[str] | None = None,
+    signal_paths: list[str] | None = None,
+    filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
     """Term/grep channel: independent search over full corpus with substring matching."""
     query_lower = query.lower().strip()
@@ -247,11 +300,17 @@ async def term_channel(
         return []
 
     exclude_clause = _build_exclude_clause(exclude_document_ids)
+    extra_sql, extra_params = _build_extra_filters(
+        allowed_chunk_types=allowed_chunk_types,
+        signal_paths=signal_paths or [],
+        filter_mode=filter_mode,
+    )
     params = _build_base_params(
         user_id=user_id,
         namespace=namespace,
         exclude_document_ids=exclude_document_ids,
     )
+    params.update(extra_params)
 
     ilike_conditions = []
     for i, unit in enumerate(units):
@@ -267,7 +326,7 @@ async def term_channel(
     recall_k = top_k * 3
     params["recall_k"] = recall_k
 
-    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause) + f"""
+    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + f"""
     SELECT sc.*
     FROM scoped_chunks sc
     WHERE sc.term_search_text IS NOT NULL
