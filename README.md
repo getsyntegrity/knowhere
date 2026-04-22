@@ -75,6 +75,24 @@ pnpm dev:web
 pnpm dev:docs
 ```
 
+Local API development bootstrap:
+
+- `pnpm dev:services` now runs `deploy/local-dev/start-dev.sh`, not raw `docker-compose` directly.
+- Pass `--init-user` when you want the helper to prepare local API auth state:
+  - `pnpm dev:services -- --init-user`
+- The `--init-user` path is idempotent. It can be rerun safely against an existing local database.
+- The `--init-user` path now prepares the local API database before you start the API process:
+  - creates a dashboard-compatible local `user` table needed by API foreign keys
+  - runs local API Alembic migrations
+  - seeds one deterministic local developer account
+
+Deterministic local developer account:
+
+- `user_id`: `local-dev-user`
+- `email`: `local-dev-user@knowhere.local`
+- `tier`: `tier_5`
+- `api_key`: `sk_local_dev_tier5_full_access`
+
 Stop local infrastructure services:
 
 ```bash
