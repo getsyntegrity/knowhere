@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any
 
@@ -40,6 +41,13 @@ _DATA_TYPE_ALLOWED_CHUNK_TYPES: dict[int, set[str] | None] = {
 
 def _resolve_allowed_chunk_types(data_type: int) -> set[str] | None:
     return _DATA_TYPE_ALLOWED_CHUNK_TYPES.get(data_type)
+
+
+_PATH_REF_RE = re.compile(r'\[(?:images|tables)/[^\]\n]+\]')
+
+
+def _clean_content(content: str) -> str:
+    return _PATH_REF_RE.sub('', content).strip()
 
 _PUBLIC_RESULT_FIELDS = {
     'chunk_type', 'content', 'score', 'asset_url',
@@ -237,6 +245,7 @@ async def assemble_retrieval_results(
                 assembled_row['content'] = base_content
         else:
             assembled_row['content'] = base_content
+        assembled_row['content'] = _clean_content(assembled_row['content'])
         assembled.append(assembled_row)
     return assembled
 
@@ -326,10 +335,36 @@ def _grep_search_rows(rows: list[dict[str, Any]], query: str) -> list[dict[str, 
     return [dict(row, score=score) for score, row in scored]
 
 
+def _merge_same_section_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return rows
+    groups: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for row in rows:
+        key = row.get('section_path') or row.get('chunk_id', '')
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(row)
+
+    merged: list[dict[str, Any]] = []
+    for key in order:
+        group = groups[key]
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        base = dict(group[0])
+        base['content'] = '\n'.join(str(r.get('content', '')) for r in group)
+        base['score'] = max(r.get('score', 0.0) for r in group)
+        merged.append(base)
+    return merged
+
+
 def merge_channels_rrf(
     channels: list[list[dict[str, Any]]],
     weights: list[float],
     top_k: int,
+    k: int = _RRF_K,
 ) -> list[dict[str, Any]]:
     """Reciprocal Rank Fusion across multiple retrieval channels."""
     score_dict: dict[str, float] = {}
@@ -341,7 +376,7 @@ def merge_channels_rrf(
             chunk_id = str(row.get('chunk_id') or '')
             if not chunk_id:
                 continue
-            rrf_score = w / (_RRF_K + rank + 1)
+            rrf_score = w / (k + rank + 1)
             score_dict[chunk_id] = score_dict.get(chunk_id, 0.0) + rrf_score
             if chunk_id not in row_by_chunk_id:
                 row_by_chunk_id[chunk_id] = row
@@ -787,6 +822,12 @@ async def run_retrieval_query(
 
     fused_rows = merge_channels_rrf(channel_lists, weight_list, top_k) if channel_lists else []
     logger.info(f'retrieval: rrf_fusion={len(fused_rows)} rows from {len(channel_lists)} channels')
+
+    # ── Section merging ──
+    pre_merge = len(fused_rows)
+    fused_rows = _merge_same_section_rows(fused_rows)
+    if len(fused_rows) != pre_merge:
+        logger.info(f'retrieval: section_merge={pre_merge}->{len(fused_rows)}')
 
     # ── Threshold filtering ──
     if threshold > 0.0 and fused_rows:
