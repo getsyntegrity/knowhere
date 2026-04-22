@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from loguru import logger
@@ -9,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db_context
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
+from shared.services.retrieval.agent_navigate import agent_navigate
 from shared.services.retrieval.graph_service import GraphQueryService, is_excluded_section
 from shared.services.retrieval.cache_service import get_cached_retrieval_query_result, set_cached_retrieval_query_result
 from shared.services.retrieval.hit_stats_service import record_retrieval_hits
+from shared.services.retrieval.llm_adapter import create_retrieval_llm_fn
 from shared.services.retrieval.channels import path_channel, content_channel, term_channel
 from shared.services.storage.result_storage import get_result_storage
 from shared.models.database.job_result import JobResult
@@ -415,6 +418,7 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
     public_response = {
         'namespace': response.get('namespace'),
         'query': response.get('query'),
+        'router_used': response.get('router_used'),
         'results': [],
     }
     public_results: list[dict[str, Any]] = []
@@ -469,7 +473,13 @@ async def run_retrieval_query(
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
 ) -> dict[str, Any]:
-    """Checkerboard retrieval: 3 independent channels -> RRF -> graph union -> assembly."""
+    """Checkerboard retrieval: 3 independent channels -> RRF -> agent/graph union -> assembly."""
+    t_start = time.monotonic()
+    logger.info(
+        f'retrieval: query="{query[:80]}" user={user_id} ns={namespace} '
+        f'top_k={top_k} exclude_docs={len(exclude_document_ids)} exclude_secs={len(exclude_sections)}'
+    )
+
     cache_version: int | None = None
     try:
         cache_version, cached = await get_cached_retrieval_query_result(
@@ -481,6 +491,7 @@ async def run_retrieval_query(
             exclude_sections=exclude_sections,
         )
         if cached:
+            logger.info(f'retrieval: cache_hit=True version={cache_version}')
             try:
                 schedule_retrieval_hit_stats_update(
                     user_id=user_id,
@@ -493,18 +504,28 @@ async def run_retrieval_query(
     except Exception as e:
         logger.warning(f"Failed to read retrieval cache (ignored): {e}")
 
-    channel_kwargs = dict(
-        user_id=user_id,
-        namespace=namespace,
-        query=query,
-        top_k=top_k,
-        exclude_document_ids=exclude_document_ids,
-        exclude_sections=exclude_sections,
-    )
+    logger.debug(f'retrieval: cache_hit=False version={cache_version}')
 
-    path_rows = await path_channel(db, **channel_kwargs)
-    content_rows = await content_channel(db, **channel_kwargs)
-    term_rows = await term_channel(db, **channel_kwargs)
+    t_ch = time.monotonic()
+    path_rows = await path_channel(
+        db, user_id=user_id, namespace=namespace, query=query,
+        top_k=top_k, exclude_document_ids=exclude_document_ids, exclude_sections=exclude_sections,
+    )
+    logger.info(f'retrieval: path_channel={len(path_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+
+    t_ch = time.monotonic()
+    content_rows = await content_channel(
+        db, user_id=user_id, namespace=namespace, query=query,
+        top_k=top_k, exclude_document_ids=exclude_document_ids, exclude_sections=exclude_sections,
+    )
+    logger.info(f'retrieval: content_channel={len(content_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+
+    t_ch = time.monotonic()
+    term_rows = await term_channel(
+        db, user_id=user_id, namespace=namespace, query=query,
+        top_k=top_k, exclude_document_ids=exclude_document_ids, exclude_sections=exclude_sections,
+    )
+    logger.info(f'retrieval: term_channel={len(term_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
 
     channels: list[list[dict[str, Any]]] = []
     channel_weights: list[float] = []
@@ -520,18 +541,68 @@ async def run_retrieval_query(
         channel_weights.append(_CHANNEL_WEIGHT_TERM)
 
     fused_rows = merge_channels_rrf(channels, channel_weights, top_k) if channels else []
+    logger.info(f'retrieval: rrf_fusion={len(fused_rows)} rows from {len(channels)} channels')
 
-    graph_rows = await list_graph_routed_chunks(
-        db,
-        user_id=user_id,
-        namespace=namespace,
-        query=query,
-        top_k=top_k,
-        exclude_document_ids=exclude_document_ids,
-        exclude_sections=exclude_sections,
-    )
+    # ── Agent navigation or lexical graph fallback ──
+    router_used = 'discovery_only'
+    llm_fn = create_retrieval_llm_fn()
+
+    if llm_fn is not None:
+        t_agent = time.monotonic()
+        try:
+            graph_rows = await agent_navigate(
+                db,
+                user_id=user_id,
+                namespace=namespace,
+                query=query,
+                llm_fn=llm_fn,
+                exclude_document_ids=exclude_document_ids,
+            )
+            if graph_rows:
+                router_used = 'discovery+agent'
+                logger.info(
+                    f'retrieval: agent_navigate={len(graph_rows)} rows '
+                    f'in {round((time.monotonic() - t_agent) * 1000)}ms (router={router_used})'
+                )
+            else:
+                logger.info(
+                    f'retrieval: agent_navigate=0 rows '
+                    f'in {round((time.monotonic() - t_agent) * 1000)}ms, '
+                    f'falling back to lexical graph routing'
+                )
+                graph_rows = await list_graph_routed_chunks(
+                    db, user_id=user_id, namespace=namespace, query=query,
+                    top_k=top_k, exclude_document_ids=exclude_document_ids,
+                    exclude_sections=exclude_sections,
+                )
+                if graph_rows:
+                    logger.info(f'retrieval: graph_fallback={len(graph_rows)} rows')
+        except Exception as exc:
+            logger.error(f'retrieval: agent_navigate failed, falling back to lexical: {exc}')
+            graph_rows = await list_graph_routed_chunks(
+                db, user_id=user_id, namespace=namespace, query=query,
+                top_k=top_k, exclude_document_ids=exclude_document_ids,
+                exclude_sections=exclude_sections,
+            )
+            if graph_rows:
+                logger.info(f'retrieval: graph_fallback={len(graph_rows)} rows')
+    else:
+        logger.debug('retrieval: no LLM configured, using lexical graph routing')
+        try:
+            graph_rows = await list_graph_routed_chunks(
+                db, user_id=user_id, namespace=namespace, query=query,
+                top_k=top_k, exclude_document_ids=exclude_document_ids,
+                exclude_sections=exclude_sections,
+            )
+            if graph_rows:
+                logger.info(f'retrieval: graph_fallback={len(graph_rows)} rows')
+        except Exception as exc:
+            logger.error(f'retrieval: graph routing failed (ignored): {exc}')
+            graph_rows = []
+
     if graph_rows:
         fused_rows = _union_graph_results(fused_rows, graph_rows, top_k)
+        logger.info(f'retrieval: union={len(fused_rows)} rows after graph merge')
 
     assembled_rows = await assemble_retrieval_results(
         db=db,
@@ -540,9 +611,12 @@ async def run_retrieval_query(
         exclude_sections=exclude_sections,
     )
     results = [_with_citation(row) for row in assembled_rows]
+    logger.info(f'retrieval: assembled={len(results)} results')
+
     response = {
         "namespace": namespace,
         "query": query,
+        "router_used": router_used,
         "results": results,
     }
 
@@ -569,5 +643,11 @@ async def run_retrieval_query(
         )
     except Exception as e:
         logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
+
+    elapsed_total = round((time.monotonic() - t_start) * 1000)
+    logger.info(
+        f'retrieval: response={len(results)} results, '
+        f'router={router_used}, total_time={elapsed_total}ms'
+    )
 
     return await _to_public_response(response)
