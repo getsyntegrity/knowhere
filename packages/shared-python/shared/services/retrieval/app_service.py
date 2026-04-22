@@ -506,18 +506,33 @@ async def _to_public_response(response: dict[str, Any]) -> dict[str, Any]:
     return public_response
 
 
-def _union_graph_results(
+def _get_row_path(row: dict[str, Any]) -> str:
+    """Extract the canonical path from a row for deduplication."""
+    return str(row.get('section_path') or row.get('source_chunk_path') or '')
+
+
+def _union_by_path(
     fused_rows: list[dict[str, Any]],
-    graph_rows: list[dict[str, Any]],
+    agent_rows: list[dict[str, Any]],
     top_k: int,
 ) -> list[dict[str, Any]]:
-    """Union graph-discovered chunks after RRF fusion (original KB pattern)."""
-    existing_ids = {str(row.get("chunk_id") or "") for row in fused_rows}
-    for row in graph_rows:
-        chunk_id = str(row.get("chunk_id") or "")
-        if chunk_id and chunk_id not in existing_ids:
-            existing_ids.add(chunk_id)
+    """Union agent-discovered chunks with RRF discovery results on section_path.
+
+    Aligned with KB unified_retriever._deduplicate_ordered():
+    discovery results come first, then agent-only results appended.
+    """
+    existing_paths: set[str] = set()
+    for row in fused_rows:
+        path = _get_row_path(row)
+        if path:
+            existing_paths.add(path)
+
+    for row in agent_rows:
+        path = _get_row_path(row)
+        if path and path not in existing_paths:
+            existing_paths.add(path)
             fused_rows.append(row)
+
     return fused_rows[:top_k]
 
 
@@ -601,57 +616,67 @@ async def _load_all_scoped_chunks(
     return rows
 
 
-async def _llm_rerank(
-    rows: list[dict[str, Any]],
+async def _hydrate_paths_to_rows(
+    db: AsyncSession,
     *,
-    query: str,
-    llm_fn: Any,
-    top_k: int,
+    paths: list[str],
+    user_id: str,
+    namespace: str,
 ) -> list[dict[str, Any]]:
-    """LLM-based reranking of RRF fusion results (recovered from knowhere-kb)."""
-    if not rows:
-        return rows
+    """Load full chunk rows by section_path or source_chunk_path.
 
-    import json as _json
-    import re as _re
+    Used to hydrate agent-selected paths into the standard row format
+    expected by assemble_retrieval_results().
+    """
+    if not paths:
+        return []
 
-    candidates_text = []
-    for i, row in enumerate(rows):
-        content_preview = str(row.get('content') or '')[:300]
-        path = row.get('section_path') or row.get('source_file_name') or ''
-        candidates_text.append(f'[{i}] path={path}\n{content_preview}')
-
-    prompt = (
-        'You are a search result reranker.\n\n'
-        f'Query: {query}\n\n'
-        'Candidates:\n' + '\n\n'.join(candidates_text) + '\n\n'
-        'Reorder the candidates by relevance to the query. '
-        'Return ONLY a JSON array of indices in order of relevance, e.g.: [2, 0, 1, 3]\n'
-        'Do not include any explanation.'
+    stmt = (
+        select(Document, DocumentChunk, DocumentSection, JobResult)
+        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id)
+              & (DocumentChunk.job_result_id == Document.current_job_result_id))
+        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
+        .where(Document.user_id == user_id)
+        .where(Document.namespace == namespace)
+        .where(Document.status == 'active')
+        .where(
+            or_(
+                DocumentSection.section_path.in_(paths),
+                DocumentChunk.source_chunk_path.in_(paths),
+            )
+        )
     )
+    result = await db.execute(stmt)
 
-    try:
-        response_text = await llm_fn(prompt)
-        text = response_text.strip()
-        match = _re.search(r'\[.*?\]', text, _re.DOTALL)
-        if match:
-            indices = _json.loads(match.group())
-            if isinstance(indices, list):
-                valid_indices = [int(idx) for idx in indices if isinstance(idx, int) and 0 <= idx < len(rows)]
-                seen: set[int] = set()
-                reordered: list[dict[str, Any]] = []
-                for idx in valid_indices:
-                    if idx not in seen:
-                        seen.add(idx)
-                        reordered.append(rows[idx])
-                for i, row in enumerate(rows):
-                    if i not in seen:
-                        reordered.append(row)
-                return reordered[:top_k]
-    except Exception as exc:
-        logger.warning(f'retrieval: LLM rerank failed (keeping original order): {exc}')
+    # Build rows, preserving agent-selected order
+    path_order = {p: idx for idx, p in enumerate(paths)}
+    rows: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for document, chunk, section, job_result in result.all():
+        row_path = (section.section_path if section else None) or chunk.source_chunk_path or ''
+        if row_path in seen_paths:
+            continue
+        seen_paths.add(row_path)
+        rows.append({
+            'document_id': document.document_id,
+            'chunk_id': chunk.chunk_id,
+            'section_id': chunk.section_id,
+            'section_path': section.section_path if section else None,
+            'source_file_name': document.source_file_name,
+            'chunk_type': chunk.chunk_type,
+            'content': chunk.content,
+            'score': 2.0,  # agent-selected chunks get a high base score
+            'file_path': chunk.file_path,
+            'chunk_metadata': chunk.chunk_metadata or {},
+            'job_result_id': chunk.job_result_id,
+            'job_id': job_result.job_id if job_result else None,
+            'source_chunk_path': chunk.source_chunk_path,
+            'sort_order': chunk.sort_order,
+        })
 
-    return rows[:top_k]
+    rows.sort(key=lambda r: path_order.get(_get_row_path(r), 10**9))
+    return rows
 
 
 async def run_retrieval_query(
@@ -839,24 +864,16 @@ async def run_retrieval_query(
         fused_rows = [row for row in fused_rows if row.get('score', 0.0) >= threshold]
         logger.info(f'retrieval: threshold_filter={pre_count}->{len(fused_rows)} (threshold={threshold})')
 
-    # ── LLM reranking ──
-    if rerank and fused_rows:
-        t_rerank = time.monotonic()
-        rerank_llm_fn = create_retrieval_llm_fn()
-        if rerank_llm_fn is not None:
-            fused_rows = await _llm_rerank(fused_rows, query=query, llm_fn=rerank_llm_fn, top_k=top_k)
-            logger.info(f'retrieval: llm_rerank={len(fused_rows)} rows in {round((time.monotonic() - t_rerank) * 1000)}ms')
-        else:
-            logger.warning('retrieval: rerank requested but no LLM configured, skipping')
-
     # ── Agent navigation or lexical graph fallback ──
+    # Aligned with KB: agent_navigate returns chunk paths, union on section_path
     router_used = 'discovery_only'
     llm_fn = create_retrieval_llm_fn()
+    agent_rows: list[dict[str, Any]] = []
 
     if llm_fn is not None:
         t_agent = time.monotonic()
         try:
-            graph_rows = await agent_navigate(
+            agent_paths = await agent_navigate(
                 db,
                 user_id=user_id,
                 namespace=namespace,
@@ -864,51 +881,60 @@ async def run_retrieval_query(
                 llm_fn=llm_fn,
                 exclude_document_ids=exclude_document_ids,
             )
-            if graph_rows:
+            if agent_paths:
+                # Filter out paths already in discovery results
+                discovery_paths = {_get_row_path(r) for r in fused_rows}
+                new_paths = [p for p in agent_paths if p not in discovery_paths]
+                if new_paths:
+                    agent_rows = await _hydrate_paths_to_rows(
+                        db, paths=new_paths,
+                        user_id=user_id, namespace=namespace,
+                    )
                 router_used = 'discovery+agent'
                 logger.info(
-                    f'retrieval: agent_navigate={len(graph_rows)} rows '
+                    f'retrieval: agent_navigate={len(agent_paths)} paths '
+                    f'({len(new_paths)} new) '
                     f'in {round((time.monotonic() - t_agent) * 1000)}ms (router={router_used})'
                 )
             else:
                 logger.info(
-                    f'retrieval: agent_navigate=0 rows '
+                    f'retrieval: agent_navigate=0 paths '
                     f'in {round((time.monotonic() - t_agent) * 1000)}ms, '
                     f'falling back to lexical graph routing'
                 )
-                graph_rows = await list_graph_routed_chunks(
+                agent_rows = await list_graph_routed_chunks(
                     db, user_id=user_id, namespace=namespace, query=query,
                     top_k=top_k, exclude_document_ids=exclude_document_ids,
                     exclude_sections=exclude_sections,
                 )
-                if graph_rows:
-                    logger.info(f'retrieval: graph_fallback={len(graph_rows)} rows')
+                if agent_rows:
+                    logger.info(f'retrieval: graph_fallback={len(agent_rows)} rows')
         except Exception as exc:
             logger.error(f'retrieval: agent_navigate failed, falling back to lexical: {exc}')
-            graph_rows = await list_graph_routed_chunks(
+            agent_rows = await list_graph_routed_chunks(
                 db, user_id=user_id, namespace=namespace, query=query,
                 top_k=top_k, exclude_document_ids=exclude_document_ids,
                 exclude_sections=exclude_sections,
             )
-            if graph_rows:
-                logger.info(f'retrieval: graph_fallback={len(graph_rows)} rows')
+            if agent_rows:
+                logger.info(f'retrieval: graph_fallback={len(agent_rows)} rows')
     else:
         logger.debug('retrieval: no LLM configured, using lexical graph routing')
         try:
-            graph_rows = await list_graph_routed_chunks(
+            agent_rows = await list_graph_routed_chunks(
                 db, user_id=user_id, namespace=namespace, query=query,
                 top_k=top_k, exclude_document_ids=exclude_document_ids,
                 exclude_sections=exclude_sections,
             )
-            if graph_rows:
-                logger.info(f'retrieval: graph_fallback={len(graph_rows)} rows')
+            if agent_rows:
+                logger.info(f'retrieval: graph_fallback={len(agent_rows)} rows')
         except Exception as exc:
             logger.error(f'retrieval: graph routing failed (ignored): {exc}')
-            graph_rows = []
+            agent_rows = []
 
-    if graph_rows:
-        fused_rows = _union_graph_results(fused_rows, graph_rows, top_k)
-        logger.info(f'retrieval: union={len(fused_rows)} rows after graph merge')
+    if agent_rows:
+        fused_rows = _union_by_path(fused_rows, agent_rows, top_k)
+        logger.info(f'retrieval: union={len(fused_rows)} rows after path merge')
 
     assembled_rows = await assemble_retrieval_results(
         db=db,

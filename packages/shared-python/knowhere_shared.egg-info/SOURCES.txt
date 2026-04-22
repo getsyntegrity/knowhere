@@ -94,6 +94,7 @@ shared/repositories/webhook_secret_repository.py
 shared/services/job_lifecycle_sync.py
 shared/services/worker_health.py
 shared/services/ai/__init__.py
+shared/services/ai/direct_ai_client.py
 shared/services/ai/prompt_service.py
 shared/services/ai/response_process_service.py
 shared/services/billing/__init__.py
@@ -116,12 +117,14 @@ shared/services/redis/redis_sync_service.py
 shared/services/redis/task_redis_service.py
 shared/services/redis/user_redis_service.py
 shared/services/retrieval/__init__.py
+shared/services/retrieval/agent_navigate.py
 shared/services/retrieval/app_service.py
 shared/services/retrieval/cache_service.py
 shared/services/retrieval/channels.py
 shared/services/retrieval/graph_service.py
 shared/services/retrieval/hit_stats_service.py
 shared/services/retrieval/lexical_text.py
+shared/services/retrieval/llm_adapter.py
 shared/services/retrieval/publication_service.py
 shared/services/storage/__init__.py
 shared/services/storage/file_encryptor_service.py

@@ -1,8 +1,15 @@
-"""Agent-driven KG navigation for retrieval.
+"""Agent-driven KG navigation for retrieval — aligned with knowhere-kb.
 
-Two-stage LLM-driven document routing:
+Two-stage LLM-driven document routing (mirrors unified_retriever.agent_navigate):
   1. LLM reads a knowledge map overview (file-level metadata) and selects relevant files.
-  2. For each file, LLM reads compact chunk previews and selects relevant chunks.
+  2. For each file, LLM reads compact chunk previews and selects relevant chunk **paths**.
+
+Additional KB-aligned mechanisms:
+  - GREP discovery: term-search hits → include parent document_ids in KG scope.
+  - Edge expansion: selected documents → follow GraphEdge → include neighbor documents.
+
+Returns chunk paths (section_path / source_chunk_path), NOT hydrated rows.
+The caller (app_service) handles path→row hydration and union with discovery results.
 
 Falls back gracefully when LLM is unavailable or fails.
 """
@@ -15,13 +22,14 @@ import time
 from typing import Any, Sequence
 
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.models.database.document import Document, DocumentChunk, DocumentSection, RetrievalHitStat
+from shared.models.database.document import Document, DocumentChunk, DocumentSection, GraphNode, GraphEdge
 from shared.models.database.job_result import JobResult
 from shared.services.retrieval.hit_stats_service import compute_importance_score
 from shared.services.retrieval.llm_adapter import LLMFn
+from shared.models.database.document import RetrievalHitStat
 
 _CONTENT_PREVIEW_LEN = 120
 _MAX_OVERVIEW_FILES = 50
@@ -56,8 +64,8 @@ Below are candidate chunks from document "{doc_name}" (id: {doc_id}):
 User query: {query}
 
 Select the most relevant chunks (at most {max_chunks}).
-Return ONLY a JSON array of chunk_id strings from the list above,
-e.g.: ["chunk_abc", "chunk_def"]
+Return ONLY a JSON array of chunk path strings from the list above,
+e.g.: ["doc_name/Section A/Subsection B", "tables/table-1.html"]
 Do not include any explanation.
 """
 
@@ -241,9 +249,22 @@ async def _build_chunks_slim(
     document_id: str,
     job_result_id: str,
 ) -> list[dict[str, str]]:
-    """Build compact chunk descriptors for LLM chunk selection."""
+    """Build compact chunk descriptors for LLM chunk path selection.
+
+    Aligned with KB's do_get_chunks_slim() + _build_slim_chunk():
+    - Each entry has 'path' (section_path or source_chunk_path), 'type', 'preview'
+    - 'preview' is summary-first (from chunk_metadata.summary), fallback to content[:N]
+    - LLM will select paths, not chunk_ids
+    """
     stmt = (
-        select(DocumentChunk.chunk_id, DocumentChunk.chunk_type, DocumentChunk.content, DocumentSection.section_path)
+        select(
+            DocumentChunk.chunk_id,
+            DocumentChunk.chunk_type,
+            DocumentChunk.content,
+            DocumentChunk.source_chunk_path,
+            DocumentChunk.chunk_metadata,
+            DocumentSection.section_path,
+        )
         .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
         .where(DocumentChunk.document_id == document_id)
         .where(DocumentChunk.job_result_id == job_result_id)
@@ -252,31 +273,40 @@ async def _build_chunks_slim(
     )
     result = await db.execute(stmt)
     chunks: list[dict[str, str]] = []
-    for chunk_id, chunk_type, content, section_path in result.all():
-        preview = re.sub(r'\s+', ' ', str(content or '')).strip()[:_CONTENT_PREVIEW_LEN]
+    for chunk_id, chunk_type, content, source_chunk_path, chunk_metadata, section_path in result.all():
+        # Path: prefer section_path, fallback to source_chunk_path
+        path = section_path or source_chunk_path or ''
+        if not path:
+            continue
+
+        # Preview: prefer metadata.summary (aligned with KB _build_slim_chunk)
+        meta = chunk_metadata or {}
+        summary = re.sub(r'\s+', ' ', str(meta.get('summary') or '')).strip()
+        raw_content = re.sub(r'\s+', ' ', str(content or '')).strip()
+        preview = summary or raw_content[:_CONTENT_PREVIEW_LEN]
+
         entry: dict[str, str] = {
-            'chunk_id': chunk_id,
+            'path': path,
             'type': chunk_type or 'text',
         }
-        if section_path:
-            entry['path'] = section_path
         if preview:
-            entry['preview'] = preview
+            entry['preview'] = preview[:_CONTENT_PREVIEW_LEN]
         chunks.append(entry)
     return chunks
 
 
 def _format_chunks_for_llm(chunks: list[dict[str, str]], max_chars: int = 4000) -> str:
-    """Format compact chunk descriptors for LLM prompt."""
+    """Format compact chunk descriptors for LLM prompt.
+
+    Shows path (not chunk_id), aligned with KB's _format_chunks_slim().
+    """
     if not chunks:
         return '(no chunks available)'
 
     def _render(include_preview: bool) -> str:
         lines: list[str] = []
         for c in chunks:
-            line = f'- [{c["type"]}] id={c["chunk_id"]}'
-            if c.get('path'):
-                line += f' path="{c["path"]}"'
+            line = f'- [{c["type"]}] path="{c["path"]}"'
             if include_preview and c.get('preview'):
                 line += f' | {c["preview"]}'
             if len('\n'.join(lines + [line])) > max_chars:
@@ -290,6 +320,147 @@ def _format_chunks_for_llm(chunks: list[dict[str, str]], max_chars: int = 4000) 
     return full if len(full) <= max_chars else _render(include_preview=False)
 
 
+# ------------------------------------------------------------------
+# GREP document discovery (aligned with KB do_discover_files)
+# ------------------------------------------------------------------
+
+async def _grep_discover_document_ids(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    query: str,
+    exclude_document_ids: Sequence[str] = (),
+    limit: int = 10,
+) -> list[str]:
+    """GREP discovery: search term_search_text for query terms, return parent document_ids.
+
+    Aligned with KB's do_discover_files(): if a chunk's term_search_text
+    contains query terms, its parent document is included in the KG scope.
+    """
+    # Tokenize query into searchable units (Chinese groups + English words)
+    units = re.findall(r'[\u4e00-\u9fff]{2,4}|[a-zA-Z0-9]{2,}', query.lower())
+    if not units:
+        return []
+
+    # Build OR conditions for ILIKE matching
+    conditions = []
+    params: dict[str, str] = {
+        'user_id': user_id,
+        'namespace': namespace,
+    }
+    for i, unit in enumerate(units[:8]):  # cap at 8 terms to avoid huge queries
+        param_name = f'unit_{i}'
+        params[param_name] = f'%{unit}%'
+        conditions.append(DocumentChunk.term_search_text.ilike(f'%{unit}%'))
+
+    if not conditions:
+        return []
+
+    stmt = (
+        select(Document.document_id)
+        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id)
+              & (DocumentChunk.job_result_id == Document.current_job_result_id))
+        .where(Document.user_id == user_id)
+        .where(Document.namespace == namespace)
+        .where(Document.status == 'active')
+        .where(DocumentChunk.term_search_text.is_not(None))
+        .where(or_(*conditions))
+        .distinct()
+        .limit(limit)
+    )
+    if exclude_document_ids:
+        stmt = stmt.where(Document.document_id.notin_(list(exclude_document_ids)))
+
+    result = await db.execute(stmt)
+    return [row[0] for row in result.all()]
+
+
+# ------------------------------------------------------------------
+# Edge expansion (aligned with KB KGIndex.neighbors)
+# ------------------------------------------------------------------
+
+async def _expand_by_edges(
+    db: AsyncSession,
+    *,
+    document_ids: list[str],
+    user_id: str,
+    namespace: str,
+    hops: int = 1,
+) -> list[str]:
+    """Expand document set by following GraphEdge relationships.
+
+    Aligned with KB's KGIndex.neighbors(): traverse edges to include
+    related documents. If no edges exist, returns original document_ids unchanged.
+    """
+    if not document_ids:
+        return document_ids
+
+    current = set(document_ids)
+
+    for _ in range(hops):
+        # Find graph nodes owned by current documents
+        node_stmt = (
+            select(GraphNode.node_id, GraphNode.owner_document_id, GraphNode.ref_document_id)
+            .where(GraphNode.user_id == user_id)
+            .where(GraphNode.namespace == namespace)
+            .where(GraphNode.owner_document_id.in_(list(current)))
+        )
+        node_result = await db.execute(node_stmt)
+        node_rows = node_result.all()
+
+        if not node_rows:
+            break
+
+        node_ids = {row[0] for row in node_rows}
+        # Also add any ref_document_id from nodes directly
+        for _, _, ref_doc_id in node_rows:
+            if ref_doc_id:
+                current.add(ref_doc_id)
+
+        # Follow edges from/to these nodes
+        edge_stmt = (
+            select(GraphEdge.source_node_id, GraphEdge.target_node_id)
+            .where(GraphEdge.user_id == user_id)
+            .where(GraphEdge.namespace == namespace)
+            .where(or_(
+                GraphEdge.source_node_id.in_(list(node_ids)),
+                GraphEdge.target_node_id.in_(list(node_ids)),
+            ))
+        )
+        edge_result = await db.execute(edge_stmt)
+
+        neighbor_node_ids: set[str] = set()
+        for src, tgt in edge_result.all():
+            if src in node_ids:
+                neighbor_node_ids.add(tgt)
+            if tgt in node_ids:
+                neighbor_node_ids.add(src)
+
+        if not neighbor_node_ids:
+            break
+
+        # Resolve neighbor nodes to document_ids
+        neighbor_doc_stmt = (
+            select(GraphNode.owner_document_id)
+            .where(GraphNode.node_id.in_(list(neighbor_node_ids)))
+        )
+        neighbor_doc_result = await db.execute(neighbor_doc_stmt)
+        for (doc_id,) in neighbor_doc_result.all():
+            current.add(doc_id)
+
+    # Preserve original order, append new ones at end
+    ordered = list(document_ids)
+    for doc_id in current:
+        if doc_id not in document_ids:
+            ordered.append(doc_id)
+    return ordered
+
+
+# ------------------------------------------------------------------
+# Main entry point
+# ------------------------------------------------------------------
+
 async def agent_navigate(
     db: AsyncSession,
     *,
@@ -300,14 +471,18 @@ async def agent_navigate(
     max_files: int = 3,
     max_chunks_per_file: int = 15,
     exclude_document_ids: Sequence[str] = (),
-) -> list[dict[str, Any]]:
-    """Agent-driven KG navigation — returns hydrated chunk rows.
+) -> list[str]:
+    """Agent-driven KG navigation — returns chunk paths.
 
-    Two-stage LLM routing:
-      1. LLM selects relevant files from a knowledge map overview.
-      2. For each file, LLM selects relevant chunks from compact previews.
+    Aligned with KB unified_retriever.agent_navigate():
+      Step 1: LLM selects files from knowledge map overview.
+      GREP:   term-search hit chunks → include their parent documents.
+      Edge:   selected documents → follow edges → include neighbors.
+      Step 2: For each file, LLM selects chunk paths from compact previews.
 
-    Returns chunk rows in the same format as list_graph_routed_chunks().
+    Returns:
+        List of chunk path strings (section_path or source_chunk_path).
+        Empty list if no documents or LLM fails.
     """
     t0 = time.monotonic()
 
@@ -351,7 +526,40 @@ async def agent_navigate(
         f'{[doc_id_to_name.get(d, d) for d in valid_ids]} in {elapsed_file}ms'
     )
 
-    # ── Step 2: For each file, LLM selects chunks ──
+    # ── GREP discovery: include parent documents of term-hit chunks ──
+    try:
+        grep_doc_ids = await _grep_discover_document_ids(
+            db, user_id=user_id, namespace=namespace, query=query,
+            exclude_document_ids=exclude_document_ids,
+        )
+        if grep_doc_ids:
+            pre_count = len(valid_ids)
+            for did in grep_doc_ids:
+                if did not in valid_ids and did in doc_id_to_name:
+                    valid_ids.append(did)
+            if len(valid_ids) > pre_count:
+                logger.info(
+                    f'retrieval: agent_navigate: grep_discover added '
+                    f'{len(valid_ids) - pre_count} more documents'
+                )
+    except Exception as exc:
+        logger.warning(f'retrieval: agent_navigate: grep_discover failed (ignored): {exc}')
+
+    # ── Edge expansion: include neighbor documents ──
+    try:
+        expanded_ids = await _expand_by_edges(
+            db, document_ids=valid_ids, user_id=user_id, namespace=namespace,
+        )
+        if len(expanded_ids) > len(valid_ids):
+            logger.info(
+                f'retrieval: agent_navigate: edge_expand '
+                f'{len(valid_ids)}->{len(expanded_ids)} documents'
+            )
+            valid_ids = expanded_ids
+    except Exception as exc:
+        logger.warning(f'retrieval: agent_navigate: edge_expand failed (ignored): {exc}')
+
+    # ── Step 2: For each file, LLM selects chunk paths ──
     doc_job_map: dict[str, str] = {}
     doc_stmt = (
         select(Document.document_id, Document.current_job_result_id)
@@ -362,7 +570,7 @@ async def agent_navigate(
         if jrid:
             doc_job_map[did] = jrid
 
-    all_selected_chunk_ids: list[str] = []
+    all_selected_paths: list[str] = []
 
     for doc_id in valid_ids:
         job_result_id = doc_job_map.get(doc_id)
@@ -385,18 +593,18 @@ async def agent_navigate(
             max_chunks=max_chunks_per_file,
         )
 
-        valid_chunk_ids = {c['chunk_id'] for c in chunks_slim}
+        valid_paths = {c['path'] for c in chunks_slim if c.get('path')}
 
         t2 = time.monotonic()
         try:
             chunk_response = await llm_fn(chunk_prompt)
-            selected_chunks = [
-                cid for cid in _parse_json_array(chunk_response)
-                if cid in valid_chunk_ids
+            selected_paths = [
+                path for path in _parse_json_array(chunk_response)
+                if path in valid_paths
             ]
         except Exception as exc:
             logger.error(
-                f'retrieval: agent_navigate: LLM chunk selection failed '
+                f'retrieval: agent_navigate: LLM chunk path selection failed '
                 f'for doc={doc_id}: {exc}'
             )
             continue
@@ -405,64 +613,16 @@ async def agent_navigate(
         logger.info(
             f'retrieval: agent_navigate: llm_chunk_select '
             f'doc={doc_id_to_name.get(doc_id, doc_id)} → '
-            f'{len(selected_chunks)} chunks in {elapsed_chunk}ms'
+            f'{len(selected_paths)} paths in {elapsed_chunk}ms'
         )
 
-        for cid in selected_chunks:
-            if cid not in all_selected_chunk_ids:
-                all_selected_chunk_ids.append(cid)
-
-    if not all_selected_chunk_ids:
-        logger.info('retrieval: agent_navigate: no chunks selected by LLM')
-        return []
-
-    # ── Step 3: Hydrate selected chunks ──
-    rows = await _hydrate_chunks_by_ids(db, chunk_ids=all_selected_chunk_ids)
+        for path in selected_paths:
+            if path not in all_selected_paths:
+                all_selected_paths.append(path)
 
     elapsed_total = round((time.monotonic() - t0) * 1000)
     logger.info(
-        f'retrieval: agent_navigate: total={len(rows)} chunks '
+        f'retrieval: agent_navigate: total={len(all_selected_paths)} chunk paths '
         f'from {len(valid_ids)} files in {elapsed_total}ms'
     )
-    return rows
-
-
-async def _hydrate_chunks_by_ids(
-    db: AsyncSession,
-    *,
-    chunk_ids: list[str],
-) -> list[dict[str, Any]]:
-    """Load full chunk rows by chunk_id, matching the standard retrieval row format."""
-    if not chunk_ids:
-        return []
-
-    stmt = (
-        select(Document, DocumentChunk, DocumentSection, JobResult)
-        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
-        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
-        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
-        .where(DocumentChunk.chunk_id.in_(chunk_ids))
-        .where(Document.status == 'active')
-    )
-    result = await db.execute(stmt)
-
-    chunk_id_order = {cid: idx for idx, cid in enumerate(chunk_ids)}
-    rows: list[dict[str, Any]] = []
-    for document, chunk, section, job_result in result.all():
-        rows.append({
-            'document_id': document.document_id,
-            'chunk_id': chunk.chunk_id,
-            'section_id': chunk.section_id,
-            'section_path': section.section_path if section else None,
-            'source_file_name': document.source_file_name,
-            'chunk_type': chunk.chunk_type,
-            'content': chunk.content,
-            'score': 2.0,
-            'file_path': chunk.file_path,
-            'chunk_metadata': chunk.chunk_metadata or {},
-            'job_result_id': chunk.job_result_id,
-            'job_id': job_result.job_id if job_result else None,
-        })
-
-    rows.sort(key=lambda r: chunk_id_order.get(str(r.get('chunk_id', '')), 10**9))
-    return rows
+    return all_selected_paths

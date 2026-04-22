@@ -20,11 +20,21 @@ from lxml import etree
 from app.services.common.kb_utils import normalize_md, truncate_text, truncate_text_by_tokens
 from app.services.document_parser.table_parser import df2md
 from app.services.document_parser.html_parser import df2html
-from app.services.document_parser.layout_parser import hiearchy_llm
+from app.services.document_parser.layout_parser import (
+    hiearchy_llm,
+    judge_by_conditions,
+    remove_by_conditions,
+)
 from app.services.document_parser.stage_profiler import stage_timer
+from shared.core.config import settings
 from shared.utils.OpenAICompatibleClientSync import get_openai_client
 from shared.services.ai.prompt_service import build_prompt
 from shared.services.ai.response_process_service import eval_response
+
+
+def _resolve_hierarchy_model_name(model_name: str | None = None) -> str:
+    """Resolve dedicated hierarchy model, falling back to the normal model."""
+    return model_name or settings.HIERARCHY_LLM_MODEL or settings.NORMOL_MODEL
 
 
 # ==================== DOCX TOC Detection Functions ====================
@@ -610,16 +620,17 @@ def parse_toc_hierarchy(toc_df, max_depth: int = 6, model_name: str = None) -> l
     Returns:
         List of dicts with id, heading, level
     """
+    resolved_model_name = _resolve_hierarchy_model_name(model_name)
     try:
         with stage_timer(
             "toc.parse_hierarchy_llm",
-            model_name=model_name,
+            model_name=resolved_model_name,
             heading_count=len(toc_df),
             max_depth=max_depth,
         ):
             toc_hierarchy = hiearchy_llm(
                 toc_df,
-                model_name=model_name,
+                model_name=resolved_model_name,
                 max_depth=max_depth,
                 task="eval-toc-headings",
             )
@@ -865,13 +876,20 @@ def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6)
     return payload["toc_with_level"], payload["toc_tree"]
 
 
-def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "normal", limit_: int = 150):
+def detect_tocs_in_texts(
+    md_lines: list,
+    model_name: str = None,
+    hierarchy_model_name: str = None,
+    branch: str = "normal",
+    limit_: int = 150,
+):
     """
     Detect and analyze TOC in texts
     
     Args:
         md_lines: markdown lines list
-        model_name: model name (optional)
+        model_name: TOC range detection model name (optional)
+        hierarchy_model_name: hierarchy LLM model name (optional)
         branch: "normal" or "plus-ocr"
         limit_: max lines to consider for each candidate area
     
@@ -951,7 +969,7 @@ def detect_tocs_in_texts(md_lines: list, model_name: str = None, branch: str = "
         """Analyze hierarchy for a single TOC area. Returns (idx, result_dict)."""
         logger.info(f"Analyzing TOC area #{idx+1}: TOC range [{toc_start}, {toc_end}], scan range ends at {area_end}")
         try:
-            toc_with_level, toc_tree = eval_toc_levels(toc_lines, model_name, max_depth=6)
+            toc_with_level, toc_tree = eval_toc_levels(toc_lines, hierarchy_model_name, max_depth=6)
             return idx, {
                 "toc_range": (toc_start, toc_end),
                 "scan_range": (toc_start, area_end),

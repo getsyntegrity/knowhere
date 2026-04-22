@@ -14,8 +14,14 @@ class AIConfig(BaseModel):
     DS_URL: str = Field(..., description="DeepSeek API URL")
     GPT_API_KEY: str = Field(default="", description="OpenAI API密钥")
     EMBEDDING_MODEL: str = Field(default="", description="嵌入模型")
-    NORMOL_MODEL: str = Field(default="", description="普通模型")
-    IMAGE_MODEL: str = Field(default="", description="图像模型")
+    # 默认: 文本/表格摘要走 deepseek-chat; hierarchy_llm 可通过 HIERARCHY_LLM_MODEL 单独覆盖。
+    # 保留通过环境变量 NORMOL_MODEL / HIERARCHY_LLM_MODEL / IMAGE_MODEL / IMAGE_MODEL_MAX 覆盖的能力。
+    NORMOL_MODEL: str = Field(default="deepseek-chat", description="普通文本模型 (文本摘要 / 表格摘要 / 常规文本LLM)")
+    HIERARCHY_LLM_MODEL: str = Field(
+        default="",
+        description="标题/目录层级识别模型；为空时回退到 NORMOL_MODEL",
+    )
+    IMAGE_MODEL: str = Field(default="qwen3.5-flash", description="图像模型 (image summary / atlas / OCR)")
     
     # 模型参数配置
     MIN_CONFIDENCE_THRESHOLD: float = Field(default=0.05, description="最小置信度阈值")
@@ -65,7 +71,7 @@ class AIConfig(BaseModel):
     # risking 429 rate-limit errors — especially when multiple pods/jobs run in parallel.
     HEADING_LLM_MAX_CONCURRENT: int = Field(default=8, description="Max concurrent gevent greenlets for parallel heading classification LLM calls (DeepSeek).")
     SUMMARY_LLM_MAX_CONCURRENT: int = Field(default=8, description="Max concurrent gevent greenlets for parallel post-heading summary LLM calls — image/table/text (Dashscope).")
-    IMAGE_MODEL_MAX: str = Field(default="", description="最大图像模型（兼容性字段）")
+    IMAGE_MODEL_MAX: str = Field(default="qwen3.5-flash", description="图像高阶模型 (OCR / ask-image 等 Q&A 场景)")
     REASON_MODEL: str = Field(default="", description="推理模型（兼容性字段）")
     IMG_HEADER: str = Field(default="", description="图像头部（兼容性字段）")
     CONFIG_PATH: str = Field(default="app/core/config/config.txt", description="配置路径（兼容性字段）")

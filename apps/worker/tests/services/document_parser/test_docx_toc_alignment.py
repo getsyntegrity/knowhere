@@ -184,6 +184,8 @@ def test_parse_docx_passes_structured_toc_context_to_pred_titles(
             "doc_type": "manual",
             "summary_image": False,
             "summary_table": False,
+            "model_name": "deepseek-chat",
+            "hierarchy_model_name": "qwen3.6-flash",
         },
         output_dir=str(tmp_path),
         filename="sample.docx",
@@ -193,6 +195,7 @@ def test_parse_docx_passes_structured_toc_context_to_pred_titles(
     assert captured["kwargs"]["first_toc_ele_num"] == 1
     assert captured["kwargs"]["toc_hierarchies"][0]["toc_range"] == (1, 2)
     assert "第一章 总则" in captured["kwargs"]["toc_hierarchies"][0]["toc_with_level"]
+    assert captured["kwargs"]["model_name"] == "qwen3.6-flash"
     assert (tmp_path / "toc_hierarchies.json").exists()
 
 

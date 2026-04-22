@@ -3,7 +3,6 @@ ZIP Result Package Generation Service
 Generates ZIP packages according to Knowhere-API-ZIP-Spec.md specification
 """
 import hashlib
-import io
 import json
 import os
 import tempfile
@@ -48,7 +47,7 @@ class ZipResultService:
             source_file_name: Source file name
             data_id: User-defined ID
             job_metadata: Job metadata
-            parsed_df: Optional, parsed DataFrame for generating kb.csv and hierarchy.json
+            parsed_df: Optional, parsed DataFrame for building hierarchy.json (kb.csv / hierarchy_view.html are not added to the ZIP)
             temp_dir: Optional directory for the generated ZIP file
 
         Returns:
@@ -135,29 +134,17 @@ class ZipResultService:
                     else:
                         logger.warning(f"Table file not found: {source_path}")
 
-                # 5. Generate kb.csv and hierarchy.json (if parsed_df is provided)
-                has_kb_csv = False
-                has_hierarchy = False
+                # 5. Generate hierarchy.json (if parsed_df is provided). kb.csv and hierarchy_view.html are omitted from the ZIP.
                 if parsed_df is not None and len(parsed_df) > 0:
-                    # 5a. Generate kb.csv (using UTF-8 with BOM encoding for Excel compatibility)
-                    csv_buffer = io.StringIO()
-                    parsed_df.to_csv(csv_buffer, index=False, encoding='utf-8')
-                    # Add BOM header (\ufeff) to ensure Excel recognizes UTF-8
-                    csv_content = '\ufeff' + csv_buffer.getvalue()
-                    zip_file.writestr("kb.csv", csv_content.encode("utf-8"))
-                    has_kb_csv = True
-                    logger.info(f"Added kb.csv with {len(parsed_df)} rows")
-                    
-                    # 5b. Generate hierarchy.json from parsed_df path column
+                    # 5a. Generate hierarchy.json from parsed_df path column
                     if 'path' in parsed_df.columns:
                         path_list = parsed_df['path'].dropna().tolist()
                         hierarchy_dict = self._restore_graph_by_paths(path_list)
                         hierarchy_json = json.dumps(hierarchy_dict, ensure_ascii=False, indent=4)
                         zip_file.writestr("hierarchy.json", hierarchy_json.encode("utf-8"))
-                        has_hierarchy = True
                         logger.info(f"Added hierarchy.json")
 
-                        # 5c. Generate hierarchy_slim.json — clean structure tree, no _* metadata keys
+                        # 5b. Generate hierarchy_slim.json — clean structure tree, no _* metadata keys
                         try:
                             tree_dict = self._build_tree_json(hierarchy_dict)
                             tree_json = json.dumps(tree_dict, ensure_ascii=False, indent=2)
@@ -165,15 +152,6 @@ class ZipResultService:
                             logger.info("Added hierarchy_slim.json")
                         except Exception as e:
                             logger.warning(f"generate hierarchy_slim.json fail {e}")
-
-                        # 5d. 生成 hierarchy_view.html
-                        try:
-                            from shared.services.storage.hierarchy_html_generator import generate_hierarchy_html
-                            chunks_dict = {"chunks": formatted_chunks}
-                            html_content = generate_hierarchy_html(hierarchy_dict, chunks_dict)
-                            zip_file.writestr("hierarchy_view.html", html_content.encode("utf-8"))
-                        except Exception as e:
-                            logger.warning(f"genearte hierarchy_view.html fail {e}")
 
                 # 6. Generate manifest.json (checksum not included, stored in database)
                 manifest = self._generate_manifest(

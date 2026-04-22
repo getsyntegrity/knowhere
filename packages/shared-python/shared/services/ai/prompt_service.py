@@ -10,7 +10,60 @@ Removed prompts for:
 - Other: eval-images, gen-table-query
 """
 
+import re
+
 from shared.services.ai.response_process_service import process_llm_history
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Language detection & directive injection
+# ──────────────────────────────────────────────────────────────────────────────
+# Rationale: LLMs such as deepseek-chat have a strong prior toward Chinese when
+# summarizing numeric / structured input (financial tables, GAAP terms, etc.),
+# and a soft "same language as the input" instruction is often ignored. We
+# therefore detect the input language deterministically at the caller site and
+# inject an EXPLICIT "Respond ONLY in <lang>" directive into the prompt.
+#
+# Callers pass ``paras['lang']`` with one of: 'en', 'zh', or None. When None,
+# prompts fall back to the original "same language" wording.
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_ASCII_LETTER_RE = re.compile(r"[A-Za-z]")
+
+
+def _detect_text_language(text) -> str:
+    """Return 'zh' if CJK chars dominate, 'en' if ASCII letters dominate, else 'other'.
+
+    Uses a conservative threshold: a language wins only when it clearly
+    out-counts the other. If neither is dominant, returns 'other' so that the
+    caller can fall back to the legacy "same language as the input" wording.
+    """
+    if not isinstance(text, str) or not text:
+        return "other"
+    sample = text[:4000]
+    cjk = len(_CJK_RE.findall(sample))
+    ascii_letters = len(_ASCII_LETTER_RE.findall(sample))
+    if cjk == 0 and ascii_letters == 0:
+        return "other"
+    if cjk >= max(8, ascii_letters * 0.5):
+        return "zh"
+    if ascii_letters >= max(20, cjk * 3):
+        return "en"
+    return "other"
+
+
+def _language_directive(lang) -> str:
+    """Return a strong, explicit language directive (or '' to keep defaults)."""
+    if lang == "en":
+        return (
+            "You MUST write the ENTIRE response in ENGLISH ONLY. "
+            "Do NOT use Chinese or any other language, even for individual words, "
+            "keywords, titles, or punctuation marks."
+        )
+    if lang == "zh":
+        return (
+            "你必须完全使用简体中文作答，禁止出现英文单词（专有名词除外）、日文、韩文或其他任何语言。"
+        )
+    return ""
 
 
 def build_prompt(task, texts, query, **kwargs):
@@ -27,42 +80,63 @@ def build_prompt(task, texts, query, **kwargs):
 
     if task == 'summary':
         max_tokens = kwargs['paras']['max_tokens']
+        lang = kwargs['paras'].get('lang')
+        lang_directive = _language_directive(lang)
+        lang_rule = (
+            f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
+            if lang_directive
+            else "- Your response must be in the SAME LANGUAGE as the input text"
+        )
         prompt = f"""
         You will receive a text passage (which may include HTML tables or structured data):
         '''
         {texts}
         '''
         Your task and requirements:
+        {lang_rule}
         - Extract the main content of the material, not exceeding {max_tokens} characters
         - If the input is an HTML table, summarize its structure and key data points in natural language, do NOT return the HTML code itself
         - If the input content is too short, mostly empty, or lacks meaningful text to summarize, return exactly: null
-        - Your response must be in the SAME LANGUAGE as the input text
         - Output the summary content DIRECTLY, do not start with phrases like "Here is the summary"
         - Do not add any format wrappers, prefixes, or explanations beyond the summary
         """
 
     elif task == 'summary-titled':
         max_tokens = kwargs['paras']['max_tokens']
+        lang = kwargs['paras'].get('lang')
+        lang_directive = _language_directive(lang)
+        lang_rule = (
+            f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
+            if lang_directive
+            else "- Your response must be in the SAME LANGUAGE as the input text"
+        )
         prompt = f"""
         You will receive a text passage (which may include HTML tables or structured data):
         '''
         {texts}
         '''
         Your task:
+        {lang_rule}
         - Line 1: Output a short title (no more than 15 characters) that captures the core topic
         - Line 2 onward: Output a detailed summary, not exceeding {max_tokens} characters
         - If the input is an HTML table, summarize its structure and key data points in natural language, do NOT return the HTML code itself
         - If the input content is too short, mostly empty, or lacks meaningful text, return exactly: null
-        - Your response must be in the SAME LANGUAGE as the input text
         - Output DIRECTLY without any prefixes like "Title:" or "Summary:"
         """
         
     elif task == 'summary-keywords':
         max_tokens = kwargs['paras']['max_tokens']
         kw_num = kwargs['paras']['kw_num']
+        lang = kwargs['paras'].get('lang')
+        lang_directive = _language_directive(lang)
+        lang_rule = (
+            f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
+            if lang_directive
+            else "- Keywords must be in the SAME LANGUAGE as the input text"
+        )
 
         example = '''
-         {"answer":"keyword1;keyword2;keyword3"}
+         {"answer":"<keyword_1>;<keyword_2>;<keyword_3>"}
         '''
         
         prompt = f"""
@@ -71,9 +145,9 @@ def build_prompt(task, texts, query, **kwargs):
         {texts}
         '''
         Your task is to extract keywords, no more than [{kw_num}] keywords. Note:
+        {lang_rule}
         - Your response must be in JSON dictionary format with key "answer" and value being the extracted keywords
         - Keywords should reflect the text theme, separated by semicolons ";"
-        - Keywords must be in the SAME LANGUAGE as the input text
         - Example format:
         {example}
         - Do not output any additional explanations or descriptions besides the keywords
@@ -82,9 +156,21 @@ def build_prompt(task, texts, query, **kwargs):
     elif task == 'summary-full':
         max_tokens = kwargs['paras']['max_tokens']
         kw_num = kwargs['paras'].get('kw_num', 3)
+        lang = kwargs['paras'].get('lang')
+        lang_directive = _language_directive(lang)
+        if lang_directive:
+            lang_line = (
+                f"**LANGUAGE (HARD CONSTRAINT, applies to EVERY field — title, "
+                f"keywords, and summary)**: {lang_directive}"
+            )
+        else:
+            lang_line = (
+                "**First and most important**, all output must be in the "
+                "**SAME LANGUAGE** as the input text"
+            )
 
         example = '''
-         {"title":"核心主题标题","keywords":"关键词1;关键词2;关键词3","summary":"内容摘要文本"}
+         {"title":"<title>","keywords":"<keyword_1>;<keyword_2>;<keyword_3>","summary":"<summary>"}
         '''
 
         prompt = f"""
@@ -92,13 +178,16 @@ def build_prompt(task, texts, query, **kwargs):
         '''
         {texts}
         '''
-        Your task is to extract a title, keywords, and summary from this content. Note:
+        Your task is to extract a title, keywords, and summary from this content.
+        {lang_line}
+
+        Other requirements:
         - Your response must be in JSON format with exactly three keys: "title", "keywords", "summary"
         - "title": a short title capturing the core topic, no more than 15 characters
         - "keywords": the most important thematic keywords, no more than {kw_num}, separated by semicolons ";"
         - "summary": a concise summary of the main content, not exceeding {max_tokens} characters
         - If the input is an HTML table, summarize its structure and key data points in natural language
-        - All output must be in the SAME LANGUAGE as the input text
+        
         - If the input content is too short, mostly empty, or lacks meaningful text, return exactly: null
         - Example format:
         {example}
@@ -288,11 +377,11 @@ def build_prompt(task, texts, query, **kwargs):
            ``level`` is a preliminary estimate: a positive integer (1 = shallowest, deeper = larger)
            or the string "Not Sure" (undetermined). These rows — and ONLY these — are the ones you must evaluate.
 
-        2) PLACEHOLDER — ``id`` has the form "start-end" (a range of lines) OR a single 
-           integer referring to one body line; ``heading`` is "[N BODY LINES]" where N is 
-           the number of body lines that were folded here; ``level`` is the literal "-". 
-           Placeholders are positional markers that tell you how many body lines sit between
-           adjacent candidates. Use them as context ONLY.
+        2) PLACEHOLDER — ``id`` is ALWAYS a hyphenated range "start-end" (for a
+           single-line it is "N-N", e.g. "56-56"); ``heading`` is "[N BODY LINES]"
+           where N is the number of body lines folded here; ``level`` is the literal "-".
+           Placeholders are positional markers that tell you how many body lines sit
+           between adjacent candidates. Use them as context ONLY.
 
         Data to be adjusted:
         '''
@@ -350,11 +439,10 @@ def build_prompt(task, texts, query, **kwargs):
         Rule 3 — Body text demotion (candidate → -1):
             Demote a candidate to level = -1 when it clearly does NOT serve as a section title. 
             In compact input, the strongest demotion cues are:
-            - In case any heading is exactly "Figure/Image", demote it to level = -1.
-            - The text is an isolated broken phrase, label fragment, data value,
-              or caption-like snippet (e.g. "Table 3-2", "Figure 4", a bare unit
-              such as "kN/m²").
             - Two CANDIDATE rows appear adjacent with NO placeholder between them
+            - The text contains equations and math symbols such as + = - × ÷.
+            - The text is exactly "Figure/Image", demote it to level = -1.
+            - The text is an isolated broken phrase, fragment, data value, or caption-like snippet (e.g. "Table 3-2", "Figure 4"
 
         Rule 4 — Normalise to start at level 1:
             The shallowest (the most coarse granularity) heading found MUST be assigned level 1.
@@ -442,8 +530,9 @@ def build_prompt(task, texts, query, **kwargs):
         Your task is to extract the main content described in the image. Note:
         - Line 1: Output a short title (no more than 15 characters) summarizing the image's core topic
         - Line 2 onward: Provide a precise and concise summary, using text descriptions only, avoid extracting specific data from the image
-        - Your response must be in the SAME LANGUAGE as any text visible in the image (or the context if provided)
+        - Your response **MUST BE in the SAME LANGUAGE** as any text visible in the image (if there is no text, English is preferred)
         - If the image is blank, unreadable, or contains no meaningful content, return exactly: null
+
         {img_context}
         - Output DIRECTLY without any prefixes like "Title:" or "Summary:" or "This image shows"
         - Do not add any format wrappers, prefixes, or explanations beyond the content
@@ -455,7 +544,7 @@ def build_prompt(task, texts, query, **kwargs):
         prompt = f'''
         You will receive an image, which may be a photo, chart, or an image requiring OCR.
         Your task is to perform OCR operation, fully extract and return the image content. Note:
-        - Preserve the original language of the text in the image
+        - **MUST Preserve the ORIGINAL LANGUAGE** of the text in the image
         - If the image contains no readable text, return exactly: null
         - Output the text content DIRECTLY, do not start with phrases like "The text reads"
         - Do not add any format wrappers, prefixes, or explanations beyond the text content
@@ -502,8 +591,7 @@ def build_prompt(task, texts, query, **kwargs):
              b) Atlas name (图集名): the Chinese or English name of this drawing collection
              c) Page label (页码): the page number or label shown in the title block
            - Output EXACTLY this format (replace placeholders with real values):
-             <atlas_no> （<atlas_name>）page <page_label>
-             Example: 22D701-3 （电缆桥架安装）page 5
+             <atlas_no (if any)> (<atlas_name>) <page number>
 
         2. IF the title block is present but you can only find SOME fields (e.g. no atlas name), fill what you can and omit missing parts:
            - Only atlas number found: <atlas_no>
@@ -594,14 +682,21 @@ def build_prompt(task, texts, query, **kwargs):
     elif task == "file-summary":
         max_tokens = kwargs['paras'].get('max_tokens', 100)
         node_name = kwargs['paras'].get('node_name', '')
+        lang = kwargs['paras'].get('lang')
+        lang_directive = _language_directive(lang)
+        lang_rule = (
+            f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
+            if lang_directive
+            else "- Your response must be in the SAME LANGUAGE as the input text"
+        )
 
         prompt = f"""You will receive summaries of sub-sections from a document section called "{node_name}":
         '''
         {texts}
         '''
         Your task:
+        {lang_rule}
         - Produce ONE concise sentence summarizing ALL sub-sections, no more than {max_tokens} characters
-        - Your response must be in the SAME LANGUAGE as the input text
         - Output the summary DIRECTLY, no prefixes, no explanations
         - If the input lacks meaningful text, return exactly: null
         """
