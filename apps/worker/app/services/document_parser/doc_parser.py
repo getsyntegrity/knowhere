@@ -522,7 +522,10 @@ def parse_docx(docx_path, llm_paras, output_dir=None, filename="", file_url="", 
     outline_dic = {-1:-1}
     smart_title_parse = llm_paras['smart_title_parse']
     if not llm_paras['doc_type'] in "templates":
-        model_name = llm_paras.get("model_name", settings.NORMOL_MODEL) if llm_paras else settings.NORMOL_MODEL
+        model_name = (
+            llm_paras.get("hierarchy_model_name")
+            or llm_paras.get("model_name", settings.NORMOL_MODEL)
+        ) if llm_paras else (settings.HIERARCHY_LLM_MODEL or settings.NORMOL_MODEL)
         heading_candidates = pred_titles(
             heading_infos,
             doc_type="docx",

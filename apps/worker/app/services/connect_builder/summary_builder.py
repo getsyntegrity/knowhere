@@ -46,14 +46,20 @@ def _llm_summarize(snippets_text: str, node_name: str) -> str:
     Returns plain text summary (≤100 chars), or "" on failure.
     """
     try:
-        from shared.services.ai.prompt_service import build_prompt
+        from shared.services.ai.prompt_service import build_prompt, _detect_text_language
         from shared.utils.OpenAICompatibleClientSync import get_openai_client
 
+        # Deterministic language lock — see prompt_service._language_directive
+        detected_lang = _detect_text_language(snippets_text)
         prompt, temperature, top_p, max_tokens = build_prompt(
             task="file-summary",
             texts=snippets_text,
             query="",
-            paras={"max_tokens": 100, "node_name": node_name},
+            paras={
+                "max_tokens": 100,
+                "node_name": node_name,
+                "lang": detected_lang,
+            },
         )
         messages = [
             {"role": "system", "content": "you are a helpful assistant"},

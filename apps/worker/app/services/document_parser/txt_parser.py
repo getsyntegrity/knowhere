@@ -98,12 +98,22 @@ def extract_title_keywords_summary(texts, max_keywords=3, summary_len=None):
             - summary: summary text, or ""
     """
     from shared.core.constants import ProcessingConstants
+    from shared.services.ai.prompt_service import _detect_text_language
     if summary_len is None:
         summary_len = ProcessingConstants.SUMMARY_LEN
     try:
+        # Deterministic language lock: LLMs (especially deepseek-chat) often
+        # default to Chinese on numeric / structured inputs even when asked to
+        # match input language. We detect the input's dominant language here
+        # and pass it as a HARD constraint to the prompt.
+        detected_lang = _detect_text_language(texts)
         prompt, temperature, top_p, max_tokens = build_prompt(
             task='summary-full', texts=texts, query="",
-            paras={'max_tokens': summary_len, 'kw_num': max_keywords}
+            paras={
+                'max_tokens': summary_len,
+                'kw_num': max_keywords,
+                'lang': detected_lang,
+            },
         )
         messages = [
             {"role": "system", "content": "you are a helpful assistant"},

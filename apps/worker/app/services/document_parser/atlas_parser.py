@@ -194,12 +194,17 @@ def _atlas_render_pages_worker(queue, pdf_path, img_dir, skip_pages_list, dpi, p
     queue.put({"ok": True, "page_data": page_data})
 
 
-def _detect_toc_pages_from_texts(page_texts: list[str], model_name: str) -> tuple:
+def _detect_toc_pages_from_texts(
+    page_texts: list[str],
+    model_name: str,
+    hierarchy_model_name: str | None = None,
+) -> tuple:
     """Detect TOC pages from pre-extracted page texts (no PyMuPDF needed).
 
     Args:
         page_texts: list of text strings, one per page (0-indexed).
-        model_name: LLM model for TOC detection.
+        model_name: LLM model for TOC range detection.
+        hierarchy_model_name: Optional dedicated model for TOC hierarchy parsing.
 
     Returns:
         (toc_page_set, toc_hierarchies)
@@ -216,7 +221,11 @@ def _detect_toc_pages_from_texts(page_texts: list[str], model_name: str) -> tupl
     if not md_lines:
         return set(), None
 
-    toc_hierarchies, _ = detect_tocs_in_texts(md_lines, model_name=model_name)
+    toc_hierarchies, _ = detect_tocs_in_texts(
+        md_lines,
+        model_name=model_name,
+        hierarchy_model_name=hierarchy_model_name,
+    )
 
     if not toc_hierarchies:
         return set(), None
@@ -289,7 +298,12 @@ def parse_atlas(
 
     # ── TOC detection (runs in parent — uses LLM, no PyMuPDF) ──
     model_name = base_llm_paras.get("model_name", settings.NORMOL_MODEL)
-    toc_page_set, toc_hierarchies = _detect_toc_pages_from_texts(page_texts, model_name)
+    hierarchy_model_name = base_llm_paras.get("hierarchy_model_name") or model_name
+    toc_page_set, toc_hierarchies = _detect_toc_pages_from_texts(
+        page_texts,
+        model_name,
+        hierarchy_model_name=hierarchy_model_name,
+    )
 
     if toc_page_set:
         logger.info(f"📐 Atlas: TOC pages detected: {sorted(toc_page_set)}")

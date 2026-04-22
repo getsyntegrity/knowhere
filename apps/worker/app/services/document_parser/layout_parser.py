@@ -31,6 +31,11 @@ from shared.core.exceptions.domain_exceptions import WorkerHandlingException
 
 # ==================== Helper Functions ====================
 
+
+def _resolve_hierarchy_model_name(model_name=None):
+    """Resolve the dedicated hierarchy LLM model with backward-compatible fallback."""
+    return model_name or settings.HIERARCHY_LLM_MODEL or settings.NORMOL_MODEL
+
 def save_intermediate_csv(df: pd.DataFrame, output_dir: str, filename: str):
     """
     save intermediate result to csv file, use utf-8-sig encoding to support Chinese and English
@@ -771,11 +776,32 @@ def remove_by_conditions(text, include_punc=False):
     neg_condition_zero = r"^0\.\d+[\u4e00-\u9fa5A-Za-z\S]*"  # 0.2xxx
     neg_decimal_only = r"^\d*\.\d+$"  # 0.2 .23
     neg_condition_http = r"(?i)(^https?://\S+|^www\.\S+|^P\.S|^\b\d{0,2}\s*(?:a\.m|p\.m)\b)"
-    neg_condition_latex = r"\$[^$]*\\[A-Za-z]+(?:\s*\{[^{}]*\})?[^$]*\$"
+    # LaTeX: wrapped ($..\cmd..$) OR bare commands (\times, \mathrm, etc.)
+    neg_condition_latex = (
+        r"(?:"
+        r"\$[^$]*\\[A-Za-z]+(?:\s*\{[^{}]*\})?[^$]*\$"  # wrapped: $...\cmd...$
+        r"|"
+        r"\\(?:times|div|cdot|pm|mp|leq|geq|neq|approx|equiv|sim|infty"
+        r"|sum|prod|int|sqrt|frac|mathrm|mathbf|mathit|mathcal"
+        r"|text(?:bf|it|rm)?|alpha|beta|gamma|delta|epsilon|theta"
+        r"|lambda|mu|sigma|pi|omega|partial|nabla"
+        r"|left|right|begin|end|overline|underline|hat|vec|tilde)\b"
+        r")"
+    )
+    # Number immediately followed by measurement unit (e.g. 25.40mm, 100kPa)
+    neg_condition_unit = (
+        r"^\d+\.?\d*\s{0,2}"
+        r"(?:mm|cm|km|nm|μm|inch(?:es)?|ft|yd|mi"
+        r"|kg|mg|μg|lb|oz"
+        r"|kPa|MPa|GPa|Pa|psi|bar"
+        r"|°[CFK]"
+        r"|Hz|kHz|MHz|GHz"
+        r"|mol|mL|dL|dB|Nm|kN|MN|kW|MW|GW|hp|rpm|cc|cal|kcal)\b"
+    )
     neg_condition_punc_mid = r"[。！；].+"
     neg_condition_punc_end = r"[.,;，。；]$"
 
-    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex, neg_condition_zero, neg_decimal_only, neg_condition_punc_mid]
+    neg_conditions = [neg_condition_num, neg_condition_http, neg_condition_latex, neg_condition_zero, neg_decimal_only, neg_condition_punc_mid, neg_condition_unit]
 
     neg_triggered_code = []
     for regex in neg_conditions:
@@ -804,7 +830,7 @@ def md_heading_match(line, as_is=True):
         return line, -1
 
 
-def filter_md_headings(md_lines, num_pos=17, num_neg=6, layout_json_path=None):
+def filter_md_headings(md_lines, num_pos=17, num_neg=7, layout_json_path=None):
     """filter candidate headings for .md
     
     Args:
@@ -1051,6 +1077,7 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=204
         List of dicts with id and level, one per row in ``df`` (missing IDs -> level=-1).
     """
 
+    model_name = _resolve_hierarchy_model_name(model_name)
     level_md = df2md(df)
 
     # Completion budget is driven by the number of heading candidates, not the
@@ -1249,6 +1276,7 @@ def pred_titles(infos, doc_type, toc_hierarchies=None, prompt_limt=4000, enable_
         layout_json_path: path to layout.json for META features (optional)
         first_toc_ele_num: ele_num of the first TOC block in DOCX (for pre-TOC exclusion)
     """
+    model_name = _resolve_hierarchy_model_name(model_name)
     logger.info(f"Start to predict title hierarchy: doc_type={doc_type}, smart_parse={smart_parse}, candidate titles={len(infos)}")
     
     if doc_type == "pptx":
@@ -1449,6 +1477,7 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
         output_dir: output directory, used to save intermediate results CSV
         csv_suffix: suffix for intermediate CSV filenames
     """
+    model_name = _resolve_hierarchy_model_name(model_name)
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 

@@ -113,6 +113,7 @@ def checkerboard_inject_parse(
         "doc_type": doc_type,
         "frag_desc": add_frag_desc,
         "model_name": settings.NORMOL_MODEL,
+        "hierarchy_model_name": settings.HIERARCHY_LLM_MODEL or settings.NORMOL_MODEL,
     }
     
     baseurl = base_url
