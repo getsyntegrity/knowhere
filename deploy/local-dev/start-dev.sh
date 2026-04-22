@@ -52,6 +52,15 @@ parse_args() {
     done
 }
 
+run_compose() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose "$@"
+        return 0
+    fi
+
+    docker compose "$@"
+}
+
 require_uv() {
     if ! command -v uv >/dev/null 2>&1; then
         printf 'uv is required for local bootstrap. Install uv first.\n' >&2
@@ -216,7 +225,7 @@ main() {
     log_step "Starting Knowhere local development services..."
     require_docker
 
-    docker-compose -f "${COMPOSE_FILE}" up -d
+    run_compose -f "${COMPOSE_FILE}" up -d
 
     wait_for_postgres
     wait_for_redis
