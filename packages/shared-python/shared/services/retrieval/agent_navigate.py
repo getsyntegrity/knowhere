@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database.document import Document, DocumentChunk, DocumentSection, RetrievalHitStat
 from shared.models.database.job_result import JobResult
+from shared.services.retrieval.hit_stats_service import compute_importance_score
 from shared.services.retrieval.llm_adapter import LLMFn
 
 _CONTENT_PREVIEW_LEN = 120
@@ -160,14 +161,21 @@ async def _build_knowledge_map_overview(
         chunk_stats[row[0]] = {'total': row[1], 'media': row[2]}
 
     hit_stmt = (
-        select(RetrievalHitStat.document_id, RetrievalHitStat.hit_count)
+        select(
+            RetrievalHitStat.document_id,
+            RetrievalHitStat.hit_count,
+            RetrievalHitStat.last_hit_at,
+            RetrievalHitStat.created_at,
+        )
         .where(RetrievalHitStat.user_id == user_id)
         .where(RetrievalHitStat.namespace == namespace)
         .where(RetrievalHitStat.hit_kind == 'document')
         .where(RetrievalHitStat.document_id.in_(doc_ids))
     )
     hit_result = await db.execute(hit_stmt)
-    hit_counts: dict[str, int] = {row[0]: row[1] for row in hit_result.all()}
+    doc_importance: dict[str, float] = {}
+    for row in hit_result.all():
+        doc_importance[row[0]] = compute_importance_score(row[1], row[2], row[3])
 
     section_summaries_stmt = (
         select(
@@ -209,14 +217,14 @@ async def _build_knowledge_map_overview(
         did = doc.document_id
         name = doc_id_to_name[did]
         stats = chunk_stats.get(did, {'total': 0, 'media': 0})
-        hits = hit_counts.get(did, 0)
+        importance = doc_importance.get(did, 0.0)
         titles = section_titles.get(did, '')
 
         line = f'- [{did}] {name}  chunks={stats["total"]}'
         if stats['media'] > 0:
             line += f' media={stats["media"]}'
-        if hits > 0:
-            line += f' hits={hits}'
+        if importance > 0:
+            line += f' importance={importance}'
         kw_str = doc_keywords.get(did, '')
         if kw_str:
             line += f'  keywords="{kw_str}"'

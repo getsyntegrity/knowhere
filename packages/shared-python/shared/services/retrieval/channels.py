@@ -17,9 +17,9 @@ from shared.services.retrieval.graph_service import is_excluded_section
 from shared.utils.text_utils import tokenize2stw_remove
 
 
-def tokenize_query_for_fts(query: str) -> str:
+def tokenize_query_for_fts(query: str, stopwords: list[str] | None = None) -> str:
     """Jieba-tokenize a query string for plainto_tsquery('simple', ...) compatibility."""
-    tokens = tokenize2stw_remove([query], stopwords=[], link_char=" ")
+    tokens = tokenize2stw_remove([query], stopwords=stopwords, link_char=" ")
     return tokens[0] if tokens else query
 
 

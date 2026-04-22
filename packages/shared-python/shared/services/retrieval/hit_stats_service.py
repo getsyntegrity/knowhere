@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+_HALF_LIFE_DAYS = 30.0
+_ALPHA = 0.7
+_BETA = 0.3
+
+
+def _decay_score(hit_count: int, ref_time: datetime, half_life_days: float) -> float:
+    days = (datetime.now(timezone.utc).replace(tzinfo=None) - ref_time).total_seconds() / 86400
+    return hit_count * math.exp(-0.693 * days / half_life_days)
+
+
+def compute_importance_score(hit_count: int, last_hit_at: datetime, created_at: datetime) -> float:
+    usage_heat = _decay_score(hit_count, last_hit_at, _HALF_LIFE_DAYS)
+    freshness = _decay_score(1, created_at, _HALF_LIFE_DAYS)
+    return round(_ALPHA * usage_heat + _BETA * freshness, 4)
 
 _UPSERT_DOCUMENT_HIT_SQL = text("""
     INSERT INTO retrieval_hit_stats (
