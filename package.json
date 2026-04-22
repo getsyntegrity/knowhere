@@ -9,7 +9,7 @@
     "dev:docs": "cd apps/docs && pnpm dev",
     "dev:worker": "cd apps/worker && uv run python worker.py",
     "dev:flower": "cd apps/worker && uv run celery -A shared.core.celery_app flower --port=5555",
-    "dev:services": "cd deploy/local-dev && docker-compose -f docker-compose.dev.yml up -d",
+    "dev:services": "cd deploy/local-dev && ./start-dev.sh",
     "dev:services:down": "cd deploy/local-dev && docker-compose -f docker-compose.dev.yml down",
     "build": "turbo build",
     "generate:types": "pnpm --filter @knowhere/openapi-specs generate",

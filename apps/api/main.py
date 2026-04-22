@@ -25,7 +25,37 @@ from app.core.image_cli import ImageCli
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from app.mcp import create_retrieval_mcp_server
+from app.services.local_dev import LocalDevelopmentBootstrapService
 from app.services.rate_limit.rule_loader import load_rules
+
+
+async def _ensure_local_development_prerequisites() -> None:
+    """Make local-only auth prerequisites exist before migrations run."""
+    if settings.ENVIRONMENT != "development":
+        return
+
+    service = LocalDevelopmentBootstrapService()
+    await service.ensure_user_table_exists()
+    logger.info("local development user table is ready")
+
+
+async def _seed_local_development_identity() -> None:
+    """Create or refresh the deterministic local developer account."""
+    if settings.ENVIRONMENT != "development":
+        return
+
+    from shared.core.database import AsyncSessionFactory
+
+    service = LocalDevelopmentBootstrapService()
+    async with AsyncSessionFactory() as session:
+        await service.seed_local_developer(session)
+        await session.commit()
+
+    logger.info(
+        "local development seed is ready: user_id={}",
+        LocalDevelopmentBootstrapService.LOCAL_DEV_USER_ID,
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,6 +67,7 @@ async def lifespan(app: FastAPI):
     import sys
     
     try:
+        await _ensure_local_development_prerequisites()
         logger.info("start running database migration...")
         result = subprocess.run([
             sys.executable, "-m", "alembic", "upgrade", "heads"
@@ -54,6 +85,8 @@ async def lifespan(app: FastAPI):
     from shared.core.database import prewarm_connection_pool
     await prewarm_connection_pool()
     logger.info("database connection pool warmed up.")
+
+    await _seed_local_development_identity()
     
     await redis_pool_manager.init_pool()
     logger.info("Redis connection pool created.")

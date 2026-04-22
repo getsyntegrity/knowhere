@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -10,6 +11,17 @@ import main as app_main
 class _SessionContext:
     async def __aenter__(self) -> object:
         return object()
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return False
+
+
+class _SessionContextWithSession:
+    def __init__(self, session: object) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> object:
+        return self._session
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
         return False
@@ -34,6 +46,8 @@ async def _noop_async(*_args: object, **_kwargs: object) -> None:
 def _patch_lifespan_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     load_rules_impl: Callable[[object], Awaitable[None]],
+    *,
+    bootstrap_enabled: bool = False,
 ) -> _LifespanTracker:
     import app.services.rate_limit.config as rate_limit_config_module
     import shared.core.database as database_module
@@ -58,6 +72,17 @@ def _patch_lifespan_dependencies(
     )
     monkeypatch.setattr(app_main, "load_rules", load_rules_impl)
     monkeypatch.setattr(app_main.httpx, "AsyncClient", lambda **_kwargs: object())
+    if not bootstrap_enabled:
+        monkeypatch.setattr(
+            app_main,
+            "_ensure_local_development_prerequisites",
+            _noop_async,
+        )
+        monkeypatch.setattr(
+            app_main,
+            "_seed_local_development_identity",
+            _noop_async,
+        )
     tracker = _LifespanTracker()
     monkeypatch.setattr(app_main, "safe_dispose_engine", tracker.dispose_engine)
     monkeypatch.setattr(
@@ -106,3 +131,51 @@ async def test_lifespan_fails_fast_when_initial_rule_load_fails(
 
     assert tracker.close_async_client_calls == 0
     assert tracker.dispose_engine_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_lifespan_bootstraps_local_development_state_in_development_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_load_rules(_db: object) -> None:
+        return None
+
+    _patch_lifespan_dependencies(
+        monkeypatch,
+        _fake_load_rules,
+        bootstrap_enabled=True,
+    )
+    bootstrap_calls = {
+        "ensure_user_table_exists": 0,
+        "seed_local_developer": 0,
+    }
+    bootstrap_session = AsyncMock()
+    bootstrap_session.commit = AsyncMock()
+
+    class _BootstrapService:
+        LOCAL_DEV_USER_ID = "local-dev-user"
+
+        async def ensure_user_table_exists(self) -> None:
+            bootstrap_calls["ensure_user_table_exists"] += 1
+
+        async def seed_local_developer(self, _db: object) -> None:
+            bootstrap_calls["seed_local_developer"] += 1
+
+    import shared.core.database as database_module
+
+    monkeypatch.setattr(app_main.settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(app_main, "LocalDevelopmentBootstrapService", _BootstrapService)
+    monkeypatch.setattr(
+        database_module,
+        "AsyncSessionFactory",
+        lambda: _SessionContextWithSession(bootstrap_session),
+    )
+
+    async with app_main.lifespan(FastAPI()):
+        pass
+
+    assert bootstrap_calls == {
+        "ensure_user_table_exists": 1,
+        "seed_local_developer": 1,
+    }
+    bootstrap_session.commit.assert_awaited_once_with()

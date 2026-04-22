@@ -23,6 +23,19 @@ cd deploy/local-dev
 ./start-dev.sh
 ```
 
+The helper is idempotent and can be rerun safely. It now:
+
+- waits for PostgreSQL, Redis, and LocalStack
+- ensures the minimal local `user` table needed by API migrations exists without relying on dashboard migrations
+- refreshes the deterministic local developer account when the API schema is already present
+
+Deterministic local developer account:
+
+- `user_id`: `local-dev-user`
+- `email`: `local-dev-user@knowhere.local`
+- `tier`: `tier_5`
+- `api_key`: `sk_local_dev_tier5_full_access`
+
 ## Stop the Stack
 
 From the repository root:
