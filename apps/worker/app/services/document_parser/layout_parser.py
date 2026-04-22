@@ -7,7 +7,7 @@ from gevent.pool import Pool as GeventPool
 
 import pandas as pd
 from collections import Counter, defaultdict
-from app.services.common.kb_utils import count_cn_en, truncate_text
+from app.services.common.kb_utils import count_cn_en, truncate_text, truncate_text_by_tokens
 from app.services.document_parser.stage_profiler import stage_timer
 from app.services.document_parser.table_parser import df2md
 from docx.oxml.ns import qn
@@ -580,9 +580,74 @@ def get_max_lvl(code_str: str):
     return max_val if max_val>1 else -2  # -2 = "Not Sure" sentinel (int-safe)
 
 
+PLACEHOLDER_REASON = "__PLACEHOLDER__"
+
+
+def _compact_for_llm(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse consecutive ``level == -1`` rows into a single placeholder row.
+
+    Rows with ``level >= 1`` (heading candidates) and ``level == -2`` ("Not Sure")
+    are preserved verbatim so the LLM can still judge them.  Each run of
+    consecutive ``-1`` rows becomes one placeholder row whose:
+
+        id      = "start-end" (or just "start" for a single-row run)
+        heading = "[N BODY LINES]" where N is the run length
+        level   = "-"
+        reason  = ``PLACEHOLDER_REASON``
+
+    Downstream code identifies placeholder rows via ``reason == PLACEHOLDER_REASON``
+    (and via ``id`` being non-integer) so they can be filtered before mapping or
+    LLM-output reconciliation.
+    """
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=["id", "heading", "level", "reason"])
+
+    rows = []
+    i = 0
+    n = len(df)
+    while i < n:
+        lvl_raw = df.iloc[i]["level"]
+        try:
+            lvl_int = int(lvl_raw)
+        except (TypeError, ValueError):
+            lvl_int = None
+
+        if lvl_int == -1:
+            j = i
+            while j < n:
+                try:
+                    nxt_lvl = int(df.iloc[j]["level"])
+                except (TypeError, ValueError):
+                    break
+                if nxt_lvl != -1:
+                    break
+                j += 1
+            start_id = int(df.iloc[i]["id"])
+            end_id = int(df.iloc[j - 1]["id"])
+            run = j - i
+            rows.append({
+                "id": f"{start_id}-{end_id}" if start_id != end_id else f"{start_id}",
+                "heading": f"[{run} BODY LINES]",
+                "level": "-",
+                "reason": PLACEHOLDER_REASON,
+            })
+            i = j
+        else:
+            r = df.iloc[i]
+            rows.append({
+                "id": int(r["id"]),
+                "heading": str(r["heading"]),
+                "level": int(lvl_int) if lvl_int is not None and lvl_int != -2 else "Not Sure",
+                "reason": str(r.get("reason", "") or ""),
+            })
+            i += 1
+
+    return pd.DataFrame(rows, columns=["id", "heading", "level", "reason"])
+
+
 def heading_tb_transfer(df, threshold=3000, max_start=50, max_end=10):
     raw_headings = df['heading'].tolist()
-    df["heading"] = df["heading"].apply(lambda x: truncate_text(x, max_start, max_end))
+    df["heading"] = df["heading"].apply(lambda x: truncate_text_by_tokens(x, max_start, max_end))
 
     sub_dfs = []
     current_rows = []
@@ -963,23 +1028,41 @@ def format_toc_context_for_llm(toc_context) -> str:
     return "\n".join(formatted_blocks)
 
 
-def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=8192, task="eval-headings"):
+def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=2048, task="eval-headings"):
     """Apply LLM to analyze the hierarchy of headings
-    
+
     Args:
         df: DataFrame with id, heading columns
         model_name: LLM model name (optional, uses default if None)
         max_depth: Maximum hierarchy depth
-        max_len: Maximum output tokens
+        max_len: Hard cap for LLM completion max_tokens (default 2048).
+                 Actual value is derived from the number of heading candidates.
         task: Prompt task type - "eval-headings" for general document, "eval-toc-headings" for TOC
         toc_context: Optional formatted TOC context string for guiding level assignment
-    
+
     Returns:
-        List of dicts with id and level
+        List of dicts with id and level, one per row in ``df`` (missing IDs -> level=-1).
     """
 
     level_md = df2md(df)
-    ot_limit = int(len(level_md) * 1.2)
+
+    # Completion budget is driven by the number of heading candidates, not the
+    # markdown input length.  Each JSON entry is `{"id":X,"level":Y}` ≈ 25 tokens;
+    # add 200 tokens overhead for brackets/whitespace and leave a 512 floor for
+    # tiny inputs.  Non-int ids (placeholders like "10-12" or "-") are excluded.
+    def _is_candidate_id(val):
+        if isinstance(val, bool):
+            return False
+        if isinstance(val, int):
+            return True
+        try:
+            int(val)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    n_candidates = int(df["id"].apply(_is_candidate_id).sum()) if len(df) > 0 else 0
+    ot_limit = max(512, n_candidates * 25 + 200)
     ot_limit = min(ot_limit, max_len)
     formatted_toc_context = format_toc_context_for_llm(toc_context)
 
@@ -993,13 +1076,15 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
         {"role": "system", "content": "you are a document auditing expert"},
         {"role": "user", "content": prompt}
     ]
-    
+
     try:
         with stage_timer(
             "heading.hierarchy_llm_call",
             model_name=model_name,
             row_count=len(df),
             task=task,
+            candidate_count=n_candidates,
+            max_tokens=max_tokens,
         ):
             answer = get_openai_client(model=model_name).chat_completion(
                 messages=messages,
@@ -1008,14 +1093,14 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
                 temperature=temperature
             )
             layout_res = eval_response(answer)
-        
+
         # Validate eval_response result — it can return a raw string when JSON parsing fails
         if not isinstance(layout_res, list):
             raise ValueError(
                 f"LLM returned non-list response (type={type(layout_res).__name__}), "
                 f"raw content: {str(layout_res)[:200]}"
             )
-        
+
         # Validate each item is a dict with required keys
         for i, item in enumerate(layout_res):
             if not isinstance(item, dict) or "id" not in item or "level" not in item:
@@ -1023,15 +1108,45 @@ def hiearchy_llm(df, model_name=None, max_depth=6, toc_context=None, max_len=819
                     f"LLM response item[{i}] is malformed: {item!r}"
                 )
 
-        # LLM now only returns heading rows (level > -1)
-        # Reconstruct full result: fill missing IDs with level=-1
-        all_ids = df["id"].tolist()
-        llm_levels = {item["id"]: item["level"] for item in layout_res}
-        full_result = [
-            {"id": row_id, "level": llm_levels.get(row_id, -1)}
-            for row_id in all_ids
-        ]
-        logger.debug(f"LLM returned {len(layout_res)} headings out of {len(all_ids)} rows")
+        # Drop items whose id is not a clean integer.  This includes placeholder
+        # rows ("10-12", "-") that the LLM may echo back despite the prompt telling
+        # it not to.
+        clean_res = []
+        dropped = 0
+        for item in layout_res:
+            raw_id = item["id"]
+            if isinstance(raw_id, bool):
+                dropped += 1
+                continue
+            if isinstance(raw_id, int):
+                clean_res.append({"id": raw_id, "level": item["level"]})
+                continue
+            try:
+                clean_res.append({"id": int(raw_id), "level": item["level"]})
+            except (TypeError, ValueError):
+                dropped += 1
+        if dropped:
+            logger.debug(f"filtered {dropped} non-integer-id entries from LLM response")
+
+        # LLM only returns heading rows (level >= 1). Reconstruct full result so the
+        # returned list has one entry per row in ``df``, with missing ids defaulting
+        # to level=-1.  Rows whose ``id`` is itself non-integer (placeholders) keep
+        # their id as-is and level=-1 so the caller can filter them out.
+        llm_levels = {item["id"]: item["level"] for item in clean_res}
+        full_result = []
+        for row_id in df["id"].tolist():
+            if _is_candidate_id(row_id):
+                try:
+                    int_id = int(row_id)
+                except (TypeError, ValueError):
+                    int_id = row_id
+                full_result.append({"id": int_id, "level": llm_levels.get(int_id, -1)})
+            else:
+                full_result.append({"id": row_id, "level": -1})
+        logger.debug(
+            f"LLM returned {len(clean_res)} heading levels out of {n_candidates} candidates "
+            f"({len(df)} total rows)"
+        )
         return full_result
     except Exception as e:
         logger.error(f"detect hierarchy by LLM failed: {e}")
@@ -1302,55 +1417,94 @@ def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
 def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30, max_depth=6, model_name=None, output_dir=None, csv_suffix=""):
     """LLM-based hierarchy detection — first chunk via LLM, remaining chunks via reason-code mapping.
 
+    When ``KB_LAYOUT_LLM_COMPACT_INPUT`` is enabled (default), consecutive
+    ``level == -1`` rows in ``raw_preds`` are folded into a single placeholder
+    row (``[N BODY LINES]``) before chunking.  This shrinks the prompt, makes
+    most documents fit into a single chunk (skipping the lossy reason-code
+    mapping), and preserves the positional signal for the LLM.
+
     Strategy:
-        1. Send only the first chunk to LLM for hierarchy prediction
-        2. Build reason_code → level mapping from LLM results
-        3. Handle unseen codes in remaining chunks via double_mapping fallback
-        4. Apply the mapping to all chunks for consistent level assignment
+        1. (Optional) Compact raw_preds so consecutive body rows become placeholders.
+        2. Send only the first chunk to LLM for hierarchy prediction.
+        3. Collect ``{id -> level}`` from the LLM response (int ids only).
+        4. For multi-chunk docs, extend that mapping via reason-code mapping on
+           chunks 1..N (placeholders excluded).
+        5. Expand the id->level mapping back onto the ORIGINAL ``raw_preds``;
+           any row not present in the mapping defaults to ``level = -1``.
 
     Args:
         raw_preds: raw data
         prompt_limt: prompt character limit
         toc_hierarchies: TOC hierarchies
-        max_len: maximum heading length
+        max_len: maximum heading length (passed through to heading_tb_transfer)
         max_depth: maximum hierarchy depth
         model_name: LLM model name
         output_dir: output directory, used to save intermediate results CSV
+        csv_suffix: suffix for intermediate CSV filenames
     """
     if len(raw_preds) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
 
-    # NOTE: the following code is the old logic to remove "Figure/Image" rows before sending to LLM
-    # (replaced by the mapping-exclusion approach below for multi-chunk docs, and
-    #  by the Figure/Image Rule 0 in the prompt for single-chunk / LLM-direct paths)
-    # resource_rows = None
-    # resource_mask = raw_preds["heading"].eq("Figure/Image") & raw_preds["level"].eq(-1)
-    # if resource_mask.any():
-    #     resource_rows = raw_preds.loc[resource_mask, ["id", "heading", "level", "reason"]].copy()
-    #     raw_preds = raw_preds.loc[~resource_mask].reset_index(drop=True)
-    #     logger.info(
-    #         f"smart parse => stripped {len(resource_rows)} Figure/Image rows before LLM"
-    #     )
-    #
-    # if len(raw_preds) == 0:
-    #     logger.info("smart parse => only Figure/Image rows remain, skipping LLM hierarchy detection")
-    #     return resource_rows.sort_values("id").reset_index(drop=True)
-    resource_rows = None  # keep for re-injection below (no-op now that stripping is disabled)
+    compact_enabled = os.environ.get("KB_LAYOUT_LLM_COMPACT_INPUT", "true").strip().lower() in (
+        "true", "1", "yes", "on"
+    )
+    preds_for_llm = _compact_for_llm(raw_preds) if compact_enabled else raw_preds.copy()
+    if compact_enabled:
+        placeholder_count = int(preds_for_llm["reason"].eq(PLACEHOLDER_REASON).sum())
+        logger.info(
+            f"smart parse => compact input: {len(raw_preds)} → {len(preds_for_llm)} rows "
+            f"({placeholder_count} placeholder groups)"
+        )
 
-    full_preds = []
-    level_dfs, raw_headings = heading_tb_transfer(raw_preds, threshold=prompt_limt, max_start=max_len, max_end=5)
-    logger.info(f"smart parse => {len(level_dfs)} chunks, LLM on chunk 0, mapping on the rest")
+    # Short-circuit: if there are no heading candidates to judge (all rows were
+    # collapsed into placeholders, or raw_preds contains only level==-1 rows
+    # with compaction disabled), skip the LLM entirely and return raw_preds
+    # with all levels set to -1.
+    non_placeholder = preds_for_llm[preds_for_llm["reason"].astype(str) != PLACEHOLDER_REASON] \
+        if compact_enabled else preds_for_llm
+    if len(non_placeholder) == 0:
+        logger.info("smart parse => no heading candidates, skipping LLM hierarchy detection")
+        fallback = raw_preds.copy()[["id", "heading", "level", "reason"]]
+        fallback["level"] = -1
+        return fallback.sort_values("id").reset_index(drop=True)
 
-    basic_df = level_dfs[0]
+    level_dfs, _raw_headings = heading_tb_transfer(
+        preds_for_llm, threshold=prompt_limt, max_start=max_len, max_end=5
+    )
+    chunk_sizes = [len(d) for d in level_dfs]
+    logger.info(
+        f"smart parse => {len(level_dfs)} chunk(s) | rows per chunk: {chunk_sizes} | "
+        f"threshold={prompt_limt} | max_start={max_len}"
+    )
+
+    # Pick the first chunk that actually contains heading candidates.  When
+    # compaction is enabled a small prompt_limt may push a placeholder-only
+    # chunk to index 0 — using it would waste an LLM call and produce an empty
+    # mapping.  Placeholder chunks that precede the chosen one contribute no
+    # reason-code signal (their ids map to -1 anyway).
+    basic_idx = 0
+    for idx, chunk in enumerate(level_dfs):
+        if (chunk["reason"].astype(str) != PLACEHOLDER_REASON).any():
+            basic_idx = idx
+            break
+    basic_df = level_dfs[basic_idx]
+    if basic_idx != 0:
+        logger.info(
+            f"smart parse => promoted chunk {basic_idx} as basic_df "
+            f"(chunks 0..{basic_idx - 1} contain only placeholders)"
+        )
+    full_preds = None
     try:
         with stage_timer(
             "heading.hierarchy_llm",
             chunk_count=len(level_dfs),
             base_chunk_rows=len(basic_df),
+            compact_enabled=compact_enabled,
+            source_row_count=len(raw_preds),
             model_name=model_name,
         ):
             logger.debug("🚀 smart parse => interpreting hierarchy patterns...")
-            df4llm = basic_df.drop(columns=["reason"])
+            df4llm = basic_df.drop(columns=["reason"]).copy()
             from .metadata_extractor import clean_md_text_for_llm
             # Keep formatting signals in `reason` / preliminary `level`, but let the LLM
             # judge hierarchy from the semantic heading text instead of raw markdown markers.
@@ -1359,62 +1513,109 @@ def est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, max_len=30
 
             layout_res = hiearchy_llm(df4llm, model_name, max_depth, toc_hierarchies, task="eval-headings")
 
-            base_preds = pd.DataFrame(layout_res)
-            base_preds.insert(1, "heading", basic_df["heading"].values)
-            base_preds["reason"] = basic_df["reason"].values
+            # Build base_preds by aligning on basic_df["id"]: we always have one
+            # row per chunk-0 row in the rendered output, regardless of how many
+            # entries the LLM actually returned.  Missing ids -> level=-1.
+            layout_level_by_id = {}
+            if isinstance(layout_res, list):
+                for item in layout_res:
+                    if isinstance(item, dict) and "id" in item and "level" in item:
+                        layout_level_by_id[item["id"]] = item["level"]
 
-            # Save base_preds as preds_3
+            def _level_for(rid):
+                if rid in layout_level_by_id:
+                    return layout_level_by_id[rid]
+                try:
+                    return layout_level_by_id.get(int(rid), -1)
+                except (TypeError, ValueError):
+                    return -1
+
+            base_preds = basic_df[["id", "heading", "reason"]].copy().reset_index(drop=True)
+            base_preds.insert(2, "level", base_preds["id"].map(_level_for))
+
+            # Save base_preds as preds_3 (reflects what the LLM saw, compact or not)
             save_intermediate_csv(base_preds, output_dir, f"preds_3_llm_base{csv_suffix}")
 
-            if len(level_dfs) == 1:
-                # Single chunk: use LLM results directly without mapping.
-                # Mapping is designed to extrapolate chunk-0 decisions to chunks 1..N,
-                # but for single-chunk docs it's redundant and lossy — it collapses
-                # LLM's contextual per-row level into a per-reason-code majority vote.
-                logger.info("single chunk — skipping reason-code mapping, using LLM output directly")
-                full_preds = base_preds[["id", "heading", "level", "reason"]].copy()
-                full_preds['heading'] = raw_headings
-            else:
-                # Multi-chunk: build reason-code mapping from chunk 0, apply to all chunks.
-                # Figure/Image rows always have level=-1 and a fixed heading placeholder;
-                # including them in the mapping would pollute the reason-code → level table.
-                # Separate them out, force level=-1, then re-insert after mapping.
+            # Collect {int_id -> level} from chunk-0 LLM output.  Placeholder rows
+            # have non-integer ids and are skipped.
+            llm_levels = {}
+            for _, row in base_preds.iterrows():
+                rid = row["id"]
+                if isinstance(rid, bool):
+                    continue
+                if isinstance(rid, int):
+                    llm_levels[rid] = row["level"]
+
+            if len(level_dfs) > 1:
+                # Multi-chunk: build reason-code mapping from chunk-0 candidates and
+                # apply it to chunks 1..N to infer levels for headings beyond chunk 0.
+                # Placeholder rows are excluded from both the mapping source and the
+                # per-chunk application — they always map to level=-1 in the final df.
+                placeholder_mask_base = base_preds["reason"].eq(PLACEHOLDER_REASON)
                 figure_mask_base = base_preds["heading"].eq("Figure/Image")
-                base_preds_for_mapping = base_preds[~figure_mask_base].copy()
-                base_origin_for_mapping = basic_df.loc[~figure_mask_base.values, 'level'].tolist()
+                exclude_mask_base = placeholder_mask_base | figure_mask_base
+                base_preds_for_mapping = base_preds[~exclude_mask_base].copy()
+                base_origin_for_mapping = basic_df.loc[~exclude_mask_base.values, "level"].tolist()
 
                 base_preds_for_mapping, lvl_mapping = build_level_mapping(
                     base_preds_for_mapping, base_origin_for_mapping, mode="freq"
                 )
-                logger.debug(f"mapping development finished, there are {len(lvl_mapping)} rules (Figure/Image excluded)")
+                logger.debug(
+                    f"mapping development finished: {len(lvl_mapping)} rules "
+                    f"(placeholders and Figure/Image excluded)"
+                )
 
-                logger.debug(f"mapping dataframe to levels, there are {len(level_dfs)} dataframes...")
-                lvl_mapping = handle_unseen_codes(raw_preds, level_dfs, lvl_mapping, output_dir)
+                logger.debug(f"mapping dataframe to levels across {len(level_dfs)} chunks...")
+                lvl_mapping = handle_unseen_codes(
+                    preds_for_llm, level_dfs, lvl_mapping, output_dir
+                )
 
-                for l, level_df in enumerate(level_dfs):
+                for level_df in level_dfs:
+                    placeholder_mask_chunk = level_df["reason"].eq(PLACEHOLDER_REASON)
                     figure_mask_chunk = level_df["heading"].eq("Figure/Image")
-                    non_figure_df = level_df[~figure_mask_chunk].copy()
-                    non_figure_df = execute_level_mapping(non_figure_df, lvl_mapping)
-                    # Restore Figure/Image rows with forced level=-1
-                    figure_df = level_df[figure_mask_chunk].copy()
-                    figure_df["level"] = -1
-                    figure_df["origin_level"] = -1
-                    merged_chunk = pd.concat([non_figure_df, figure_df], ignore_index=True)
-                    merged_chunk = merged_chunk.sort_values("id").reset_index(drop=True)
-                    full_preds.append(merged_chunk)
+                    exclude_mask_chunk = placeholder_mask_chunk | figure_mask_chunk
+                    non_excluded = level_df[~exclude_mask_chunk].copy()
+                    if not non_excluded.empty:
+                        non_excluded = execute_level_mapping(non_excluded, lvl_mapping)
+                        for _, row in non_excluded.iterrows():
+                            rid = row["id"]
+                            if isinstance(rid, bool):
+                                continue
+                            if isinstance(rid, int):
+                                # Mapping may override chunk-0 LLM decisions when
+                                # two rows share the same reason; accept that (the
+                                # mapping is by construction the "representative"
+                                # level for each reason-code).
+                                llm_levels[rid] = row["level"]
+                logger.info(
+                    f"multi-chunk mapping produced {len(llm_levels)} id→level entries"
+                )
+            else:
+                logger.info("single chunk — skipping reason-code mapping, using LLM output directly")
 
-                full_preds = pd.concat(full_preds, ignore_index=True)
-                full_preds['heading'] = raw_headings
-                full_preds.drop("origin_level", axis=1, inplace=True)
+            # Expand back onto the original raw_preds: heading candidates take
+            # the LLM/mapping-assigned level; everything else is body text (-1).
+            full_preds = raw_preds.copy()
+            full_preds = full_preds[["id", "heading", "level", "reason"]]
+
+            def _resolve_level(rid):
+                try:
+                    int_id = int(rid)
+                except (TypeError, ValueError):
+                    return -1
+                lvl = llm_levels.get(int_id, -1)
+                try:
+                    return int(lvl)
+                except (TypeError, ValueError):
+                    return -1
+
+            full_preds["level"] = full_preds["id"].map(_resolve_level).astype(int)
 
             save_intermediate_csv(full_preds, output_dir, f"preds_4_llm_final{csv_suffix}")
 
     except Exception as e:
         logger.warning(f"LLM-based parsing fails due to {e}, using non-llm pipeline...")
-        full_preds = pd.concat(level_dfs, ignore_index=True)
-        full_preds = est_hierarchies_naive(full_preds)
-    if resource_rows is not None and not resource_rows.empty:
-        full_preds = pd.concat([full_preds, resource_rows], ignore_index=True).sort_values("id").reset_index(drop=True)
+        full_preds = est_hierarchies_naive(raw_preds.copy())
     return full_preds
 
 

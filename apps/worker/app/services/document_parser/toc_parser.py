@@ -17,10 +17,10 @@ import pandas as pd
 from loguru import logger
 from lxml import etree
 
-from app.services.common.kb_utils import normalize_md, truncate_text
+from app.services.common.kb_utils import normalize_md, truncate_text, truncate_text_by_tokens
 from app.services.document_parser.table_parser import df2md
 from app.services.document_parser.html_parser import df2html
-from app.services.document_parser.layout_parser import hiearchy_llm, judge_by_conditions, remove_by_conditions
+from app.services.document_parser.layout_parser import hiearchy_llm
 from app.services.document_parser.stage_profiler import stage_timer
 from shared.utils.OpenAICompatibleClientSync import get_openai_client
 from shared.services.ai.prompt_service import build_prompt
@@ -544,7 +544,7 @@ def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -
             reindex_to_original = {i: abs_idx for i, (abs_idx, _) in enumerate(lines_)}
             
             df = pd.DataFrame([
-                {"id": i, "content": truncate_text(
+                {"id": i, "content": truncate_text_by_tokens(
                     re.sub(r'^#+\s*', '', line.strip()), 30, 10
                 )}
                 for i, (_, line) in enumerate(lines_)
@@ -711,8 +711,6 @@ def build_toc_hierarchy_payload(
             "heading": heading,
             "level": level,
         }
-        if "reason" in entry:
-            normalized_entry["reason"] = entry["reason"]
         valid_entries.append(normalized_entry)
 
     if not valid_entries:
@@ -721,7 +719,7 @@ def build_toc_hierarchy_payload(
     result_df = pd.DataFrame(valid_entries)
     payload = {
         "toc_range": toc_range or (valid_entries[0]["id"], valid_entries[-1]["id"]),
-        "toc_with_level": df2md(result_df, index=False),
+        "toc_with_level": df2md(result_df[["id", "heading", "level"]], index=False),
         "toc_tree": build_tree_tocs(valid_entries),
     }
     if scan_range is not None:
@@ -782,7 +780,6 @@ def build_docx_toc_hierarchies(block_tuples: list) -> list:
                 "id": ele_num,
                 "heading": text,
                 "level": toc_level if toc_level and toc_level > 0 else None,
-                "reason": gen_reason_code_toc(text),
                 "left_indent": left_indent,
             })
 
@@ -798,27 +795,6 @@ def build_docx_toc_hierarchies(block_tuples: list) -> list:
     return toc_hierarchies
 
 
-def gen_reason_code_toc(text: str) -> str:
-    """
-    Generate reason code for a text line using judge_by_conditions and remove_by_conditions.
-    This aligns with the preds CSV format.
-    
-    Args:
-        text: the text line to analyze
-    
-    Returns:
-        reason code string in format "POS [...] NEG [...]"
-    """
-    # Clean the text (remove leading # marks)
-    text_clean = text.lstrip('#').strip()
-    
-    pos_code, detail_info = judge_by_conditions(text_clean, return_detail=True)
-    neg_code = remove_by_conditions(text_clean)
-    
-    reason_suffix = detail_info.get('reason_suffix', '')
-    reason_str = f"POS {pos_code}{reason_suffix} NEG {neg_code}"
-    
-    return reason_str
 
 
 def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6) -> tuple:
@@ -837,18 +813,26 @@ def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6)
         - toc_tree: nested JSON structure
     """
     # Build data for LLM judgment (all lines are valid, pre-filtered)
+    # TOC keyword trigger lines (e.g. "TABLE OF CONTENTS", "目录") are excluded from
+    # the LLM input: they stay within toc_range so they are stripped from md_lines,
+    # but they must not be sent to the hierarchy LLM to avoid a spurious Level=1 entry.
+    _toc_title_keywords = {"目录", "目次", "tableofcontents", "contents"}
     valid_data = []
-    
+
     for i, line in enumerate(toc_lines):
         heading = line.strip()
         if not heading:
             continue
-        
+        if normalize_md(heading) in _toc_title_keywords:
+            logger.debug(f"eval_toc_levels: skipping TOC keyword title line id={i}: {heading[:60]}")
+            continue
+
         valid_data.append({
             "id": i,
             "heading": heading,
             "level": "Not Sure"
         })
+
     
     toc_df = pd.DataFrame(valid_data)
     
@@ -862,21 +846,18 @@ def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6)
     # Build id -> level mapping from LLM result
     id_to_level = {item["id"]: item["level"] for item in llm_result}
     
-    # Build final result with reason as post-processing
+    # Build final result
     result_data = []
     valid_items_for_tree = []
-    
+
     for data in valid_data:
         line_id = data["id"]
         heading = data["heading"]
         level = id_to_level.get(line_id, -1)
-        
-        # Add reason as post-processing
-        reason = gen_reason_code_toc(heading)
-        
+
         if level > 0:
-            result_data.append({"id": line_id, "heading": heading, "level": level, "reason": reason})
-            valid_items_for_tree.append({"id": line_id, "heading": heading, "level": level, "reason": reason})
+            result_data.append({"id": line_id, "heading": heading, "level": level})
+            valid_items_for_tree.append({"id": line_id, "heading": heading, "level": level})
     
     payload = build_toc_hierarchy_payload(valid_items_for_tree)
     if not payload:

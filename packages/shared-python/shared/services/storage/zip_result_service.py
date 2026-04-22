@@ -156,8 +156,17 @@ class ZipResultService:
                         zip_file.writestr("hierarchy.json", hierarchy_json.encode("utf-8"))
                         has_hierarchy = True
                         logger.info(f"Added hierarchy.json")
-                        
-                        # 5c. 生成 hierarchy_view.html
+
+                        # 5c. Generate hierarchy_slim.json — clean structure tree, no _* metadata keys
+                        try:
+                            tree_dict = self._build_tree_json(hierarchy_dict)
+                            tree_json = json.dumps(tree_dict, ensure_ascii=False, indent=2)
+                            zip_file.writestr("hierarchy_slim.json", tree_json.encode("utf-8"))
+                            logger.info("Added hierarchy_slim.json")
+                        except Exception as e:
+                            logger.warning(f"generate hierarchy_slim.json fail {e}")
+
+                        # 5d. 生成 hierarchy_view.html
                         try:
                             from shared.services.storage.hierarchy_html_generator import generate_hierarchy_html
                             chunks_dict = {"chunks": formatted_chunks}
@@ -809,3 +818,27 @@ class ZipResultService:
                 current_dict = current_dict[node]
         
         return root_dict
+
+    def _build_tree_json(self, node: Any) -> Any:
+        """
+        Build a clean hierarchy tree JSON by recursively stripping all keys that
+        start with '_' (e.g. _summary, _chunks).  Leaf nodes that contain only
+        metadata keys become an empty dict {}.
+
+        Args:
+            node: A nested dict produced by _restore_graph_by_paths (or
+                  hierarchy.json loaded from disk).
+
+        Returns:
+            A new nested dict with the same section-heading structure but
+            without any _* metadata entries — suitable for human debugging.
+        """
+        if not isinstance(node, dict):
+            return {}
+        result: Dict[str, Any] = {}
+        for key, value in node.items():
+            if str(key).startswith("_"):
+                # Skip all internal metadata keys (_summary, _chunks, etc.)
+                continue
+            result[key] = self._build_tree_json(value)
+        return result

@@ -107,38 +107,192 @@ def build_prompt(task, texts, query, **kwargs):
 
     # ==================== Heading/Structure Prompts ====================
 
+    # ---------------------------------------------------------------------
+    # LEGACY `eval-headings` prompt — designed for FULL-TEXT input, before
+    # `_compact_for_llm` collapses consecutive body rows into placeholders.
+    # Kept as reference; DO NOT delete.  The live prompt below targets the
+    # COMPACT input shape used when `KB_LAYOUT_LLM_COMPACT_INPUT` is on
+    # (default).  See plan: hierarchy_llm_compact_input_0c446abf.plan.md.
+    # ---------------------------------------------------------------------
+    #     elif task == 'eval-headings':
+    #         temperature = 0
+    #         top_p = 0.01
+    #         max_depth = kwargs['paras']['max_depth']
+    #         max_tokens = kwargs['paras']['max_tokens']
+    #         toc_context = kwargs['paras'].get('toc_context', '')
+    #
+    #         # developing toc context (if any)
+    #         if toc_context:
+    #             toc_section = f"""
+    #         ***Important Reference: Table of Contents (TOC)***
+    #         The following is the document's table of contents with predefined levels. Use this as a reference when assigning levels:
+    #
+    #         '''
+    #         {toc_context}
+    #         '''
+    #
+    #         - If a row's heading matches a TOC entry, use the TOC's predefined level
+    #         - If a row appears to be a sub-section of a TOC entry, assign a deeper level
+    #         - IMPORTANT: If a row does NOT appear in the TOC, it CAN ONLY be set as either a body text (level = -1) or sub-section with a deeper level than the nearest TOC heading above it
+    #         """
+    #         else:
+    #             toc_section = ""
+    #
+    #         prompt = f"""
+    #         You are a document structure auditing expert. You will receive a Markdown table with text rows, where each row may be a heading or body text, including:
+    #         1. id column: line number
+    #         2. heading column: text content
+    #         3. level column: preliminary estimated level (may be inaccurate or missing), where:
+    #             1 represents `<h1>` (highest), 2 represents `<h2>`, and so on
+    #             -1 indicates the text is estimated as body text (not a heading)
+    #             "Not Sure" indicates the level is undetermined
+    #
+    #         Data to be adjusted:
+    #         '''
+    #         {texts}
+    #         '''
+    #
+    #         {toc_section}
+    #
+    #         ***Placeholder Rows***
+    #         Some rows may appear as "[N BODY LINES]" with an id like "55-63" (a range) or
+    #         "56" (a single line), and level column rendered as "-".  These are NOT real
+    #         candidates — they are compact markers representing N consecutive body-text
+    #         lines that have been collapsed to save space.  Treat them only as positional
+    #         context (they tell you how many body lines sit between two adjacent heading
+    #         candidates).
+    #         - You MUST NOT emit placeholder rows in your output.
+    #         - The output id field MUST be a single integer; never return an id containing
+    #           a hyphen ("-") or the level placeholder "-".
+    #         - Only evaluate rows whose id is a single integer.
+    #
+    #         ***Process in THREE steps:***
+    #
+    #         **STEP 1 — Global Pattern Scan (before assigning any levels)**
+    #         Scan ALL candidate heading rows across the entire input.
+    #         Identify every distinct structural/numbering pattern that signals hierarchy depth, for example:
+    #         - Decimal numbering: "1", "1.1", "1.1.1" → depth increases with dot count
+    #         - Enumeration styles: "一、" "（一）" "1、" "①" → shallower to deeper
+    #         - Chapter/section keywords: "Chapter X", "Part X", "第X章", "第X节"
+    #         - Indentation or formatting cues visible in the text prefix
+    #         Rank these patterns from shallowest to deepest to form a pattern → level mapping.
+    #
+    #         **STEP 2 — Assign levels using the following rules (in priority order)**
+    #         Rows marked as "Not Sure" should be treated like any other candidate row:
+    #         use the same rules below to decide whether they are true headings (level >= 1)
+    #         or body text (level = -1).
+    #
+    #         Rule 0 — Figure/Image rows are always body text (highest priority, no exceptions):
+    #             Any row whose heading text is exactly "Figure/Image" MUST be assigned level = -1.
+    #             These represent embedded images, figures, or inline resource references in the document.
+    #             Do NOT include these rows in the output (they are automatically treated as level = -1).
+    #         Rule 1 — Normalize to start at level 1:
+    #             The shallowest heading pattern found in this document MUST be assigned level 1.
+    #             Do NOT preserve preliminary estimates that start at level 2, 3, or deeper
+    #             if those headings are actually the top-level headings of the document.
+    #         Rule 2 — Global consistency (highest priority among content rules):
+    #             Headings that share the same structural pattern SHOULD receive the SAME level
+    #             throughout the ENTIRE document, regardless of their position or textual content.
+    #             (e.g., all "X.Y" two-part numbers must have the same level; all "X.Y.Z"
+    #             three-part numbers must share a different, deeper level.)
+    #         Rule 3 — Pattern over semantics:
+    #             When determining a heading's level, its numbering/structural pattern takes
+    #             precedence over its text length or semantic meaning.
+    #             Parenthetical annotations or long descriptions inside a heading text do NOT
+    #             indicate a different hierarchy level.
+    #         Rule 4 — Parent-child continuity and no level skipping:
+    #             Each heading must be consistent with adjacent headings.
+    #             A heading may stay at the same level, return to an ancestor level,
+    #             or go only ONE level deeper than its nearest valid ancestor heading.
+    #             Level jumps such as level 1 directly to level 3 are invalid.
+    #         Rule 5 — Body text demotion:
+    #             If a row does not truly serve as a section title in the document outline,
+    #             set its level to -1.
+    #             Strong body-text cues include:
+    #             - a full sentence or clause ending with sentence punctuation
+    #             - an isolated broken word, broken phrase, label fragment, data value, or body continuation
+    #             - a single Chinese character, digit, or very short fragment that clearly combines
+    #               with the next row to form one continuous phrase rather than a standalone heading
+    #         Rule 6 — Semantic heading promotion:
+    #             A row with NO obvious numbering or structural-format markers can still
+    #             be a heading, but ONLY when ALL of the following conditions are met:
+    #             (a) The text is short and title-like (not a full sentence with punctuation).
+    #             (b) It is NOT a broken fragment that simply continues into the next row
+    #                 (those belong to Rule 5 body-text demotion).
+    #             (c) Multiple longer body-text rows follow it, and the row clearly
+    #                 organizes, summarizes, or introduces the topic of those rows —
+    #                 i.e., removing it would leave the following rows without a
+    #                 meaningful section label.
+    #             Being short alone is NOT sufficient; the row must demonstrably serve
+    #             as a section boundary that groups the content below it.
+    #             When promoting, assign a level consistent with the surrounding
+    #             hierarchy — typically one level deeper than the nearest heading above.
+    #
+    #         **STEP 3 — Consistency check (one pass) before writing output**
+    #         Scan the level assignments you are about to output and confirm:
+    #         - All headings sharing the same structural or semantic pattern have been assigned the same level.
+    #         If any inconsistency is found, normalise to the most representative level for that pattern.
+    #
+    #         ***Output requirements***
+    #         - Output must be a [JSON array] only
+    #         - **Only include rows that you judge to be headings** (level >= 1). Do NOT include body text rows (level = -1) in the output
+    #         - Any row not present in your output will be automatically treated as body text (level = -1)
+    #         - Each element must contain the following fields in order:
+    #             - "id": original line number (integer)
+    #             - "level": the corrected heading level (integer from 1 to {max_depth})
+    #
+    #         ***Format requirements***
+    #         - Output only valid JSON — do not add markdown fences (no ```json)
+    #         - Do not add escaped newlines or other control characters
+    #         - Do not add any explanations, comments, or descriptive text
+    #         """
+
     elif task == 'eval-headings':
+        # COMPACT-input variant.  Input is pre-compressed by `_compact_for_llm`
+        # so that consecutive body-text rows are folded into a single
+        # ``[N BODY LINES]`` placeholder row.  The LLM therefore sees only:
+        #   * heading CANDIDATES (integer id, real heading text), and
+        #   * PLACEHOLDER rows (id with "-" or a single collapsed id, heading
+        #     "[N BODY LINES]", level "-") that carry positional / section-bulk
+        #     signals.
         temperature = 0
         top_p = 0.01
         max_depth = kwargs['paras']['max_depth']
         max_tokens = kwargs['paras']['max_tokens']
         toc_context = kwargs['paras'].get('toc_context', '')
-        
-        # developing toc context (if any)
+
         if toc_context:
             toc_section = f"""
         ***Important Reference: Table of Contents (TOC)***
-        The following is the document's table of contents with predefined levels. Use this as a reference when assigning levels:
-        
+        The following is the document's table of contents with predefined levels.
+        Use it as a prior when assigning levels to CANDIDATE rows:
+
         '''
         {toc_context}
         '''
-        
-        - If a row's heading matches a TOC entry, use the TOC's predefined level
-        - If a row appears to be a sub-section of a TOC entry, assign a deeper level
-        - IMPORTANT: If a row does NOT appear in the TOC, it CAN ONLY be set as either a body text (level = -1) or sub-section with a deeper level than the nearest TOC heading above it
+
+        - If a candidate's heading matches a TOC entry, use the TOC's predefined level.
+        - If a candidate appears to be a sub-section of a TOC entry, assign a deeper level.
+        - If a candidate does NOT appear in the TOC, it can ONLY be either body text
+          (level = -1) or a sub-section deeper than the nearest TOC heading above it.
         """
         else:
             toc_section = ""
 
         prompt = f"""
-        You are a document structure auditing expert. You will receive a Markdown table with text rows, where each row may be a heading or body text, including:
-        1. id column: line number
-        2. heading column: text content
-        3. level column: preliminary estimated level (may be inaccurate or missing), where:
-            1 represents `<h1>` (highest), 2 represents `<h2>`, and so on
-            -1 indicates the text is estimated as body text (not a heading)
-            "Not Sure" indicates the level is undetermined
+        You are a document structure auditing expert. The input you receive is a
+        COMPACT skeleton of a document.  Body-text lines have already been collapsed for 
+        you so that every row is one of two kinds:
+
+        1) HEADING CANDIDATE — ``id`` is an integer. ``heading`` is the candidate text.
+           ``level`` is a preliminary estimate: a positive integer (1 = shallowest, deeper = larger)
+           or the string "Not Sure" (undetermined). These rows — and ONLY these — are the ones you must evaluate.
+
+        2) PLACEHOLDER — ``id`` has the form "start-end" (a range of lines) OR a single 
+           integer referring to one body line; ``heading`` is "[N BODY LINES]" where N is 
+           the number of body lines that were folded here; ``level`` is the literal "-". 
+           Placeholders are positional markers that tell you how many body lines sit between
+           adjacent candidates. Use them as context ONLY.
 
         Data to be adjusted:
         '''
@@ -147,85 +301,81 @@ def build_prompt(task, texts, query, **kwargs):
 
         {toc_section}
 
+        ***Hard rules about placeholders***
+        - Placeholders are NEVER candidates. Do not output them.
+        - Every ``id`` in your output MUST be a single integer; never emit an id
+          containing a hyphen ("-").  Never emit the level string "-".
+        - Use N in ``[N BODY LINES]`` as a "section bulk" signal when applying
+          the rules below (Rule 6 in particular).
+
         ***Process in THREE steps:***
 
-        **STEP 1 — Global Pattern Scan (before assigning any levels)**
-        Scan ALL candidate heading rows across the entire input.
-        Identify every distinct structural/numbering pattern that signals hierarchy depth, for example:
+        **STEP 1 — Global Pattern Scan (CANDIDATES ONLY)**
+        Enumerate every distinct numbering / structural / semantic granularity pattern that
+        appears on candidate rows and signals hierarchy depth, for example:
         - Decimal numbering: "1", "1.1", "1.1.1" → depth increases with dot count
         - Enumeration styles: "一、" "（一）" "1、" "①" → shallower to deeper
         - Chapter/section keywords: "Chapter X", "Part X", "第X章", "第X节"
-        - Indentation or formatting cues visible in the text prefix
+        - Upper case / lower case differences in candidate headings
+        - Clear semantic granularities or groups of themes
         Rank these patterns from shallowest to deepest to form a pattern → level mapping.
+        Placeholder rows MUST NOT influence this scan.
 
-        **STEP 2 — Assign levels using the following rules (in priority order)**
-        Rows marked as "Not Sure" should be treated like any other candidate row:
-        use the same rules below to decide whether they are true headings (level >= 1)
-        or body text (level = -1).
+        **STEP 2 — Assign a level to every candidate (rules in priority order)**
+        A candidate whose preliminary ``level`` is "Not Sure" or any positive
+        integer is **always** open to revision. Pure body text has already been
+        folded into placeholders, but a candidate that slipped through the
+        pre-filter **can still be** demoted to level = -1.
 
-        Rule 0 — Figure/Image rows are always body text (highest priority, no exceptions):
-            Any row whose heading text is exactly "Figure/Image" MUST be assigned level = -1.
-            These represent embedded images, figures, or inline resource references in the document.
-            Do NOT include these rows in the output (they are automatically treated as level = -1).
-        Rule 1 — Normalize to start at level 1:
-            The shallowest heading pattern found in this document MUST be assigned level 1.
-            Do NOT preserve preliminary estimates that start at level 2, 3, or deeper
-            if those headings are actually the top-level headings of the document.
-        Rule 2 — Global consistency (highest priority among content rules):
-            Headings that share the same structural pattern SHOULD receive the SAME level
-            throughout the ENTIRE document, regardless of their position or textual content.
-            (e.g., all "X.Y" two-part numbers must have the same level; all "X.Y.Z"
-            three-part numbers must share a different, deeper level.)
-        Rule 3 — Pattern over semantics:
-            When determining a heading's level, its numbering/structural pattern takes
-            precedence over its text length or semantic meaning.
-            Parenthetical annotations or long descriptions inside a heading text do NOT
-            indicate a different hierarchy level.
-        Rule 4 — Parent-child continuity and no level skipping:
-            Each heading must be consistent with adjacent headings.
-            A heading may stay at the same level, return to an ancestor level,
-            or go only ONE level deeper than its nearest valid ancestor heading.
-            Level jumps such as level 1 directly to level 3 are invalid.
-        Rule 5 — Body text demotion:
-            If a row does not truly serve as a section title in the document outline,
-            set its level to -1.
-            Strong body-text cues include:
-            - a full sentence or clause ending with sentence punctuation
-            - an isolated broken word, broken phrase, label fragment, data value, or body continuation
-            - a single Chinese character, digit, or very short fragment that clearly combines
-              with the next row to form one continuous phrase rather than a standalone heading
-        Rule 6 — Semantic heading promotion:
-            A row with NO obvious numbering or structural-format markers can still
-            be a heading, but ONLY when ALL of the following conditions are met:
-            (a) The text is short and title-like (not a full sentence with punctuation).
-            (b) It is NOT a broken fragment that simply continues into the next row
-                (those belong to Rule 5 body-text demotion).
-            (c) Multiple longer body-text rows follow it, and the row clearly
-                organizes, summarizes, or introduces the topic of those rows —
-                i.e., removing it would leave the following rows without a
-                meaningful section label.
-            Being short alone is NOT sufficient; the row must demonstrably serve
-            as a section boundary that groups the content below it.
-            When promoting, assign a level consistent with the surrounding
-            hierarchy — typically one level deeper than the nearest heading above.
+        Rule 0 — Global consistency (highest priority among all rules):
+            Candidates sharing the same structural pattern or semantic granularity MUST receive the
+            SAME level across the ENTIRE input. (e.g. every "X.Y" pattern
+            shares one level; every "X.Y.Z" shares a different, deeper level.)
+
+        Rule 1 — Parent-child continuity and no level skipping:
+            A heading, compared to candidates before it, may stay at the same level, 
+            or go ONE level deeper than its nearest valid ancestor heading.
+            However, jumps such as level 1 → level 3 are **always invalid**.
+
+        Rule 2 — Semantic headings detection (NO numbering pattern):
+            A candidate WITHOUT any structural/numbering marker can still be a
+            heading, but ONLY when ALL of the following hold:
+            a) The text is short and title-like — no sentence-ending punctuation.
+            b) It is NOT a broken fragment that continues into the next row
+            c) In the input sequence it is IMMEDIATELY followed by a
+                placeholder ``[N BODY LINES]``, or by another candidate with finer granularity.
+                This is the "section bulk" signal — the row introduces a body block or a subsection group.
+            When Rule-2 is satisfied, pick a level consistent with Rule 1
+
+        Rule 3 — Body text demotion (candidate → -1):
+            Demote a candidate to level = -1 when it clearly does NOT serve as a section title. 
+            In compact input, the strongest demotion cues are:
+            - In case any heading is exactly "Figure/Image", demote it to level = -1.
+            - The text is an isolated broken phrase, label fragment, data value,
+              or caption-like snippet (e.g. "Table 3-2", "Figure 4", a bare unit
+              such as "kN/m²").
+            - Two CANDIDATE rows appear adjacent with NO placeholder between them
+
+        Rule 4 — Normalise to start at level 1:
+            The shallowest (the most coarse granularity) heading found MUST be assigned level 1.
 
         **STEP 3 — Consistency check (one pass) before writing output**
-        Scan the level assignments you are about to output and confirm:
-        - All headings sharing the same structural or semantic pattern have been assigned the same level.
+        Re-scan the level assignments you are about to emit:
+        - All headings sharing the same pattern (structural or semantic granularity) must share the same level.
+        - No invalid skips (Rule 1).
         If any inconsistency is found, normalise to the most representative level for that pattern.
 
         ***Output requirements***
-        - Output must be a [JSON array] only
-        - **Only include rows that you judge to be headings** (level >= 1). Do NOT include body text rows (level = -1) in the output
-        - Any row not present in your output will be automatically treated as body text (level = -1)
-        - Each element must contain the following fields in order:
+        - Output MUST be a [JSON array] only.
+        - Include ONLY candidate rows you judge to be headings (level >= 1).
+        - NEVER emit a placeholder row. Every ``id`` field MUST be a single integer (no hyphen).
+        - Each element must contain these fields in order:
             - "id": original line number (integer)
             - "level": the corrected heading level (integer from 1 to {max_depth})
 
         ***Format requirements***
-        - Output only valid JSON — do not add markdown fences (no ```json)
-        - Do not add escaped newlines or other control characters
-        - Do not add any explanations, comments, or descriptive text
+        - Output only valid JSON — do not add markdown fences (no ```json).
+        - Do not add any explanations, comments, control characters, or descriptive texts.
         """
 
     # ==================== TOC Heading Evaluation Prompts ====================

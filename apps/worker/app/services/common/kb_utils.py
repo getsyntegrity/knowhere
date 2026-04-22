@@ -11,7 +11,7 @@ from loguru import logger
 from shared.core.exceptions.domain_exceptions import WorkerHandlingException, ValidationException
 
 
-from shared.utils.text_utils import count_cn_en
+from shared.utils.text_utils import count_cn_en, _CN_EN_NUM_RE
 
 def gen_str_codes(input_string):
     """生成字符串的UUID5编码"""
@@ -249,16 +249,25 @@ def normalize_md(s: str) -> str:
     return s.lower()
 
 
+# ---------------------------------------------------------------------------
+# truncate_text (character-based) — KEPT for table-cell display callers in
+# doc_parser.py and html_parser.py where a per-character limit is intentional.
+# Do NOT use for heading / semantic text truncation; use truncate_text_by_tokens.
+# ---------------------------------------------------------------------------
 def truncate_text(text: str, start_limit: int, end_limit: int) -> str:
-    """Truncate text keeping start and end parts
-    
+    """Truncate text by raw character count, keeping start and end parts.
+
+    Intended for short display values (table headers, file names, etc.) where
+    a fixed character budget is appropriate.  For heading / semantic text where
+    English words must not be split mid-word, use ``truncate_text_by_tokens``.
+
     Args:
-        text: Text to truncate
-        start_limit: Number of characters to keep from start
-        end_limit: Number of characters to keep from end
-    
+        text: Text to truncate.
+        start_limit: Number of characters to keep from start.
+        end_limit: Number of characters to keep from end (0 = no tail).
+
     Returns:
-        Truncated text with '...' in middle if exceeds limits
+        Truncated text with '...' in the middle if it exceeds the limits.
     """
     text = str(text)
     total_limit = start_limit + end_limit
@@ -267,3 +276,96 @@ def truncate_text(text: str, start_limit: int, end_limit: int) -> str:
     start_part = text[:start_limit]
     end_part = text[-end_limit:] if end_limit > 0 else ''
     return f"{start_part}...{end_part}"
+
+
+# ---------------------------------------------------------------------------
+# Language detection & language-aware token truncation
+# ---------------------------------------------------------------------------
+
+_CN_CHAR_RE = re.compile(r'[\u4e00-\u9fff]')
+
+EN_START_LIMIT = 15   # token budget for English-dominant headings
+CN_RATIO_THRESHOLD = 0.3  # if ≥30 % of tokens are Chinese chars → "Chinese"
+
+def detect_primary_lang(text: str) -> str:
+    """Detect whether *text* is primarily Chinese or English/other.
+
+    Uses the semantic tokens already defined by ``_CN_EN_NUM_RE``
+    (Chinese chars, English word runs, number groups).  If Chinese
+    characters account for at least ``CN_RATIO_THRESHOLD`` of all
+    tokens the text is classified as ``'zh'``; otherwise ``'en'``.
+
+    Args:
+        text: Input text (heading or any short string).
+
+    Returns:
+        ``'zh'`` for Chinese-dominant text, ``'en'`` otherwise.
+    """
+    if not text:
+        return 'en'
+    tokens = _CN_EN_NUM_RE.findall(text)
+    if not tokens:
+        return 'en'
+    cn_count = sum(1 for t in tokens if _CN_CHAR_RE.fullmatch(t))
+    return 'zh' if (cn_count / len(tokens)) >= CN_RATIO_THRESHOLD else 'en'
+
+
+def truncate_text_by_tokens(
+    text: str,
+    start_limit: int,
+    end_limit: int,
+    lang_aware: bool = True,
+) -> str:
+    """Truncate text by semantic token count, preserving whole words.
+
+    Uses the same token definition as ``count_cn_en``:
+
+    - each Chinese character  = 1 token
+    - each run of English letters = 1 token
+    - each number group = 1 token
+    - punctuation and whitespace are excluded from the count but
+      preserved in the output up to the split point.
+
+    When *lang_aware* is ``True`` (default), the function auto-detects
+    whether the text is English-dominant and caps ``start_limit`` at
+    ``EN_START_LIMIT`` (15) in that case.  Chinese-dominant text keeps
+    the caller-supplied ``start_limit`` (typically 30).  This prevents
+    over-long English heading chunks while still allowing a generous
+    budget for dense Chinese text.
+
+    Cut points are placed *after* the last character of the start
+    token and *before* the first character of the first tail token,
+    so no word is ever split in the middle.
+
+    Args:
+        text: Text to truncate.
+        start_limit: Max tokens to keep from the start.  When
+            *lang_aware* is True and the text is English-dominant,
+            this is silently capped at ``EN_START_LIMIT``.
+        end_limit: Max tokens to keep from the end (0 = no tail).
+        lang_aware: When True, auto-detect language and apply a tighter
+            budget for English text.  Set to False to use raw limits.
+
+    Returns:
+        Truncated text with ``'...'`` in the middle when the token
+        count exceeds ``start_limit + end_limit``.  Returns the
+        original text unchanged when the count is within the budget.
+    """
+    text = str(text)
+    matches = list(_CN_EN_NUM_RE.finditer(text))
+    total = len(matches)
+
+    if lang_aware and total > 0:
+        lang = detect_primary_lang(text)
+        if lang == 'en':
+            start_limit = min(start_limit, EN_START_LIMIT)
+
+    if total <= start_limit + end_limit:
+        return text
+    # Cut position: end of the start_limit-th token
+    cut_start = matches[start_limit - 1].end() if start_limit > 0 else 0
+    # Tail position: start of the (total - end_limit)-th token
+    cut_end = matches[total - end_limit].start() if end_limit > 0 else len(text)
+    if cut_start >= cut_end:
+        return text
+    return text[:cut_start] + '...' + text[cut_end:]
