@@ -444,13 +444,19 @@ def handle_unseen_codes(
     # get known codes
     known_codes = set(lvl_mapping.keys())
     
-    # record all codes from all segments
+    # record all codes from all segments.  Placeholder rows (reason ==
+    # PLACEHOLDER_REASON) are injected by _compact_for_llm and are never real
+    # heading candidates, so they must be skipped here — otherwise they would
+    # show up as an "unseen code" and fall through to NO_MATCH_FALLBACK, adding
+    # harmless but noisy warnings to the log.
     all_codes_in_full = {}
     for seg_idx, seg_df in enumerate(level_dfs):
         for _, row in seg_df.iterrows():
             reason = row.get('reason', '')
             sig = extract_reason_signature(reason)
-            if sig and sig not in all_codes_in_full:
+            if not sig or sig == PLACEHOLDER_REASON:
+                continue
+            if sig not in all_codes_in_full:
                 all_codes_in_full[sig] = {'first_seg': seg_idx, 'first_id': row.get('id', 0), 'reason': reason}
     
     # find unseen codes
@@ -590,14 +596,15 @@ def _compact_for_llm(df: pd.DataFrame) -> pd.DataFrame:
     are preserved verbatim so the LLM can still judge them.  Each run of
     consecutive ``-1`` rows becomes one placeholder row whose:
 
-        id      = "start-end" (or just "start" for a single-row run)
+        id      = "start-end" (always a range; "N-N" when the run is one row)
         heading = "[N BODY LINES]" where N is the run length
         level   = "-"
         reason  = ``PLACEHOLDER_REASON``
 
-    Downstream code identifies placeholder rows via ``reason == PLACEHOLDER_REASON``
-    (and via ``id`` being non-integer) so they can be filtered before mapping or
-    LLM-output reconciliation.
+    The id is ALWAYS a hyphenated string, even for single-row runs, so that
+    ``int(id)`` fails for every placeholder.  This lets downstream code identify
+    placeholders structurally (non-integer id) without depending on ``reason``
+    or length heuristics.
     """
     if df is None or len(df) == 0:
         return pd.DataFrame(columns=["id", "heading", "level", "reason"])
@@ -626,7 +633,7 @@ def _compact_for_llm(df: pd.DataFrame) -> pd.DataFrame:
             end_id = int(df.iloc[j - 1]["id"])
             run = j - i
             rows.append({
-                "id": f"{start_id}-{end_id}" if start_id != end_id else f"{start_id}",
+                "id": f"{start_id}-{end_id}",
                 "heading": f"[{run} BODY LINES]",
                 "level": "-",
                 "reason": PLACEHOLDER_REASON,

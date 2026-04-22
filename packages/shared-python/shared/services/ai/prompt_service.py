@@ -288,11 +288,11 @@ def build_prompt(task, texts, query, **kwargs):
            ``level`` is a preliminary estimate: a positive integer (1 = shallowest, deeper = larger)
            or the string "Not Sure" (undetermined). These rows — and ONLY these — are the ones you must evaluate.
 
-        2) PLACEHOLDER — ``id`` has the form "start-end" (a range of lines) OR a single 
-           integer referring to one body line; ``heading`` is "[N BODY LINES]" where N is 
-           the number of body lines that were folded here; ``level`` is the literal "-". 
-           Placeholders are positional markers that tell you how many body lines sit between
-           adjacent candidates. Use them as context ONLY.
+        2) PLACEHOLDER — ``id`` is ALWAYS a hyphenated range "start-end" (for a
+           single-line it is "N-N", e.g. "56-56"); ``heading`` is "[N BODY LINES]"
+           where N is the number of body lines folded here; ``level`` is the literal "-".
+           Placeholders are positional markers that tell you how many body lines sit
+           between adjacent candidates. Use them as context ONLY.
 
         Data to be adjusted:
         '''
