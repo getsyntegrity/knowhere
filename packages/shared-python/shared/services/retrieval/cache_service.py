@@ -34,10 +34,28 @@ def _cache_shape_digest(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    data_type: int = 1,
+    signal_paths: list[str] | None = None,
+    filter_mode: str = 'delete',
+    channels: list[str] | None = None,
+    channel_weights: dict[str, float] | None = None,
+    rerank: bool = False,
+    threshold: float = 0.0,
+    internal_recall_k: int | None = None,
 ) -> str:
     normalized_excludes = sorted(exclude_document_ids)
     normalized_sections = _normalize_exclude_sections(exclude_sections)
-    payload = f"{query}|{top_k}|{'|'.join(normalized_excludes)}|{'|'.join(normalized_sections)}"
+    extra = '|'.join([
+        str(data_type),
+        ','.join(sorted(signal_paths or [])),
+        filter_mode,
+        ','.join(sorted(channels or [])),
+        str(sorted((channel_weights or {}).items())),
+        str(rerank),
+        str(threshold),
+        str(internal_recall_k),
+    ])
+    payload = f"{query}|{top_k}|{'|'.join(normalized_excludes)}|{'|'.join(normalized_sections)}|{extra}"
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
@@ -50,12 +68,14 @@ def _query_cache_key(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    **extra_params: Any,
 ) -> str:
     digest = _cache_shape_digest(
         query=query,
         top_k=top_k,
         exclude_document_ids=exclude_document_ids,
         exclude_sections=exclude_sections,
+        **extra_params,
     )
     return f"retrieval:query:{user_id}:{namespace}:v{version}:{digest}"
 
@@ -94,6 +114,7 @@ async def get_cached_retrieval_query_result(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    **extra_params: Any,
 ) -> tuple[int, dict[str, Any] | None]:
     version = await get_retrieval_namespace_cache_version(user_id=user_id, namespace=namespace)
     redis_service = RedisServiceFactory.get_service()
@@ -106,6 +127,7 @@ async def get_cached_retrieval_query_result(
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
             exclude_sections=exclude_sections,
+            **extra_params,
         ),
         default=None,
     )
@@ -122,6 +144,7 @@ async def set_cached_retrieval_query_result(
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
     response: dict[str, Any],
+    **extra_params: Any,
 ) -> None:
     redis_service = RedisServiceFactory.get_service()
     await redis_service.set(
@@ -133,6 +156,7 @@ async def set_cached_retrieval_query_result(
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
             exclude_sections=exclude_sections,
+            **extra_params,
         ),
         response,
         ex=_RETRIEVAL_CACHE_TTL_SECONDS,

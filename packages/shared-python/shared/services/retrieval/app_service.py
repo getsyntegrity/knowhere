@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db_context
@@ -27,6 +27,19 @@ _CHANNEL_WEIGHT_PATH = 1.0
 _CHANNEL_WEIGHT_CONTENT = 2.0
 _CHANNEL_WEIGHT_TERM = 1.5
 _INTERNAL_RECALL_K_MULTIPLIER = 2
+
+_DATA_TYPE_ALLOWED_CHUNK_TYPES: dict[int, set[str] | None] = {
+    1: None,
+    2: {'text'},
+    3: {'image'},
+    4: {'table'},
+    5: {'text', 'image'},
+    6: {'text', 'table'},
+}
+
+
+def _resolve_allowed_chunk_types(data_type: int) -> set[str] | None:
+    return _DATA_TYPE_ALLOWED_CHUNK_TYPES.get(data_type)
 
 _PUBLIC_RESULT_FIELDS = {
     'chunk_type', 'content', 'score', 'asset_url',
@@ -165,12 +178,18 @@ async def assemble_retrieval_results(
     rows: list[dict[str, Any]],
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    allowed_chunk_types: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     filtered_rows = _filter_excluded_rows(
         rows,
         exclude_document_ids=exclude_document_ids,
         exclude_sections=exclude_sections,
     )
+    if allowed_chunk_types is not None:
+        filtered_rows = [
+            row for row in filtered_rows
+            if _normalize_chunk_type(row.get('chunk_type')) in allowed_chunk_types
+        ]
     hydrated_rows = await hydrate_connected_target_rows(
         db=db,
         rows=filtered_rows,
@@ -463,6 +482,139 @@ def _union_graph_results(
     return fused_rows[:top_k]
 
 
+async def _count_scoped_chunks(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    exclude_document_ids: list[str],
+    allowed_chunk_types: set[str] | None,
+) -> int:
+    stmt = (
+        select(func.count(DocumentChunk.id))
+        .join(Document, (Document.document_id == DocumentChunk.document_id) & (Document.current_job_result_id == DocumentChunk.job_result_id))
+        .where(Document.user_id == user_id)
+        .where(Document.namespace == namespace)
+        .where(Document.status == 'active')
+    )
+    if exclude_document_ids:
+        stmt = stmt.where(Document.document_id.notin_(list(exclude_document_ids)))
+    if allowed_chunk_types is not None:
+        stmt = stmt.where(func.lower(DocumentChunk.chunk_type).in_(list(allowed_chunk_types)))
+    result = await db.execute(stmt)
+    return result.scalar() or 0
+
+
+async def _load_all_scoped_chunks(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
+    allowed_chunk_types: set[str] | None,
+    signal_paths: list[str],
+    filter_mode: str,
+) -> list[dict[str, Any]]:
+    stmt = (
+        select(Document, DocumentChunk, DocumentSection, JobResult)
+        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
+        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
+        .where(Document.user_id == user_id)
+        .where(Document.namespace == namespace)
+        .where(Document.status == 'active')
+        .order_by(DocumentChunk.sort_order)
+    )
+    if exclude_document_ids:
+        stmt = stmt.where(Document.document_id.notin_(list(exclude_document_ids)))
+    if allowed_chunk_types is not None:
+        stmt = stmt.where(func.lower(DocumentChunk.chunk_type).in_(list(allowed_chunk_types)))
+
+    result = await db.execute(stmt)
+    rows: list[dict[str, Any]] = []
+    for document, chunk, section, job_result in result.all():
+        section_path = section.section_path if section else None
+        if is_excluded_section(document_id=document.document_id, section_path=section_path, exclude_sections=exclude_sections):
+            continue
+        if signal_paths and section_path:
+            path_lower = section_path.lower()
+            matches_any = any(kw.lower() in path_lower for kw in signal_paths)
+            if filter_mode == 'keep' and not matches_any:
+                continue
+            if filter_mode == 'delete' and matches_any:
+                continue
+        rows.append({
+            'document_id': document.document_id,
+            'chunk_id': chunk.chunk_id,
+            'section_id': chunk.section_id,
+            'section_path': section_path,
+            'source_file_name': document.source_file_name,
+            'chunk_type': chunk.chunk_type,
+            'content': chunk.content,
+            'score': 1.0,
+            'file_path': chunk.file_path,
+            'chunk_metadata': chunk.chunk_metadata or {},
+            'job_result_id': chunk.job_result_id,
+            'job_id': job_result.job_id if job_result else None,
+            'sort_order': chunk.sort_order,
+        })
+    return rows
+
+
+async def _llm_rerank(
+    rows: list[dict[str, Any]],
+    *,
+    query: str,
+    llm_fn: Any,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    """LLM-based reranking of RRF fusion results (recovered from knowhere-kb)."""
+    if not rows:
+        return rows
+
+    import json as _json
+    import re as _re
+
+    candidates_text = []
+    for i, row in enumerate(rows):
+        content_preview = str(row.get('content') or '')[:300]
+        path = row.get('section_path') or row.get('source_file_name') or ''
+        candidates_text.append(f'[{i}] path={path}\n{content_preview}')
+
+    prompt = (
+        'You are a search result reranker.\n\n'
+        f'Query: {query}\n\n'
+        'Candidates:\n' + '\n\n'.join(candidates_text) + '\n\n'
+        'Reorder the candidates by relevance to the query. '
+        'Return ONLY a JSON array of indices in order of relevance, e.g.: [2, 0, 1, 3]\n'
+        'Do not include any explanation.'
+    )
+
+    try:
+        response_text = await llm_fn(prompt)
+        text = response_text.strip()
+        match = _re.search(r'\[.*?\]', text, _re.DOTALL)
+        if match:
+            indices = _json.loads(match.group())
+            if isinstance(indices, list):
+                valid_indices = [int(idx) for idx in indices if isinstance(idx, int) and 0 <= idx < len(rows)]
+                seen: set[int] = set()
+                reordered: list[dict[str, Any]] = []
+                for idx in valid_indices:
+                    if idx not in seen:
+                        seen.add(idx)
+                        reordered.append(rows[idx])
+                for i, row in enumerate(rows):
+                    if i not in seen:
+                        reordered.append(row)
+                return reordered[:top_k]
+    except Exception as exc:
+        logger.warning(f'retrieval: LLM rerank failed (keeping original order): {exc}')
+
+    return rows[:top_k]
+
+
 async def run_retrieval_query(
     *,
     db: AsyncSession,
@@ -472,12 +624,34 @@ async def run_retrieval_query(
     top_k: int,
     exclude_document_ids: list[str],
     exclude_sections: list[dict[str, str]],
+    data_type: int = 1,
+    signal_paths: list[str] | None = None,
+    filter_mode: str = 'delete',
+    channels: list[str] | None = None,
+    channel_weights: dict[str, float] | None = None,
+    rerank: bool = False,
+    threshold: float = 0.0,
+    internal_recall_k: int | None = None,
 ) -> dict[str, Any]:
     """Checkerboard retrieval: 3 independent channels -> RRF -> agent/graph union -> assembly."""
     t_start = time.monotonic()
     logger.info(
         f'retrieval: query="{query[:80]}" user={user_id} ns={namespace} '
         f'top_k={top_k} exclude_docs={len(exclude_document_ids)} exclude_secs={len(exclude_sections)}'
+    )
+
+    allowed_chunk_types = _resolve_allowed_chunk_types(data_type)
+    effective_recall_k = internal_recall_k if internal_recall_k is not None else top_k * _INTERNAL_RECALL_K_MULTIPLIER
+
+    cache_extra = dict(
+        data_type=data_type,
+        signal_paths=signal_paths,
+        filter_mode=filter_mode,
+        channels=channels,
+        channel_weights=channel_weights,
+        rerank=rerank,
+        threshold=threshold,
+        internal_recall_k=internal_recall_k,
     )
 
     cache_version: int | None = None
@@ -489,6 +663,7 @@ async def run_retrieval_query(
             top_k=top_k,
             exclude_document_ids=exclude_document_ids,
             exclude_sections=exclude_sections,
+            **cache_extra,
         )
         if cached:
             logger.info(f'retrieval: cache_hit=True version={cache_version}')
@@ -506,42 +681,128 @@ async def run_retrieval_query(
 
     logger.debug(f'retrieval: cache_hit=False version={cache_version}')
 
-    t_ch = time.monotonic()
-    path_rows = await path_channel(
-        db, user_id=user_id, namespace=namespace, query=query,
-        top_k=top_k, exclude_document_ids=exclude_document_ids, exclude_sections=exclude_sections,
+    # ── Small KB optimization ──
+    total_chunk_count = await _count_scoped_chunks(
+        db, user_id=user_id, namespace=namespace,
+        exclude_document_ids=exclude_document_ids,
+        allowed_chunk_types=allowed_chunk_types,
     )
-    logger.info(f'retrieval: path_channel={len(path_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+    if total_chunk_count <= top_k:
+        logger.info(f'retrieval: small_kb_optimization total_chunks={total_chunk_count} <= top_k={top_k}')
+        all_rows = await _load_all_scoped_chunks(
+            db, user_id=user_id, namespace=namespace,
+            exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
+            allowed_chunk_types=allowed_chunk_types,
+            signal_paths=signal_paths or [],
+            filter_mode=filter_mode,
+        )
+        assembled_rows = await assemble_retrieval_results(
+            db=db, rows=all_rows,
+            exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
+            allowed_chunk_types=allowed_chunk_types,
+        )
+        results = [_with_citation(row) for row in assembled_rows]
+        response = {
+            "namespace": namespace, "query": query,
+            "router_used": "small_kb_all", "results": results,
+        }
+        if cache_version is not None:
+            try:
+                await set_cached_retrieval_query_result(
+                    user_id=user_id, namespace=namespace, version=cache_version,
+                    query=query, top_k=top_k,
+                    exclude_document_ids=exclude_document_ids,
+                    exclude_sections=exclude_sections,
+                    response=response, **cache_extra,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to write retrieval cache (ignored): {e}")
+        try:
+            schedule_retrieval_hit_stats_update(user_id=user_id, namespace=namespace, results=results)
+        except Exception as e:
+            logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
+        elapsed_total = round((time.monotonic() - t_start) * 1000)
+        logger.info(f'retrieval: small_kb response={len(results)} results, total_time={elapsed_total}ms')
+        return await _to_public_response(response)
 
-    t_ch = time.monotonic()
-    content_rows = await content_channel(
-        db, user_id=user_id, namespace=namespace, query=query,
-        top_k=top_k, exclude_document_ids=exclude_document_ids, exclude_sections=exclude_sections,
-    )
-    logger.info(f'retrieval: content_channel={len(content_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+    # ── Channel execution ──
+    active_channels = set(channels) if channels else {'path', 'content', 'term'}
 
-    t_ch = time.monotonic()
-    term_rows = await term_channel(
-        db, user_id=user_id, namespace=namespace, query=query,
-        top_k=top_k, exclude_document_ids=exclude_document_ids, exclude_sections=exclude_sections,
-    )
-    logger.info(f'retrieval: term_channel={len(term_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+    path_rows: list[dict[str, Any]] = []
+    content_rows: list[dict[str, Any]] = []
+    term_rows: list[dict[str, Any]] = []
 
-    channels: list[list[dict[str, Any]]] = []
-    channel_weights: list[float] = []
+    if 'path' in active_channels:
+        t_ch = time.monotonic()
+        path_rows = await path_channel(
+            db, user_id=user_id, namespace=namespace, query=query,
+            top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
+            signal_paths=signal_paths, filter_mode=filter_mode,
+        )
+        logger.info(f'retrieval: path_channel={len(path_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+
+    if 'content' in active_channels:
+        t_ch = time.monotonic()
+        content_rows = await content_channel(
+            db, user_id=user_id, namespace=namespace, query=query,
+            top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
+            signal_paths=signal_paths, filter_mode=filter_mode,
+        )
+        logger.info(f'retrieval: content_channel={len(content_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+
+    if 'term' in active_channels:
+        t_ch = time.monotonic()
+        term_rows = await term_channel(
+            db, user_id=user_id, namespace=namespace, query=query,
+            top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
+            signal_paths=signal_paths, filter_mode=filter_mode,
+        )
+        logger.info(f'retrieval: term_channel={len(term_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+
+    # ── RRF fusion with configurable weights ──
+    default_weights = {
+        'path': _CHANNEL_WEIGHT_PATH,
+        'content': _CHANNEL_WEIGHT_CONTENT,
+        'term': _CHANNEL_WEIGHT_TERM,
+    }
+    effective_weights = {**default_weights, **(channel_weights or {})}
+
+    channel_lists: list[list[dict[str, Any]]] = []
+    weight_list: list[float] = []
 
     if path_rows:
-        channels.append(path_rows)
-        channel_weights.append(_CHANNEL_WEIGHT_PATH)
+        channel_lists.append(path_rows)
+        weight_list.append(effective_weights.get('path', _CHANNEL_WEIGHT_PATH))
     if content_rows:
-        channels.append(content_rows)
-        channel_weights.append(_CHANNEL_WEIGHT_CONTENT)
+        channel_lists.append(content_rows)
+        weight_list.append(effective_weights.get('content', _CHANNEL_WEIGHT_CONTENT))
     if term_rows:
-        channels.append(term_rows)
-        channel_weights.append(_CHANNEL_WEIGHT_TERM)
+        channel_lists.append(term_rows)
+        weight_list.append(effective_weights.get('term', _CHANNEL_WEIGHT_TERM))
 
-    fused_rows = merge_channels_rrf(channels, channel_weights, top_k) if channels else []
-    logger.info(f'retrieval: rrf_fusion={len(fused_rows)} rows from {len(channels)} channels')
+    fused_rows = merge_channels_rrf(channel_lists, weight_list, top_k) if channel_lists else []
+    logger.info(f'retrieval: rrf_fusion={len(fused_rows)} rows from {len(channel_lists)} channels')
+
+    # ── Threshold filtering ──
+    if threshold > 0.0 and fused_rows:
+        pre_count = len(fused_rows)
+        fused_rows = [row for row in fused_rows if row.get('score', 0.0) >= threshold]
+        logger.info(f'retrieval: threshold_filter={pre_count}->{len(fused_rows)} (threshold={threshold})')
+
+    # ── LLM reranking ──
+    if rerank and fused_rows:
+        t_rerank = time.monotonic()
+        rerank_llm_fn = create_retrieval_llm_fn()
+        if rerank_llm_fn is not None:
+            fused_rows = await _llm_rerank(fused_rows, query=query, llm_fn=rerank_llm_fn, top_k=top_k)
+            logger.info(f'retrieval: llm_rerank={len(fused_rows)} rows in {round((time.monotonic() - t_rerank) * 1000)}ms')
+        else:
+            logger.warning('retrieval: rerank requested but no LLM configured, skipping')
 
     # ── Agent navigation or lexical graph fallback ──
     router_used = 'discovery_only'
@@ -609,6 +870,7 @@ async def run_retrieval_query(
         rows=fused_rows,
         exclude_document_ids=exclude_document_ids,
         exclude_sections=exclude_sections,
+        allowed_chunk_types=allowed_chunk_types,
     )
     results = [_with_citation(row) for row in assembled_rows]
     logger.info(f'retrieval: assembled={len(results)} results')
@@ -631,6 +893,7 @@ async def run_retrieval_query(
                 exclude_document_ids=exclude_document_ids,
                 exclude_sections=exclude_sections,
                 response=response,
+                **cache_extra,
             )
         except Exception as e:
             logger.warning(f"Failed to write retrieval cache (ignored): {e}")

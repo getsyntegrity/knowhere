@@ -9,6 +9,7 @@ Falls back gracefully when LLM is unavailable or fails.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from typing import Any, Sequence
@@ -78,6 +79,37 @@ def _parse_json_array(text: str) -> list[str]:
         except (json.JSONDecodeError, ValueError):
             pass
     return []
+
+
+def _keywords_need_repair(keywords: list[str] | None) -> bool:
+    if not isinstance(keywords, list) or not keywords:
+        return True
+    bad = sum(1 for kw in keywords if not kw or len(str(kw)) <= 1
+              or re.match(r'^\d+[.,%]*$', str(kw)))
+    return bad >= len(keywords) * 0.5
+
+
+def _compute_tfidf_keywords(chunk_metadata_list: list[dict[str, Any]], top_k: int = 10) -> list[str]:
+    df_count: dict[str, int] = {}
+    tf_count: dict[str, int] = {}
+    total = len(chunk_metadata_list) or 1
+    for meta in chunk_metadata_list:
+        if not isinstance(meta, dict):
+            continue
+        terms = list(meta.get('tokens', [])) + list(meta.get('keywords', []))
+        seen: set[str] = set()
+        for t in terms:
+            if not t or len(str(t)) <= 1 or re.match(r'^\d+[.,%]*$', str(t)):
+                continue
+            lower = str(t).lower()
+            tf_count[lower] = tf_count.get(lower, 0) + 1
+            if lower not in seen:
+                df_count[lower] = df_count.get(lower, 0) + 1
+                seen.add(lower)
+    scored = [(term, freq * (math.log(total / (df_count.get(term, 1))) + 1))
+              for term, freq in tf_count.items()]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [s[0] for s in scored[:top_k]]
 
 
 async def _build_knowledge_map_overview(
@@ -150,6 +182,28 @@ async def _build_knowledge_map_overview(
     section_result = await db.execute(section_summaries_stmt)
     section_titles: dict[str, str] = {row[0]: row[1] or '' for row in section_result.all()}
 
+    chunk_meta_stmt = (
+        select(DocumentChunk.document_id, DocumentChunk.chunk_metadata)
+        .join(Document, (Document.document_id == DocumentChunk.document_id) & (Document.current_job_result_id == DocumentChunk.job_result_id))
+        .where(DocumentChunk.document_id.in_(doc_ids))
+    )
+    chunk_meta_result = await db.execute(chunk_meta_stmt)
+    doc_chunk_metas: dict[str, list[dict[str, Any]]] = {}
+    for did, meta in chunk_meta_result.all():
+        doc_chunk_metas.setdefault(did, []).append(meta or {})
+
+    doc_keywords: dict[str, str] = {}
+    for did, metas in doc_chunk_metas.items():
+        existing_kws = []
+        for m in metas:
+            existing_kws.extend(m.get('keywords', []))
+        if _keywords_need_repair(existing_kws):
+            kws = _compute_tfidf_keywords(metas)
+        else:
+            kws = [str(k) for k in existing_kws if k and len(str(k)) > 1][:10]
+        if kws:
+            doc_keywords[did] = ', '.join(kws[:8])
+
     lines: list[str] = []
     for doc in documents:
         did = doc.document_id
@@ -163,6 +217,9 @@ async def _build_knowledge_map_overview(
             line += f' media={stats["media"]}'
         if hits > 0:
             line += f' hits={hits}'
+        kw_str = doc_keywords.get(did, '')
+        if kw_str:
+            line += f'  keywords="{kw_str}"'
         if titles:
             line += f'  sections="{titles[:200]}"'
         lines.append(line)
