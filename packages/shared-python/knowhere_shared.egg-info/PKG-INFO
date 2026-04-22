@@ -35,6 +35,8 @@ Requires-Dist: psutil==5.9.8
 Requires-Dist: pytz==2025.2
 Requires-Dist: PyYAML==6.0.2
 Requires-Dist: typing-extensions==4.14.1
+Requires-Dist: jieba==0.42.1
+Requires-Dist: rank-bm25>=0.2.2
 Requires-Dist: pillow==11.2.1
 Requires-Dist: gevent>=24.11.1
 Requires-Dist: psycogreen>=1.0.2

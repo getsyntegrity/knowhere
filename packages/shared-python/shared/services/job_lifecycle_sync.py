@@ -28,6 +28,7 @@ from shared.services.billing.credits_sync_service import SyncCreditsService
 from shared.services.redis.redis_sync_service import (
     SyncRedisServiceFactory,
 )
+from shared.services.retrieval.publication_service import RetrievalPublicationService
 from shared.utils.error_details import normalize_error_details
 from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
@@ -44,6 +45,7 @@ class SyncJobLifecycleService:
 
     def __init__(self) -> None:
         self._state_machine = SyncStateMachineService()
+        self._retrieval_publication = RetrievalPublicationService()
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -84,7 +86,30 @@ class SyncJobLifecycleService:
                     result_size=zip_size,
                 )
 
-                self._replace_chunks(db, job_result.id, chunks or [])
+                normalized_chunks = chunks or []
+                self._replace_chunks(db, job_result.id, normalized_chunks)
+                previous_document_scope = self._retrieval_publication.get_existing_document_scope(
+                    db,
+                    job_id=job_id,
+                )
+                published_document_state = self._retrieval_publication.publish_document_state(
+                    db,
+                    job_id=job_id,
+                    job_result_id=job_result.id,
+                    chunks=normalized_chunks,
+                )
+                if published_document_state is not None:
+                    self._retrieval_publication.publish_document_graph(
+                        db,
+                        job_id=job_id,
+                        job_result_id=job_result.id,
+                    )
+                cache_invalidation = self._build_retrieval_cache_invalidation(
+                    db,
+                    job_id=job_id,
+                    published_document_state=published_document_state,
+                    previous_document_scope=previous_document_scope,
+                )
 
                 transition_ok = self._state_machine.mark_completed(
                     db, job_id,
@@ -106,6 +131,7 @@ class SyncJobLifecycleService:
                 db.commit()
                 logger.info(f"Job {job_id} success transaction committed")
 
+                self._post_commit_invalidate_retrieval_cache(cache_invalidation)
                 self._post_commit_enqueue_webhook(webhook_event)
 
                 return {
@@ -252,7 +278,7 @@ class SyncJobLifecycleService:
         db: Session,
         job_result_id: str,
         chunks: List[Dict[str, Any]],
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Delete existing chunks and insert new ones."""
         db.execute(delete(JobChunk).where(JobChunk.job_result_id == job_result_id))
 
@@ -274,6 +300,47 @@ class SyncJobLifecycleService:
             ))
         db.add_all(chunk_models)
         db.flush()
+
+    def _build_retrieval_cache_invalidation(
+        self,
+        db: Session,
+        *,
+        job_id: str,
+        published_document_state: Optional[Dict[str, str]],
+        previous_document_scope: Optional[Dict[str, str]],
+    ) -> None:
+        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if not job:
+            return None
+
+        namespaces: list[str] = []
+        metadata = job.job_metadata or {}
+        new_namespace = metadata.get("namespace") or "default"
+        namespaces.append(new_namespace)
+
+        if previous_document_scope and previous_document_scope.get("namespace"):
+            namespaces.append(previous_document_scope["namespace"])
+        if published_document_state and published_document_state.get("namespace"):
+            namespaces.append(published_document_state["namespace"])
+
+        return {"user_id": str(job.user_id), "namespaces": namespaces, "job_id": job_id}
+
+    def _post_commit_invalidate_retrieval_cache(self, cache_invalidation: Optional[Dict[str, Any]]) -> None:
+        if not cache_invalidation:
+            return
+        try:
+            redis_service = SyncRedisServiceFactory.get_service()
+            user_id = cache_invalidation["user_id"]
+            seen: set[str] = set()
+            for namespace in cache_invalidation["namespaces"]:
+                if not namespace or namespace in seen:
+                    continue
+                seen.add(namespace)
+                redis_service.incr(f"retrieval:version:{user_id}:{namespace}")
+        except Exception as exc:
+            logger.warning(
+                f"Failed to invalidate retrieval cache after publication (ignored): job_id={cache_invalidation.get('job_id')}, error={exc}"
+            )
 
     def _bulk_insert_kb_records(
         self,

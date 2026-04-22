@@ -29,6 +29,8 @@ class ParsingParams(BaseModel):
 class JobCreate(BaseModel):
     """创建任务请求"""
 
+    namespace: Optional[str] = Field(None, description="Retrieval namespace; defaults to default")
+    document_id: Optional[str] = Field(None, description="Existing document ID for update flows")
     source_type: Literal["file", "url"] = Field(..., description="文档来源类型")
     source_url: Optional[str] = Field(
         None, description="文件URL（source_type=url时必填）"
@@ -45,6 +47,8 @@ class JobResponse(BaseModel):
     """任务响应"""
 
     job_id: str = Field(..., description="任务ID")
+    namespace: Optional[str] = Field(None, description="Effective namespace")
+    document_id: Optional[str] = Field(None, description="Linked document ID")
     status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="任务状态")
     source_type: str = Field(..., description="文件来源类型")
     data_id: Optional[str] = Field(None, description="用户自定义ID")
@@ -74,6 +78,8 @@ class JobResultResponse(BaseModel):
     """Job status query response (for GET /jobs/{job_id}/result)"""
 
     job_id: str = Field(..., description="Job ID")
+    namespace: Optional[str] = Field(None, description="Effective retrieval namespace")
+    document_id: Optional[str] = Field(None, description="Linked document ID")
     status: Literal["pending", "waiting-file", "running", "converting", "done", "failed"] = Field(..., description="Job status")
     source_type: str = Field(..., description="File source type")
     data_id: Optional[str] = Field(None, description="User-defined ID")

@@ -59,6 +59,8 @@ dependencies = [
     "pytz==2025.2",
     "PyYAML==6.0.2",
     "typing-extensions==4.14.1",
+    "jieba==0.42.1",
+    "rank-bm25>=0.2.2",
     
     # 图像处理（ZipResultService需要）
     "pillow==11.2.1",

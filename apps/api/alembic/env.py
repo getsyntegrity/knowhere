@@ -12,6 +12,7 @@ from shared.core.database import Base
 from shared.models.database import (
     api_key,
     credits_transaction,
+    document,
     knowledge_base,
     payment_record,
     stripe_price_config,

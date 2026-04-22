@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Route
 
 # Import custom OpenAPI function
 from custom_openapi import custom_openapi
@@ -23,6 +24,7 @@ from app.core.middleware import setup_cors, LoggingMiddleware
 from app.core.image_cli import ImageCli
 from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
+from app.mcp import create_retrieval_mcp_server
 from app.services.rate_limit.rule_loader import load_rules
 
 @asynccontextmanager
@@ -69,8 +71,15 @@ async def lifespan(app: FastAPI):
         await load_rules(session)
     logger.info("rate limit rules loaded at startup; restart the pod to apply changes")
 
+    mcp_server = getattr(app.state, "retrieval_mcp_server", None)
+    mcp_session_manager = getattr(mcp_server, "session_manager", None)
+
     logger.info("knowledge library API service started!")
-    yield
+    if mcp_session_manager is not None:
+        async with mcp_session_manager.run():
+            yield
+    else:
+        yield
 
     try:
         from shared.utils.http_clients import close_async_client
@@ -134,6 +143,20 @@ def create_app() -> FastAPI:
     
     # Register other API routes
     app.include_router(api_router)
+
+    retrieval_mcp_server = create_retrieval_mcp_server(
+        streamable_http_path="/mcp",
+    )
+    retrieval_mcp_app = retrieval_mcp_server.streamable_http_app()
+    app.state.retrieval_mcp_server = retrieval_mcp_server
+    for route in retrieval_mcp_app.routes:
+        if isinstance(route, Route) and route.path == "/mcp":
+            app.router.routes.append(route)
+            break
+    else:  # pragma: no cover - guards against upstream FastMCP route changes
+        raise RuntimeError(
+            "FastMCP streamable HTTP app did not expose the expected /mcp route"
+        )
 
     # Setup global exception handlers
     setup_exception_handlers(app)

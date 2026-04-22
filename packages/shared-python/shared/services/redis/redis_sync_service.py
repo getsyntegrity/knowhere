@@ -125,6 +125,15 @@ class SyncRedisService:
         full_key = self._build_key(key)
         return bool(client.expire(full_key, ttl))
 
+    def incr(self, key: str) -> int:
+        try:
+            client = self._get_client()
+            full_key = self._build_key(key)
+            return int(client.incr(full_key))
+        except Exception as e:
+            logger.error(f"Redis INCR failed: key={key}, error={e}")
+            raise
+
     def eval(self, script: str, keys: Sequence[str], args: Optional[Sequence[Any]] = None) -> Any:
         """Execute a Lua script with namespaced Redis keys."""
         client = self._get_client()
