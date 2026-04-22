@@ -21,8 +21,8 @@ os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 
-async def _empty_lexical_chunks(*_args, **_kwargs):
-    return [], []
+async def _empty_channel(*_args, **_kwargs):
+    return []
 
 
 @pytest.mark.asyncio
@@ -75,12 +75,12 @@ async def test_run_retrieval_query_does_not_overlap_lexical_and_graph_db_work(mo
     async def fake_set_cached_retrieval_query_result(**_kwargs):
         return None
 
-    async def fake_list_lexical_chunks(*_args, **_kwargs):
+    async def fake_channel(*_args, **_kwargs):
         tracker['active_calls'] += 1
         tracker['max_active_calls'] = max(tracker['max_active_calls'], tracker['active_calls'])
         await asyncio.sleep(0)
         tracker['active_calls'] -= 1
-        return [], []
+        return []
 
     async def fake_list_graph_routed_chunks(*_args, **_kwargs):
         tracker['active_calls'] += 1
@@ -94,7 +94,10 @@ async def test_run_retrieval_query_does_not_overlap_lexical_and_graph_db_work(mo
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', fake_list_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', fake_channel)
+    monkeypatch.setattr(app_service, 'content_channel', fake_channel)
+    monkeypatch.setattr(app_service, 'term_channel', fake_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'assemble_retrieval_results', fake_assemble_retrieval_results)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -137,9 +140,18 @@ async def test_run_retrieval_query_always_uses_graph_routing(monkeypatch):
 
     scheduled = {}
 
-    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', lambda **_kwargs: None)
-    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
+    async def fake_get_cached(**_kwargs):
+        return None, None
+
+    async def fake_set_cached(**_kwargs):
+        return None
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached)
+    monkeypatch.setattr(app_service, 'path_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'term_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_graph)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **kwargs: scheduled.update(kwargs))
 
@@ -225,7 +237,7 @@ async def test_run_retrieval_query_falls_back_to_lexical_when_graph_fails(monkey
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         raise RuntimeError('redis down')
 
-    async def fake_list_lexical_chunks(*_args, **_kwargs):
+    async def fake_content_channel(*_args, **_kwargs):
         return [
             {
                 'document_id': 'doc_123',
@@ -238,14 +250,17 @@ async def test_run_retrieval_query_falls_back_to_lexical_when_graph_fails(monkey
                 'score': 1.0,
                 'file_path': None,
             }
-        ], []
+        ]
 
     async def fake_list_graph_routed_chunks(*_args, **_kwargs):
         graph_calls.append('graph')
         raise RuntimeError('graph unavailable')
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', fake_list_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', fake_content_channel)
+    monkeypatch.setattr(app_service, 'term_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -368,29 +383,34 @@ async def test_run_retrieval_query_uses_plan_channel_weights_for_graph_content_p
     async def fake_get_cached_retrieval_query_result(**_kwargs):
         return 1, None
 
-    async def fake_list_lexical_chunks(*_args, **_kwargs):
-        return content_rows, path_rows
+    async def fake_path_channel(*_args, **_kwargs):
+        return path_rows
+
+    async def fake_content_channel(*_args, **_kwargs):
+        return content_rows
+
+    async def fake_term_channel(*_args, **_kwargs):
+        return term_rows
 
     async def fake_list_graph_routed_chunks(*_args, **_kwargs):
         return graph_rows
-
-    def fake_grep_search_rows(_rows, _query):
-        return term_rows
 
     def fake_merge_channels_rrf(channels, weights, top_k):
         captured['channels'] = channels
         captured['weights'] = weights
         captured['top_k'] = top_k
-        return [graph_rows[0]]
+        return [content_rows[0]]
 
     async def fake_assemble_retrieval_results(**kwargs):
         return kwargs['rows']
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', fake_list_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', fake_path_channel)
+    monkeypatch.setattr(app_service, 'content_channel', fake_content_channel)
+    monkeypatch.setattr(app_service, 'term_channel', fake_term_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
-    monkeypatch.setattr(app_service, '_grep_search_rows', fake_grep_search_rows)
     monkeypatch.setattr(app_service, 'merge_channels_rrf', fake_merge_channels_rrf)
     monkeypatch.setattr(app_service, 'assemble_retrieval_results', fake_assemble_retrieval_results)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -405,10 +425,10 @@ async def test_run_retrieval_query_uses_plan_channel_weights_for_graph_content_p
         exclude_sections=[],
     )
 
-    assert captured['channels'] == [graph_rows, content_rows, path_rows, term_rows]
-    assert captured['weights'] == [2.0, 2.0, 1.0, 1.5]
+    assert captured['channels'] == [path_rows, content_rows, term_rows]
+    assert captured['weights'] == [1.0, 2.0, 1.5]
     assert captured['top_k'] == 5
-    assert result['results'][0]['source']['document_id'] == 'doc_graph'
+    assert result['results'][0]['source']['document_id'] == 'doc_content'
 
 
 @pytest.mark.asyncio
@@ -440,7 +460,10 @@ async def test_run_retrieval_query_writes_cache_after_db_result(monkeypatch):
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'term_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
@@ -504,7 +527,10 @@ async def test_run_retrieval_query_returns_asset_url_without_caching_signed_url(
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'term_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FakeResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -813,7 +839,10 @@ async def test_run_retrieval_query_does_not_generate_asset_url_for_text_chunk(mo
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', lambda **_kwargs: None)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'term_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'get_result_storage', lambda: FailResultStorage())
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -872,7 +901,10 @@ async def test_run_retrieval_query_passes_section_exclusions_to_cache_and_db_pat
         captured['cache_write'] = kwargs
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'term_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
@@ -1067,7 +1099,10 @@ async def test_run_retrieval_query_uses_pinned_cache_version_for_write(monkeypat
 
     monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
     monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
-    monkeypatch.setattr(app_service, 'list_lexical_chunks', _empty_lexical_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'term_channel', _empty_channel)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: None)
     monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fake_list_graph_routed_chunks)
     monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
 
