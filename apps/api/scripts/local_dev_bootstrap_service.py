@@ -31,18 +31,109 @@ class LocalDevelopmentBootstrapService:
     LOCAL_DEV_CREDITS_BALANCE: int = MicroDollar.from_dollars(2_000).amount
     LOCAL_DEV_LIFETIME_BILLING_MICRO: int = MicroDollar.from_dollars(2_000).amount
     LOCAL_DEV_PAYMENT_AMOUNT_CENTS: int = 200_000
+    LOCAL_DEV_FALLBACK_EMAIL_DOMAIN: str = "knowhere.local"
 
     async def ensure_user_table_exists(self) -> None:
-        """Create the minimal local `user` table needed by API foreign keys."""
+        """Create a dashboard-compatible local `user` table needed by API foreign keys."""
         async with engine.begin() as connection:
             await connection.execute(
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS "user" (
-                        id TEXT PRIMARY KEY,
-                        name VARCHAR(255) NOT NULL,
-                        email TEXT NULL
+                        id TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        email TEXT NOT NULL,
+                        "emailVerified" BOOLEAN DEFAULT false NOT NULL,
+                        image TEXT,
+                        role TEXT DEFAULT 'user' NOT NULL,
+                        "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+                        "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
                     )
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    ALTER TABLE "user"
+                    ALTER COLUMN id SET NOT NULL,
+                    ALTER COLUMN name TYPE TEXT,
+                    ALTER COLUMN name SET NOT NULL,
+                    ALTER COLUMN email TYPE TEXT
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    f"""
+                    UPDATE "user"
+                    SET email = id || '@{self.LOCAL_DEV_FALLBACK_EMAIL_DOMAIN}'
+                    WHERE email IS NULL
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    ALTER TABLE "user"
+                    ALTER COLUMN email SET NOT NULL
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    ALTER TABLE "user"
+                    ADD COLUMN IF NOT EXISTS "emailVerified" BOOLEAN DEFAULT false NOT NULL,
+                    ADD COLUMN IF NOT EXISTS image TEXT,
+                    ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user' NOT NULL,
+                    ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+                    ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    UPDATE "user"
+                    SET
+                        "emailVerified" = COALESCE("emailVerified", false),
+                        role = COALESCE(role, 'user'),
+                        "createdAt" = COALESCE("createdAt", now()),
+                        "updatedAt" = COALESCE("updatedAt", now())
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    ALTER TABLE "user"
+                    ALTER COLUMN "emailVerified" SET DEFAULT false,
+                    ALTER COLUMN "emailVerified" SET NOT NULL,
+                    ALTER COLUMN role SET DEFAULT 'user',
+                    ALTER COLUMN role SET NOT NULL,
+                    ALTER COLUMN "createdAt" SET DEFAULT now(),
+                    ALTER COLUMN "createdAt" SET NOT NULL,
+                    ALTER COLUMN "updatedAt" SET DEFAULT now(),
+                    ALTER COLUMN "updatedAt" SET NOT NULL
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'user_email_unique'
+                              AND conrelid = 'user'::regclass
+                        ) THEN
+                            ALTER TABLE "user"
+                            ADD CONSTRAINT "user_email_unique" UNIQUE ("email");
+                        END IF;
+                    END $$;
                     """
                 )
             )

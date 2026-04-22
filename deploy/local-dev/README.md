@@ -23,10 +23,17 @@ cd deploy/local-dev
 ./start-dev.sh
 ```
 
-The helper is idempotent and can be rerun safely. It now:
+To initialize the local user/auth state too:
+
+```bash
+cd deploy/local-dev
+./start-dev.sh --init-user
+```
+
+The `--init-user` path is idempotent and can be rerun safely. It now:
 
 - waits for PostgreSQL, Redis, and LocalStack
-- ensures the minimal local `user` table needed by API migrations exists without relying on dashboard migrations
+- ensures the local `user` table matches the dashboard-owned schema needed by API migrations
 - runs API Alembic migrations in the local environment
 - seeds the deterministic local developer account after the local schema is ready
 

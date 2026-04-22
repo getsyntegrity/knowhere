@@ -11,6 +11,7 @@ LOCAL_DEV_USER_ID="local-dev-user"
 LOCAL_DEV_USER_EMAIL="local-dev-user@knowhere.local"
 LOCAL_DEV_USER_TIER="tier_5"
 LOCAL_DEV_API_KEY="sk_local_dev_tier5_full_access"
+RUN_USER_INIT=0
 
 log_step() {
     printf '%s\n' "$1"
@@ -18,6 +19,37 @@ log_step() {
 
 warn() {
     printf 'Warning: %s\n' "$1"
+}
+
+print_usage() {
+    cat <<EOF
+Usage: ./start-dev.sh [--init-user]
+
+Options:
+  --init-user   Create the dashboard-compatible local user table, run API migrations,
+                and seed the deterministic local developer account.
+  -h, --help    Show this help message.
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --init-user)
+                RUN_USER_INIT=1
+                ;;
+            -h|--help)
+                print_usage
+                exit 0
+                ;;
+            *)
+                printf 'Unknown option: %s\n' "$1" >&2
+                print_usage >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
 }
 
 require_uv() {
@@ -126,7 +158,8 @@ run_local_bootstrap() {
 }
 
 print_summary() {
-    cat <<EOF
+    if [[ "${RUN_USER_INIT}" -eq 1 ]]; then
+        cat <<EOF
 
 Local development services are ready.
 
@@ -153,9 +186,33 @@ The helper is idempotent:
 Stop services:
   docker-compose -f ${COMPOSE_FILE} down
 EOF
+        return 0
+    fi
+
+    cat <<EOF
+
+Local development services are ready.
+
+Service endpoints:
+  - LocalStack: http://localhost:4566
+  - PostgreSQL: localhost:5432 (root/root123)
+  - Redis: localhost:6379
+
+Next steps:
+  1. Start the API: pnpm dev:api
+  2. Start the worker: pnpm dev:worker
+
+Optional user bootstrap:
+  - rerun this script with --init-user to create the dashboard-compatible local user table
+  - the same --init-user path also runs API migrations and seeds the deterministic local developer account
+
+Stop services:
+  docker-compose -f ${COMPOSE_FILE} down
+EOF
 }
 
 main() {
+    parse_args "$@"
     log_step "Starting Knowhere local development services..."
     require_docker
 
@@ -164,7 +221,9 @@ main() {
     wait_for_postgres
     wait_for_redis
     wait_for_localstack
-    run_local_bootstrap
+    if [[ "${RUN_USER_INIT}" -eq 1 ]]; then
+        run_local_bootstrap
+    fi
     print_summary
 }
 
