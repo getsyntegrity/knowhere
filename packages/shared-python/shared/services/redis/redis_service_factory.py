@@ -1,6 +1,4 @@
-"""
-Redis服务工厂
-"""
+"""Factory for RedisService instances."""
 import asyncio
 import threading
 import weakref
@@ -11,7 +9,7 @@ from shared.services.redis.redis_service import RedisService
 
 
 class RedisServiceFactory:
-    """Redis服务工厂"""
+    """Factory for Redis service instances."""
 
     # Per-event-loop cache to avoid sharing asyncio-bound Redis state across loops.
     _services_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[RedisService, RedisConfigManager]]" = weakref.WeakKeyDictionary()
@@ -32,13 +30,13 @@ class RedisServiceFactory:
     @classmethod
     def get_service(cls, config_manager: Optional[RedisConfigManager] = None) -> RedisService:
         """
-        获取Redis服务实例
+        Get a Redis service instance.
         
         Args:
-            config_manager: Redis配置管理器，如果为None则使用默认配置
+            config_manager: Redis config manager, or None to use defaults.
         
         Returns:
-            RedisService实例
+            RedisService instance.
         """
         resolved_config = cls._resolve_config_manager(config_manager)
 
@@ -68,13 +66,13 @@ class RedisServiceFactory:
     @classmethod
     def create_service(cls, config_manager: Optional[RedisConfigManager] = None) -> RedisService:
         """
-        创建新的Redis服务实例
+        Create a new Redis service instance.
         
         Args:
-            config_manager: Redis配置管理器，如果为None则使用默认配置
+            config_manager: Redis config manager, or None to use defaults.
         
         Returns:
-            新的RedisService实例
+            New RedisService instance.
         """
         return RedisService(cls._resolve_config_manager(config_manager))
 
@@ -96,7 +94,7 @@ class RedisServiceFactory:
     
     @classmethod
     def reset(cls):
-        """重置工厂状态"""
+        """Reset the factory state."""
         cls._services_by_loop = weakref.WeakKeyDictionary()
         cls._thread_local = threading.local()
         cls._default_config_manager = None

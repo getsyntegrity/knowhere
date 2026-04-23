@@ -402,6 +402,19 @@ def test_selected_utility_files_only_keep_english_comments_and_docstrings() -> N
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
+def test_selected_redis_support_files_only_keep_english_comments_and_docstrings() -> None:
+    for relative_path in (
+        "packages/shared-python/shared/services/redis/chunks_redis_service.py",
+        "packages/shared-python/shared/services/redis/job_info_redis_service.py",
+        "packages/shared-python/shared/services/redis/job_metadata_service.py",
+        "packages/shared-python/shared/services/redis/rate_limit_service.py",
+        "packages/shared-python/shared/services/redis/redis_service_factory.py",
+        "packages/shared-python/shared/services/redis/task_redis_service.py",
+        "packages/shared-python/shared/services/redis/user_redis_service.py",
+    ):
+        assert not find_chinese_comments_and_docstrings(relative_path), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -477,6 +490,7 @@ def main() -> None:
     test_selected_large_repository_and_service_files_only_keep_english_comments_and_docstrings()
     test_selected_small_modules_only_keep_english_comments_and_docstrings()
     test_selected_utility_files_only_keep_english_comments_and_docstrings()
+    test_selected_redis_support_files_only_keep_english_comments_and_docstrings()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
