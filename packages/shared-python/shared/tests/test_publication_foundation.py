@@ -541,6 +541,9 @@ def test_public_safety_scan_blocks_private_cloud_identifiers() -> None:
     assert "arn:aws:[a-z0-9-]+:" in scan_script_text
     assert "dkr\\\\.ecr" in scan_script_text
     assert "amazonaws\\\\.com" in scan_script_text
+    assert "api-staging\\\\.knowhereto\\\\.ai" in scan_script_text
+    assert "api\\\\.internal" in scan_script_text
+    assert "workers\\\\.dev" in scan_script_text
 
 
 def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:

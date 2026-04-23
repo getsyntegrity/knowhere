@@ -54,7 +54,7 @@ run_pattern_scan \
   "hardcoded private cloud identifiers" \
   "arn:aws:[a-z0-9-]+:|[0-9]{12}\\.dkr\\.ecr\\.[A-Za-z0-9-]+\\.amazonaws\\.com"
 run_pattern_scan \
-  "private placeholder domains or emails" \
-  "dev-placeholder@knowhere\\.internal|knowhere\\.internal"
+  "private placeholder domains, staging hosts, or callback-provider hosts" \
+  "dev-placeholder@knowhere\\.internal|knowhere\\.internal|api-staging\\.knowhereto\\.ai|api\\.internal|workers\\.dev"
 
 echo "Public safety scan passed."
