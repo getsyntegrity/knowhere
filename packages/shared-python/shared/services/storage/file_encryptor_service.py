@@ -10,8 +10,8 @@ class FernetPickleEncryptor:
         self.cipher = Fernet(key)
 
     def save_to_file(self, data: any, file_path: str):
-        serialized_data = pickle.dumps(data)  # 序列化数据
-        encrypted_data = self.cipher.encrypt(serialized_data)  # 加密数据
+        serialized_data = pickle.dumps(data)  # Serialize the input payload.
+        encrypted_data = self.cipher.encrypt(serialized_data)  # Encrypt the serialized bytes.
         with open(file_path, 'wb') as f:
             f.write(encrypted_data)
 
@@ -20,21 +20,20 @@ class FernetPickleEncryptor:
             raise FileNotFoundError(f"文件 {file_path} 不存在。")
         with open(file_path, 'rb') as f:
             encrypted_data = f.read()
-        decrypted_data = self.cipher.decrypt(encrypted_data)  # 解密数据
-        loaded_data = pickle.loads(decrypted_data)  # 反序列化数据
+        decrypted_data = self.cipher.decrypt(encrypted_data)  # Decrypt the file bytes.
+        loaded_data = pickle.loads(decrypted_data)  # Deserialize the decrypted payload.
         return loaded_data
 
 encryptor = FernetPickleEncryptor()
 
 if __name__ == "__main__":
-    # 2. 加密数据
+    # 2. Encrypt the payload.
     data = {'key': 'value'}
-    # 3. 保存加密数据到文件
+    # 3. Save the encrypted payload to a file.
     file_path = 'data.pkl'
     encryptor.save_to_file(data, file_path)
     print(f"加密数据已保存到文件: {file_path}")
 
-    # 4. 从文件加载加密数据
+    # 4. Load the encrypted payload back from disk.
     decrypted_data = encryptor.load_from_file(file_path)
     print("从文件加载的解密后数据:", decrypted_data)
-

@@ -1,95 +1,95 @@
 """
-统一存储适配器接口
-支持S3、OSS和MinIO的统一访问接口
+Unified storage adapter interface.
+Supports consistent access patterns across S3, OSS, and MinIO backends.
 """
 from abc import ABC, abstractmethod
 from typing import Any, BinaryIO, Dict, Iterator, Optional
 
 
 class StorageAdapter(ABC):
-    """存储适配器抽象基类"""
+    """Abstract base class for storage adapters."""
     
     @abstractmethod
     def upload_file(self, local_path: str, key: str, bucket: Optional[str] = None) -> Dict[str, Any]:
         """
-        上传本地文件到存储
+        Upload a local file to storage.
         
         Args:
-            local_path: 本地文件路径
-            key: 存储中的对象键
-            bucket: 存储桶名称（如果为None则使用默认bucket）
+            local_path: Local file path.
+            key: Object key in storage.
+            bucket: Bucket name, or None to use the default bucket.
             
         Returns:
-            上传结果信息
+            Upload result metadata.
         """
     
     @abstractmethod
     def upload_fileobj(self, file_obj: BinaryIO, key: str, bucket: Optional[str] = None, 
                       content_type: Optional[str] = None) -> Dict[str, Any]:
         """
-        上传文件对象到存储
+        Upload a file object to storage.
         
         Args:
-            file_obj: 文件对象（可读的二进制流）
-            key: 存储中的对象键
-            bucket: 存储桶名称（如果为None则使用默认bucket）
-            content_type: 内容类型
+            file_obj: Readable binary file object.
+            key: Object key in storage.
+            bucket: Bucket name, or None to use the default bucket.
+            content_type: Content type.
             
         Returns:
-            上传结果信息
+            Upload result metadata.
         """
     
     @abstractmethod
     def download_file(self, key: str, local_path: str, bucket: Optional[str] = None) -> str:
         """
-        从存储下载文件到本地
+        Download an object to a local file.
         
         Args:
-            key: 存储中的对象键
-            local_path: 本地文件路径
-            bucket: 存储桶名称（如果为None则使用默认bucket）
+            key: Object key in storage.
+            local_path: Local file path.
+            bucket: Bucket name, or None to use the default bucket.
             
         Returns:
-            本地文件路径
+            Local file path.
         """
     
     @abstractmethod
     def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
         """
-        从存储下载文件对象
+        Download an object into memory.
         
         Args:
-            key: 存储中的对象键
-            bucket: 存储桶名称（如果为None则使用默认bucket）
+            key: Object key in storage.
+            bucket: Bucket name, or None to use the default bucket.
             
         Returns:
-            文件内容（字节）
+            File contents as bytes.
         """
     
     @abstractmethod
     def delete_object(self, key: str, bucket: Optional[str] = None) -> bool:
         """
-        删除存储中的对象
+        Delete an object from storage.
         
         Args:
-            key: 存储中的对象键
-            bucket: 存储桶名称（如果为None则使用默认bucket）
+            key: Object key in storage.
+            bucket: Bucket name, or None to use the default bucket.
             
         Returns:
-            是否删除成功
+            Whether deletion succeeded.
         """
     
     @abstractmethod
     def list_objects(self, prefix: str = "", bucket: Optional[str] = None) -> Iterator[str]:
         """
-        列出存储中的对象
+        List objects in storage.
         
         Args:
-            prefix: 对象键前缀
-            bucket: 存储桶名称（如果为None则使用默认bucket）
+            prefix: Object-key prefix.
+            bucket: Bucket name, or None to use the default bucket.
             
         Yields:
-            对象键
+            Object keys.
         """
     
     @abstractmethod
@@ -97,42 +97,41 @@ class StorageAdapter(ABC):
                               bucket: Optional[str] = None, method: str = "GET",
                               headers: Optional[Dict[str, str]] = None) -> str:
         """
-        生成预签名URL
+        Generate a presigned URL.
         
         Args:
-            key: 存储中的对象键
-            expiration: 过期时间（秒）
-            bucket: 存储桶名称（如果为None则使用默认bucket）
-            method: HTTP方法（GET/PUT）
-            headers: 参与签名的请求头（例如 Content-Type 等）
+            key: Object key in storage.
+            expiration: Expiration time in seconds.
+            bucket: Bucket name, or None to use the default bucket.
+            method: HTTP method, such as GET or PUT.
+            headers: Request headers included in the signature, such as Content-Type.
             
         Returns:
-            预签名URL
+            Presigned URL.
         """
     
     @abstractmethod
     def exists(self, key: str, bucket: Optional[str] = None) -> bool:
         """
-        检查对象是否存在
+        Check whether an object exists.
         
         Args:
-            key: 存储中的对象键
-            bucket: 存储桶名称（如果为None则使用默认bucket）
+            key: Object key in storage.
+            bucket: Bucket name, or None to use the default bucket.
             
         Returns:
-            对象是否存在
+            Whether the object exists.
         """
     
     @abstractmethod
     def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:
         """
-        获取对象大小
+        Get object size.
         
         Args:
-            key: 存储中的对象键
-            bucket: 存储桶名称（如果为None则使用默认bucket）
+            key: Object key in storage.
+            bucket: Bucket name, or None to use the default bucket.
             
         Returns:
-            对象大小（字节），如果不存在返回None
+            Object size in bytes, or None when the object is missing.
         """
-

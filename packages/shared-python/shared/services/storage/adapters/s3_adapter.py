@@ -1,6 +1,4 @@
-"""
-S3存储适配器实现（支持AWS S3和MinIO）
-"""
+"""S3 storage adapter implementation for AWS S3 and MinIO."""
 from typing import Any, BinaryIO, Dict, Iterator, Optional
 
 import boto3
@@ -12,25 +10,25 @@ from shared.services.storage.storage_adapter import StorageAdapter
 
 
 class S3StorageAdapter(StorageAdapter):
-    """S3存储适配器（支持AWS S3和MinIO）"""
+    """S3 storage adapter supporting AWS S3 and MinIO."""
     
     def __init__(self, s3_client: 'boto3.client', default_bucket: str):
         """
-        初始化S3适配器
+        Initialize the S3 adapter.
         
         Args:
-            s3_client: boto3 S3客户端
-            default_bucket: 默认存储桶名称
+            s3_client: boto3 S3 client.
+            default_bucket: Default bucket name.
         """
         self.s3_client = s3_client
         self.default_bucket = default_bucket
     
     def _get_bucket(self, bucket: Optional[str] = None) -> str:
-        """获取存储桶名称"""
+        """Get the effective bucket name."""
         return bucket or self.default_bucket
     
     def upload_file(self, local_path: str, key: str, bucket: Optional[str] = None) -> Dict[str, Any]:
-        """上传本地文件到S3"""
+        """Upload a local file to S3."""
         bucket_name = self._get_bucket(bucket)
         try:
             self.s3_client.upload_file(local_path, bucket_name, key)
@@ -51,7 +49,7 @@ class S3StorageAdapter(StorageAdapter):
     
     def upload_fileobj(self, file_obj: BinaryIO, key: str, bucket: Optional[str] = None,
                       content_type: Optional[str] = None) -> Dict[str, Any]:
-        """上传文件对象到S3"""
+        """Upload a file object to S3."""
         bucket_name = self._get_bucket(bucket)
         try:
             extra_args = {}
@@ -80,7 +78,7 @@ class S3StorageAdapter(StorageAdapter):
             )
     
     def download_file(self, key: str, local_path: str, bucket: Optional[str] = None) -> str:
-        """从S3下载文件到本地"""
+        """Download an S3 object to a local file."""
         bucket_name = self._get_bucket(bucket)
         try:
             self.s3_client.download_file(bucket_name, key, local_path)
@@ -96,7 +94,7 @@ class S3StorageAdapter(StorageAdapter):
             )
     
     def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
-        """从S3下载文件对象"""
+        """Download an S3 object into memory."""
         bucket_name = self._get_bucket(bucket)
         try:
             response = self.s3_client.get_object(Bucket=bucket_name, Key=key)
@@ -111,7 +109,7 @@ class S3StorageAdapter(StorageAdapter):
             )
     
     def delete_object(self, key: str, bucket: Optional[str] = None) -> bool:
-        """删除S3中的对象"""
+        """Delete an S3 object."""
         bucket_name = self._get_bucket(bucket)
         try:
             self.s3_client.delete_object(Bucket=bucket_name, Key=key)
@@ -123,7 +121,7 @@ class S3StorageAdapter(StorageAdapter):
             return False
     
     def list_objects(self, prefix: str = "", bucket: Optional[str] = None) -> Iterator[str]:
-        """列出S3中的对象"""
+        """List S3 objects."""
         bucket_name = self._get_bucket(bucket)
         try:
             paginator = self.s3_client.get_paginator('list_objects_v2')
@@ -141,13 +139,13 @@ class S3StorageAdapter(StorageAdapter):
     def generate_presigned_url(self, key: str, expiration: int = 3600,
                               bucket: Optional[str] = None, method: str = "GET",
                               headers: Optional[Dict[str, str]] = None) -> str:
-        """生成S3预签名URL"""
+        """Generate an S3 presigned URL."""
         bucket_name = self._get_bucket(bucket)
         try:
             params = {'Bucket': bucket_name, 'Key': key}
             
-            # 当进行PUT并且指定了Content-Type时，将其纳入预签名参数，
-            # 这样S3端会设置对象的Content-Type，同时与前端请求头保持一致
+            # Include Content-Type in PUT signatures so object metadata matches
+            # the request headers used by the client.
             if method.upper() == "PUT" and headers:
                 content_type = headers.get("Content-Type") or headers.get("content-type")
                 if content_type:
@@ -174,7 +172,7 @@ class S3StorageAdapter(StorageAdapter):
             )
     
     def exists(self, key: str, bucket: Optional[str] = None) -> bool:
-        """检查S3中的对象是否存在"""
+        """Check whether an S3 object exists."""
         bucket_name = self._get_bucket(bucket)
         try:
             self.s3_client.head_object(Bucket=bucket_name, Key=key)
@@ -189,7 +187,7 @@ class S3StorageAdapter(StorageAdapter):
             )
     
     def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:
-        """获取S3对象大小"""
+        """Get an S3 object size."""
         bucket_name = self._get_bucket(bucket)
         try:
             response = self.s3_client.head_object(Bucket=bucket_name, Key=key)
@@ -203,4 +201,3 @@ class S3StorageAdapter(StorageAdapter):
                 operation="get_object_size",
                 original_exception=e
             )
-
