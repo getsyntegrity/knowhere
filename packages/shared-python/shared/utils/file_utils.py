@@ -1,7 +1,4 @@
-"""
-文件操作通用工具函数
-这些函数被多个服务使用，保留在 shared-python 中
-"""
+"""General file utilities shared across multiple services."""
 import os
 
 import pandas as pd
@@ -9,12 +6,12 @@ import pandas as pd
 
 def clean_file(path_, mode='remove', cols=None):
     """
-    清理文件
+    Clean or remove a file.
     
     Args:
-        path_: 文件路径
-        mode: 清理模式 ('remove' 删除文件, 'clean' 清空内容)
-        cols: 列名（用于 CSV 文件）
+        path_: File path.
+        mode: Cleanup mode ('remove' deletes the file, 'clean' clears content).
+        cols: Column names used when recreating a CSV.
     """
     try:
         if mode == 'remove':
@@ -37,14 +34,14 @@ def clean_file(path_, mode='remove', cols=None):
 
 def path_handle(path, mode):
     """
-    路径处理工具函数
+    Path handling helper.
     
     Args:
-        path: 路径字符串
-        mode: 处理模式 ('split', 'extract-base', 'sanitize', 'clean_single')
+        path: Path string.
+        mode: Handling mode ('split', 'extract-base', 'sanitize', 'clean_single').
     
     Returns:
-        处理后的路径或路径列表
+        Processed path or path list.
     """
     import re
     illegal_chars = r'[\t\n<>：:;；"　/\\|?*]'
@@ -63,7 +60,7 @@ def path_handle(path, mode):
         path = path.replace("\\", "/")
         parts = path.split("/")
         sanitized_parts = []
-        for part in parts:  # 用正则替换掉非法字符（包括 / 本身）
+        for part in parts:  # Replace illegal characters with a safe placeholder.
             clean_part = re.sub(illegal_chars, safe_char, part)
             sanitized_parts.append(clean_part)
         return os.sep.join(sanitized_parts)
@@ -72,4 +69,3 @@ def path_handle(path, mode):
         path = re.sub(illegal_chars, safe_char, path)
         return path
     return None
-

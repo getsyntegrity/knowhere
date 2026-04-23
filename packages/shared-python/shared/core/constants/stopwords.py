@@ -1,5 +1,5 @@
 """
-百度停用词表 (中英文混合)
+Baidu stopword list (mixed Chinese and English).
 Source: https://github.com/goto456/stopwords
 """
 

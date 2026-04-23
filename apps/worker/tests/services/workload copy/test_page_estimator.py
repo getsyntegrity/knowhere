@@ -52,7 +52,7 @@ class TestCountCnEn:
 
     def test_mixed_content(self):
         """Mixed Chinese, English, and numbers."""
-        # 你好 (2 Chinese) + Hello World (2 English) + 123 (1 number) = 5
+        # Two Chinese chars + two English words + one numeric token = 5.
         assert count_cn_en("你好Hello World 123") == 5
 
     def test_special_characters_ignored(self):

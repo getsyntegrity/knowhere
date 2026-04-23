@@ -1,7 +1,4 @@
-"""
-文本处理通用工具函数
-这些函数被多个服务使用，保留在 shared-python 中
-"""
+"""Text utilities shared across services."""
 import re
 import warnings
 from typing import List, Optional
@@ -19,13 +16,13 @@ import jieba
 
 def remove_duplicates_orderkept(input_list: List) -> List:
     """
-    移除重复项但保持顺序
+    Remove duplicates while preserving order.
     
     Args:
-        input_list: 输入列表
+        input_list: Input list.
     
     Returns:
-        去重后的列表
+        Deduplicated list.
     """
     seen = set()
     output_list = []
@@ -40,7 +37,7 @@ def remove_duplicates_orderkept(input_list: List) -> List:
 _CN_EN_NUM_RE = re.compile(r'[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?')
 
 def count_cn_en(text: str) -> int:
-    """统计中英文单词和数字的数量（单次正则扫描）"""
+    """Count Chinese chars, English words, and numbers in one regex pass."""
     if not text:
         return 0
     return len(_CN_EN_NUM_RE.findall(str(text)))
@@ -50,8 +47,8 @@ def _is_meaningful_token(token: str) -> bool:
     """Check if a token is worth keeping: has useful characters and isn't pure noise."""
     if not _CN_EN_NUM_RE.search(token):
         return False
-    # Filter single-character tokens: '共','年','月','1','9','m' etc.
-    # Multi-char English words like 'PPO' or Chinese words like '施工' are kept.
+    # Filter single-character tokens such as one-letter units or standalone digits.
+    # Keep longer English or Chinese word tokens when they carry semantic meaning.
     if len(token) == 1:
         return False
     return True
@@ -114,4 +111,3 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
         tokens = remove_duplicates_orderkept(tokens)
         res_contents.append(link_char.join(tokens))
     return res_contents
-

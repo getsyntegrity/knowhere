@@ -92,7 +92,7 @@ def _make_title_from_text(page_text: str, page_num: int, max_len: int = 25) -> s
     """
     Build a chunk title from the first and last non-empty lines + page number.
     
-    Example: "P5 室外出入口一般规定...比例1:50"
+    Example: "P5 General entrance requirements...Scale 1:50"
     """
     lines = [l.strip() for l in page_text.split("\n") if l.strip()]
     if not lines:

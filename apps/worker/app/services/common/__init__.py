@@ -1,7 +1,4 @@
-"""
-通用服务模块
-包含知识库工具函数等通用服务
-"""
+"""Common worker services, including reusable knowledge-base helpers."""
 
 from shared.utils.device_utils import check_internet
 from shared.utils.file_utils import clean_file, path_handle

@@ -373,6 +373,35 @@ def test_selected_large_repository_and_service_files_only_keep_english_comments_
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
+def test_selected_small_modules_only_keep_english_comments_and_docstrings() -> None:
+    for relative_path in (
+        "apps/api/app/repositories/__init__.py",
+        "apps/worker/app/core/tasks/__init__.py",
+        "apps/worker/app/services/__init__.py",
+        "apps/worker/app/services/common/__init__.py",
+        "packages/shared-python/shared/__init__.py",
+        "packages/shared-python/shared/models/database/knowledge_base.py",
+        "packages/shared-python/shared/models/database/stripe_price_config.py",
+        "packages/shared-python/shared/services/ai/response_process_service.py",
+        "packages/shared-python/shared/services/redis/__init__.py",
+    ):
+        assert not find_chinese_comments_and_docstrings(relative_path), relative_path
+
+
+def test_selected_utility_files_only_keep_english_comments_and_docstrings() -> None:
+    for relative_path in (
+        "apps/worker/app/services/document_parser/atlas_parser.py",
+        "apps/worker/tests/services/workload copy/test_page_estimator.py",
+        "packages/shared-python/shared/core/constants/stopwords.py",
+        "packages/shared-python/shared/services/ai/prompt_service.py",
+        "packages/shared-python/shared/utils/file_utils.py",
+        "packages/shared-python/shared/utils/gc_utils.py",
+        "packages/shared-python/shared/utils/math_utils.py",
+        "packages/shared-python/shared/utils/text_utils.py",
+    ):
+        assert not find_chinese_comments_and_docstrings(relative_path), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -446,6 +475,8 @@ def main() -> None:
     test_selected_files_only_keep_english_comments_and_docstrings()
     test_selected_repository_files_only_keep_english_comments_and_docstrings()
     test_selected_large_repository_and_service_files_only_keep_english_comments_and_docstrings()
+    test_selected_small_modules_only_keep_english_comments_and_docstrings()
+    test_selected_utility_files_only_keep_english_comments_and_docstrings()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()

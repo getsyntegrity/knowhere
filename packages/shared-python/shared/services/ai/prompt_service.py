@@ -261,8 +261,10 @@ def build_prompt(task, texts, query, **kwargs):
     #         Scan ALL candidate heading rows across the entire input.
     #         Identify every distinct structural/numbering pattern that signals hierarchy depth, for example:
     #         - Decimal numbering: "1", "1.1", "1.1.1" → depth increases with dot count
-    #         - Enumeration styles: "一、" "（一）" "1、" "①" → shallower to deeper
-    #         - Chapter/section keywords: "Chapter X", "Part X", "第X章", "第X节"
+    #         - Enumeration styles such as Chinese numerals, numbered bullets,
+    #           or circled digits map from shallower to deeper levels
+    #         - Chapter/section keywords: "Chapter X", "Part X", and Chinese
+    #           chapter/section markers
     #         - Indentation or formatting cues visible in the text prefix
     #         Rank these patterns from shallowest to deepest to form a pattern → level mapping.
     #

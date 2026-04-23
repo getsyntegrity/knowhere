@@ -1,6 +1,5 @@
-"""
-知识库服务模块
-"""
-# KBOrchestrator 已移除，只在 API 服务中使用
+"""Worker service package."""
+
+# KBOrchestrator was removed and now lives only in the API service.
 
 __all__ = []

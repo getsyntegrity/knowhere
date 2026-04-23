@@ -1,6 +1,4 @@
-"""
-Stripe价格配置数据模型
-"""
+"""Stripe price configuration model."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,15 +12,15 @@ from shared.core.database import Base
 
 
 class StripePriceConfig(Base):
-    """Stripe价格配置模型"""
+    """Persisted Stripe price configuration."""
     __tablename__ = "stripe_price_configs"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     price_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     product_type: Mapped[str] = mapped_column(String(50), nullable=False)  # subscription/credits_package
-    plan_id: Mapped[str] = mapped_column(String(50), nullable=False)  # plus/pro/credits_500等
+    plan_id: Mapped[str] = mapped_column(String(50), nullable=False)  # plus/pro/credits_500 and similar plan IDs
     credits_amount: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default='0')  # Micro-credits (1 display credit = 1,000,000 micros)
-    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')  # 金额（分，必填，用于验证和前端显示）
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')  # Amount in cents, required for validation and UI display.
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default='CNY')
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     extra_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column("metadata", JSON, nullable=True)
@@ -45,9 +43,9 @@ class StripePriceConfig(Base):
         return f"<StripePriceConfig(id={self.id}, price_id='{self.price_id}', product_type='{self.product_type}', plan_id='{self.plan_id}')>"
     
     def is_subscription(self) -> bool:
-        """检查是否为订阅类型"""
+        """Return whether the price is a subscription."""
         return self.product_type == 'subscription'
     
     def is_credits_package(self) -> bool:
-        """检查是否为Credits包类型"""
+        """Return whether the price is a credits package."""
         return self.product_type == 'credits_package'

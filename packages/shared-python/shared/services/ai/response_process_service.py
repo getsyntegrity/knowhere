@@ -37,7 +37,7 @@ def eval_response(resp, answer_key=None):
         )
 
     try:
-        # 直接尝试解析 JSON
+        # Try parsing JSON directly first.
         logger.debug(f'eval_response cleaned: {cleaned}')
         answer = json.loads(cleaned)
         logger.debug(f'✅ 直接解析 JSON 成功')
@@ -46,12 +46,12 @@ def eval_response(resp, answer_key=None):
         return answer
     except Exception as e:
         logger.warning(f'⚠️ 直接解析失败，尝试提取JSON标识再解析 {e}')
-    # 尝试提取 ```json ... ``` 中的内容
+    # Try extracting content from a ```json ... ``` fenced block.
     match = re.search(r'```json\s*([\s\S]*?)\s*```', cleaned, re.DOTALL)
     if match:
         json_block = match.group(1).strip()
     else:
-        # 尝试手动去除 ```json / ``` 包裹（不依赖匹配）
+        # Fall back to stripping ```json / ``` wrappers without relying on regex matches.
         json_block = re.sub(r'^```json', '', cleaned)
         json_block = re.sub(r'```$', '', json_block).strip()
     try:
@@ -68,5 +68,4 @@ def eval_response(resp, answer_key=None):
             
     
     
-
 

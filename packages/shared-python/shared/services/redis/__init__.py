@@ -1,6 +1,4 @@
-"""
-Redis服务模块
-"""
+"""Redis service exports."""
 from .job_info_redis_service import JobInfoRedisService
 from .job_metadata_service import JobMetadataService
 from .redis_alerts import AlertRule, RedisAlertManager, RedisAlertNotifier

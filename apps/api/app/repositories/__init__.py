@@ -1,7 +1,4 @@
-"""
-Repositories模块
-数据访问层，提供数据库操作接口
-"""
+"""Repository exports for the data-access layer."""
 from .api_key_repository import APIKeyRepository
 from .base_repository import BaseRepository
 from .job_repository import JobRepository
@@ -31,4 +28,3 @@ __all__ = [
 
     "WebhookRepository",
 ]
-

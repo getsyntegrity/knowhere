@@ -13,9 +13,7 @@ def utc_now():
 
 
 class ContentBase(Base):
-    """
-    知识库内容主表
-    """
+    """Primary table for knowledge-base content."""
     __tablename__ = "knowledge_base"
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="内容顺序标识符")
     content = Column(Text, nullable=True, comment="内容的具体文本")
@@ -52,9 +50,7 @@ class PathPydantic(BaseModel):
 
 
 class FileDirectory(Base):
-    """
-    用户文件目录结构表
-    """
+    """Directory tree table for user files."""
     __tablename__ = "file_directory"
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="目录唯一标识符")
     title = Column(String(255), nullable=False, comment="目录标题")
@@ -63,7 +59,7 @@ class FileDirectory(Base):
     create_time = Column(DateTime, nullable=True, default=utc_now, comment="创建时间")
     update_time = Column(DateTime, nullable=True, default=utc_now, onupdate=utc_now, comment="更新时间")
 
-    # 通过parent_id实现自引用关系
+    # Self-referential relationship implemented through parent_id.
     parent: Mapped["FileDirectory"] = relationship(
         "FileDirectory",
         remote_side=[id],
