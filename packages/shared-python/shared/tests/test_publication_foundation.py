@@ -434,6 +434,12 @@ def test_selected_storage_support_files_only_keep_english_comments_and_docstring
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
+def test_storage_upload_service_only_keeps_english_comments_and_docstrings() -> None:
+    assert not find_chinese_comments_and_docstrings(
+        "packages/shared-python/shared/services/storage/file_upload_service.py"
+    )
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -512,6 +518,7 @@ def main() -> None:
     test_selected_redis_support_files_only_keep_english_comments_and_docstrings()
     test_selected_redis_core_files_only_keep_english_comments_and_docstrings()
     test_selected_storage_support_files_only_keep_english_comments_and_docstrings()
+    test_storage_upload_service_only_keeps_english_comments_and_docstrings()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
