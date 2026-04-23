@@ -1,16 +1,16 @@
 """
-知识库管理编排服务
+Knowledge-base workflow orchestration.
 """
 from typing import Optional
 
 from shared.core.celery_router import task_router
-# 注意：任务已迁移到 Worker 服务，通过任务名称字符串引用
+# Tasks now run in the Worker service and are referenced by task name.
 from shared.core.exceptions.domain_exceptions import KnowhereException, WorkerHandlingException
 from loguru import logger
 
 
 class KBOrchestrator:
-    """知识库编排器"""
+    """Coordinate knowledge-base processing jobs."""
     
     def __init__(self):
         self.task_router = task_router
@@ -25,21 +25,21 @@ class KBOrchestrator:
         user_id: str = None,
     ) -> str:
         """
-        启动知识库管理工作流
-        
+        Start the knowledge-base workflow.
+
         Args:
-            db: 数据库会话
-            job_id: 任务ID
-            source_type: 文件来源类型
-            file_path: 文件路径（直传时使用）
-            file_url: 文件URL（URL外链时使用）
-            user_id: 用户ID
-            
+            db: Database session.
+            job_id: Job identifier.
+            source_type: Source type.
+            file_path: Uploaded file path when direct upload is used.
+            file_url: Source URL when URL ingestion is used.
+            user_id: User identifier.
+
         Returns:
-            str: 工作流ID
+            str: Celery task identifier.
         """
         try:
-            # 如果source_type是url但没有提供file_url，尝试从job_metadata中获取
+            # When the source is a URL, recover file_url from job metadata if needed.
             if source_type == "url" and not file_url:
                 from shared.models.schemas.job_metadata import JobMetadataHelper
                 from app.repositories.job_repository import JobRepository
@@ -50,16 +50,16 @@ class KBOrchestrator:
                 job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
                 file_url = JobMetadataHelper.get_field(job_metadata, "file_url")
             
-            # 获取队列名称
+            # Resolve the queue name for this job.
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
             task_kwargs = {
                 "user_id": user_id,
                 "job_type": "kb_management",
             }
             
-            # 启动单任务（文件已通过S3直传）
-            # 任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息
-            # Webhook和邮件发送已迁移到API服务，由消息处理器处理
+            # Start the single worker task. Upload is already complete via S3.
+            # The task handles parsing, vectorization, ZIP generation, S3 upload,
+            # and result publication. Webhook and email delivery stay in the API.
             from celery import signature
             task_signature = signature(
                 'app.core.tasks.kb_tasks.parse_task',
@@ -67,33 +67,33 @@ class KBOrchestrator:
                 kwargs=task_kwargs,
             ).set(queue=queue_name)
             
-            # 启动任务
+            # Enqueue the task.
             result = task_signature.apply_async()
-            
-            logger.info(f"知识库管理任务已启动: job_id={job_id}, task_id={result.id}, queue={queue_name}")
+
+            logger.info(f"Knowledge-base workflow started: job_id={job_id}, task_id={result.id}, queue={queue_name}")
             
             return result.id
             
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"启动知识库管理工作流失败: {e}")
+            logger.error(f"Failed to start knowledge-base workflow: {e}")
             raise WorkerHandlingException(
-                internal_message=f"启动知识库管理工作流失败: {str(e)}",
+                internal_message=f"Failed to start knowledge-base workflow: {str(e)}",
                 original_exception=e
             )
     
     def create_workflow_chain(self, job_id: str, user_id: str, queue_name: str = None):
         """
-        创建知识库管理任务（用于测试或手动执行）
-        
+        Create the workflow signature for tests or manual execution.
+
         Args:
-            job_id: 任务ID
-            user_id: 用户ID
-            queue_name: 队列名称（可选）
-            
+            job_id: Job identifier.
+            user_id: User identifier.
+            queue_name: Optional explicit queue name.
+
         Returns:
-            signature: Celery任务签名
+            signature: Celery task signature.
         """
         if not queue_name:
             queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
@@ -104,8 +104,9 @@ class KBOrchestrator:
         
         from celery import signature
 
-        # 返回单任务签名（任务包含：解析、向量化、生成ZIP、上传S3、发布结果消息）
-        # Webhook和邮件发送已迁移到API服务，由消息处理器处理
+        # Return the single-task signature. Parsing, vectorization, ZIP generation,
+        # S3 upload, and publication happen in the worker. Webhook and email
+        # delivery remain in the API service.
         return signature(
             'app.core.tasks.kb_tasks.parse_task',
             args=[job_id],
@@ -114,13 +115,13 @@ class KBOrchestrator:
     
     def cancel_workflow(self, workflow_id: str) -> bool:
         """
-        取消工作流
-        
+        Cancel a workflow.
+
         Args:
-            workflow_id: 工作流ID
-            
+            workflow_id: Workflow identifier.
+
         Returns:
-            bool: 是否成功取消
+            bool: Whether cancellation succeeded.
         """
         try:
             from shared.core.celery_app import get_celery_app
@@ -129,9 +130,9 @@ class KBOrchestrator:
             result = celery_app.AsyncResult(workflow_id)
             result.revoke(terminate=True)
             
-            logger.info(f"工作流已取消: {workflow_id}")
+            logger.info(f"Workflow cancelled: {workflow_id}")
             return True
-            
+
         except Exception as e:
-            logger.error(f"取消工作流失败: {e}")
+            logger.error(f"Failed to cancel workflow: {e}")
             return False

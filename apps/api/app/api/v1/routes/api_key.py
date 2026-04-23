@@ -1,5 +1,5 @@
 """
-API Key 管理 API
+API key management endpoints.
 """
 
 from shared.core.database import get_db
@@ -24,13 +24,13 @@ from shared.core.exceptions.domain_exceptions import (
 router = APIRouter(tags=["API Key Management"])
 
 
-@router.post("/create", summary="创建API Key")
+@router.post("/create", summary="Create an API key")
 async def create_api_key(
     request: CreateAPIKeyRequest,
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """创建API Key"""
+    """Create an API key."""
     api_key_service = APIKeyService()
     
     try:
@@ -59,12 +59,12 @@ async def create_api_key(
         )
 
 
-@router.get("/list", summary="获取API Key列表")
+@router.get("/list", summary="List API keys")
 async def list_api_keys(
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取API Key列表"""
+    """List API keys for the current user."""
     api_key_service = APIKeyService()
     
     try:
@@ -95,13 +95,13 @@ async def list_api_keys(
         )
 
 
-@router.post("/regenerate", summary="重新生成API Key")
+@router.post("/regenerate", summary="Regenerate an API key")
 async def regenerate_api_key(
     request: RegenerateAPIKeyRequest,
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """重新生成API Key"""
+    """Regenerate an API key."""
     api_key_service = APIKeyService()
     
     try:
@@ -113,7 +113,7 @@ async def regenerate_api_key(
         
         return {
             "api_key": new_api_key,
-            "message": "API Key已重新生成"
+            "message": "API key regenerated"
         }
         
     except NotFoundException:
@@ -124,13 +124,13 @@ async def regenerate_api_key(
         )
 
 
-@router.post("/revoke", summary="撤销API Key")
+@router.post("/revoke", summary="Revoke an API key")
 async def revoke_api_key(
     request: RevokeAPIKeyRequest,
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """撤销API Key"""
+    """Revoke an API key."""
     api_key_service = APIKeyService()
     
     try:
@@ -139,7 +139,7 @@ async def revoke_api_key(
             api_key_id=request.api_key_id,
             user_id=current_user.user_id
         )
-        return {"message": "API Key已撤销"}
+        return {"message": "API key revoked"}
             
     except NotFoundException:
         raise
@@ -151,13 +151,13 @@ async def revoke_api_key(
         )
 
 
-@router.get("/{api_key_id}", summary="获取API Key详情")
+@router.get("/{api_key_id}", summary="Get API key details")
 async def get_api_key(
     api_key_id: str,
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取单个API Key详情"""
+    """Get details for a single API key."""
     api_key_service = APIKeyService()
     
     try:
@@ -187,19 +187,19 @@ async def get_api_key(
         )
 
 
-@router.put("/{api_key_id}/toggle", summary="启用/禁用API Key")
+@router.put("/{api_key_id}/toggle", summary="Enable or disable an API key")
 async def toggle_api_key(
     api_key_id: str,
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """启用/禁用API Key"""
+    """Enable or disable an API key."""
     api_key_service = APIKeyService()
     
     try:
         success = await api_key_service.toggle_api_key(db, current_user.user_id, api_key_id)
         if success:
-            return {"message": "API Key状态更新成功"}
+            return {"message": "API key status updated"}
         else:
             raise APIKeyOperationException(
                 internal_message="Failed to toggle API Key status"

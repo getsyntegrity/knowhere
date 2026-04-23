@@ -197,6 +197,45 @@ def test_public_env_examples_and_selected_dev_assets_are_english_first() -> None
     assert "复制此文件" not in worker_env_text
 
 
+def test_active_alembic_assets_and_local_init_files_are_public_safe() -> None:
+    for relative_path in (
+        "packages/shared-python/pyproject.toml",
+        "apps/api/alembic/env.py",
+        "apps/api/alembic.ini",
+        "apps/api/alembic/versions/33eff537939b_baseline_20260305.py",
+        "apps/api/scripts/reset_alembic.py",
+        "deploy/local-dev/minio/init/setup-webhook.sh",
+        "deploy/local-dev/mysql/init/01-init.sql",
+        "deploy/local-dev/postgres/init/01-init.sql",
+        "deploy/local-dev/localstack/init/setup-aws-resources.sh",
+    ):
+        file_text: str = read_text(relative_path)
+        assert not CHINESE_TEXT_PATTERN.search(file_text), relative_path
+        assert "*** Add File:" not in file_text, relative_path
+        assert "*** Update File:" not in file_text, relative_path
+        assert "*** Begin Patch" not in file_text, relative_path
+        assert "*** End Patch" not in file_text, relative_path
+
+    assert not (REPO_ROOT / "apps/api/alembic/versions_archive_20260305").exists()
+    assert "knowhere.internal" not in read_text("README.md")
+
+
+def test_selected_active_api_text_surfaces_are_english_first() -> None:
+    for relative_path in (
+        "apps/api/app/api/api_router.py",
+        "apps/api/app/api/v1/api_v1.py",
+        "apps/api/app/api/v1/health.py",
+        "apps/api/app/api/v1/routes/api_key.py",
+        "apps/api/app/api/v1/routes/jobs.py",
+        "apps/api/app/api/v1/routes/knowledge_base.py",
+        "apps/api/app/api/v1/routes/s3_events.py",
+        "apps/api/app/api/v1/routes/version.py",
+        "apps/api/app/middleware/moesif_middleware.py",
+        "apps/api/app/services/knowledge/kb_orchestrator.py",
+    ):
+        assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -243,6 +282,13 @@ def test_public_typecheck_script_targets_selected_api_entrypoints() -> None:
         assert relative_path in typecheck_script_text, relative_path
 
 
+def test_public_check_script_runs_public_safety_scan() -> None:
+    check_public_text: str = read_text("scripts/check-public.sh")
+
+    assert (REPO_ROOT / "scripts/scan-public-safety.sh").exists()
+    assert "scripts/scan-public-safety.sh" in check_public_text
+
+
 def main() -> None:
     test_publication_foundation_files_exist()
     test_license_and_notice_match_apache_2_baseline()
@@ -254,10 +300,13 @@ def main() -> None:
     test_repo_surface_is_python_first()
     test_public_docs_cover_services_release_and_local_verification()
     test_public_env_examples_and_selected_dev_assets_are_english_first()
+    test_active_alembic_assets_and_local_init_files_are_public_safe()
+    test_selected_active_api_text_surfaces_are_english_first()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
     test_public_typecheck_script_targets_selected_api_entrypoints()
+    test_public_check_script_runs_public_safety_scan()
 
 
 if __name__ == "__main__":

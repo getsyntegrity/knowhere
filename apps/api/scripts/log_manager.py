@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-日志管理脚本
-用于管理分离的日志文件：生产日志、调试日志、错误日志
+Log-management utility.
+
+Use this helper to inspect, clean, and compress production, debug, and error logs.
 """
 
 import argparse
@@ -12,14 +13,14 @@ import shutil
 
 
 class LogManager:
-    """日志管理器"""
+    """Manage repo-local log files."""
     
     def __init__(self, logs_dir="logs"):
         self.logs_dir = Path(logs_dir)
         self.logs_dir.mkdir(exist_ok=True)
     
     def list_logs(self, log_type=None):
-        """列出日志文件"""
+        """List matching log files."""
         log_files = []
         
         for log_file in self.logs_dir.glob("*.log*"):
@@ -29,20 +30,20 @@ class LogManager:
             else:
                 log_files.append(log_file)
         
-        # 按修改时间排序
+        # Sort by modification time, newest first.
         log_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
         
         return log_files
     
     def show_logs(self, log_type=None, lines=50):
-        """显示日志内容"""
+        """Show the tail of the newest matching log file."""
         log_files = self.list_logs(log_type)
         
         if not log_files:
-            print(f"未找到{'指定类型' if log_type else ''}的日志文件")
+            print(f"No {'matching ' if log_type else ''}log files found")
             return
         
-        print(f"找到 {len(log_files)} 个日志文件:")
+        print(f"Found {len(log_files)} log files:")
         for i, log_file in enumerate(log_files):
             size = log_file.stat().st_size
             mtime = datetime.fromtimestamp(log_file.stat().st_mtime)
@@ -50,7 +51,7 @@ class LogManager:
         
         if log_files:
             latest_file = log_files[0]
-            print(f"\n显示最新日志文件: {latest_file.name}")
+            print(f"\nShowing the newest log file: {latest_file.name}")
             print("-" * 80)
             
             try:
@@ -61,15 +62,15 @@ class LogManager:
                     with open(latest_file, 'r', encoding='utf-8') as f:
                         content = f.readlines()
                 
-                # 显示最后N行
+                # Print the last N lines.
                 for line in content[-lines:]:
                     print(line.rstrip())
                     
             except Exception as e:
-                print(f"读取日志文件失败: {e}")
+                print(f"Failed to read the log file: {e}")
     
     def clean_old_logs(self, days=7, dry_run=True):
-        """清理旧日志文件"""
+        """Delete log files older than the retention window."""
         cutoff_date = datetime.now() - timedelta(days=days)
         cleaned_files = []
         
@@ -81,20 +82,20 @@ class LogManager:
                     log_file.unlink()
         
         if cleaned_files:
-            print(f"找到 {len(cleaned_files)} 个超过 {days} 天的日志文件:")
+            print(f"Found {len(cleaned_files)} log files older than {days} days:")
             for log_file in cleaned_files:
                 file_time = datetime.fromtimestamp(log_file.stat().st_mtime)
                 print(f"  - {log_file.name} ({file_time.strftime('%Y-%m-%d %H:%M:%S')})")
             
             if not dry_run:
-                print("已删除上述文件")
+                print("Deleted the files above")
             else:
-                print("(预览模式，使用 --execute 参数实际删除)")
+                print("(Preview mode. Use --execute to delete files.)")
         else:
-            print(f"没有找到超过 {days} 天的日志文件")
+            print(f"No log files older than {days} days were found")
     
     def compress_logs(self, days=1):
-        """压缩旧日志文件"""
+        """Compress log files older than the retention window."""
         cutoff_date = datetime.now() - timedelta(days=days)
         compressed_files = []
         
@@ -110,17 +111,17 @@ class LogManager:
                         log_file.unlink()
                         compressed_files.append(compressed_file)
                     except Exception as e:
-                        print(f"压缩 {log_file.name} 失败: {e}")
+                        print(f"Failed to compress {log_file.name}: {e}")
         
         if compressed_files:
-            print(f"已压缩 {len(compressed_files)} 个日志文件:")
+            print(f"Compressed {len(compressed_files)} log files:")
             for compressed_file in compressed_files:
                 print(f"  - {compressed_file.name}")
         else:
-            print(f"没有找到需要压缩的日志文件")
+            print("No log files needed compression")
     
     def get_log_stats(self):
-        """获取日志统计信息"""
+        """Return log-file statistics grouped by type."""
         stats = {
             'production': {'files': 0, 'size': 0},
             'debug': {'files': 0, 'size': 0},
@@ -147,7 +148,7 @@ class LogManager:
 
 
 def format_size(size_bytes):
-    """格式化文件大小"""
+    """Render a byte count with a human-readable unit."""
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size_bytes < 1024.0:
             return f"{size_bytes:.1f} {unit}"
@@ -156,31 +157,31 @@ def format_size(size_bytes):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="日志管理工具")
-    parser.add_argument("--logs-dir", default="logs", help="日志目录路径")
+    parser = argparse.ArgumentParser(description="Log-management utility")
+    parser.add_argument("--logs-dir", default="logs", help="Path to the log directory")
     
-    subparsers = parser.add_subparsers(dest="command", help="可用命令")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
-    # 列出日志文件
-    list_parser = subparsers.add_parser("list", help="列出日志文件")
-    list_parser.add_argument("--type", choices=["production", "debug", "error"], help="日志类型")
+    # List log files.
+    list_parser = subparsers.add_parser("list", help="List log files")
+    list_parser.add_argument("--type", choices=["production", "debug", "error"], help="Log type")
     
-    # 显示日志内容
-    show_parser = subparsers.add_parser("show", help="显示日志内容")
-    show_parser.add_argument("--type", choices=["production", "debug", "error"], help="日志类型")
-    show_parser.add_argument("--lines", type=int, default=50, help="显示行数")
+    # Show log content.
+    show_parser = subparsers.add_parser("show", help="Show log content")
+    show_parser.add_argument("--type", choices=["production", "debug", "error"], help="Log type")
+    show_parser.add_argument("--lines", type=int, default=50, help="Number of lines to show")
     
-    # 清理旧日志
-    clean_parser = subparsers.add_parser("clean", help="清理旧日志文件")
-    clean_parser.add_argument("--days", type=int, default=7, help="保留天数")
-    clean_parser.add_argument("--execute", action="store_true", help="实际执行删除")
+    # Clean old logs.
+    clean_parser = subparsers.add_parser("clean", help="Delete old log files")
+    clean_parser.add_argument("--days", type=int, default=7, help="Retention period in days")
+    clean_parser.add_argument("--execute", action="store_true", help="Delete files instead of previewing")
     
-    # 压缩日志
-    compress_parser = subparsers.add_parser("compress", help="压缩旧日志文件")
-    compress_parser.add_argument("--days", type=int, default=1, help="压缩多少天前的日志")
+    # Compress logs.
+    compress_parser = subparsers.add_parser("compress", help="Compress old log files")
+    compress_parser.add_argument("--days", type=int, default=1, help="Compress files older than this many days")
     
-    # 统计信息
-    stats_parser = subparsers.add_parser("stats", help="显示日志统计信息")
+    # Show statistics.
+    stats_parser = subparsers.add_parser("stats", help="Show log statistics")
     
     args = parser.parse_args()
     
@@ -193,13 +194,13 @@ def main():
     if args.command == "list":
         log_files = log_manager.list_logs(args.type)
         if log_files:
-            print(f"日志文件 ({args.type or '全部'}):")
+            print(f"Log files ({args.type or 'all'}):")
             for log_file in log_files:
                 size = log_file.stat().st_size
                 mtime = datetime.fromtimestamp(log_file.stat().st_mtime)
                 print(f"  {log_file.name} ({format_size(size)}, {mtime.strftime('%Y-%m-%d %H:%M:%S')})")
         else:
-            print("未找到日志文件")
+            print("No log files found")
     
     elif args.command == "show":
         log_manager.show_logs(args.type, args.lines)
@@ -212,11 +213,11 @@ def main():
     
     elif args.command == "stats":
         stats = log_manager.get_log_stats()
-        print("日志统计信息:")
-        print(f"  生产日志: {stats['production']['files']} 个文件, {format_size(stats['production']['size'])}")
-        print(f"  调试日志: {stats['debug']['files']} 个文件, {format_size(stats['debug']['size'])}")
-        print(f"  错误日志: {stats['error']['files']} 个文件, {format_size(stats['error']['size'])}")
-        print(f"  总计: {stats['total']['files']} 个文件, {format_size(stats['total']['size'])}")
+        print("Log statistics:")
+        print(f"  Production logs: {stats['production']['files']} files, {format_size(stats['production']['size'])}")
+        print(f"  Debug logs: {stats['debug']['files']} files, {format_size(stats['debug']['size'])}")
+        print(f"  Error logs: {stats['error']['files']} files, {format_size(stats['error']['size'])}")
+        print(f"  Total: {stats['total']['files']} files, {format_size(stats['total']['size'])}")
 
 
 if __name__ == "__main__":

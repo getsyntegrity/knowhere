@@ -11,16 +11,16 @@ api_router = APIRouter()
 
 
 # API Key management
-api_router.include_router(api_key.router, prefix="/auth", tags=["API Key管理"])
+api_router.include_router(api_key.router, prefix="/auth", tags=["API Key Management"])
 
 # Guest registration 
 api_router.include_router(guest.router, prefix="/guest", tags=["Guest Registration"])
 
 # Billing
-api_router.include_router(billing.router, prefix="/billing", tags=["计费管理"])
+api_router.include_router(billing.router, prefix="/billing", tags=["Billing"])
 
 # Knowledge base
-api_router.include_router(knowledge_base.router, prefix="/kb", tags=["知识库"])
+api_router.include_router(knowledge_base.router, prefix="/kb", tags=["Knowledge Base"])
 
 # Unified Jobs routes
 api_router.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
@@ -34,7 +34,7 @@ api_router.include_router(documents.router, prefix="/documents", tags=["Document
 # S3 event webhook (internal)
 api_router.include_router(s3_events.router, prefix="/internal", tags=["Internal"])
 
-api_router.include_router(webhook.router, prefix="/webhooks", tags=["Webhook管理"])
+api_router.include_router(webhook.router, prefix="/webhooks", tags=["Webhook Management"])
 
 api_router.include_router(webhook_secrets.router, prefix="/webhooks/secrets", tags=["Webhook Secrets"])
 
@@ -42,9 +42,9 @@ api_router.include_router(webhook_secrets.router, prefix="/webhooks/secrets", ta
 api_router.include_router(qstash_callbacks.router, prefix="/webhooks", tags=["QStash Callbacks"])
 
 # Health check
-api_router.include_router(health.router, prefix="/health", tags=["健康检查"])
+api_router.include_router(health.router, prefix="/health", tags=["Health"])
 
 # Version info
-api_router.include_router(version.router, tags=["版本信息"])
+api_router.include_router(version.router, tags=["Version"])
 
 __all__ = ["api_router"]

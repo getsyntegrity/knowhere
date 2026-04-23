@@ -6,7 +6,7 @@ from sqlalchemy import pool
 
 from alembic import context
 
-# 导入我们的数据库配置和模型
+# Import the shared database configuration and metadata.
 from shared.core.config import settings
 from shared.core.database import Base
 from shared.models.database import (
@@ -23,10 +23,10 @@ from shared.models.database import (
     webhook_secret,
 )
 
-# 创建同步数据库URL（将asyncpg替换为psycopg2）
+# Build a synchronous database URL by replacing asyncpg with psycopg2.
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
 
-# 获取SSL连接参数
+# Read SSL connect args from shared settings.
 ssl_connect_args = settings.get_ssl_connect_args()
 
 # this is the Alembic Config object, which provides
@@ -43,8 +43,16 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 def include_object(object, name, type_, reflected, compare_to):
-    """Exclude externally managed tables from Alembic autogenerate output."""
-    if type_ == "table" and (name == "user" or name == "verification" or name == "jwks" or name == "account" or name == "emailVerificationToken" or name == "session"):
+    """Exclude externally managed auth tables from Alembic autogenerate output."""
+    externally_managed_tables: set[str] = {
+        "user",
+        "verification",
+        "jwks",
+        "account",
+        "emailVerificationToken",
+        "session",
+    }
+    if type_ == "table" and name in externally_managed_tables:
         return False
     return True
 
@@ -66,7 +74,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    # 使用我们的数据库配置（同步版本）
+    # Use the shared synchronous database configuration.
     url = sync_database_url
     context.configure(
         url=url,
@@ -74,8 +82,8 @@ def run_migrations_offline() -> None:
         include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        # 使用配置的SSL参数
-        connect_args=ssl_connect_args
+        # Pass through configured SSL connect args.
+        connect_args=ssl_connect_args,
     )
 
     with context.begin_transaction():
@@ -89,13 +97,13 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    # 直接使用create_engine来确保SSL参数被正确传递
+    # Use create_engine directly so SSL connect args are applied explicitly.
     from sqlalchemy import create_engine
-    
+
     connectable = create_engine(
         sync_database_url,
         poolclass=pool.NullPool,
-        connect_args=ssl_connect_args
+        connect_args=ssl_connect_args,
     )
 
     with connectable.connect() as connection:

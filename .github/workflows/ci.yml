@@ -7,6 +7,15 @@ on:
   pull_request:
 
 jobs:
+  public-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run public safety scan
+        run: ./scripts/scan-public-safety.sh
+
   api-typecheck:
     runs-on: ubuntu-latest
     steps:
