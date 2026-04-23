@@ -1,6 +1,4 @@
-"""
-Job结果与Chunk数据模型
-"""
+"""Job-result and chunk data models."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,7 +12,7 @@ from shared.core.database import Base
 
 
 class JobResult(Base):
-    """Job 结果主表"""
+    """Primary job-result table."""
     __tablename__ = "job_results"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -38,7 +36,7 @@ class JobResult(Base):
 
 
 class JobChunk(Base):
-    """Job 解析结果的Chunk详情"""
+    """Chunk details for a parsed job result."""
     __tablename__ = "job_chunks"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))

@@ -28,8 +28,8 @@ class APIKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # Last used time
     
-    # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
-    
+    # Relationship fields are intentionally omitted here for now.
+
     def __repr__(self):
         return f"<APIKey(id={self.id}, name='{self.name}', user_id='{self.user_id}')>"
     

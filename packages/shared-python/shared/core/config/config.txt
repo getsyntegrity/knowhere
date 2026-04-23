@@ -1,14 +1,14 @@
-# LLM API 配置文件
-# 此文件包含模型配置信息，用于LLM API调用
+# LLM API configuration file
+# This file contains model settings used for LLM API calls
 
-# 历史记录配置
+# History settings
 HISTORY_K	5
 
-# 模型参数配置
+# Model parameter settings
 MAX_TOKENS	2000
 TEMPERATURE	0.7
 TOP_P	0.9
 
-# 其他配置
+# Other settings
 API_TIMEOUT	30
 RETRY_COUNT	3

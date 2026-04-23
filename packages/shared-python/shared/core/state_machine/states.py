@@ -1,6 +1,4 @@
-"""
-状态机状态枚举和转换规则 - 简化版本
-"""
+"""State-machine statuses and transition rules."""
 import os
 from datetime import datetime, timezone
 from enum import Enum
@@ -8,7 +6,7 @@ from typing import Dict, Set
 
 
 class JobStatus(str, Enum):
-    """PRD任务状态枚举"""
+    """PRD job status enum."""
     PENDING = "pending"
     WAITING_FILE = "waiting-file"
     RUNNING = "running"
@@ -18,7 +16,7 @@ class JobStatus(str, Enum):
 
 
 
-# 终态集合
+# Terminal states.
 TERMINAL_STATES: Set[str] = {JobStatus.DONE.value, JobStatus.FAILED.value}
 
 
@@ -26,7 +24,7 @@ TERMINAL_STATES: Set[str] = {JobStatus.DONE.value, JobStatus.FAILED.value}
 
 
 def is_terminal_state(state: str) -> bool:
-    """检查是否为终态"""
+    """Return whether the given state is terminal."""
     return state in TERMINAL_STATES
 
 
@@ -76,4 +74,3 @@ def is_job_expired(created_at: datetime | None, max_age_seconds: int) -> bool:
     )
     age = (datetime.now(timezone.utc) - created_utc).total_seconds()
     return age > max_age_seconds
-

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-# 前向引用，避免循环导入
+# Forward references avoid circular imports.
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 

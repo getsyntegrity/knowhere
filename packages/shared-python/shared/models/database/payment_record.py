@@ -37,9 +37,8 @@ class PaymentRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
-    # 关系
-    # 关系
-    
+    # Relationship fields are intentionally omitted here.
+
     __table_args__ = (
         UniqueConstraint('checkout_session_id', name='uq_payment_record_checkout_session_id'),
     )

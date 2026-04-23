@@ -286,6 +286,20 @@ def test_selected_module_support_surfaces_are_english_first() -> None:
         assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
 
 
+def test_selected_state_and_model_support_surfaces_are_english_first() -> None:
+    for relative_path in (
+        "packages/shared-python/shared/core/constants/__init__.py",
+        "packages/shared-python/shared/core/state_machine/states.py",
+        "packages/shared-python/shared/core/config/config.txt",
+        "packages/shared-python/shared/models/database/job_result.py",
+        "packages/shared-python/shared/models/database/payment_record.py",
+        "packages/shared-python/shared/models/database/api_key.py",
+        "packages/shared-python/shared/models/database/job.py",
+        "packages/shared-python/shared/models/database/credits_transaction.py",
+    ):
+        assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -355,6 +369,7 @@ def main() -> None:
     test_selected_shared_python_public_surfaces_are_english_first()
     test_selected_api_support_surfaces_are_english_first()
     test_selected_module_support_surfaces_are_english_first()
+    test_selected_state_and_model_support_surfaces_are_english_first()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()

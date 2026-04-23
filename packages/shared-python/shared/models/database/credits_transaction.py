@@ -26,10 +26,9 @@ class CreditsTransaction(Base):
     transaction_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     
-    # 关系
-    # 关系 - 使用SQLAlchemy 2.0最佳实践，考虑lazy加载
+    # Relationship fields are intentionally omitted here for now.
     # user: Mapped[User] = relationship("User", back_populates="credits_transactions", lazy="select")
-    
+
     def __repr__(self):
         return f"<CreditsTransaction(id={self.id}, amount={self.credits_amount}, type='{self.transaction_type}')>"
     
