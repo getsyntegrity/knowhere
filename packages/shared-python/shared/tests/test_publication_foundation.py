@@ -236,6 +236,27 @@ def test_selected_active_api_text_surfaces_are_english_first() -> None:
         assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
 
 
+def test_selected_shared_python_public_surfaces_are_english_first() -> None:
+    for relative_path in (
+        "packages/shared-python/shared/core/config/ai.py",
+        "packages/shared-python/shared/core/config/base.py",
+        "packages/shared-python/shared/core/config/billing.py",
+        "packages/shared-python/shared/core/config/database.py",
+        "packages/shared-python/shared/core/config/redis.py",
+        "packages/shared-python/shared/core/config/storage.py",
+        "packages/shared-python/shared/models/schemas/api_key.py",
+        "packages/shared-python/shared/models/schemas/billing.py",
+        "packages/shared-python/shared/models/schemas/files.py",
+        "packages/shared-python/shared/models/schemas/job.py",
+        "packages/shared-python/shared/models/schemas/job_metadata.py",
+        "packages/shared-python/shared/models/schemas/kb_user.py",
+        "packages/shared-python/shared/models/schemas/knowledge_base.py",
+        "packages/shared-python/shared/models/schemas/oss_event.py",
+        "packages/shared-python/shared/models/schemas/s3_event.py",
+    ):
+        assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -302,6 +323,7 @@ def main() -> None:
     test_public_env_examples_and_selected_dev_assets_are_english_first()
     test_active_alembic_assets_and_local_init_files_are_public_safe()
     test_selected_active_api_text_surfaces_are_english_first()
+    test_selected_shared_python_public_surfaces_are_english_first()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
