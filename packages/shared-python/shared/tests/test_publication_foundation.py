@@ -535,6 +535,14 @@ def test_public_check_script_runs_public_safety_scan() -> None:
     assert "scripts/scan-public-safety.sh" in check_public_text
 
 
+def test_public_safety_scan_blocks_private_cloud_identifiers() -> None:
+    scan_script_text: str = read_text("scripts/scan-public-safety.sh")
+
+    assert "arn:aws:[a-z0-9-]+:" in scan_script_text
+    assert "dkr\\\\.ecr" in scan_script_text
+    assert "amazonaws\\\\.com" in scan_script_text
+
+
 def main() -> None:
     test_publication_foundation_files_exist()
     test_license_and_notice_match_apache_2_baseline()
@@ -570,6 +578,7 @@ def main() -> None:
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
     test_public_typecheck_script_targets_selected_api_entrypoints()
     test_public_check_script_runs_public_safety_scan()
+    test_public_safety_scan_blocks_private_cloud_identifiers()
 
 
 if __name__ == "__main__":

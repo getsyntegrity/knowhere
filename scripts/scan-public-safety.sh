@@ -51,6 +51,9 @@ run_pattern_scan \
   "credential-like material" \
   "github_pat_[A-Za-z0-9_]+|ghp_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}"
 run_pattern_scan \
+  "hardcoded private cloud identifiers" \
+  "arn:aws:[a-z0-9-]+:|[0-9]{12}\\.dkr\\.ecr\\.[A-Za-z0-9-]+\\.amazonaws\\.com"
+run_pattern_scan \
   "private placeholder domains or emails" \
   "dev-placeholder@knowhere\\.internal|knowhere\\.internal"
 
