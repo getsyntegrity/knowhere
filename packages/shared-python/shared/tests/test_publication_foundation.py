@@ -80,6 +80,19 @@ def test_readme_links_public_foundation_documents() -> None:
     assert "CODE_OF_CONDUCT.md" in readme_text
 
 
+def test_build_images_workflow_only_targets_ghcr() -> None:
+    workflow_text: str = read_text(".github/workflows/build-images.yml")
+
+    assert "ghcr.io" in workflow_text
+    assert "ALIYUN_ACR_" not in workflow_text
+    assert "ECR_REGISTRY" not in workflow_text
+    assert "AWS_EKS_" not in workflow_text
+    assert "aws-actions/configure-aws-credentials" not in workflow_text
+    assert "Login to ACR" not in workflow_text
+    assert "Login to ECR" not in workflow_text
+    assert "aws ecr get-login-password" not in workflow_text
+
+
 def main() -> None:
     test_publication_foundation_files_exist()
     test_license_and_notice_match_apache_2_baseline()
@@ -87,6 +100,7 @@ def main() -> None:
     test_gitignore_blocks_agent_artifacts_from_reappearing()
     test_private_root_only_files_are_removed_from_publication_branch()
     test_readme_links_public_foundation_documents()
+    test_build_images_workflow_only_targets_ghcr()
 
 
 if __name__ == "__main__":

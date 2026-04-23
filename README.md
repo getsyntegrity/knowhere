@@ -130,6 +130,10 @@ Docker build assets live in `deploy/docker/`.
 
 The active GitHub Actions workflow in `.github/workflows/build-images.yml` only builds and publishes Docker images for the `api` and `worker` services.
 
+This publication migration branch keeps the Docker workflow limited to GHCR
+only. Private registry and deployment steps should not be carried forward into
+the public release baseline.
+
 - `main` and Git tags build production-tagged images
 - `staging` builds staging-tagged images
 - pull requests run build validation without publishing

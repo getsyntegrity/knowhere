@@ -31,12 +31,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
-  ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
-  ECR_REGISTRY: 107424103509.dkr.ecr.us-east-1.amazonaws.com
-  ECR_REPOSITORY: knowhere
-  AWS_EKS_PROD_CLUSTER_NAME: ${{ secrets.AWS_EKS_PROD_CLUSTER_NAME }}
-  AWS_EKS_PROD_REGION: ${{ secrets.AWS_EKS_PROD_REGION }}
 
 jobs:
   build-and-publish:
@@ -52,11 +46,9 @@ jobs:
           - service: api
             dockerfile: deploy/docker/Dockerfile.api
             image_name: knowhere-backend
-            ecr_repo_name: knowhere-backend
           - service: worker
             dockerfile: deploy/docker/Dockerfile.worker
             image_name: knowhere-worker
-            ecr_repo_name: knowhere-worker
 
     steps:
       - name: Checkout code
@@ -127,17 +119,6 @@ jobs:
           echo "ghcr_image=${{ env.REGISTRY }}/${owner}/${image_name}:${image_tag}" >> "$GITHUB_OUTPUT"
           echo "ghcr_latest=${{ env.REGISTRY }}/${owner}/${image_name}:${latest_tag}" >> "$GITHUB_OUTPUT"
 
-          if [ -n "${{ env.ACR_REGISTRY }}" ] && [ "${{ steps.context.outputs.should_push }}" = "true" ]; then
-            acr_namespace="$(echo "${{ env.ACR_NAMESPACE }}" | tr '[:upper:]' '[:lower:]')"
-            echo "acr_image=${{ env.ACR_REGISTRY }}/${acr_namespace}/${image_name}:${image_tag}" >> "$GITHUB_OUTPUT"
-            echo "acr_latest=${{ env.ACR_REGISTRY }}/${acr_namespace}/${image_name}:${latest_tag}" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ "${{ steps.context.outputs.should_push }}" = "true" ]; then
-            echo "ecr_image=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/${{ matrix.ecr_repo_name }}:${image_tag}" >> "$GITHUB_OUTPUT"
-            echo "ecr_latest=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/${{ matrix.ecr_repo_name }}:${latest_tag}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build tag list
         if: steps.context.outputs.should_build == 'true'
         id: tag-list
@@ -147,16 +128,6 @@ jobs:
             echo 'tags<<EOF'
             echo "${{ steps.images.outputs.ghcr_image }}"
             echo "${{ steps.images.outputs.ghcr_latest }}"
-
-            if [ -n "${{ steps.images.outputs.acr_image }}" ]; then
-              echo "${{ steps.images.outputs.acr_image }}"
-              echo "${{ steps.images.outputs.acr_latest }}"
-            fi
-
-            if [ -n "${{ steps.images.outputs.ecr_image }}" ]; then
-              echo "${{ steps.images.outputs.ecr_image }}"
-              echo "${{ steps.images.outputs.ecr_latest }}"
-            fi
 
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
@@ -172,28 +143,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to ACR
-        if: steps.context.outputs.should_build == 'true' && steps.context.outputs.should_push == 'true' && env.ACR_REGISTRY != ''
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.ACR_REGISTRY }}
-          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
-          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
-
-      - name: Configure AWS credentials
-        if: steps.context.outputs.should_build == 'true' && steps.context.outputs.should_push == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Login to ECR
-        if: steps.context.outputs.should_build == 'true' && steps.context.outputs.should_push == 'true'
-        shell: bash
-        run: |
-          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       - name: Build image
         if: steps.context.outputs.should_build == 'true'
@@ -219,108 +168,3 @@ jobs:
           echo "Environment: ${{ steps.context.outputs.environment }}"
           echo "Push enabled: ${{ steps.context.outputs.should_push }}"
           echo "Primary tag: ${{ steps.tags.outputs.image_tag }}"
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-publish
-    if: github.event_name != 'pull_request'
-    permissions:
-      contents: read
-
-    strategy:
-      matrix:
-        service: [api, worker]
-        include:
-          - service: api
-            ecr_repo_name: knowhere-backend
-          - service: worker
-            ecr_repo_name: knowhere-worker
-
-    steps:
-      - name: Decide deployment context
-        id: context
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            environment="${{ github.event.inputs.environment }}"
-          elif [[ "${{ github.ref }}" == refs/tags/* ]] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            environment="prod"
-          else
-            environment="staging"
-          fi
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.service }}" ] && [ "${{ github.event.inputs.service }}" != "all" ] && [ "${{ github.event.inputs.service }}" != "${{ matrix.service }}" ]; then
-            should_deploy="false"
-          else
-            should_deploy="true"
-          fi
-
-          if [ "$environment" = "prod" ]; then
-            namespace="knowhere-prod"
-          else
-            namespace="knowhere-staging"
-          fi
-
-          short_sha="${GITHUB_SHA::8}"
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            git_tag="${GITHUB_REF#refs/tags/}"
-            image_tag="${git_tag}-${environment}"
-          else
-            image_tag="${environment}-${short_sha}"
-          fi
-
-          echo "environment=$environment" >> "$GITHUB_OUTPUT"
-          echo "namespace=$namespace" >> "$GITHUB_OUTPUT"
-          echo "should_deploy=$should_deploy" >> "$GITHUB_OUTPUT"
-          echo "image_uri=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}/${{ matrix.ecr_repo_name }}:${image_tag}" >> "$GITHUB_OUTPUT"
-
-      - name: Configure AWS credentials
-        if: steps.context.outputs.should_deploy == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_EKS_PROD_REGION }}
-
-      - name: Update kubeconfig
-        if: steps.context.outputs.should_deploy == 'true'
-        shell: bash
-        run: |
-          aws eks update-kubeconfig \
-            --name "${{ env.AWS_EKS_PROD_CLUSTER_NAME }}" \
-            --region "${{ env.AWS_EKS_PROD_REGION }}"
-
-      - name: Roll out service on AWS EKS
-        if: steps.context.outputs.should_deploy == 'true'
-        shell: bash
-        run: |
-          deployment_name="knowhere-${{ matrix.service }}"
-          container_name="${{ matrix.service }}"
-          namespace="${{ steps.context.outputs.namespace }}"
-          image_uri="${{ steps.context.outputs.image_uri }}"
-
-          echo "Deploying ${deployment_name} to ${namespace} with ${image_uri}"
-
-          kubectl set image "deployment/${deployment_name}" \
-            "${container_name}=${image_uri}" \
-            --namespace "${namespace}"
-
-          if [ "${{ matrix.service }}" = "worker" ]; then
-            kubectl patch "deployment/${deployment_name}" \
-              --namespace "${namespace}" \
-              --type='strategic' \
-              -p='{"spec":{"template":{"spec":{"containers":[{"name":"worker","readinessProbe":{"exec":{"command":["python","-c","from shared.services.worker_health import assert_worker_healthy; assert_worker_healthy()"]}},"livenessProbe":{"exec":{"command":["python","-c","from shared.services.worker_health import assert_worker_healthy; assert_worker_healthy()"]}}}]}}}}'
-          fi
-
-          kubectl rollout status "deployment/${deployment_name}" \
-            --namespace "${namespace}" \
-            --timeout=300s
-
-      - name: Summarize deployment
-        if: steps.context.outputs.should_deploy == 'true'
-        shell: bash
-        run: |
-          echo "Service: ${{ matrix.service }}"
-          echo "Environment: ${{ steps.context.outputs.environment }}"
-          echo "Namespace: ${{ steps.context.outputs.namespace }}"
-          echo "Image: ${{ steps.context.outputs.image_uri }}"
