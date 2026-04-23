@@ -223,7 +223,8 @@ def test_public_env_examples_and_selected_dev_assets_are_english_first() -> None
     for env_text in (api_env_text, worker_env_text):
         assert "Copy this file to .env" in env_text
         assert "Required for local startup" in env_text
-        assert "Optional integrations" in env_text
+        assert "Required for specific features" in env_text
+        assert "Optional or development-only" in env_text
         assert "DATABASE_URL=postgresql+asyncpg://root:root123@localhost:5432/Knowhere" in env_text
         assert "S3_ENDPOINT_URL=http://localhost:4566" in env_text
         assert "S3_ACCESS_KEY_ID=test" in env_text
