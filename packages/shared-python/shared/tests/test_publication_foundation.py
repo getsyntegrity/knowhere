@@ -279,6 +279,23 @@ def test_selected_shared_redis_and_storage_services_are_english_first() -> None:
         assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
 
 
+def test_selected_api_and_shared_runtime_modules_are_english_first() -> None:
+    for relative_path in (
+        "apps/api/app/repositories/job_repository.py",
+        "apps/api/app/repositories/job_result_repository.py",
+        "apps/api/app/repositories/knowledge_base_repository.py",
+        "apps/api/app/services/auth/api_key_service.py",
+        "apps/api/app/services/billing/stripe_service.py",
+        "packages/shared-python/shared/core/celery_router.py",
+        "packages/shared-python/shared/core/database.py",
+        "packages/shared-python/shared/models/database/knowledge_base.py",
+        "packages/shared-python/shared/services/ai/response_process_service.py",
+        "packages/shared-python/shared/utils/FileDownUpUtils.py",
+        "packages/shared-python/shared/utils/device_utils.py",
+    ):
+        assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
+
+
 def test_active_alembic_assets_and_local_init_files_are_public_safe() -> None:
     for relative_path in (
         "packages/shared-python/pyproject.toml",
@@ -687,6 +704,7 @@ def main() -> None:
     test_local_dev_bootstrap_docs_and_scripts_use_non_secret_demo_api_key()
     test_public_env_examples_and_selected_dev_assets_are_english_first()
     test_selected_shared_redis_and_storage_services_are_english_first()
+    test_selected_api_and_shared_runtime_modules_are_english_first()
     test_active_alembic_assets_and_local_init_files_are_public_safe()
     test_selected_active_api_text_surfaces_are_english_first()
     test_selected_shared_python_public_surfaces_are_english_first()

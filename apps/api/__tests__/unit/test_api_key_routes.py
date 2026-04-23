@@ -24,7 +24,7 @@ async def test_revoke_api_key_returns_success(authenticated_client: AsyncClient)
         )
 
     assert response.status_code == 200
-    assert response.json() == {"message": "API Key已撤销"}
+    assert response.json() == {"message": "API key revoked"}
 
 
 @pytest.mark.asyncio

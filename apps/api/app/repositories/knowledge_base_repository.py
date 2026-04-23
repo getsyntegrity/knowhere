@@ -85,11 +85,11 @@ async def create_update_path(paths:list[PathPydantic]) -> bool:
                 lambda session: session.bulk_insert_mappings(PathBase, path_mappings)
             )
             await db.commit()
-            logger.info(f"批量插入{len(path_mappings)}条记录成功")
+            logger.info(f"Bulk inserted {len(path_mappings)} records successfully")
             return True
         except Exception as e:
             await db.rollback()
-            logger.error(f"批量插入记录时发生错误: {e}")
+            logger.error(f"Error while bulk inserting records: {e}")
             return False
 
 async def get_kb_by_id(kb_id:str) -> KBPydantic|None:
@@ -154,7 +154,7 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
         
         return content_list
     except Exception as e:
-        logger.error(f"获取目录内容失败: {e}")
+        logger.error(f"Failed to get directory contents: {e}")
         return []
 
 async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
@@ -172,12 +172,12 @@ async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
         if content:
             await db.delete(content)
             await db.commit()
-            logger.info(f"删除知识库内容成功: {content_id}")
+            logger.info(f"Deleted knowledge base content successfully: {content_id}")
             return True
         return False
     except Exception as e:
         await db.rollback()
-        logger.error(f"删除知识库内容失败: {e}")
+        logger.error(f"Failed to delete knowledge base content: {e}")
         return False
 
 async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:

@@ -54,15 +54,15 @@ class JobRepository:
             # Skip db.refresh() — all fields are already set in-memory.
             # This avoids an extra SELECT round-trip after INSERT.
 
-            logger.info(f"Job {job.job_id} 创建成功")
+            logger.info(f"Job {job.job_id} created successfully")
             return job
             
         except IntegrityError as e:
-            logger.error(f"创建Job失败: {e}")
+            logger.error(f"Failed to create job: {e}")
             await db.rollback()
             raise
         except Exception as e:
-            logger.error(f"创建Job失败: {e}")
+            logger.error(f"Failed to create job: {e}")
             await db.rollback()
             return None
     
@@ -77,7 +77,7 @@ class JobRepository:
             result = await db.execute(stmt)
             return result.scalar_one_or_none()
         except Exception as e:
-            logger.error(f"获取Job {job_id} 失败: {e}")
+            logger.error(f"Failed to get job {job_id}: {e}")
             return None
     
     async def get_jobs_by_user(
@@ -112,7 +112,7 @@ class JobRepository:
             result = await db.execute(stmt)
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"获取用户 {user_id} Jobs失败: {e}")
+            logger.error(f"Failed to get jobs for user {user_id}: {e}")
             return []
     
     async def count_jobs_by_user(
@@ -139,7 +139,7 @@ class JobRepository:
             result = await db.execute(stmt)
             return result.scalar() or 0
         except Exception as e:
-            logger.error(f"获取用户 {user_id} Jobs总数失败: {e}")
+            logger.error(f"Failed to count jobs for user {user_id}: {e}")
             return 0
     
     async def update_job_state(
@@ -173,7 +173,7 @@ class JobRepository:
             return result.rowcount > 0
 
         except Exception as e:
-            logger.error(f"更新Job {job_id} S3键失败: {e}")
+            logger.error(f"Failed to update S3 key for job {job_id}: {e}")
             await db.rollback()
             return False
     
@@ -215,7 +215,7 @@ class JobRepository:
             return True
 
         except Exception as e:
-            logger.error(f"更新Job {job_id} 文件URL失败: {e}")
+            logger.error(f"Failed to update file URL for job {job_id}: {e}")
             await db.rollback()
             return False
     
@@ -251,7 +251,7 @@ class JobRepository:
             )
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"获取Job {job_id} 状态历史失败: {e}")
+            logger.error(f"Failed to get status history for job {job_id}: {e}")
             return []
     
     async def get_jobs_by_status(
@@ -271,7 +271,7 @@ class JobRepository:
             )
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"获取状态为 {status} 的Jobs失败: {e}")
+            logger.error(f"Failed to get jobs with status {status}: {e}")
             return []
     
     async def update_job_status(
@@ -292,12 +292,12 @@ class JobRepository:
             await db.commit()
 
             if result.rowcount > 0:
-                logger.info(f"Job {job_id} 状态更新为 {status}")
+                logger.info(f"Job {job_id} status updated to {status}")
                 return True
             return False
         except Exception as e:
             await db.rollback()
-            logger.error(f"更新Job {job_id} 状态失败: {e}")
+            logger.error(f"Failed to update status for job {job_id}: {e}")
             return False
     
     async def get_job_state_metadata(
@@ -329,7 +329,9 @@ class JobRepository:
                         import json
                         metadata = json.loads(metadata)
                     except json.JSONDecodeError as e:
-                        logger.error(f"解析Job {job_id} 状态 {state} 元数据JSON失败: {e}")
+                        logger.error(
+                            f"Failed to parse JSON metadata for job {job_id} state {state}: {e}"
+                        )
                         return None
                 
                 # If metadata is already a dict, return the requested key.
@@ -339,7 +341,9 @@ class JobRepository:
             return None
             
         except Exception as e:
-            logger.error(f"获取Job {job_id} 状态 {state} 元数据 {metadata_key} 失败: {e}")
+            logger.error(
+                f"Failed to get metadata {metadata_key} for job {job_id} state {state}: {e}"
+            )
             return None
     
     async def get_job_metadata(
@@ -375,7 +379,7 @@ class JobRepository:
             )
             metadata = result.scalar_one_or_none()
         except Exception as e:
-            logger.error(f"获取Job {job_id} metadata失败: {e}")
+            logger.error(f"Failed to get metadata for job {job_id}: {e}")
             metadata = None
 
         if metadata:

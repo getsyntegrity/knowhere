@@ -396,7 +396,7 @@ async def safe_dispose_engine(db_engine):
         if db_engine:
             # dispose() is synchronous, so run it in a worker thread.
             await asyncio.to_thread(db_engine.dispose)
-            logger.info("数据库引擎已安全关闭")
+            logger.info("Database engine shut down safely")
     except Exception as e:
-        logger.error(f"关闭数据库引擎时出错: {e}")
+        logger.error(f"Error while shutting down the database engine: {e}")
         # Suppress dispose failures to avoid blocking app shutdown.

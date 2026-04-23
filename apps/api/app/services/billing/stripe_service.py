@@ -70,7 +70,7 @@ class StripeService:
             )
             return str(session.url or "")
         except stripe.StripeError as e:
-            logger.error(f"创建订阅支付会话失败: {e}")
+            logger.error(f"Failed to create subscription checkout session: {e}")
             raise StripeServiceException(
                 internal_message=f"Stripe checkout session creation failed: {e}"
             )
@@ -211,7 +211,7 @@ class StripeService:
                 'payment_intent_id': intent.id
             }
         except stripe.StripeError as e:
-            logger.error(f"创建支付意图失败: {e}")
+            logger.error(f"Failed to create payment intent: {e}")
             raise StripeServiceException(
                 internal_message=f"Stripe payment intent creation failed: {e}"
             )
@@ -264,12 +264,14 @@ class StripeService:
         quantity = int(metadata.get('quantity', 1))
 
         if not user_id:
-            logger.warning(f"Checkout session {session_id} 缺少user_id metadata，可能是测试事件，跳过处理")
+            logger.warning(
+                f"Checkout session {session_id} is missing user_id metadata; likely a test event, skipping"
+            )
             return {'status': 'ignored', 'message': 'Missing user_id metadata (likely test event)', 'checkout_session_id': session_id, 'event_type': 'checkout.session.completed'}
         
         # Skip work that was already processed for this Checkout session.
         if await self.payment_record_repo.is_processed(db, checkout_session_id=session_id):
-            logger.info(f"Checkout session {session_id} 已处理，跳过")
+            logger.info(f"Checkout session {session_id} already processed, skipping")
             return {'status': 'ignored', 'message': 'Already processed', 'checkout_session_id': session_id}
         
         # Seed audit metadata for the payment record.
@@ -297,18 +299,20 @@ class StripeService:
                 price_id = metadata.get('price_id')
                 
                 if not price_id:
-                    logger.error(f"Credits包信息不完整: price_id={price_id}")
+                    logger.error(f"Incomplete Credits pack info: price_id={price_id}")
                     return {'status': 'error', 'message': 'Missing price_id'}
                 
                 # Load the credits amount and product metadata from the price config.
                 price_config = await self.price_config_service.get_price_config(db, price_id)
                 credits_amount = price_config.credits_amount * quantity
                 if credits_amount is None:
-                    logger.error(f"价格ID {price_id} 的Credits数量未配置")
+                    logger.error(
+                        f"Credits amount is not configured for price ID {price_id}"
+                    )
                     return {'status': 'error', 'message': 'Credits amount not configured'}
                 
                 # Attach purchased product details to the payment record.
-                product_description = f"Credits包 - {credits_amount} Credits"
+                product_description = f"Credits pack - {credits_amount} Credits"
                 if price_config.extra_metadata and price_config.extra_metadata.get('description'):
                     product_description = price_config.extra_metadata.get('description')
                 
@@ -343,7 +347,9 @@ class StripeService:
                     user_id,
                 )
 
-                logger.info(f"Credits包购买成功: user_id={user_id}, credits={credits_amount}, price_id={price_id}")
+                logger.info(
+                    f"Credits pack purchase succeeded: user_id={user_id}, credits={credits_amount}, price_id={price_id}"
+                )
                 return {
                     'status': 'success',
                     'event_type': 'checkout.session.completed',
@@ -352,18 +358,18 @@ class StripeService:
                     'payment_type': 'credits_package'
                 }
             else:
-                logger.warning(f"未知的支付类型: mode={mode}, type={payment_type}")
+                logger.warning(f"Unknown payment type: mode={mode}, type={payment_type}")
                 return {'status': 'ignored', 'message': 'Unknown payment type'}
         
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"处理checkout.session.completed失败: {e}", exc_info=True)
+            logger.error(f"Failed to process checkout.session.completed: {e}", exc_info=True)
             payment_record.status = 'failed'
             payment_record.extra_metadata = {**(payment_record.extra_metadata or {}), 'error': str(e)}
             await db.commit()
             raise StripeServiceException(
-                internal_message=f"处理checkout.session.completed失败: {str(e)}",
+                internal_message=f"Failed to process checkout.session.completed: {str(e)}",
                 original_exception=e
             )
     
@@ -376,16 +382,20 @@ class StripeService:
         payment_type = metadata.get('type')
         
         if payment_type != 'credits':
-            logger.info(f"PaymentIntent {payment_intent_id} 不是Credits类型，跳过")
+            logger.info(
+                f"PaymentIntent {payment_intent_id} is not a Credits payment, skipping"
+            )
             return {'status': 'ignored', 'payment_intent_id': payment_intent_id}
         
         if not user_id:
-            logger.warning(f"PaymentIntent {payment_intent_id} 缺少user_id metadata，可能是测试事件，跳过处理")
+            logger.warning(
+                f"PaymentIntent {payment_intent_id} is missing user_id metadata; likely a test event, skipping"
+            )
             return {'status': 'ignored', 'message': 'Missing user_id metadata (likely test event)', 'payment_intent_id': payment_intent_id}
         
         # Skip work that was already processed for this PaymentIntent.
         if await self.payment_record_repo.is_processed(db, payment_intent_id=payment_intent_id):
-            logger.info(f"PaymentIntent {payment_intent_id} 已处理，跳过")
+            logger.info(f"PaymentIntent {payment_intent_id} already processed, skipping")
             return {'status': 'ignored', 'message': 'Already processed', 'payment_intent_id': payment_intent_id}
         
         # Seed audit metadata for the payment record.
@@ -411,7 +421,7 @@ class StripeService:
             # Read the purchased credits amount from metadata.
             credits_amount_str = metadata.get('credits_amount')
             if not credits_amount_str:
-                logger.error(f"PaymentIntent {payment_intent_id} 缺少credits_amount")
+                logger.error(f"PaymentIntent {payment_intent_id} is missing credits_amount")
                 payment_record.status = 'failed'
                 payment_record.extra_metadata = {**(payment_record.extra_metadata or {}), 'error': 'Missing credits_amount'}
                 await db.commit()
@@ -463,12 +473,12 @@ class StripeService:
             }
         
         except Exception as e:
-            logger.error(f"Credits购买处理失败: {e}", exc_info=True)
+            logger.error(f"Failed to process Credits purchase: {e}", exc_info=True)
             payment_record.status = 'failed'
             payment_record.extra_metadata = {**(payment_record.extra_metadata or {}), 'error': str(e)}
             await db.commit()
             raise StripeServiceException(
-                internal_message=f"Credits购买处理失败: {str(e)}",
+                internal_message=f"Failed to process Credits purchase: {str(e)}",
                 original_exception=e
             )
     
@@ -478,7 +488,7 @@ class StripeService:
         subscription_id = invoice.get('subscription')
         
         if not subscription_id:
-            logger.warning("Invoice缺少subscription ID")
+            logger.warning("Invoice is missing subscription ID")
             return {'status': 'ignored', 'message': 'Missing subscription_id'}
 
         return {'status': 'ignored', 'message': 'Subscription renewal not implemented'}
@@ -496,9 +506,9 @@ class StripeService:
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"处理customer.subscription.deleted失败: {e}", exc_info=True)
+            logger.error(f"Failed to process customer.subscription.deleted: {e}", exc_info=True)
             raise StripeServiceException(
-                internal_message=f"处理customer.subscription.deleted失败: {str(e)}",
+                internal_message=f"Failed to process customer.subscription.deleted: {str(e)}",
                 original_exception=e
             )
 
@@ -527,7 +537,9 @@ class StripeService:
         payment_type = metadata.get("type") or (getattr(original_record, "payment_type", None)) or "refund"
 
         if not user_id:
-            logger.error(f"退款事件缺少 user_id，无法记录退款: charge_id={charge_id}")
+            logger.error(
+                f"Refund event is missing user_id; cannot record refund: charge_id={charge_id}"
+            )
             return {"status": "error", "message": "Missing user_id for refund", "event_type": "charge.refunded"}
 
         # Normalize user_id to UUID before using it in SQL filters.
@@ -560,7 +572,9 @@ class StripeService:
         refund_amount_cents = total_refund_amount_cents - origin_total_refund_amount_cents
         if refund_amount_cents <= 0:
             # The refund has already been processed; keep this path idempotent.
-            logger.info(f"退款已处理，跳过: charge_id={charge_id}, refund_id={refund_id}")
+            logger.info(
+                f"Refund already processed, skipping: charge_id={charge_id}, refund_id={refund_id}"
+            )
             return {
                 "status": "success",
                 "event_type": "charge.refunded",
@@ -585,7 +599,9 @@ class StripeService:
                         / abs(price_cfg.amount_cents)  # credits_amount * quantity
                     )
             except Exception as e:
-                logger.warning(f"退款计算Credits失败，price_id={price_id}: {e}")
+                logger.warning(
+                    f"Failed to calculate refunded Credits, price_id={price_id}: {e}"
+                )
                 credits_refunded = None
         
         # Fall back to the original payment record ratio when price metadata is unavailable.
@@ -635,7 +651,7 @@ class StripeService:
         await db.refresh(refund_record)
 
         logger.info(
-            f"退款记录已创建: user_id={user_id}, amount_cents={refund_record.amount_cents}, "
+            f"Refund record created: user_id={user_id}, amount_cents={refund_record.amount_cents}, "
             f"refund_id={refund_id}, charge_id={charge_id}"
         )
 

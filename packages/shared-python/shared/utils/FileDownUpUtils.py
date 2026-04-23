@@ -36,7 +36,7 @@ def s3_upload_file(file: UploadFile , prefix: str ):
         )
         public_url = f"{settings.S3_PRIVATE_DOMAIN}/{object_key}" if settings.S3_PRIVATE_DOMAIN else f"storage/{object_key}"
         content={
-            "message": "文件上传成功",
+            "message": "File uploaded successfully",
             "bucket": settings.S3_BUCKET_NAME,
             "file_key": object_key,
             "public_url_for_reference": public_url
@@ -48,7 +48,7 @@ def s3_upload_file(file: UploadFile , prefix: str ):
     except Exception as e:
         # Wrap storage upload failures in a domain exception.
         raise StorageServiceException(
-            internal_message=f"存储上传失败: {str(e)}",
+            internal_message=f"Storage upload failed: {str(e)}",
             operation="upload",
             original_exception=e
         )
@@ -130,7 +130,12 @@ def s3_get_download_url(file_key: str, expires_in: int = 3600):
             Params={'Bucket': settings.S3_BUCKET_NAME, 'Key': file_key},
             ExpiresIn=expires_in  # URL lifetime.
         )
-        fsdl = FliesDownload(message="已经成功签名", file_key=file_key, download_url=presigned_url, expires_in_seconds=expires_in)
+        fsdl = FliesDownload(
+            message="URL signed successfully",
+            file_key=file_key,
+            download_url=presigned_url,
+            expires_in_seconds=expires_in,
+        )
         return fsdl
 
     except ClientError as e:
@@ -138,7 +143,10 @@ def s3_get_download_url(file_key: str, expires_in: int = 3600):
         raise NotFoundException(
             resource="File",
             resource_id=file_key,
-            internal_message=f"无法生成URL。检查文件是否正确或S3配置是否有效: {str(e)}"
+            internal_message=(
+                f"Could not generate the URL. Check whether the file is correct "
+                f"or the S3 configuration is valid: {str(e)}"
+            )
         )
 
 def get_url_file(path):
@@ -207,7 +215,7 @@ async def download_and_upload_image(img_url: str, prefix: str="images/", temp_st
         if local_file_path.exists():
             os.remove(local_file_path)
         raise StorageServiceException(
-            internal_message=f"下载并上传图片失败: {str(e)}",
+            internal_message=f"Failed to download and upload the image: {str(e)}",
             operation="download_and_upload",
             original_exception=e
         )

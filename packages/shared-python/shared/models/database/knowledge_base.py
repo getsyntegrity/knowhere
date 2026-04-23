@@ -15,22 +15,22 @@ def utc_now():
 class ContentBase(Base):
     """Primary table for knowledge-base content."""
     __tablename__ = "knowledge_base"
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="内容顺序标识符")
-    content = Column(Text, nullable=True, comment="内容的具体文本")
-    path = Column(Text, nullable=True, comment="文件路径或来源")
-    type = Column(String(2000), nullable=True, comment="内容类型（如PTXT, SUMMARY等）")
-    length = Column(Integer, nullable=True, comment="内容的长度或大小")
-    keywords = Column(String(511), nullable=True, comment="内容的关键词")
-    summary = Column(Text, nullable=True, comment="内容的摘要")
-    know_id = Column(String(128), nullable=True, comment="知识ID，可能关联到外部知识库")
-    tokens = Column(Text, nullable=True, comment="内容分词后的token")
-    embedding = Column(Text, nullable=True, comment="内容的语义向量，用于相似度搜索等")
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="Content order identifier")
+    content = Column(Text, nullable=True, comment="Content text")
+    path = Column(Text, nullable=True, comment="File path or source")
+    type = Column(String(2000), nullable=True, comment="Content type (for example PTXT or SUMMARY)")
+    length = Column(Integer, nullable=True, comment="Content length or size")
+    keywords = Column(String(511), nullable=True, comment="Content keywords")
+    summary = Column(Text, nullable=True, comment="Content summary")
+    know_id = Column(String(128), nullable=True, comment="Knowledge ID, possibly linked to an external knowledge base")
+    tokens = Column(Text, nullable=True, comment="Tokenized content")
+    embedding = Column(Text, nullable=True, comment="Content embedding for similarity search and related tasks")
 
 class PathBase(Base):
     __tablename__ = "path_base"
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="路径顺序标识符")
-    path = Column(Text, nullable=True, comment="文件路径或来源")
-    embedding = Column(Text, nullable=True, comment="内容的语义向量，用于相似度搜索等")
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="Path order identifier")
+    path = Column(Text, nullable=True, comment="File path or source")
+    embedding = Column(Text, nullable=True, comment="Content embedding for similarity search and related tasks")
 
 class KBPydantic(BaseModel):
     content:Optional[str] = None
@@ -52,12 +52,12 @@ class PathPydantic(BaseModel):
 class FileDirectory(Base):
     """Directory tree table for user files."""
     __tablename__ = "file_directory"
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="目录唯一标识符")
-    title = Column(String(255), nullable=False, comment="目录标题")
-    parent_id = Column(String(36), ForeignKey('file_directory.id'),nullable=True, comment="父级目录ID，NULL表示根目录")
-    user_id = Column(String(36), nullable=False, comment="所属用户ID")
-    create_time = Column(DateTime, nullable=True, default=utc_now, comment="创建时间")
-    update_time = Column(DateTime, nullable=True, default=utc_now, onupdate=utc_now, comment="更新时间")
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="Directory unique identifier")
+    title = Column(String(255), nullable=False, comment="Directory title")
+    parent_id = Column(String(36), ForeignKey('file_directory.id'),nullable=True, comment="Parent directory ID; NULL indicates the root directory")
+    user_id = Column(String(36), nullable=False, comment="Owning user ID")
+    create_time = Column(DateTime, nullable=True, default=utc_now, comment="Creation time")
+    update_time = Column(DateTime, nullable=True, default=utc_now, onupdate=utc_now, comment="Update time")
 
     # Self-referential relationship implemented through parent_id.
     parent: Mapped["FileDirectory"] = relationship(

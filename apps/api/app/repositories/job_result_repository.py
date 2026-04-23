@@ -46,7 +46,9 @@ class JobResultRepository:
             existing.result_size = result_size
             await db.flush()
             await db.refresh(existing)
-            logger.info(f"更新JobResult成功: job_id={job_id}, mode={delivery_mode}")
+            logger.info(
+                f"Updated JobResult successfully: job_id={job_id}, mode={delivery_mode}"
+            )
             return existing
 
         job_result = JobResult(
@@ -60,7 +62,9 @@ class JobResultRepository:
         db.add(job_result)
         await db.flush()
         await db.refresh(job_result)
-        logger.info(f"创建JobResult成功: job_id={job_id}, mode={delivery_mode}")
+        logger.info(
+            f"Created JobResult successfully: job_id={job_id}, mode={delivery_mode}"
+        )
         return job_result
 
     async def replace_chunks(

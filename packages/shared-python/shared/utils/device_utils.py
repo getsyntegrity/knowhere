@@ -21,7 +21,7 @@ def check_internet(url: str = 'http://www.baidu.com') -> bool:
         response.raise_for_status()
         return True
     except requests.RequestException as e:
-        logger.warning(f"网络连接检查失败: {e}")
+        logger.warning(f"Network connectivity check failed: {e}")
         return False
 
 
@@ -44,11 +44,13 @@ def check_device_capabilities() -> Dict[str, Any]:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
         # Default to CPU when torch is unavailable, such as in the API service.
-        logger.debug("torch不可用，默认使用cpu设备")
+        logger.debug("torch is unavailable; defaulting to the CPU device")
         device = "cpu"
     except Exception as e:
         # Handle other failures, such as torch initialization errors.
-        logger.warning(f"检查设备能力时发生异常: {e}，默认使用cpu设备")
+        logger.warning(
+            f"Error while checking device capabilities: {e}; defaulting to the CPU device"
+        )
         device = "cpu"
     
     device_info = {

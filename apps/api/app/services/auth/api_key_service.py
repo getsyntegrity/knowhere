@@ -130,13 +130,13 @@ class APIKeyService:
     
     async def revoke_api_key(self, session: AsyncSession, api_key_id: str, user_id: str) -> bool:
         """Revoke an API key by deleting it directly."""
-        logger.info(f"撤销API密钥: api_key_id={api_key_id}, user_id={user_id}")
+        logger.info(f"Revoking API key: api_key_id={api_key_id}, user_id={user_id}")
         
         # 1. Verify that the API key belongs to the user.
         api_key = await self.repository.get_by_id(session, api_key_id)
         
         if not api_key:
-            logger.warning("API密钥不存在")
+            logger.warning("API key does not exist")
             raise NotFoundException(
                 resource="APIKey",
                 resource_id=api_key_id,
@@ -144,7 +144,9 @@ class APIKeyService:
             )
             
         if str(api_key.user_id) != user_id:
-            logger.warning(f"用户ID不匹配: api_key.user_id={api_key.user_id}, user_id={user_id}")
+            logger.warning(
+                f"User ID mismatch: api_key.user_id={api_key.user_id}, user_id={user_id}"
+            )
             raise NotFoundException(
                 resource="APIKey",
                 resource_id=api_key_id,
@@ -153,12 +155,12 @@ class APIKeyService:
         
         # 2. Delete the API key directly.
         success = await self.repository.delete_by_id(session, api_key_id)
-        logger.info(f"删除结果: {success}")
+        logger.info(f"Delete result: {success}")
         
         # 3. Commit the transaction.
         if success:
             await session.commit()
-            logger.info("事务已提交")
+            logger.info("Transaction committed")
             await self._invalidate_revoked_api_key_cache_best_effort(
                 user_id=user_id,
                 key_hash=api_key.key_hash,
@@ -272,9 +274,9 @@ class APIKeyService:
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"获取API Key失败: {e}")
+            logger.error(f"Failed to get API key: {e}")
             raise APIKeyOperationException(
-                internal_message=f"获取API Key失败: {str(e)}",
+                internal_message=f"Failed to get API key: {str(e)}",
                 original_exception=e
             )
     
@@ -296,14 +298,16 @@ class APIKeyService:
                     api_key.key_hash,
                 )
             
-            logger.info(f"API Key状态切换成功: {api_key_id}, 新状态: {api_key.is_active}")
+            logger.info(
+                f"API key status toggled successfully: {api_key_id}, new_status={api_key.is_active}"
+            )
             return True
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"切换API Key状态失败: {e}")
+            logger.error(f"Failed to toggle API key status: {e}")
             await session.rollback()
             raise APIKeyOperationException(
-                internal_message=f"切换API Key状态失败: {str(e)}",
+                internal_message=f"Failed to toggle API key status: {str(e)}",
                 original_exception=e
             )

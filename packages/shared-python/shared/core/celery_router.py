@@ -130,14 +130,17 @@ class CeleryTaskRouter:
             # Clamp the result to the 1-10 range.
             final_priority = max(1, min(10, int(final_priority)))
             
-            logger.debug(f"任务优先级计算: 基础={base_priority}, 用户权重={user_weight}, "
-                        f"文档权重={doc_weight}, 紧急权重={urgent_weight}, "
-                        f"重试惩罚={retry_penalty}, 最终={final_priority}")
+            logger.debug(
+                f"Task priority calculation: base={base_priority}, "
+                f"user_weight={user_weight}, doc_weight={doc_weight}, "
+                f"urgent_weight={urgent_weight}, retry_penalty={retry_penalty}, "
+                f"final={final_priority}"
+            )
             
             return final_priority
             
         except Exception as e:
-            logger.error(f"计算任务优先级失败: {e}")
+            logger.error(f"Failed to compute task priority: {e}")
             return 5  # Default medium priority.
     
     def create_task_context(self, task_type: str, user_id: str, **kwargs) -> TaskContext:
@@ -174,7 +177,7 @@ class CeleryTaskRouter:
                 metadata=kwargs.get('metadata', {})
             )
         except Exception as e:
-            logger.error(f"创建任务上下文失败: {e}")
+            logger.error(f"Failed to create task context: {e}")
             # Return a safe default context.
             return TaskContext(
                 task_type=TaskType.DOCUMENT_PROCESSING,
@@ -222,7 +225,7 @@ class CeleryTaskRouter:
                 return f"{job_type}_medium"
                 
         except Exception as e:
-            logger.error(f"获取用户 {user_id} 队列失败: {e}")
+            logger.error(f"Failed to get queue for user {user_id}: {e}")
             # Default to a medium-priority queue on failure.
             if job_type in ["kb_management", "kb_encoding"]:
                 return "kb_medium"
@@ -265,7 +268,10 @@ class CeleryTaskRouter:
                 # Compute the final priority.
                 priority = self.calculate_priority(context)
                 
-                logger.info(f"路由任务 {name} 到队列 {queue_name} (用户: {user_id}, 类型: {job_type}, 优先级: {priority})")
+                logger.info(
+                    f"Routed task {name} to queue {queue_name} "
+                    f"(user: {user_id}, type: {job_type}, priority: {priority})"
+                )
                 
                 return {
                     'queue': queue_name,
@@ -276,7 +282,7 @@ class CeleryTaskRouter:
                 return None
                 
         except Exception as e:
-            logger.error(f"任务路由失败: {e}")
+            logger.error(f"Task routing failed: {e}")
             return None
 
 
@@ -296,5 +302,4 @@ celery_app.conf.task_routes = [
     task_router.route_task,  # Dynamic routing priority
     static_routes,           # Fallback to static configuration
 ]
-
 
