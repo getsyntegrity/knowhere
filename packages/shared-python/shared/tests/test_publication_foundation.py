@@ -543,6 +543,14 @@ def test_public_safety_scan_blocks_private_cloud_identifiers() -> None:
     assert "amazonaws\\\\.com" in scan_script_text
 
 
+def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
+    retained_test_text: str = read_text("apps/api/__tests__/unit/test_qstash_callbacks.py")
+
+    assert "api.internal" not in retained_test_text
+    assert "workers.dev" not in retained_test_text
+    assert "wangbinqi" not in retained_test_text
+
+
 def main() -> None:
     test_publication_foundation_files_exist()
     test_license_and_notice_match_apache_2_baseline()
@@ -579,6 +587,7 @@ def main() -> None:
     test_public_typecheck_script_targets_selected_api_entrypoints()
     test_public_check_script_runs_public_safety_scan()
     test_public_safety_scan_blocks_private_cloud_identifiers()
+    test_selected_retained_test_surfaces_avoid_private_callback_hosts()
 
 
 if __name__ == "__main__":

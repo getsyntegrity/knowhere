@@ -31,7 +31,7 @@ def test_get_qstash_verification_url_prefers_public_callback_url(
 
     url = qstash_callbacks._get_qstash_verification_url(
         "/webhooks/qstash/callback",
-        "http://api.internal:5005/api/v1/webhooks/qstash/callback",
+        "https://api.example.test/api/v1/webhooks/qstash/callback",
     )
 
     assert url == "https://api.example.com/api/v1/webhooks/qstash/callback"
@@ -49,10 +49,10 @@ def test_get_qstash_verification_url_falls_back_to_request_url_when_base_url_is_
 
     url = qstash_callbacks._get_qstash_verification_url(
         "/webhooks/qstash/callback",
-        "http://api.internal:5005/api/v1/webhooks/qstash/callback",
+        "https://api.example.test/api/v1/webhooks/qstash/callback",
     )
 
-    assert url == "http://api.internal:5005/api/v1/webhooks/qstash/callback"
+    assert url == "https://api.example.test/api/v1/webhooks/qstash/callback"
 
 
 def test_verify_qstash_signature_uses_single_derived_url(
@@ -143,7 +143,7 @@ def test_process_qstash_callback_stores_qstash_message_id_separately(
     event = SimpleNamespace(
         id="6d3c9753-4547-4471-b6af-1a0aeb925a70",
         job_id="job_af999f445be6",
-        target_url="https://worker-bold-band-58df.wangbinqi77.workers.dev/drugs",
+        target_url="https://worker.example.com/drugs",
         payload={"event": "job.completed", "job_id": "job_af999f445be6"},
         status=WebhookEventStatus.DELIVERING,
         attempts=0,
