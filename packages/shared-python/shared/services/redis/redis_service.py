@@ -38,7 +38,7 @@ class RedisService:
                             **self.config_manager.get_connection_params()
                         )
                         self._health_checker = RedisHealthChecker(self._client)
-                        logger.debug("Redis客户端初始化成功")
+                        logger.debug("Redis client initialized")
                     except Exception as e:
                         raise RedisConnectionError(
                             internal_message=f"Redis client initialization failed: {str(e)}",
@@ -72,7 +72,9 @@ class RedisService:
                 from shared.utils.json_utils import make_json_safe
                 safe_value = make_json_safe(value)
                 value = json.dumps(safe_value, ensure_ascii=False)
-                logger.debug(f"Redis序列化完成: key={full_key}, 类型={type(value)}")
+                logger.debug(
+                    f"Redis serialization completed: key={full_key}, type={type(value)}"
+                )
             
             # Prefer ex when provided, then ttl, then the default config TTL.
             expire_time = ex or ttl or self.config_manager.config.REDIS_DEFAULT_TTL
@@ -520,7 +522,7 @@ class RedisService:
             result = await self._execute_with_retry(_operation)
             return result
         except Exception as e:
-            logger.error(f"Redis PING操作失败: {e}")
+            logger.error(f"Redis PING failed: {e}")
             return False
     
     async def is_healthy(self) -> bool:
@@ -537,7 +539,7 @@ class RedisService:
             await self._client.close()
             self._client = None
             self._health_checker = None
-            logger.info("Redis连接已关闭")
+            logger.info("Redis connection closed")
     
     async def __aenter__(self):
         """Enter the async context manager."""

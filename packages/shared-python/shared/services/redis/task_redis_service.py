@@ -29,10 +29,10 @@ class TaskRedisService:
             await self.redis.sadd(processing_tasks_key, task_id)
             await self.redis.expire(processing_tasks_key, redis_key_builder.get_key_ttl(RedisKeyType.SET))
             
-            logger.info(f"任务 {task_id} 创建成功")
+            logger.info(f"Task {task_id} created successfully")
             return True
         except Exception as e:
-            logger.error(f"创建任务 {task_id} 失败: {e}")
+            logger.error(f"Failed to create task {task_id}: {e}")
             return False
     
     async def set_task_status(self, task_id: str, status: str) -> bool:
@@ -50,10 +50,10 @@ class TaskRedisService:
             await self.redis.hset(progress_key, mapping=progress_data)
             await self.redis.expire(progress_key, redis_key_builder.get_key_ttl(RedisKeyType.TASK))
             
-            logger.debug(f"任务 {task_id} 状态更新为: {status}")
+            logger.debug(f"Task {task_id} status updated to: {status}")
             return True
         except Exception as e:
-            logger.error(f"设置任务 {task_id} 状态失败: {e}")
+            logger.error(f"Failed to set task {task_id} status: {e}")
             return False
     
     async def get_task_status(self, task_id: str) -> str:
@@ -63,7 +63,7 @@ class TaskRedisService:
             status = await self.redis.get(status_key, "unknown")
             return status
         except Exception as e:
-            logger.error(f"获取任务 {task_id} 状态失败: {e}")
+            logger.error(f"Failed to get task {task_id} status: {e}")
             return "unknown"
     
     async def save_task_result(self, task_id: str, result: Dict[str, Any]) -> bool:
@@ -79,10 +79,10 @@ class TaskRedisService:
             processing_tasks_key = redis_key_builder.set_processing_tasks()
             await self.redis.srem(processing_tasks_key, task_id)
             
-            logger.info(f"任务 {task_id} 结果保存成功")
+            logger.info(f"Result for task {task_id} saved successfully")
             return True
         except Exception as e:
-            logger.error(f"保存任务 {task_id} 结果失败: {e}")
+            logger.error(f"Failed to save result for task {task_id}: {e}")
             return False
     
     async def get_task_result(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -92,7 +92,7 @@ class TaskRedisService:
             result = await self.redis.get(result_key)
             return result
         except Exception as e:
-            logger.error(f"获取任务 {task_id} 结果失败: {e}")
+            logger.error(f"Failed to get result for task {task_id}: {e}")
             return None
     
     async def update_task_progress(self, task_id: str, progress: int, message: str = "") -> bool:
@@ -108,7 +108,7 @@ class TaskRedisService:
             await self.redis.expire(progress_key, redis_key_builder.get_key_ttl(RedisKeyType.TASK))
             return True
         except Exception as e:
-            logger.error(f"更新任务 {task_id} 进度失败: {e}")
+            logger.error(f"Failed to update progress for task {task_id}: {e}")
             return False
     
     async def get_task_progress(self, task_id: str) -> Dict[str, Any]:
@@ -118,7 +118,7 @@ class TaskRedisService:
             progress = await self.redis.hgetall(progress_key)
             return progress
         except Exception as e:
-            logger.error(f"获取任务 {task_id} 进度失败: {e}")
+            logger.error(f"Failed to get progress for task {task_id}: {e}")
             return {}
     
     async def mark_task_failed(self, task_id: str, error_message: str) -> bool:
@@ -141,10 +141,10 @@ class TaskRedisService:
             await self.redis.rpush(error_logs_key, error_data)
             await self.redis.expire(error_logs_key, redis_key_builder.get_key_ttl(RedisKeyType.LIST))
             
-            logger.error(f"任务 {task_id} 标记为失败: {error_message}")
+            logger.error(f"Task {task_id} marked as failed: {error_message}")
             return True
         except Exception as e:
-            logger.error(f"标记任务 {task_id} 失败时出错: {e}")
+            logger.error(f"Error while marking task {task_id} as failed: {e}")
             return False
     
     async def get_processing_tasks(self) -> List[str]:
@@ -154,7 +154,7 @@ class TaskRedisService:
             tasks = await self.redis.smembers(processing_tasks_key)
             return list(tasks)
         except Exception as e:
-            logger.error(f"获取处理中任务列表失败: {e}")
+            logger.error(f"Failed to get the in-progress task list: {e}")
             return []
     
     async def cleanup_task(self, task_id: str) -> bool:
@@ -174,10 +174,10 @@ class TaskRedisService:
             processing_tasks_key = redis_key_builder.set_processing_tasks()
             await self.redis.srem(processing_tasks_key, task_id)
             
-            logger.info(f"任务 {task_id} 数据清理完成")
+            logger.info(f"Task {task_id} data cleanup completed")
             return True
         except Exception as e:
-            logger.error(f"清理任务 {task_id} 数据失败: {e}")
+            logger.error(f"Failed to clean up data for task {task_id}: {e}")
             return False
     
     def _get_current_timestamp(self) -> str:

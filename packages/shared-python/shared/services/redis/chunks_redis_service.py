@@ -32,10 +32,10 @@ class ChunksRedisService:
             List[Dict]: Chunk record list.
         """
         if df is None or len(df) == 0:
-            logger.warning("DataFrame为空，返回空chunks列表")
+            logger.warning("DataFrame is empty; returning an empty chunks list")
             return []
 
-        logger.debug(f"开始转换DataFrame为chunks: DataFrame长度={len(df)}")
+        logger.debug(f"Converting DataFrame to chunks: length={len(df)}")
 
         # Helper functions.
         def safe_int(x):
@@ -300,7 +300,7 @@ class ChunksRedisService:
                 metadata.get("connect_to", []),
             )
 
-        logger.debug(f"DataFrame转换完成: chunks数量={len(chunks)}")
+        logger.debug(f"DataFrame conversion completed: chunk count={len(chunks)}")
         return chunks
 
     async def save_dataframe_as_chunks(self, job_id: str, df) -> bool:
@@ -309,7 +309,7 @@ class ChunksRedisService:
             chunks = self._dataframe_to_chunks(df)
             return await self.save_chunks(job_id, chunks)
         except Exception as e:
-            logger.error(f"保存DataFrame为chunks失败: job_id={job_id}, error={e}")
+            logger.error(f"Failed to save DataFrame as chunks: job_id={job_id}, error={e}")
             return False
 
     async def save_chunks(self, job_id: str, chunks: List[Dict[str, Any]]) -> bool:
@@ -321,10 +321,10 @@ class ChunksRedisService:
                 chunks,
                 ttl=3600  # 1 hour TTL.
             )
-            logger.debug(f"Chunks数据保存成功: job_id={job_id}, count={len(chunks)}")
+            logger.debug(f"Chunk data saved successfully: job_id={job_id}, count={len(chunks)}")
             return True
         except Exception as e:
-            logger.error(f"保存chunks数据失败: job_id={job_id}, error={e}")
+            logger.error(f"Failed to save chunk data: job_id={job_id}, error={e}")
             return False
 
     async def get_chunks(self, job_id: str) -> Optional[List[Dict[str, Any]]]:
@@ -333,12 +333,14 @@ class ChunksRedisService:
             chunks_key = f"job_chunks:{job_id}"
             chunks = await self.redis.get(chunks_key)
             if chunks:
-                logger.debug(f"Chunks数据获取成功: job_id={job_id}, count={len(chunks)}")
+                logger.debug(
+                    f"Chunk data loaded successfully: job_id={job_id}, count={len(chunks)}"
+                )
             else:
-                logger.warning(f"Chunks数据不存在: job_id={job_id}")
+                logger.warning(f"Chunk data does not exist: job_id={job_id}")
             return chunks
         except Exception as e:
-            logger.error(f"获取chunks数据失败: job_id={job_id}, error={e}")
+            logger.error(f"Failed to get chunk data: job_id={job_id}, error={e}")
             return None
 
     async def delete_chunks(self, job_id: str) -> bool:
@@ -346,8 +348,8 @@ class ChunksRedisService:
         try:
             chunks_key = f"job_chunks:{job_id}"
             await self.redis.delete(chunks_key)
-            logger.debug(f"Chunks数据删除成功: job_id={job_id}")
+            logger.debug(f"Chunk data deleted successfully: job_id={job_id}")
             return True
         except Exception as e:
-            logger.error(f"删除chunks数据失败: job_id={job_id}, error={e}")
+            logger.error(f"Failed to delete chunk data: job_id={job_id}, error={e}")
             return False

@@ -24,7 +24,7 @@ class RedisMonitor:
             info = await client.info()
             return info
         except Exception as e:
-            logger.error(f"获取Redis信息失败: {e}")
+            logger.error(f"Failed to get Redis info: {e}")
             return {}
     
     async def get_memory_usage(self) -> Dict[str, Any]:
@@ -43,7 +43,7 @@ class RedisMonitor:
             }
             return memory_info
         except Exception as e:
-            logger.error(f"获取内存使用情况失败: {e}")
+            logger.error(f"Failed to get memory usage: {e}")
             return {}
     
     async def get_connection_info(self) -> Dict[str, Any]:
@@ -60,7 +60,7 @@ class RedisMonitor:
             }
             return connection_info
         except Exception as e:
-            logger.error(f"获取连接信息失败: {e}")
+            logger.error(f"Failed to get connection info: {e}")
             return {}
     
     async def get_stats_info(self) -> Dict[str, Any]:
@@ -81,7 +81,7 @@ class RedisMonitor:
             }
             return stats_info
         except Exception as e:
-            logger.error(f"获取统计信息失败: {e}")
+            logger.error(f"Failed to get statistics: {e}")
             return {}
     
     async def get_keyspace_info(self) -> Dict[str, Any]:
@@ -102,7 +102,7 @@ class RedisMonitor:
             
             return keyspace_info
         except Exception as e:
-            logger.error(f"获取键空间信息失败: {e}")
+            logger.error(f"Failed to get keyspace info: {e}")
             return {}
     
     async def get_slow_log(self, count: int = 10) -> List[Dict[str, Any]]:
@@ -125,7 +125,7 @@ class RedisMonitor:
             
             return formatted_log
         except Exception as e:
-            logger.error(f"获取慢查询日志失败: {e}")
+            logger.error(f"Failed to get slow query log: {e}")
             return []
     
     async def get_key_count_by_type(self) -> Dict[str, int]:
@@ -142,7 +142,7 @@ class RedisMonitor:
             
             return key_counts
         except Exception as e:
-            logger.error(f"统计键数量失败: {e}")
+            logger.error(f"Failed to count keys: {e}")
             return {}
     
     async def get_business_metrics(self) -> Dict[str, Any]:
@@ -168,7 +168,7 @@ class RedisMonitor:
             
             return metrics
         except Exception as e:
-            logger.error(f"获取业务指标失败: {e}")
+            logger.error(f"Failed to get business metrics: {e}")
             return {}
     
     async def check_health(self) -> Dict[str, Any]:
@@ -190,7 +190,7 @@ class RedisMonitor:
             if ping_result:
                 health_status["ping_latency"] = ping_latency
             else:
-                health_status["issues"].append("PING失败")
+                health_status["issues"].append("PING failed")
             
             # Check memory usage.
             memory_info = await self.get_memory_usage()
@@ -203,7 +203,9 @@ class RedisMonitor:
                     health_status["memory_usage"] = memory_usage_percent
                     
                     if memory_usage_percent > 90:
-                        health_status["issues"].append(f"内存使用率过高: {memory_usage_percent:.2f}%")
+                        health_status["issues"].append(
+                            f"Memory usage too high: {memory_usage_percent:.2f}%"
+                        )
                 else:
                     health_status["memory_usage"] = 0
             
@@ -213,27 +215,31 @@ class RedisMonitor:
             health_status["connection_count"] = connection_count
             
             if connection_count > 1000:  # Use 1000 connections as the warning threshold.
-                health_status["issues"].append(f"连接数过多: {connection_count}")
+                health_status["issues"].append(
+                    f"Too many connections: {connection_count}"
+                )
             
             # Check slow queries.
             slow_log = await self.get_slow_log(5)
             if slow_log:
                 slow_queries = [log for log in slow_log if log["duration"] > 1000]  # Queries slower than one second.
                 if slow_queries:
-                    health_status["issues"].append(f"发现 {len(slow_queries)} 个慢查询")
+                    health_status["issues"].append(
+                        f"Detected {len(slow_queries)} slow queries"
+                    )
             
             # Compute the overall health flag.
             health_status["is_healthy"] = len(health_status["issues"]) == 0
             
             return health_status
         except Exception as e:
-            logger.error(f"检查Redis健康状态失败: {e}")
+            logger.error(f"Failed to check Redis health: {e}")
             return {
                 "is_healthy": False,
                 "ping_latency": 0,
                 "memory_usage": 0,
                 "connection_count": 0,
-                "issues": [f"健康检查失败: {e}"]
+                "issues": [f"Health check failed: {e}"]
             }
     
     async def get_comprehensive_report(self) -> Dict[str, Any]:
@@ -251,12 +257,12 @@ class RedisMonitor:
             }
             return report
         except Exception as e:
-            logger.error(f"生成监控报告失败: {e}")
+            logger.error(f"Failed to generate monitoring report: {e}")
             return {"error": str(e)}
     
     async def start_monitoring(self, interval: int = 60):
         """Start the monitoring loop."""
-        logger.info("Redis监控已启动")
+        logger.info("Redis monitoring started")
         
         while True:
             try:
@@ -266,7 +272,7 @@ class RedisMonitor:
                 if not report.get("health", {}).get("is_healthy", False):
                     issues = report.get("health", {}).get("issues", [])
                     for issue in issues:
-                        logger.warning(f"Redis健康检查警告: {issue}")
+                        logger.warning(f"Redis health check warning: {issue}")
                 
                 # Record the latest metrics snapshot.
                 self._metrics[time.time()] = report
@@ -281,7 +287,7 @@ class RedisMonitor:
                 await asyncio.sleep(interval)
                 
             except Exception as e:
-                logger.error(f"监控过程中出错: {e}")
+                logger.error(f"Error during monitoring: {e}")
                 await asyncio.sleep(interval)
     
     def get_metrics_history(self, duration: int = 3600) -> Dict[str, Any]:

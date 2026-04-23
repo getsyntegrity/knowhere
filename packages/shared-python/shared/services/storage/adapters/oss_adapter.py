@@ -43,7 +43,9 @@ class OSSStorageAdapter(StorageAdapter):
         warning and continues with the default bucket.
         """
         if bucket and bucket != self.default_bucket_name:
-            logger.warning(f"OSS适配器不支持跨bucket操作，使用默认bucket: {self.default_bucket_name} 而非 {bucket}")
+            logger.warning(
+                f"OSS adapter does not support cross-bucket operations; using the default bucket {self.default_bucket_name} instead of {bucket}"
+            )
         return self.default_bucket_name
     
     def upload_file(self, local_path: str, key: str, bucket: Optional[str] = None) -> Dict[str, Any]:
@@ -52,7 +54,7 @@ class OSSStorageAdapter(StorageAdapter):
         bucket_name = self._get_bucket_name(bucket)
         try:
             result = self.bucket.put_object_from_file(key, local_path)
-            logger.debug(f"OSS上传成功: {key} -> {bucket_name}")
+            logger.debug(f"OSS upload succeeded: {key} -> {bucket_name}")
             return {
                 "bucket": bucket_name,
                 "key": key,
@@ -79,7 +81,7 @@ class OSSStorageAdapter(StorageAdapter):
             
             data = file_obj.read()
             result = self.bucket.put_object(key, data, headers=headers if headers else None)
-            logger.debug(f"OSS上传文件对象成功: {key} -> {bucket_name}")
+            logger.debug(f"OSS object upload succeeded: {key} -> {bucket_name}")
             return {
                 "bucket": bucket_name,
                 "key": key,
@@ -100,7 +102,7 @@ class OSSStorageAdapter(StorageAdapter):
         bucket_name = self._get_bucket_name(bucket)
         try:
             self.bucket.get_object_to_file(key, local_path)
-            logger.debug(f"OSS下载成功: {bucket_name}/{key} -> {local_path}")
+            logger.debug(f"OSS download succeeded: {bucket_name}/{key} -> {local_path}")
             return local_path
         except OssError as e:
             logger.error(f"OSS download failed: {e}")
@@ -131,10 +133,10 @@ class OSSStorageAdapter(StorageAdapter):
         bucket_name = self._get_bucket_name(bucket)
         try:
             self.bucket.delete_object(key)
-            logger.debug(f"OSS删除成功: {bucket_name}/{key}")
+            logger.debug(f"OSS delete succeeded: {bucket_name}/{key}")
             return True
         except OssError as e:
-            logger.error(f"OSS删除失败: {e}")
+            logger.error(f"OSS delete failed: {e}")
             return False
     
     def list_objects(self, prefix: str = "", bucket: Optional[str] = None) -> Iterator[str]:
@@ -145,7 +147,7 @@ class OSSStorageAdapter(StorageAdapter):
             for obj in oss2.ObjectIterator(self.bucket, prefix=prefix):
                 yield obj.key
         except OssError as e:
-            logger.error(f"OSS列出对象失败: {e}")
+            logger.error(f"OSS list objects failed: {e}")
             return
     
     def generate_presigned_url(self, key: str, expiration: int = 3600,
@@ -160,7 +162,7 @@ class OSSStorageAdapter(StorageAdapter):
             else:
                 url = self.bucket.sign_url('GET', key, expiration, headers=headers)
             
-            logger.debug(f"OSS生成预签名URL成功: {key}")
+            logger.debug(f"OSS presigned URL generated successfully: {key}")
             return url
         except OssError as e:
             logger.error(f"OSS generate presigned URL failed: {e}")
@@ -177,7 +179,7 @@ class OSSStorageAdapter(StorageAdapter):
         try:
             return self.bucket.object_exists(key)
         except OssError as e:
-            logger.error(f"OSS检查对象存在性失败: {e}")
+            logger.error(f"OSS object existence check failed: {e}")
             return False
     
     def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:

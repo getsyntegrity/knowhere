@@ -259,6 +259,26 @@ def test_public_env_examples_and_selected_dev_assets_are_english_first() -> None
     assert "复制此文件" not in worker_env_text
 
 
+def test_selected_shared_redis_and_storage_services_are_english_first() -> None:
+    for relative_path in (
+        "packages/shared-python/shared/services/redis/chunks_redis_service.py",
+        "packages/shared-python/shared/services/redis/job_info_redis_service.py",
+        "packages/shared-python/shared/services/redis/job_metadata_service.py",
+        "packages/shared-python/shared/services/redis/rate_limit_service.py",
+        "packages/shared-python/shared/services/redis/redis_alerts.py",
+        "packages/shared-python/shared/services/redis/redis_monitor.py",
+        "packages/shared-python/shared/services/redis/redis_service.py",
+        "packages/shared-python/shared/services/redis/redis_sync_service.py",
+        "packages/shared-python/shared/services/redis/task_redis_service.py",
+        "packages/shared-python/shared/services/redis/user_redis_service.py",
+        "packages/shared-python/shared/services/storage/adapters/oss_adapter.py",
+        "packages/shared-python/shared/services/storage/adapters/s3_adapter.py",
+        "packages/shared-python/shared/services/storage/file_encryptor_service.py",
+        "packages/shared-python/shared/services/storage/file_upload_service.py",
+    ):
+        assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
+
+
 def test_active_alembic_assets_and_local_init_files_are_public_safe() -> None:
     for relative_path in (
         "packages/shared-python/pyproject.toml",
@@ -666,6 +686,7 @@ def main() -> None:
     test_public_docs_cover_services_release_and_local_verification()
     test_local_dev_bootstrap_docs_and_scripts_use_non_secret_demo_api_key()
     test_public_env_examples_and_selected_dev_assets_are_english_first()
+    test_selected_shared_redis_and_storage_services_are_english_first()
     test_active_alembic_assets_and_local_init_files_are_public_safe()
     test_selected_active_api_text_surfaces_are_english_first()
     test_selected_shared_python_public_surfaces_are_english_first()

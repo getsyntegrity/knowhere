@@ -425,7 +425,7 @@ class SyncTaskRedisService:
             pipe.execute()
             return True
         except Exception as e:
-            logger.error(f"设置任务 {task_id} 状态失败: {e}")
+            logger.error(f"Failed to set task {task_id} status: {e}")
             return False
 
     def save_task_result(self, task_id: str, result: Dict[str, Any]) -> bool:
@@ -450,7 +450,7 @@ class SyncTaskRedisService:
             pipe.execute()
             return True
         except Exception as e:
-            logger.error(f"保存任务 {task_id} 结果失败: {e}")
+            logger.error(f"Failed to save result for task {task_id}: {e}")
             return False
 
     def mark_task_failed(self, task_id: str, error_message: str) -> bool:
@@ -479,7 +479,7 @@ class SyncTaskRedisService:
             pipe.execute()
             return True
         except Exception as e:
-            logger.error(f"标记任务 {task_id} 失败时出错: {e}")
+            logger.error(f"Error while marking task {task_id} as failed: {e}")
             return False
 
     def _get_current_timestamp(self) -> str:

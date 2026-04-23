@@ -17,7 +17,7 @@ class FernetPickleEncryptor:
 
     def load_from_file(self, file_path: str) -> any:
         if not os.path.exists(file_path):
-            raise FileNotFoundError(f"文件 {file_path} 不存在。")
+            raise FileNotFoundError(f"File {file_path} does not exist.")
         with open(file_path, 'rb') as f:
             encrypted_data = f.read()
         decrypted_data = self.cipher.decrypt(encrypted_data)  # Decrypt the file bytes.
@@ -32,8 +32,8 @@ if __name__ == "__main__":
     # 3. Save the encrypted payload to a file.
     file_path = 'data.pkl'
     encryptor.save_to_file(data, file_path)
-    print(f"加密数据已保存到文件: {file_path}")
+    print(f"Encrypted data saved to file: {file_path}")
 
     # 4. Load the encrypted payload back from disk.
     decrypted_data = encryptor.load_from_file(file_path)
-    print("从文件加载的解密后数据:", decrypted_data)
+    print("Decrypted data loaded from file:", decrypted_data)

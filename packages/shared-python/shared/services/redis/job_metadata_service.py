@@ -21,10 +21,12 @@ class JobMetadataService:
         try:
             key = redis_key_builder.task_metadata(job_id)
             await self.redis.set(key, metadata, ttl=self.METADATA_TTL)
-            logger.debug(f"Job metadata已保存到Redis: job_id={job_id}, ttl={self.METADATA_TTL}s")
+            logger.debug(
+                f"Job metadata saved to Redis: job_id={job_id}, ttl={self.METADATA_TTL}s"
+            )
             return True
         except Exception as e:
-            logger.error(f"保存job metadata到Redis失败: {e}")
+            logger.error(f"Failed to save job metadata to Redis: {e}")
             return False
     
     async def get_metadata(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -33,10 +35,10 @@ class JobMetadataService:
             key = redis_key_builder.task_metadata(job_id)
             metadata = await self.redis.get(key)
             if metadata:
-                logger.debug(f"从Redis获取job metadata: job_id={job_id}")
+                logger.debug(f"Loaded job metadata from Redis: job_id={job_id}")
             return metadata
         except Exception as e:
-            logger.error(f"从Redis获取job metadata失败: {e}")
+            logger.error(f"Failed to load job metadata from Redis: {e}")
             return None
     
     async def update_metadata(self, job_id: str, updates: Dict[str, Any]) -> bool:
@@ -48,7 +50,7 @@ class JobMetadataService:
                 return await self.save_metadata(job_id, metadata)
             return False
         except Exception as e:
-            logger.error(f"更新job metadata失败: {e}")
+            logger.error(f"Failed to update job metadata: {e}")
             return False
     
     async def delete_metadata(self, job_id: str) -> bool:
@@ -58,5 +60,5 @@ class JobMetadataService:
             await self.redis.delete(key)
             return True
         except Exception as e:
-            logger.error(f"删除job metadata失败: {e}")
+            logger.error(f"Failed to delete job metadata: {e}")
             return False

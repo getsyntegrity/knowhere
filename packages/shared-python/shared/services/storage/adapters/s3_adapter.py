@@ -32,7 +32,7 @@ class S3StorageAdapter(StorageAdapter):
         bucket_name = self._get_bucket(bucket)
         try:
             self.s3_client.upload_file(local_path, bucket_name, key)
-            logger.debug(f"S3上传成功: {key} -> {bucket_name}")
+            logger.debug(f"S3 upload succeeded: {key} -> {bucket_name}")
             return {
                 "bucket": bucket_name,
                 "key": key,
@@ -62,7 +62,7 @@ class S3StorageAdapter(StorageAdapter):
                 key,
                 ExtraArgs=extra_args if extra_args else None
             )
-            logger.debug(f"S3上传文件对象成功: {key} -> {bucket_name}")
+            logger.debug(f"S3 object upload succeeded: {key} -> {bucket_name}")
             return {
                 "bucket": bucket_name,
                 "key": key,
@@ -82,7 +82,7 @@ class S3StorageAdapter(StorageAdapter):
         bucket_name = self._get_bucket(bucket)
         try:
             self.s3_client.download_file(bucket_name, key, local_path)
-            logger.debug(f"S3下载成功: {bucket_name}/{key} -> {local_path}")
+            logger.debug(f"S3 download succeeded: {bucket_name}/{key} -> {local_path}")
             return local_path
         except ClientError as e:
             error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
@@ -113,7 +113,7 @@ class S3StorageAdapter(StorageAdapter):
         bucket_name = self._get_bucket(bucket)
         try:
             self.s3_client.delete_object(Bucket=bucket_name, Key=key)
-            logger.debug(f"S3删除成功: {bucket_name}/{key}")
+            logger.debug(f"S3 delete succeeded: {bucket_name}/{key}")
             return True
         except ClientError as e:
             error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'
@@ -160,7 +160,7 @@ class S3StorageAdapter(StorageAdapter):
                     'get_object', Params=params, ExpiresIn=expiration
                 )
             
-            logger.debug(f"S3生成预签名URL成功: {key}")
+            logger.debug(f"S3 presigned URL generated successfully: {key}")
             return url
         except ClientError as e:
             error_code = e.response['Error'].get('Code', 'Unknown') if hasattr(e, 'response') else 'Unknown'

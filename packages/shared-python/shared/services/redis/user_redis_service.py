@@ -26,10 +26,10 @@ class UserRedisService:
             await self.redis.sadd(online_users_key, user_id)
             await self.redis.expire(online_users_key, redis_key_builder.get_key_ttl(RedisKeyType.SET))
             
-            logger.debug(f"用户 {user_id} 会话更新成功")
+            logger.debug(f"Updated session for user {user_id}")
             return True
         except Exception as e:
-            logger.error(f"更新用户 {user_id} 会话失败: {e}")
+            logger.error(f"Failed to update session for user {user_id}: {e}")
             return False
     
     async def get_user_session(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -39,7 +39,7 @@ class UserRedisService:
             session = await self.redis.get(session_key)
             return session
         except Exception as e:
-            logger.error(f"获取用户 {user_id} 会话失败: {e}")
+            logger.error(f"Failed to get session for user {user_id}: {e}")
             return None
     
     async def update_user_activity(self, user_id: str, activity: str = "active") -> bool:
@@ -59,10 +59,10 @@ class UserRedisService:
             await self.redis.sadd(active_users_key, user_id)
             await self.redis.expire(active_users_key, redis_key_builder.get_key_ttl(RedisKeyType.SET))
             
-            logger.debug(f"用户 {user_id} 活动更新: {activity}")
+            logger.debug(f"Updated activity for user {user_id}: {activity}")
             return True
         except Exception as e:
-            logger.error(f"更新用户 {user_id} 活动失败: {e}")
+            logger.error(f"Failed to update activity for user {user_id}: {e}")
             return False
     
     async def get_user_activity(self, user_id: str) -> Dict[str, Any]:
@@ -72,7 +72,7 @@ class UserRedisService:
             activity = await self.redis.hgetall(activity_key)
             return activity
         except Exception as e:
-            logger.error(f"获取用户 {user_id} 活动失败: {e}")
+            logger.error(f"Failed to get activity for user {user_id}: {e}")
             return {}
     
     async def set_user_permissions(self, user_id: str, permissions: List[str]) -> bool:
@@ -85,10 +85,10 @@ class UserRedisService:
             }
             await self.redis.set(permissions_key, permissions_data, ttl=redis_key_builder.get_key_ttl(RedisKeyType.USER))
             
-            logger.info(f"用户 {user_id} 权限设置成功")
+            logger.info(f"Permissions set successfully for user {user_id}")
             return True
         except Exception as e:
-            logger.error(f"设置用户 {user_id} 权限失败: {e}")
+            logger.error(f"Failed to set permissions for user {user_id}: {e}")
             return False
     
     async def get_user_permissions(self, user_id: str) -> List[str]:
@@ -101,7 +101,7 @@ class UserRedisService:
                 return permissions_data.get("permissions", [])
             return []
         except Exception as e:
-            logger.error(f"获取用户 {user_id} 权限失败: {e}")
+            logger.error(f"Failed to get permissions for user {user_id}: {e}")
             return []
     
     async def increment_user_requests(self, user_id: str) -> int:
@@ -112,7 +112,7 @@ class UserRedisService:
             await self.redis.expire(counter_key, redis_key_builder.get_key_ttl(RedisKeyType.COUNTER))
             return count
         except Exception as e:
-            logger.error(f"增加用户 {user_id} 请求计数失败: {e}")
+            logger.error(f"Failed to increment request count for user {user_id}: {e}")
             return 0
     
     async def get_user_requests_count(self, user_id: str) -> int:
@@ -122,7 +122,7 @@ class UserRedisService:
             count = await self.redis.get(counter_key, 0)
             return int(count)
         except Exception as e:
-            logger.error(f"获取用户 {user_id} 请求计数失败: {e}")
+            logger.error(f"Failed to get request count for user {user_id}: {e}")
             return 0
     
     async def get_online_users(self) -> List[str]:
@@ -132,7 +132,7 @@ class UserRedisService:
             users = await self.redis.smembers(online_users_key)
             return list(users)
         except Exception as e:
-            logger.error(f"获取在线用户列表失败: {e}")
+            logger.error(f"Failed to get online user list: {e}")
             return []
     
     async def get_active_users(self) -> List[str]:
@@ -142,7 +142,7 @@ class UserRedisService:
             users = await self.redis.smembers(active_users_key)
             return list(users)
         except Exception as e:
-            logger.error(f"获取活跃用户列表失败: {e}")
+            logger.error(f"Failed to get active user list: {e}")
             return []
     
     async def user_logout(self, user_id: str) -> bool:
@@ -159,10 +159,10 @@ class UserRedisService:
             # Update the activity status.
             await self.update_user_activity(user_id, "logout")
             
-            logger.info(f"用户 {user_id} 登出成功")
+            logger.info(f"User {user_id} logged out successfully")
             return True
         except Exception as e:
-            logger.error(f"用户 {user_id} 登出失败: {e}")
+            logger.error(f"Failed to log out user {user_id}: {e}")
             return False
     
     async def cleanup_user_data(self, user_id: str) -> bool:
@@ -185,10 +185,10 @@ class UserRedisService:
             await self.redis.srem(online_users_key, user_id)
             await self.redis.srem(active_users_key, user_id)
             
-            logger.info(f"用户 {user_id} 数据清理完成")
+            logger.info(f"Completed data cleanup for user {user_id}")
             return True
         except Exception as e:
-            logger.error(f"清理用户 {user_id} 数据失败: {e}")
+            logger.error(f"Failed to clean up data for user {user_id}: {e}")
             return False
     
     def _get_current_timestamp(self) -> str:

@@ -58,7 +58,7 @@ class RedisAlertManager:
             name="high_memory_usage",
             condition=lambda data: data.get("memory", {}).get("memory_usage", 0) > 90,
             severity="critical",
-            message="Redis内存使用率超过90%",
+            message="Redis memory usage exceeds 90%",
             cooldown=300
         ))
         
@@ -66,7 +66,7 @@ class RedisAlertManager:
             name="medium_memory_usage",
             condition=lambda data: data.get("memory", {}).get("memory_usage", 0) > 80,
             severity="warning",
-            message="Redis内存使用率超过80%",
+            message="Redis memory usage exceeds 80%",
             cooldown=600
         ))
         
@@ -75,7 +75,7 @@ class RedisAlertManager:
             name="high_connection_count",
             condition=lambda data: data.get("connections", {}).get("connected_clients", 0) > 1000,
             severity="warning",
-            message="Redis连接数过多",
+            message="Redis connection count is too high",
             cooldown=300
         ))
         
@@ -84,7 +84,7 @@ class RedisAlertManager:
             name="high_ping_latency",
             condition=lambda data: data.get("health", {}).get("ping_latency", 0) > 100,
             severity="warning",
-            message="Redis PING延迟过高",
+            message="Redis PING latency is too high",
             cooldown=300
         ))
         
@@ -93,7 +93,7 @@ class RedisAlertManager:
             name="slow_queries",
             condition=lambda data: len(data.get("slow_log", [])) > 0,
             severity="info",
-            message="发现慢查询",
+            message="Slow queries detected",
             cooldown=600
         ))
         
@@ -102,7 +102,7 @@ class RedisAlertManager:
             name="error_logs",
             condition=lambda data: data.get("business_metrics", {}).get("error_logs_count", 0) > 10,
             severity="warning",
-            message="错误日志数量过多",
+            message="Too many error logs",
             cooldown=300
         ))
         
@@ -111,19 +111,19 @@ class RedisAlertManager:
             name="too_many_processing_tasks",
             condition=lambda data: data.get("business_metrics", {}).get("processing_tasks_count", 0) > 100,
             severity="warning",
-            message="处理中任务数量过多",
+            message="Too many tasks in progress",
             cooldown=300
         ))
     
     def add_rule(self, rule: AlertRule):
         """Add an alert rule."""
         self.alert_rules.append(rule)
-        logger.info(f"添加告警规则: {rule.name}")
+        logger.info(f"Added alert rule: {rule.name}")
     
     def remove_rule(self, rule_name: str):
         """Remove an alert rule."""
         self.alert_rules = [rule for rule in self.alert_rules if rule.name != rule_name]
-        logger.info(f"移除告警规则: {rule_name}")
+        logger.info(f"Removed alert rule: {rule_name}")
     
     async def check_alerts(self) -> List[Dict[str, Any]]:
         """Evaluate all alert rules."""
@@ -139,7 +139,7 @@ class RedisAlertManager:
                     alert = {
                         "rule_name": rule.name,
                         "severity": rule.severity,
-                        "message": rule.message or f"告警规则 {rule.name} 被触发",
+                        "message": rule.message or f"Alert rule {rule.name} triggered",
                         "timestamp": time.time(),
                         "data": report
                     }
@@ -153,7 +153,7 @@ class RedisAlertManager:
             return triggered_alerts
             
         except Exception as e:
-            logger.error(f"检查告警失败: {e}")
+            logger.error(f"Failed to check alerts: {e}")
             return []
     
     def _log_alert(self, alert: Dict[str, Any]):
@@ -163,11 +163,11 @@ class RedisAlertManager:
         rule_name = alert["rule_name"]
         
         if severity == "critical":
-            logger.critical(f"[REDIS告警] {rule_name}: {message}")
+            logger.critical(f"[REDIS ALERT] {rule_name}: {message}")
         elif severity == "warning":
-            logger.warning(f"[REDIS告警] {rule_name}: {message}")
+            logger.warning(f"[REDIS ALERT] {rule_name}: {message}")
         else:
-            logger.info(f"[REDIS告警] {rule_name}: {message}")
+            logger.info(f"[REDIS ALERT] {rule_name}: {message}")
     
     def get_alert_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get alert history."""
@@ -199,7 +199,7 @@ class RedisAlertManager:
     
     async def start_alert_monitoring(self, interval: int = 60):
         """Start the alert-monitoring loop."""
-        logger.info("Redis告警监控已启动")
+        logger.info("Redis alert monitoring started")
         
         import asyncio
         
@@ -208,12 +208,12 @@ class RedisAlertManager:
                 alerts = await self.check_alerts()
                 
                 if alerts:
-                    logger.info(f"检测到 {len(alerts)} 个告警")
+                    logger.info(f"Detected {len(alerts)} alerts")
                 
                 await asyncio.sleep(interval)
                 
             except Exception as e:
-                logger.error(f"告警监控过程中出错: {e}")
+                logger.error(f"Error during alert monitoring: {e}")
                 await asyncio.sleep(interval)
     
     def create_custom_rule(
@@ -252,19 +252,19 @@ class RedisAlertNotifier:
             try:
                 await notifier(alert)
             except Exception as e:
-                logger.error(f"发送告警通知失败: {e}")
+                logger.error(f"Failed to send alert notification: {e}")
     
     async def notify_email(self, alert: Dict[str, Any]):
         """Email notifier example."""
         # Email delivery logic can be implemented here.
-        logger.info(f"发送邮件告警: {alert['message']}")
+        logger.info(f"Sending email alert: {alert['message']}")
     
     async def notify_webhook(self, alert: Dict[str, Any]):
         """Webhook notifier example."""
         # Webhook delivery logic can be implemented here.
-        logger.info(f"发送Webhook告警: {alert['message']}")
+        logger.info(f"Sending webhook alert: {alert['message']}")
     
     async def notify_slack(self, alert: Dict[str, Any]):
         """Slack notifier example."""
         # Slack delivery logic can be implemented here.
-        logger.info(f"发送Slack告警: {alert['message']}")
+        logger.info(f"Sending Slack alert: {alert['message']}")

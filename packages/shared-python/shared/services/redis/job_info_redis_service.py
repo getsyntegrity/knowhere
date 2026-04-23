@@ -33,10 +33,12 @@ class JobInfoRedisService:
         try:
             key = redis_key_builder.task_info(job_id)
             await self.redis.set(key, job_info, ttl=self.JOB_INFO_TTL)
-            logger.debug(f"Job信息已保存到Redis: job_id={job_id}, ttl={self.JOB_INFO_TTL}s")
+            logger.debug(
+                f"Job info saved to Redis: job_id={job_id}, ttl={self.JOB_INFO_TTL}s"
+            )
             return True
         except Exception as e:
-            logger.error(f"保存Job信息到Redis失败: {e}")
+            logger.error(f"Failed to save job info to Redis: {e}")
             return False
     
     async def get_job_info(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -53,10 +55,10 @@ class JobInfoRedisService:
             key = redis_key_builder.task_info(job_id)
             job_info = await self.redis.get(key)
             if job_info:
-                logger.debug(f"从Redis获取Job信息: job_id={job_id}")
+                logger.debug(f"Loaded job info from Redis: job_id={job_id}")
             return job_info
         except Exception as e:
-            logger.error(f"从Redis获取Job信息失败: {e}")
+            logger.error(f"Failed to load job info from Redis: {e}")
             return None
     
     async def update_job_info(self, job_id: str, updates: Dict[str, Any]) -> bool:
@@ -77,7 +79,7 @@ class JobInfoRedisService:
                 return await self.save_job_info(job_id, job_info)
             return False
         except Exception as e:
-            logger.error(f"更新Job信息失败: {e}")
+            logger.error(f"Failed to update job info: {e}")
             return False
     
     async def delete_job_info(self, job_id: str) -> bool:
@@ -93,8 +95,8 @@ class JobInfoRedisService:
         try:
             key = redis_key_builder.task_info(job_id)
             await self.redis.delete(key)
-            logger.debug(f"Job信息已从Redis删除: job_id={job_id}")
+            logger.debug(f"Job info deleted from Redis: job_id={job_id}")
             return True
         except Exception as e:
-            logger.error(f"删除Job信息失败: {e}")
+            logger.error(f"Failed to delete job info: {e}")
             return False

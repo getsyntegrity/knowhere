@@ -20,10 +20,10 @@ class RateLimitService:
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
         logger.info(
-            f"速率限制服务初始化: "
-            f"启用={self.RATE_LIMIT_ENABLED}, "
-            f"窗口={self.RATE_LIMIT_WINDOW}秒, "
-            f"最大请求数={self.RATE_LIMIT_MAX_REQUESTS}"
+            f"Rate limit service initialized: "
+            f"enabled={self.RATE_LIMIT_ENABLED}, "
+            f"window={self.RATE_LIMIT_WINDOW}s, "
+            f"max_requests={self.RATE_LIMIT_MAX_REQUESTS}"
         )
     
     async def check_rate_limit(self, user_id: str, api_name: str) -> Dict[str, Any]:
@@ -90,12 +90,14 @@ class RateLimitService:
                 "reset": reset_timestamp,
             }
             
-            logger.debug(f"速率限制检查: user_id={user_id}, api={api_name}, count={current_count}, remaining={remaining}")
+            logger.debug(
+                f"Rate limit check: user_id={user_id}, api={api_name}, count={current_count}, remaining={remaining}"
+            )
             
             return rate_limit_info
             
         except Exception as e:
-            logger.error(f"速率限制检查失败: {e}")
+            logger.error(f"Rate limit check failed: {e}")
             # Fail open on errors, but keep the error in logs.
             return {
                 "allowed": True,
@@ -144,7 +146,7 @@ class RateLimitService:
             }
             
         except Exception as e:
-            logger.error(f"获取速率限制信息失败: {e}")
+            logger.error(f"Failed to get rate limit info: {e}")
             return {
                 "allowed": True,
                 "limit": self.RATE_LIMIT_MAX_REQUESTS,
