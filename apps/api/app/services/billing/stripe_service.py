@@ -1,6 +1,4 @@
-"""
-Stripe 支付服务
-"""
+"""Stripe payment service."""
 from shared.core.billing import MicroDollar
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -30,7 +28,7 @@ from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.tier_service import TierService
 
 class StripeService:
-    """Stripe支付服务"""
+    """Stripe payment service."""
     
     def __init__(self):
         if not settings.STRIPE_SECRET_KEY:
@@ -51,9 +49,9 @@ class StripeService:
         success_url: str, 
         cancel_url: str
     ) -> str:
-        """创建订阅支付会话"""
+        """Create a Stripe Checkout session for a subscription."""
         try:
-            # 从数据库获取计划价格ID
+            # Load the Stripe price ID for the requested plan from the database.
             price_id = await self.price_config_service.get_plan_price_id(db, plan_id)
             
             session = stripe.checkout.Session.create(
@@ -87,9 +85,9 @@ class StripeService:
         quantity: int,
         email: Optional[str] = None
     ) -> str:
-        """创建Credits包支付会话"""
+        """Create a Stripe Checkout session for a credits package."""
         try:
-            # 验证价格配置存在
+            # Validate that the selected price configuration exists.
             config = await self.price_config_service.get_price_config(db, price_id)
             if not config.is_credits_package():
                 raise ValidationException(
@@ -111,14 +109,14 @@ class StripeService:
             customer_id = user_balance.stripe_customer_id
             
             if not customer_id:
-                # 尝试通过邮箱查找现有 Customer
+                # Reuse an existing Stripe customer when the email already exists.
                 if email:
                     existing_customers = stripe.Customer.list(email=email, limit=1)
                     if existing_customers.data:
                         customer_id = existing_customers.data[0].id
                 
                 if not customer_id:
-                    # 创建新的 Customer
+                    # Create a new Stripe customer when no existing record matches.
                     if not email:
                          # For new customers, we prefer having an email.
                          # If no email provided, we can't create a good customer record.
@@ -140,7 +138,7 @@ class StripeService:
                 
                 user_balance.stripe_customer_id = customer_id
 
-            # 统一的 metadata（必须是字符串，确保 charge/refund 时可取到 user_id）
+            # Keep metadata values as strings so refunds can recover the user ID later.
             metadata = {
                 "user_id": str(user_id),
                 "price_id": str(price_id),
@@ -160,21 +158,21 @@ class StripeService:
                         "quantity": quantity,
                     }
                 ],
-                "mode": "payment",  # 一次性支付
+                "mode": "payment",  # One-time payment.
                 "success_url": success_url,
                 "cancel_url": cancel_url,
                 "metadata": metadata,
-                # 将元信息同步到 PaymentIntent/Charge，便于退款 webhook 获取 user_id
+                # Copy metadata onto the PaymentIntent and Charge for refund handling.
                 "payment_intent_data": {
                     "metadata": metadata,
                 },
 
-                # 收集更多客户信息，便于后续关联
+                # Collect more customer information for later reconciliation.
                 "allow_promotion_codes": True,
                 # Disable Adaptive Pricing to prevent currency switcher from hiding Alipay.
                 # Alipay handles USD→CNY conversion internally for customers.
                 "adaptive_pricing": {"enabled": False},
-                # 强制收集账单地址，Checkout 在创建 Customer 时会同步到客户记录
+                # Require a billing address so Checkout syncs it to the customer record.
                 "billing_address_collection": "required",
             }
 
@@ -196,7 +194,7 @@ class StripeService:
         credits_amount: int,
         currency: str = 'usd'
     ) -> Dict[str, Any]:
-        """创建支付意图（用于Credits购买）"""
+        """Create a PaymentIntent for a credits purchase."""
         try:
             intent = stripe.PaymentIntent.create(
                 amount=amount,  # amount in cents
@@ -219,7 +217,7 @@ class StripeService:
             )
     
     async def handle_webhook(self, db: AsyncSession, payload: bytes, sig_header: str) -> Dict[str, Any]:
-        """处理Stripe Webhook"""
+        """Handle a Stripe webhook payload."""
         try:
             event = stripe.Webhook.construct_event(
                 payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
@@ -239,7 +237,7 @@ class StripeService:
             )
     
     async def _process_webhook_event(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
-        """处理Webhook事件"""
+        """Dispatch an incoming Stripe webhook event."""
         event_type = event['type']
         
         if event_type == 'checkout.session.completed':
@@ -256,7 +254,7 @@ class StripeService:
             return {'status': 'ignored', 'event_type': event_type}
     
     async def _handle_checkout_completed(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
-        """处理支付完成事件"""
+        """Handle a completed Checkout session."""
         session = event['data']['object']
         session_id = session['id']
         mode = session.get('mode')
@@ -269,18 +267,18 @@ class StripeService:
             logger.warning(f"Checkout session {session_id} 缺少user_id metadata，可能是测试事件，跳过处理")
             return {'status': 'ignored', 'message': 'Missing user_id metadata (likely test event)', 'checkout_session_id': session_id, 'event_type': 'checkout.session.completed'}
         
-        # 幂等性检查
+        # Skip work that was already processed for this Checkout session.
         if await self.payment_record_repo.is_processed(db, checkout_session_id=session_id):
             logger.info(f"Checkout session {session_id} 已处理，跳过")
             return {'status': 'ignored', 'message': 'Already processed', 'checkout_session_id': session_id}
         
-        # 准备支付记录的extra_metadata
+        # Seed audit metadata for the payment record.
         payment_metadata = {
             'session_id': session_id,
-            'stripe_session': session,  # 完整session对象（用于调试和审计）
+            'stripe_session': session,  # Full session payload for debugging and audits.
         }
         
-        # 创建支付记录（pending状态）
+        # Create the pending payment record before side effects run.
         payment_record = PaymentRecord(
             checkout_session_id=session_id,
             user_id=user_id,
@@ -291,25 +289,25 @@ class StripeService:
             extra_metadata=payment_metadata
         )
         db.add(payment_record)
-        await db.flush()  # 获取ID但不提交
+        await db.flush()  # Get the database ID without committing yet.
         
         try:
             if mode == 'payment' and payment_type == 'credits_package':
-                # Credits包类型
+                # Credits package purchase flow.
                 price_id = metadata.get('price_id')
                 
                 if not price_id:
                     logger.error(f"Credits包信息不完整: price_id={price_id}")
                     return {'status': 'error', 'message': 'Missing price_id'}
                 
-                # 从价格配置获取Credits数量和商品信息
+                # Load the credits amount and product metadata from the price config.
                 price_config = await self.price_config_service.get_price_config(db, price_id)
                 credits_amount = price_config.credits_amount * quantity
                 if credits_amount is None:
                     logger.error(f"价格ID {price_id} 的Credits数量未配置")
                     return {'status': 'error', 'message': 'Credits amount not configured'}
                 
-                # 更新支付记录的extra_metadata，添加商品信息
+                # Attach purchased product details to the payment record.
                 product_description = f"Credits包 - {credits_amount} Credits"
                 if price_config.extra_metadata and price_config.extra_metadata.get('description'):
                     product_description = price_config.extra_metadata.get('description')
@@ -319,10 +317,10 @@ class StripeService:
                     'product_description': product_description,
                     'price_id': price_id,
                     'credits_amount': credits_amount,
-                    'product_metadata': price_config.extra_metadata or {}  # 从价格配置获取商品描述等信息
+                    'product_metadata': price_config.extra_metadata or {}  # Product metadata from the price config.
                 }
                 
-                # 增加Credits
+                # Grant the purchased credits to the user balance.
                 await self.credits_service.add_credits(
                     session=db,
                     user_id=user_id,
@@ -331,7 +329,7 @@ class StripeService:
                     stripe_payment_id=session.get('payment_intent')
                 )
                 
-                # 更新支付记录
+                # Mark the payment record as completed.
                 payment_record.status = 'succeeded'
                 payment_record.credits_amount = credits_amount
                 payment_record.processed_at = datetime.utcnow()
@@ -370,7 +368,7 @@ class StripeService:
             )
     
     async def _handle_payment_intent_succeeded(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
-        """处理PaymentIntent成功事件（用于Credits购买）"""
+        """Handle a successful PaymentIntent for a credits purchase."""
         payment_intent = event['data']['object']
         payment_intent_id = payment_intent['id']
         metadata = payment_intent.get('metadata', {})
@@ -385,18 +383,18 @@ class StripeService:
             logger.warning(f"PaymentIntent {payment_intent_id} 缺少user_id metadata，可能是测试事件，跳过处理")
             return {'status': 'ignored', 'message': 'Missing user_id metadata (likely test event)', 'payment_intent_id': payment_intent_id}
         
-        # 幂等性检查
+        # Skip work that was already processed for this PaymentIntent.
         if await self.payment_record_repo.is_processed(db, payment_intent_id=payment_intent_id):
             logger.info(f"PaymentIntent {payment_intent_id} 已处理，跳过")
             return {'status': 'ignored', 'message': 'Already processed', 'payment_intent_id': payment_intent_id}
         
-        # 准备支付记录的extra_metadata
+        # Seed audit metadata for the payment record.
         payment_metadata = {
             'payment_intent_id': payment_intent_id,
-            'stripe_payment_intent': payment_intent,  # 完整payment_intent对象（用于调试和审计）
+            'stripe_payment_intent': payment_intent,  # Full PaymentIntent payload for debugging and audits.
         }
         
-        # 创建支付记录（pending状态）
+        # Create the pending payment record before side effects run.
         payment_record = PaymentRecord(
             payment_intent_id=payment_intent_id,
             user_id=user_id,
@@ -407,10 +405,10 @@ class StripeService:
             extra_metadata=payment_metadata
         )
         db.add(payment_record)
-        await db.flush()  # 获取ID但不提交
+        await db.flush()  # Get the database ID without committing yet.
         
         try:
-            # 从metadata获取Credits数量
+            # Read the purchased credits amount from metadata.
             credits_amount_str = metadata.get('credits_amount')
             if not credits_amount_str:
                 logger.error(f"PaymentIntent {payment_intent_id} 缺少credits_amount")
@@ -421,20 +419,18 @@ class StripeService:
             
             credits_amount = int(credits_amount_str)
 
-            # 更新支付记录的extra_metadata，添加商品信息
+            # Attach purchased product details to the payment record.
             payment_record.extra_metadata = {
                 **payment_metadata,
                 'product_description': f"Credits package - {credits_amount} Credits",
                 'credits_amount': credits_amount,
-                'payment_method': 'payment_intent'  # 标识这是通过PaymentIntent购买的
+                'payment_method': 'payment_intent'  # Marks this purchase as PaymentIntent-based.
             }
             
-            # 验证金额（从PaymentIntent获取）
+            # Amount validation can be layered in here if needed later.
             actual_amount = payment_intent.get('amount', 0)
-            # 这里可以根据credits_amount计算预期金额进行验证
-            # 暂时跳过金额验证，因为金额已经在创建PaymentIntent时验证过
             
-            # 增加Credits
+            # Grant the purchased credits to the user balance.
             await self.credits_service.add_credits(
                 session=db,
                 user_id=user_id,
@@ -443,7 +439,7 @@ class StripeService:
                 stripe_payment_id=payment_intent_id
             )
             
-            # 更新支付记录
+            # Mark the payment record as completed.
             payment_record.status = 'succeeded'
             payment_record.credits_amount = credits_amount
             payment_record.processed_at = datetime.utcnow()
@@ -477,7 +473,7 @@ class StripeService:
             )
     
     async def _handle_payment_succeeded(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
-        """处理支付成功事件（订阅续费）"""
+        """Handle a successful subscription renewal payment."""
         invoice = event['data']['object']
         subscription_id = invoice.get('subscription')
         
@@ -488,7 +484,7 @@ class StripeService:
         return {'status': 'ignored', 'message': 'Subscription renewal not implemented'}
 
     async def _handle_subscription_deleted(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
-        """处理订阅删除事件"""
+        """Handle subscription deletion events."""
         subscription = event['data']['object']
         stripe_subscription_id = subscription['id']
 
@@ -507,7 +503,7 @@ class StripeService:
             )
 
     async def _handle_charge_refunded(self, db: AsyncSession, event: Dict[str, Any]) -> Dict[str, Any]:
-        """处理退款事件（Stripe 控制台手动退款等）"""
+        """Handle refund events, including manual refunds from the Stripe dashboard."""
         charge = event["data"]["object"]
         charge_id = charge.get("id")
         refund_items = (charge.get("refunds", {}) or {}).get("data", []) or []
@@ -518,10 +514,10 @@ class StripeService:
         
         currency = (charge.get("currency") or "cny").upper()
 
-        # 幂等性：基于 refund_id 或 charge_id 构造唯一键
+        # Use a stable idempotency key derived from the refund or charge identifier.
         idempotency_key = refund_id or f"{charge_id}-refund"
 
-        # 尝试关联原始支付记录以获取 user_id 等上下文
+        # Recover the original payment record to reuse billing context such as user_id.
         original_record = None
         if payment_intent_id:
             original_record = await self.payment_record_repo.get_by_payment_intent_id(db, payment_intent_id)
@@ -534,36 +530,36 @@ class StripeService:
             logger.error(f"退款事件缺少 user_id，无法记录退款: charge_id={charge_id}")
             return {"status": "error", "message": "Missing user_id for refund", "event_type": "charge.refunded"}
 
-        # 确保 user_id 转为 UUID 对象，避免 SQL 查询报错
+        # Normalize user_id to UUID before using it in SQL filters.
         if user_id and isinstance(user_id, str):
             try:
                 user_id = UUID(user_id)
             except ValueError:
                 logger.error(f"Invalid user_id format: {user_id}")
                 return {"status": "error", "message": "Invalid user_id format", "event_type": "charge.refunded"}
-        # 计算本次退款金额：总退款金额 - 原累计退款金额
-        # total_refund_amount_cents 是累计退款金额（包含当前这笔退款）
+
+        # Compute the incremental refund amount from the cumulative Stripe total.
+        # total_refund_amount_cents already includes the current refund event.
         total_refund_amount_cents = charge.get("amount_refunded") or 0
         
-        # 获取原累计退款金额（不包含当前这笔退款）
+        # Load previously recorded refund totals for the same payment flow.
         origin_total_refund_amount_cents = 0
 
-        # 在payment_record表中查找该payment_intent对应的所有历史退款记录
-        # 这里的查询条件改为 payment_intent_id == idempotency_key 且 user_id == user_id
+        # Sum historical refund records that use the same synthetic refund key.
         query = select(func.sum(PaymentRecord.amount_cents)).where(
             PaymentRecord.payment_intent_id == idempotency_key
         ).where(
             PaymentRecord.user_id == user_id
         ).where(
-            PaymentRecord.amount_cents < 0  # 确保是退款记录（负数）
+            PaymentRecord.amount_cents < 0  # Refund rows are stored as negative amounts.
         )
         result = await db.execute(query)
-        # 求和amount_cents（均为负数，所以求和后需取绝对值）
+        # Sum negative refund amounts and convert back to a positive total.
         origin_total_refund_amount_cents = abs(result.scalar() or 0)
         
         refund_amount_cents = total_refund_amount_cents - origin_total_refund_amount_cents
         if refund_amount_cents <= 0:
-            # 退款已处理过，直接返回成功（幂等性）
+            # The refund has already been processed; keep this path idempotent.
             logger.info(f"退款已处理，跳过: charge_id={charge_id}, refund_id={refund_id}")
             return {
                 "status": "success",
@@ -573,7 +569,7 @@ class StripeService:
                 "refund_id": refund_id,
             }
 
-        # 计算需要记录的 Credits 退款数量（按价格配置比例折算）
+        # Translate the refunded cash amount back into credits using price metadata.
         credits_refunded = None
         price_id = (
             metadata.get("price_id")
@@ -586,13 +582,13 @@ class StripeService:
                     credits_refunded = -int(
                         price_cfg.credits_amount
                         * abs(refund_amount_cents)
-                        / abs(price_cfg.amount_cents) # credits_amount * quantity
+                        / abs(price_cfg.amount_cents)  # credits_amount * quantity
                     )
             except Exception as e:
                 logger.warning(f"退款计算Credits失败，price_id={price_id}: {e}")
                 credits_refunded = None
         
-        # 回退：若没有价格配置，按原支付记录比例折算
+        # Fall back to the original payment record ratio when price metadata is unavailable.
         if credits_refunded is None and original_record and original_record.credits_amount and original_record.amount_cents:
             credits_refunded = -int(
                 abs(original_record.credits_amount)
@@ -600,7 +596,7 @@ class StripeService:
                 / abs(original_record.amount_cents)
             )
 
-        # 同步扣减用户余额（credits_refunded 为负数表示扣除）
+        # Apply the credit adjustment to the user balance when needed.
         if credits_refunded is not None and credits_refunded < 0:
             await self.credits_service.add_credits(
                 session=db,
