@@ -167,8 +167,8 @@ Service endpoints:
   - Redis: localhost:6379
 
 Next steps:
-  1. Start the API: pnpm dev:api
-  2. Start the worker: pnpm dev:worker
+  1. Start the API: cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
+  2. Start the worker: cd apps/worker && uv run python worker.py
 
 Deterministic local developer account:
   - user_id: ${LOCAL_DEV_USER_ID}
@@ -197,8 +197,8 @@ Service endpoints:
   - Redis: localhost:6379
 
 Next steps:
-  1. Start the API: pnpm dev:api
-  2. Start the worker: pnpm dev:worker
+  1. Start the API: cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
+  2. Start the worker: cd apps/worker && uv run python worker.py
 
 Optional user bootstrap:
   - rerun this script with --init-user to create the dashboard-compatible local user table

@@ -746,12 +746,21 @@ async def run_retrieval_query(
     logger.debug(f'retrieval: cache_hit=False version={cache_version}')
 
     # ── Small KB optimization ──
-    total_chunk_count = await _count_scoped_chunks(
-        db, user_id=user_id, namespace=namespace,
-        exclude_document_ids=exclude_document_ids,
-        allowed_chunk_types=allowed_chunk_types,
-    )
-    if total_chunk_count <= top_k:
+    total_chunk_count: int | None = None
+    try:
+        total_chunk_count = await _count_scoped_chunks(
+            db,
+            user_id=user_id,
+            namespace=namespace,
+            exclude_document_ids=exclude_document_ids,
+            allowed_chunk_types=allowed_chunk_types,
+        )
+    except Exception as e:
+        logger.warning(
+            f"Failed to count scoped chunks for small_kb optimization (ignored): {e}"
+        )
+
+    if total_chunk_count is not None and total_chunk_count <= top_k:
         logger.info(f'retrieval: small_kb_optimization total_chunks={total_chunk_count} <= top_k={top_k}')
         all_rows = await _load_all_scoped_chunks(
             db, user_id=user_id, namespace=namespace,

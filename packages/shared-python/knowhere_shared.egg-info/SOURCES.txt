@@ -94,7 +94,6 @@ shared/repositories/webhook_secret_repository.py
 shared/services/job_lifecycle_sync.py
 shared/services/worker_health.py
 shared/services/ai/__init__.py
-shared/services/ai/direct_ai_client.py
 shared/services/ai/prompt_service.py
 shared/services/ai/response_process_service.py
 shared/services/billing/__init__.py
@@ -129,7 +128,6 @@ shared/services/retrieval/publication_service.py
 shared/services/storage/__init__.py
 shared/services/storage/file_encryptor_service.py
 shared/services/storage/file_upload_service.py
-shared/services/storage/hierarchy_html_generator.py
 shared/services/storage/result_storage.py
 shared/services/storage/storage_adapter.py
 shared/services/storage/zip_result_service.py
@@ -150,6 +148,7 @@ shared/tests/test_http_clients.py
 shared/tests/test_job_lifecycle_sync_chunks.py
 shared/tests/test_logging.py
 shared/tests/test_openai_timeout_defaults.py
+shared/tests/test_publication_foundation.py
 shared/tests/test_result_storage.py
 shared/tests/test_retrieval_app_service.py
 shared/tests/test_retrieval_cache_service.py

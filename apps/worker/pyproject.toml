@@ -38,7 +38,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-knowhere-shared = { path = "../../packages/shared-python", editable = true }
+knowhere-shared = { workspace = true }
 
 [tool.uv]
 package = false

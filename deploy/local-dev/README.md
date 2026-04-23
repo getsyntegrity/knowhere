@@ -47,6 +47,17 @@ Deterministic local developer account:
 - `tier`: `tier_5`
 - `api_key`: `sk_local_dev_tier5_full_access`
 
+## Verify the Local API
+
+After you start the API process locally, confirm the service is reachable:
+
+```bash
+curl http://localhost:5005/health
+```
+
+You can also open the local OpenAPI docs at
+`http://localhost:5005/docs`.
+
 ## Stop the Stack
 
 From the repository root:

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  api-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync API dependencies
+        working-directory: apps/api
+        run: uv sync
+
+      - name: Run public API typecheck
+        run: ./scripts/typecheck-public.sh
+
+  shared-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync shared dependencies
+        working-directory: packages/shared-python
+        run: uv sync
+
+      - name: Run shared tests
+        run: ./scripts/test-public-shared.sh
+
+  api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync API dependencies
+        working-directory: apps/api
+        run: uv sync
+
+      - name: Prepare API env
+        working-directory: apps/api
+        run: cp env.example .env
+
+      - name: Run API tests
+        run: ./scripts/test-public-api.sh
+
+  worker-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync worker dependencies
+        working-directory: apps/worker
+        run: uv sync
+
+      - name: Prepare worker env
+        working-directory: apps/worker
+        run: cp env.example .env
+
+      - name: Run worker tests
+        run: ./scripts/test-public-worker.sh

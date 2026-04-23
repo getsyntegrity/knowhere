@@ -1,30 +1,29 @@
 #!/bin/bash
 
-# LocalStack AWS资源初始化脚本
-# 此脚本在LocalStack启动后自动执行
+# Initialize LocalStack AWS resources after the container becomes ready.
 
 set -e
 
-echo "🚀 开始初始化LocalStack AWS资源..."
+echo "Starting LocalStack AWS resource initialization..."
 
-# 等待LocalStack完全启动
-echo "⏳ 等待LocalStack服务启动..."
+# Wait until LocalStack is ready to accept requests.
+echo "Waiting for LocalStack to become ready..."
 sleep 10
 
-# 设置AWS CLI配置（指向LocalStack）
+# Point the AWS CLI at LocalStack.
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
 export AWS_DEFAULT_REGION=us-west-1
 export AWS_ENDPOINT_URL=http://localhost:4566
 
-# 创建S3存储桶
-echo "📦 创建S3存储桶..."
+# Create the buckets used by local development.
+echo "Creating S3 buckets..."
 aws --endpoint-url=http://localhost:4566 s3 mb s3://knowhere-dev
 aws --endpoint-url=http://localhost:4566 s3 mb s3://knowhere-uploads
 aws --endpoint-url=http://localhost:4566 s3 mb s3://knowhere-results
 
-# 配置S3存储桶CORS
-echo "🌐 配置S3 CORS策略..."
+# Configure bucket CORS for local browser-based development.
+echo "Configuring bucket CORS..."
 aws --endpoint-url=http://localhost:4566 s3api put-bucket-cors \
   --bucket knowhere-dev \
   --cors-configuration '{
@@ -53,16 +52,16 @@ aws --endpoint-url=http://localhost:4566 s3api put-bucket-cors \
     ]
   }'
 
-# 创建SNS主题
-echo "📢 创建SNS主题..."
+# Create the SNS topic used for upload notifications.
+echo "Creating SNS topic..."
 TOPIC_ARN=$(aws --endpoint-url=http://localhost:4566 sns create-topic \
   --name knowhere-s3-upload-events \
   --query 'TopicArn' --output text)
 
-echo "SNS主题ARN: $TOPIC_ARN"
+echo "SNS topic ARN: $TOPIC_ARN"
 
-# 配置S3事件通知
-echo "⚡ 配置S3事件通知..."
+# Configure S3 event notifications.
+echo "Configuring S3 event notifications..."
 aws --endpoint-url=http://localhost:4566 s3api put-bucket-notification-configuration \
   --bucket knowhere-uploads \
   --notification-configuration "{
@@ -89,25 +88,25 @@ aws --endpoint-url=http://localhost:4566 s3api put-bucket-notification-configura
     ]
   }"
 
-# 验证配置
-echo "✅ 验证配置..."
+# Show the resulting LocalStack state.
+echo "Verifying LocalStack resources..."
 aws --endpoint-url=http://localhost:4566 s3 ls
 aws --endpoint-url=http://localhost:4566 sns list-topics
 aws --endpoint-url=http://localhost:4566 s3api get-bucket-notification-configuration --bucket knowhere-uploads
 
-# 订阅SNS主题到webhook
+# Subscribe the SNS topic to the local webhook endpoint.
 # NOTE: The API server runs on the host (WSL2), so use host.docker.internal
 # to reach it from inside the container.
-echo "🔗 等待API服务启动以订阅SNS到webhook..."
+echo "Waiting for the API before subscribing SNS to the webhook..."
 ATTEMPT=0
 while true; do
   ATTEMPT=$((ATTEMPT + 1))
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://host.docker.internal:5005/health 2>&1) || true
   if [ "$HTTP_CODE" = "200" ]; then
-    echo "✅ API服务已就绪 (attempt #$ATTEMPT)"
+    echo "API is ready (attempt #$ATTEMPT)"
     break
   fi
-  echo "⏳ [attempt #$ATTEMPT] API服务未就绪 - http_code=$HTTP_CODE, retrying in 2s..."
+  echo "[attempt #$ATTEMPT] API not ready yet - http_code=$HTTP_CODE, retrying in 2s..."
   sleep 2
 done
 
@@ -115,20 +114,166 @@ aws --endpoint-url=http://localhost:4566 sns subscribe \
   --topic-arn "$TOPIC_ARN" \
   --protocol http \
   --notification-endpoint http://host.docker.internal:5005/v1/internal/s3-events
-echo "✅ SNS订阅完成"
+echo "SNS subscription created."
 
-echo "🎉 LocalStack AWS资源初始化完成！"
+echo "LocalStack AWS resource initialization completed."
 echo ""
-echo "📋 服务信息："
-echo "  - S3端点: http://localhost:4566"
-echo "  - SNS端点: http://localhost:4566"
-echo "  - 管理界面: http://localhost:4566/_localstack/health"
+echo "Service endpoints:"
+echo "  - S3 endpoint: http://localhost:4566"
+echo "  - SNS endpoint: http://localhost:4566"
+echo "  - LocalStack health: http://localhost:4566/_localstack/health"
 echo ""
-echo "🔧 环境变量配置："
+echo "Suggested local environment values:"
 echo "  S3_ENDPOINT_URL=http://localhost:4566"
 echo "  S3_ACCESS_KEY_ID=test"
 echo "  S3_SECRET_ACCESS_KEY=test"
-echo "  S3_BUCKET_NAME=knowhere-dev"
+echo "  S3_BUCKET_NAME=knowhere-uploads"
+echo "  S3_UPLOADS_BUCKET=knowhere-uploads"
+echo "  S3_RESULTS_BUCKET=knowhere-results"
 echo "  S3_REGION=us-west-1"
 echo "  S3_USE_SSL=false"
 echo "  S3_ADDRESSING_STYLE=path"
+*** Add File: /tmp/knowhere-api-issue213/docs/external-services.md
+# External Service Dependencies
+
+Knowhere API is the backend for <https://knowhereto.ai/>. Public product
+documentation can also link to <https://docs.knowhereto.ai/> when deeper setup
+references are helpful.
+
+## Required For Local Startup
+
+An external contributor needs these dependencies to run the retained backend
+surface locally:
+
+- PostgreSQL for the application database
+- Redis for Celery and short-lived state
+- S3-compatible storage for uploads and result assets
+- one OpenAI-compatible LLM provider key for retrieval and parsing flows
+
+The repo-managed `deploy/local-dev` stack provides PostgreSQL, Redis, and
+LocalStack so the default `env.example` files can use a coherent local baseline.
+
+## Required Only For Specific Features
+
+- MinerU:
+  required only if you want MinerU-backed document parsing flows
+- iLoveAPI:
+  required only for conversion paths such as PPTX-to-PDF
+- QStash:
+  required only if you want queued outbound webhook delivery
+- Stripe:
+  required only if you enable billing and checkout flows
+- Resend:
+  required only if you enable email notifications
+- OAuth provider credentials:
+  required only if you run dashboard-linked auth flows
+
+## Optional Observability And Analytics
+
+- Logfire for distributed tracing export
+- Moesif for API analytics
+- PostHog for product analytics
+
+These integrations are intentionally optional. Leaving them empty should not
+block a local backend bootstrap.
+
+## Minimum Viable Local Configuration
+
+The smallest supported local setup is:
+
+1. copy `apps/api/env.example` and `apps/worker/env.example`
+2. keep the default local PostgreSQL, Redis, and LocalStack values
+3. add one real LLM provider key such as `DS_KEY`
+4. run `deploy/local-dev/start-dev.sh`
+5. start the API and worker with `uv run`
+
+That path is the baseline public developer workflow. Additional providers should
+only be configured when you need the matching feature set.
+*** Add File: /tmp/knowhere-api-issue213/docs/release-distribution.md
+# Release Distribution Policy
+
+The first public Knowhere API releases should be source-code-only GitHub
+releases.
+
+## GitHub Release Assets
+
+- Use the default GitHub-generated source archives
+- Do not attach Docker images, Python packages, Node packages, or prebuilt
+  binaries unless that distribution path is explicitly approved later
+- Keep release notes clear that the release contains source code and repository
+  documentation, not a complete hosted runtime bundle
+
+## Docker Distribution
+
+Docker images are a separate registry distribution path from GitHub Release
+assets.
+
+- GHCR is the only retained public container registry target in this
+  publication-preparation branch
+- container publication should happen through `.github/workflows/build-images.yml`
+- GitHub Release notes can link to GHCR tags, but the images themselves should
+  not be duplicated as release attachments
+
+## Review Expectation
+
+Release notes should make it clear that:
+
+- self-hosting still requires environment configuration
+- public releases do not bundle private infrastructure or managed service access
+- source-code-only GitHub Release assets are the default public baseline
+*** Add File: /tmp/knowhere-api-issue213/docs/self-hosting.md
+# Self-Hosting And Local Verification
+
+This repository keeps the simplest supported backend-only local workflow.
+
+## 1. Prepare Configuration
+
+```bash
+cp apps/api/env.example apps/api/.env
+cp apps/worker/env.example apps/worker/.env
+```
+
+Add one real LLM provider key before you start the application processes.
+
+## 2. Start Local Infrastructure
+
+```bash
+cd deploy/local-dev
+./start-dev.sh
+```
+
+If you also want the helper to initialize the local API user state, rerun it
+with:
+
+```bash
+cd deploy/local-dev
+./start-dev.sh --init-user
+```
+
+## 3. Start The API And Worker
+
+```bash
+cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
+cd apps/worker && uv run python worker.py
+```
+
+## 4. Verify The Local Server
+
+```bash
+curl http://localhost:5005/health
+```
+
+If the API is healthy, you can also open:
+
+- `http://localhost:5005/docs` for the local OpenAPI docs
+- `http://localhost:4566/_localstack/health` for LocalStack health
+
+## 5. Stop Local Infrastructure
+
+```bash
+cd deploy/local-dev
+./stop-dev.sh
+```
+
+That start and stop flow is the documented public local baseline. Anything more
+complex should build on top of these helpers instead of replacing them.

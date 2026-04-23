@@ -1,25 +1,15 @@
 {
-  "venvPath": ".",
-  "venv": ".venv",
-  "extraPaths": [
-    ".",
-    "../../packages/shared-python"
-  ],
   "include": [
     "app",
-    "__tests__",
-    "scripts",
-    "alembic"
+    "main.py"
+  ],
+  "extraPaths": [
+    "../../packages/shared-python"
   ],
   "exclude": [
-    "**/__pycache__",
-    ".pytest_cache",
-    ".venv",
-    "venv",
-    "logs",
-    "alembic/versions_archive_20260305",
-    "**/node_modules",
-    "**/.*"
+    "**/__tests__",
+    "**/.venv",
+    "**/__pycache__"
   ],
   "typeCheckingMode": "basic"
 }

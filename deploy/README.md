@@ -1,30 +1,31 @@
 # Deploy Assets
 
-This directory only contains application-owned deploy assets.
+This directory contains only repository-owned deployment support files.
 
-## What Stays Here
+## What Lives Here
 
-- `deploy/docker/`: Dockerfiles used to build CI images
-- `deploy/local-dev/`: local development services and helper scripts
+- `deploy/docker/`: Dockerfiles for the API and worker services
+- `deploy/local-dev/`: local development infrastructure based on Docker Compose
 
-## What Does Not Stay Here
+## What Does Not Live Here
 
-This repository does not store remote deployment ownership.
+This repository does not own remote runtime infrastructure.
 
 Do not add:
 
-- cloud-specific deployment manifests
+- cloud deployment manifests
 - Terraform state or plans
 - SSH keys or PEM files
-- runtime secrets
-- cluster rollout or operator runbooks
+- live environment secrets
+- operator runbooks tied to a private environment
 
-Those assets belong in `knowhere-api-infra` so the application repository stays focused on source code and image builds.
+Keep runtime infrastructure and environment-specific rollout ownership in the
+separate infra repository.
 
 ## CI Scope
 
-The GitHub Actions workflow in this repository builds container images only.
+The GitHub Actions workflows in this repository validate the retained backend
+surface and build container images.
 
-- GHCR publishing is part of the default build path
-- ACR and ECR publishing remain secret-driven registry outputs
+- GHCR is the only registry path kept in this publication-preparation branch
 - no workflow in this repository should perform runtime deployment actions
