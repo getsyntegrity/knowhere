@@ -24,7 +24,7 @@ def create_mock_session() -> AsyncMock:
 async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> None:
     service = GuestRegistrationService()
     session = create_mock_session()
-    device_id = "codex-staging-smoke-20260406"
+    device_id = "codex-guest-registration-smoke"
 
     monkeypatch.setattr(
         service._credits_service,
@@ -63,7 +63,7 @@ async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> N
     created_user = session.add.call_args_list[0].args[0]
 
     assert isinstance(created_user, User)
-    assert created_user.name == "Guest codex-staging-smoke-20260406"
+    assert created_user.name == "Guest codex-guest-registration-smoke"
     assert created_user.email.startswith("guest+")
     assert created_user.email.endswith("@guest.knowhere.local")
     assert response.device_id == device_id
