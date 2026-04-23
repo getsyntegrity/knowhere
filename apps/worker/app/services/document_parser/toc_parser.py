@@ -189,14 +189,14 @@ def get_docx_toc_style_info(elem, ns):
 
 def get_toc_level(elem, ns):
     """
-    检测段落样式是否为 TOC 样式
+    Detect whether a paragraph uses a TOC style.
     
     Args:
-        elem: XML 段落元素
-        ns: XML 命名空间
+        elem: XML paragraph element.
+        ns: XML namespace map.
     
     Returns:
-        bool: True 如果是 TOC 样式
+        bool: True when the paragraph uses a TOC style.
     """
     style_info = get_docx_toc_style_info(elem, ns)
     if not style_info["is_toc_style"]:
@@ -209,17 +209,17 @@ def get_toc_level(elem, ns):
 
 def detect_sdt_toc(elem, ns):
     """
-    检测 SDT (Structured Document Tag) 目录容器
-    Word 自动生成的目录通常被包装在 sdt 元素中
+    Detect an SDT (Structured Document Tag) TOC container.
+    Word-generated TOCs are often wrapped in ``sdt`` elements.
     
     Args:
-        elem: SDT 元素
-        ns: XML 命名空间
+        elem: SDT element.
+        ns: XML namespace map.
     
     Returns:
         dict: {
-            'is_toc_sdt': bool - 是否是目录 SDT,
-            'gallery_type': str - docPartGallery 类型
+            'is_toc_sdt': bool - whether the element is a TOC SDT,
+            'gallery_type': str - docPartGallery type
         }
     """
     tag = etree.QName(elem.tag).localname if isinstance(elem.tag, str) else None
@@ -248,21 +248,21 @@ def detect_sdt_toc(elem, ns):
 
 def detect_doc_tocs(elem, ns):
     """
-    检测目录区域，支持两种检测方式：
-    1. 段落样式检测 (TOC 样式)
-    2. 域代码检测 (instrText)
+    Detect TOC regions using two strategies:
+    1. paragraph style detection (TOC styles)
+    2. field code detection (instrText)
     
-    注意：SDT 容器检测使用 detect_sdt_toc 函数
+    Note: SDT container detection is handled by ``detect_sdt_toc``.
     
     Args:
-        elem: XML 段落元素
-        ns: XML 命名空间
+        elem: XML paragraph element.
+        ns: XML namespace map.
     
     Returns:
         dict: {
-            'is_style': bool - 是否是 TOC 样式,
-            'is_field_start': bool - 是否是 TOC 域开始,
-            'is_field_end': bool - 是否是域结束
+            'is_style': bool - whether the paragraph uses a TOC style,
+            'is_field_start': bool - whether this starts a TOC field,
+            'is_field_end': bool - whether this ends a field
         }
     """
     style_info = get_docx_toc_style_info(elem, ns)
@@ -372,12 +372,13 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
     """
     Detect TOC candidates (support multiple TOC areas)
     
-    策略：从 start_idx 开始向后扫描，收集恰好 limit_ 个有效行
-    同时记录完整的原始范围 [start_idx, end_idx]，便于后续过滤整个目录区域
+    Strategy: scan forward and collect exactly ``limit_`` valid lines while
+    also recording the full raw range ``[start_idx, end_idx]`` for later
+    filtering of the TOC area.
     
     Args:
         md_lines: markdown lines list
-        limit_: 目标有效行数（不是最大扫描行数）
+        limit_: Target number of valid lines, not the maximum scan length.
     
     Returns:
         Tuple of (candidates, invalid_ids_by_area, area_ranges)
@@ -385,7 +386,7 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
           - start_idx: start index of the candidate area
           - candidate_lines_with_indices: [(line_idx, line_content), ...] exactly limit_ valid lines
         - invalid_ids_by_area: List[list] - each list contains invalid line indices for that area
-        - area_ranges: List[(start_idx, end_idx)] - 原始 md_lines 的完整范围，用于后续过滤
+        - area_ranges: List[(start_idx, end_idx)] - full raw md_lines ranges for later filtering
     """
     
     toc_keywords = {"目录", "目次", "tableofcontents", "contents"}
@@ -824,7 +825,7 @@ def eval_toc_levels(toc_lines: list, model_name: str = None, max_depth: int = 6)
         - toc_tree: nested JSON structure
     """
     # Build data for LLM judgment (all lines are valid, pre-filtered)
-    # TOC keyword trigger lines (e.g. "TABLE OF CONTENTS", "目录") are excluded from
+    # TOC title trigger lines are excluded from
     # the LLM input: they stay within toc_range so they are stripped from md_lines,
     # but they must not be sent to the hierarchy LLM to avoid a spurious Level=1 entry.
     _toc_title_keywords = {"目录", "目次", "tableofcontents", "contents"}

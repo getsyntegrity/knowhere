@@ -57,11 +57,11 @@ def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
         return None
 
     if cut:
-        file_size = path.stat().st_size  # 字节
-        if file_size < min_size:  # 小于10KB
+        file_size = path.stat().st_size  # Bytes.
+        if file_size < min_size:  # Smaller than 10 KB.
             logger.debug(f"Skipping {path} (too small: {file_size/1024:.1f} KB)")
             return None
-        if file_size >= max_size:  # 大于5MB
+        if file_size >= max_size:  # Larger than 5 MB.
             logger.debug(f"Skipping {path} (too large: {file_size/1024/1024:.1f} MB)")
             return None
 

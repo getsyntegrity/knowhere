@@ -1189,8 +1189,7 @@ def postprocess_tb(df, drop=False):
             #      matches an existing column.
             #   B) Multiple index levels share the same name → pandas tries
             #      to insert duplicate columns (e.g. five levels all named
-            #      '专业技术职级通道（全员）' → five columns all padded to
-            #      ('专业技术职级通道（全员）', '')).
+            #      one merged header repeated across five padded columns.
             # Strategy: de-duplicate index.names so every level gets a unique
             # column name during reset_index, then clean up afterwards.
             existing_col_set = set(df.columns)

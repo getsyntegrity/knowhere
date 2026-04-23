@@ -15,7 +15,7 @@ from docx.oxml.ns import qn
 try:
     from markitdown import MarkItDown
 except ImportError:
-    # 如果markitdown不可用，使用替代方案
+    # Fall back to a pass-through shim when markitdown is unavailable.
     class MarkItDown:
         def convert(self, content):
             return content
@@ -218,8 +218,8 @@ def remove_isolated_nodes(tree):
 
 # def if_no_pos_code(reason_str: str) -> bool:
 #     """
-#     检查 pos_code 是否全为 0
-#     reason 格式: "POS [0, 0, ...] NEG [...]"
+#     Check whether all pos_code values are zero.
+#     reason format: "POS [0, 0, ...] NEG [...]"
 #     """
 #     if not reason_str or not isinstance(reason_str, str):
 #         return True
@@ -751,7 +751,7 @@ def judge_by_conditions(text, scope=20, return_detail=False, CN_SPECIAL_IDX=12):
             symbols = ".-"
             count_ = (sum(matched_text.count(s) for s in symbols) + 1)
             
-            # special handling for Chinese special characters (第x章/节/条/...)
+            # Special handling for Chinese chapter/section/item markers.
             if idx == CN_SPECIAL_IDX and return_detail:
                 unit_match = re.search(r'(章|节|条|部分|款|目|项|编|篇|卷|辑)', matched_text)
                 if unit_match:
@@ -1808,7 +1808,7 @@ def postprocess_headings(df, task, max_depth=-1):
 
 #         title = match.group(1).strip()
 #         node = {"chapter": title, "children": [], 'serial': 1}
-#         level = indent // 2  # 每两个空格作为一级（可根据实际情况调整）
+#         level = indent // 2  # Two spaces per level, adjustable if needed.
 #         if level == 0:
 #             node['serial'] = len(root)+1
 #             root.append(node)

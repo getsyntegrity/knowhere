@@ -161,15 +161,15 @@ class HTMLHeaderExpander:
     
     def detect_header_row_count(self, start_row: int = 0, max_scan_rows: int = 5) -> int:
         """
-        自动检测表头行数，基于 rowspan 最大值。
+        Automatically detect header row count using the maximum rowspan.
         
-        逻辑：
-        - 从 start_row 开始扫描最多 max_scan_rows 行
-        - 找到所有单元格中 rowspan 的最大值
-        - rowspan=2 表示表头占 2 行，rowspan=3 表示 3 行
+        Logic:
+        - scan at most ``max_scan_rows`` rows starting at ``start_row``
+        - find the largest rowspan value among all cells
+        - ``rowspan=2`` means a two-row header, ``rowspan=3`` means three rows
         
         Returns:
-            int: 检测到的表头行数，至少为 1
+            int: Detected header row count, at least 1.
         """
         if start_row >= len(self.rows):
             return 1
@@ -193,12 +193,12 @@ class HTMLHeaderExpander:
         max_scan_cols: int = 3
     ) -> Dict:
         """
-        检测行索引列，返回行索引信息。
+        Detect row-index columns and return the row-index metadata.
         
-        逻辑：
-        1. 从数据行开始（跳过表头行）
-        2. 从左往右扫描，如果某列非空且不是纯数字 → 是行索引列
-        3. 遇到数据列（有空单元格或数字）→ 停止扫描
+        Logic:
+        1. start from data rows after the header
+        2. scan left to right; a non-empty, non-numeric column is a row index
+        3. stop once a data column is reached
         
         Returns:
             dict: {

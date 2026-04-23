@@ -14,17 +14,17 @@ from shared.core.exceptions.domain_exceptions import WorkerHandlingException, Va
 from shared.utils.text_utils import count_cn_en, _CN_EN_NUM_RE
 
 def gen_str_codes(input_string):
-    """生成字符串的UUID5编码"""
+    """Generate a UUID5 code from a string."""
     namespace = uuid.NAMESPACE_DNS
     return str(uuid.uuid5(namespace, input_string))
 
 def get_str_time():
-    """获取当前时间字符串"""
+    """Get the current time as a string."""
     now = datetime.now()
     return now.strftime("%Y-%m-%d %H:%M:%S")
 
 def find_images(folder_path):
-    """查找文件夹中的图片文件"""
+    """Find image files inside a folder tree."""
     image_extensions = {'.png', '.jpg', '.jpeg'}
     image_files = []
 
@@ -36,7 +36,7 @@ def find_images(folder_path):
     return image_files
 
 def find_matches_parsing(content, path):
-    """解析内容中的表格和图片标记"""
+    """Parse table and image markers from content."""
     matches = extract_chunk_refs(content)
     if len(matches) == 0:
         match_type = 'PTXT'
@@ -50,7 +50,7 @@ def find_matches_parsing(content, path):
     return match_type
 
 def flatten_list(nested_list):
-    """将嵌套列表展平"""
+    """Flatten a nested list."""
     flat_list = []
     for item in nested_list:
         if isinstance(item, list):
@@ -60,7 +60,7 @@ def flatten_list(nested_list):
     return flat_list
 
 def flatten_dic2paths(d, current_path=None, result=None):
-    """将嵌套字典展平为路径列表"""
+    """Flatten a nested dict into path strings."""
     if result is None:
         result = []
     if current_path is None:
@@ -78,7 +78,7 @@ def flatten_dic2paths(d, current_path=None, result=None):
     return result
 
 def merge_df(input_df):
-    """合并同路径的DataFrame行"""
+    """Merge DataFrame rows that share the same path."""
     dfs_by_path = list(input_df.groupby('path', sort=False))
     processed_dfs = []
 
@@ -106,7 +106,7 @@ def merge_df(input_df):
     return final_df
 
 def process_path_texts(path_, last=50):
-    """处理路径文本"""
+    """Normalize path text for downstream use."""
     temp_path = path_handle(path_, mode='sanitize')
     return '_'.join(temp_path.split(os.sep))[:last]
 
@@ -161,19 +161,19 @@ def process_dup_paths_df(df):
     for idx, row in df.iterrows():
         path = row['path']
         
-        # 检查这行本身是否需要重命名
+        # Check whether this row itself needs renaming.
         new_path = path_renames.get(idx, path)
         path_parts = new_path.split(split_char)
         
-        # 检查这行的路径是否是某个被重命名父路径的子路径
+        # Check whether this row is under a renamed parent path.
         for parent_path, rename_info in parent_rename_map.items():
             parent_parts = parent_path.split(split_char)
             
-            # 检查当前路径是否以此父路径开头（且不是父路径本身）
+            # Check whether the current path starts with that parent path.
             if (len(path_parts) > len(parent_parts) and 
                 path_parts[:len(parent_parts)] == parent_parts):
                 
-                # 找到在当前行之前、最近的被重命名的父路径
+                # Find the nearest renamed parent path that appears earlier.
                 matching_parent_idx = None
                 for parent_idx in sorted(rename_info.keys(), reverse=True):
                     if parent_idx < idx:
@@ -193,7 +193,7 @@ def process_dup_paths_df(df):
     return df
 
 def remove_spaces(text, handle_punctuation=False):
-    """移除中文之间的空格，保留英文单词间的空格"""
+    """Remove spaces between Chinese chars while keeping English word spacing."""
     if handle_punctuation:
         punctuation = r"""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~，。、【】《》？；：''""（）…—-！"""
         res_text = re.sub(f"[{re.escape(punctuation)}]", "", text)
@@ -207,7 +207,7 @@ def remove_spaces(text, handle_punctuation=False):
     return res_text.strip()
 
 def traverse_dict(d, parent=None):
-    """遍历字典生成描述文本"""
+    """Traverse a dictionary and generate description text."""
     dic_texts = []
     for key, value in d.items():
         if value:
@@ -218,7 +218,7 @@ def traverse_dict(d, parent=None):
     return dic_texts
 
 def restore_graph_by_paths(paths):
-    """从路径列表重建图结构"""
+    """Rebuild a graph structure from path strings."""
     root_dict = {}
     split_char = settings.SPLIT_CHAR or ";"
     for path in paths:
@@ -232,7 +232,7 @@ def restore_graph_by_paths(paths):
     return root_dict, dic_texts
 
 def html2txt(html_text):
-    """将HTML转换为纯文本"""
+    """Convert HTML into plain text."""
     soup = BeautifulSoup(html_text, 'html.parser')
     text = soup.get_text()
     return text
