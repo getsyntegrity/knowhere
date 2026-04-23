@@ -399,9 +399,11 @@ def test_selected_small_modules_only_keep_english_comments_and_docstrings() -> N
 
 
 def test_selected_utility_files_only_keep_english_comments_and_docstrings() -> None:
+    assert not (REPO_ROOT / "apps/worker/tests/services/workload copy").exists()
+
     for relative_path in (
         "apps/worker/app/services/document_parser/atlas_parser.py",
-        "apps/worker/tests/services/workload copy/test_page_estimator.py",
+        "apps/worker/tests/services/workload/test_page_estimator.py",
         "packages/shared-python/shared/core/constants/stopwords.py",
         "packages/shared-python/shared/services/ai/prompt_service.py",
         "packages/shared-python/shared/utils/file_utils.py",
