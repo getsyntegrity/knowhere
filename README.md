@@ -11,6 +11,17 @@ This repository owns:
 
 This repository does not own runtime deployment state.
 
+## Project Governance
+
+- Licensed under Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+- Contribution workflow and branch expectations live in
+  [CONTRIBUTING.md](CONTRIBUTING.md).
+- Security reporting guidance lives in [SECURITY.md](SECURITY.md).
+- Community behavior expectations live in
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- This migration branch now includes a root `pyproject.toml` that declares the
+  retained Python workspace members used for publication preparation.
+
 ## Repository Layout
 
 ```text
