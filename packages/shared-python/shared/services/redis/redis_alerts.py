@@ -1,6 +1,4 @@
-"""
-Redis告警服务
-"""
+"""Alerting helpers built on top of Redis monitoring."""
 import time
 from typing import Any, Callable, Dict, List
 
@@ -10,7 +8,7 @@ from shared.services.redis.redis_monitor import RedisMonitor
 
 
 class AlertRule:
-    """告警规则"""
+    """Alert rule definition."""
     
     def __init__(
         self,
@@ -18,7 +16,7 @@ class AlertRule:
         condition: Callable[[Dict[str, Any]], bool],
         severity: str = "warning",
         message: str = "",
-        cooldown: int = 300  # 冷却时间（秒）
+        cooldown: int = 300  # Cooldown in seconds.
     ):
         self.name = name
         self.condition = condition
@@ -28,14 +26,14 @@ class AlertRule:
         self.last_triggered = 0
     
     def should_trigger(self, data: Dict[str, Any]) -> bool:
-        """检查是否应该触发告警"""
+        """Check whether the alert should trigger."""
         current_time = time.time()
         
-        # 检查冷却时间
+        # Respect the cooldown window.
         if current_time - self.last_triggered < self.cooldown:
             return False
         
-        # 检查条件
+        # Evaluate the rule condition.
         if self.condition(data):
             self.last_triggered = current_time
             return True
@@ -44,7 +42,7 @@ class AlertRule:
 
 
 class RedisAlertManager:
-    """Redis告警管理器"""
+    """Manager for Redis alert rules and alert history."""
     
     def __init__(self, redis_monitor: RedisMonitor):
         self.redis_monitor = redis_monitor
@@ -53,9 +51,9 @@ class RedisAlertManager:
         self._setup_default_rules()
     
     def _setup_default_rules(self):
-        """设置默认告警规则"""
+        """Register default alert rules."""
         
-        # 内存使用率告警
+        # Memory-usage alerts.
         self.add_rule(AlertRule(
             name="high_memory_usage",
             condition=lambda data: data.get("memory", {}).get("memory_usage", 0) > 90,
@@ -72,7 +70,7 @@ class RedisAlertManager:
             cooldown=600
         ))
         
-        # 连接数告警
+        # Connection-count alert.
         self.add_rule(AlertRule(
             name="high_connection_count",
             condition=lambda data: data.get("connections", {}).get("connected_clients", 0) > 1000,
@@ -81,7 +79,7 @@ class RedisAlertManager:
             cooldown=300
         ))
         
-        # PING延迟告警
+        # PING latency alert.
         self.add_rule(AlertRule(
             name="high_ping_latency",
             condition=lambda data: data.get("health", {}).get("ping_latency", 0) > 100,
@@ -90,7 +88,7 @@ class RedisAlertManager:
             cooldown=300
         ))
         
-        # 慢查询告警
+        # Slow-query alert.
         self.add_rule(AlertRule(
             name="slow_queries",
             condition=lambda data: len(data.get("slow_log", [])) > 0,
@@ -99,7 +97,7 @@ class RedisAlertManager:
             cooldown=600
         ))
         
-        # 错误日志告警
+        # Error-log alert.
         self.add_rule(AlertRule(
             name="error_logs",
             condition=lambda data: data.get("business_metrics", {}).get("error_logs_count", 0) > 10,
@@ -108,7 +106,7 @@ class RedisAlertManager:
             cooldown=300
         ))
         
-        # 处理中任务过多告警
+        # Too many processing tasks alert.
         self.add_rule(AlertRule(
             name="too_many_processing_tasks",
             condition=lambda data: data.get("business_metrics", {}).get("processing_tasks_count", 0) > 100,
@@ -118,24 +116,24 @@ class RedisAlertManager:
         ))
     
     def add_rule(self, rule: AlertRule):
-        """添加告警规则"""
+        """Add an alert rule."""
         self.alert_rules.append(rule)
         logger.info(f"添加告警规则: {rule.name}")
     
     def remove_rule(self, rule_name: str):
-        """移除告警规则"""
+        """Remove an alert rule."""
         self.alert_rules = [rule for rule in self.alert_rules if rule.name != rule_name]
         logger.info(f"移除告警规则: {rule_name}")
     
     async def check_alerts(self) -> List[Dict[str, Any]]:
-        """检查告警"""
+        """Evaluate all alert rules."""
         try:
-            # 获取监控数据
+            # Load the latest monitoring report.
             report = await self.redis_monitor.get_comprehensive_report()
             
             triggered_alerts = []
             
-            # 检查每个规则
+            # Evaluate every registered rule.
             for rule in self.alert_rules:
                 if rule.should_trigger(report):
                     alert = {
@@ -149,7 +147,7 @@ class RedisAlertManager:
                     triggered_alerts.append(alert)
                     self.alert_history.append(alert)
                     
-                    # 记录告警
+                    # Record the triggered alert.
                     self._log_alert(alert)
             
             return triggered_alerts
@@ -159,7 +157,7 @@ class RedisAlertManager:
             return []
     
     def _log_alert(self, alert: Dict[str, Any]):
-        """记录告警"""
+        """Write an alert to logs."""
         severity = alert["severity"]
         message = alert["message"]
         rule_name = alert["rule_name"]
@@ -172,11 +170,11 @@ class RedisAlertManager:
             logger.info(f"[REDIS告警] {rule_name}: {message}")
     
     def get_alert_history(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """获取告警历史"""
+        """Get alert history."""
         return self.alert_history[-limit:]
     
     def get_alert_stats(self) -> Dict[str, Any]:
-        """获取告警统计"""
+        """Get alert statistics."""
         if not self.alert_history:
             return {
                 "total_alerts": 0,
@@ -187,7 +185,7 @@ class RedisAlertManager:
             }
         
         current_time = time.time()
-        recent_threshold = current_time - 3600  # 最近1小时
+        recent_threshold = current_time - 3600  # Last hour.
         
         stats = {
             "total_alerts": len(self.alert_history),
@@ -200,7 +198,7 @@ class RedisAlertManager:
         return stats
     
     async def start_alert_monitoring(self, interval: int = 60):
-        """开始告警监控"""
+        """Start the alert-monitoring loop."""
         logger.info("Redis告警监控已启动")
         
         import asyncio
@@ -226,7 +224,7 @@ class RedisAlertManager:
         message: str = "",
         cooldown: int = 300
     ):
-        """创建自定义告警规则"""
+        """Create and register a custom alert rule."""
         rule = AlertRule(
             name=name,
             condition=condition_func,
@@ -239,17 +237,17 @@ class RedisAlertManager:
 
 
 class RedisAlertNotifier:
-    """Redis告警通知器"""
+    """Alert notification fan-out helper."""
     
     def __init__(self):
         self.notifiers = []
     
     def add_notifier(self, notifier_func: Callable[[Dict[str, Any]], None]):
-        """添加通知器"""
+        """Add a notifier callback."""
         self.notifiers.append(notifier_func)
     
     async def notify(self, alert: Dict[str, Any]):
-        """发送通知"""
+        """Send an alert through all notifier callbacks."""
         for notifier in self.notifiers:
             try:
                 await notifier(alert)
@@ -257,16 +255,16 @@ class RedisAlertNotifier:
                 logger.error(f"发送告警通知失败: {e}")
     
     async def notify_email(self, alert: Dict[str, Any]):
-        """邮件通知（示例）"""
-        # 这里可以实现邮件发送逻辑
+        """Email notifier example."""
+        # Email delivery logic can be implemented here.
         logger.info(f"发送邮件告警: {alert['message']}")
     
     async def notify_webhook(self, alert: Dict[str, Any]):
-        """Webhook通知（示例）"""
-        # 这里可以实现Webhook发送逻辑
+        """Webhook notifier example."""
+        # Webhook delivery logic can be implemented here.
         logger.info(f"发送Webhook告警: {alert['message']}")
     
     async def notify_slack(self, alert: Dict[str, Any]):
-        """Slack通知（示例）"""
-        # 这里可以实现Slack发送逻辑
+        """Slack notifier example."""
+        # Slack delivery logic can be implemented here.
         logger.info(f"发送Slack告警: {alert['message']}")

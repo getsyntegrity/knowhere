@@ -1,6 +1,4 @@
-"""
-Redis服务抽象层
-"""
+"""Async Redis service abstraction layer."""
 import asyncio
 import json
 from typing import Any, Dict, List, Optional
@@ -17,7 +15,7 @@ from shared.utils.redis_retry import RedisHealthChecker, RedisRetry
 
 
 class RedisService:
-    """Redis服务抽象层"""
+    """Async Redis service abstraction."""
     _KEY_PREFIX: str = "knowhere-api"
     
     def __init__(self, config_manager: Optional[RedisConfigManager] = None):
@@ -30,7 +28,7 @@ class RedisService:
         self._lock = asyncio.Lock()
     
     async def _get_client(self) -> redis.Redis:
-        """获取Redis客户端（懒加载）"""
+        """Get the Redis client with lazy initialization."""
         if self._client is None:
             async with self._lock:
                 if self._client is None:
@@ -49,7 +47,7 @@ class RedisService:
         return self._client
     
     async def _execute_with_retry(self, operation: callable) -> Any:
-        """执行Redis操作并支持重试"""
+        """Execute a Redis operation with retry support."""
         return await RedisRetry.with_retry(
             operation,
             max_retries=self.config_manager.config.REDIS_MAX_RETRIES,
@@ -57,26 +55,26 @@ class RedisService:
         )
     
     def _build_key(self, key: str) -> str:
-        """构建完整的键名"""
+        """Build the fully-prefixed Redis key."""
         prefix = self._KEY_PREFIX
         return f"{prefix}:{key}" if not key.startswith(prefix) else key
     
-    # ==================== 基础操作 ====================
+    # ==================== Basic Operations ====================
     
     async def set(self, key: str, value: Any, ttl: Optional[int] = None, ex: Optional[int] = None) -> bool:
-        """设置键值"""
+        """Set a key value."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
             
             if isinstance(value, (dict, list)):
-                # 使用make_json_safe确保所有复杂类型都能正确序列化
+                # Use make_json_safe so complex types serialize consistently.
                 from shared.utils.json_utils import make_json_safe
                 safe_value = make_json_safe(value)
                 value = json.dumps(safe_value, ensure_ascii=False)
                 logger.debug(f"Redis序列化完成: key={full_key}, 类型={type(value)}")
             
-            # 优先使用ex参数，其次使用ttl参数
+            # Prefer ex when provided, then ttl, then the default config TTL.
             expire_time = ex or ttl or self.config_manager.config.REDIS_DEFAULT_TTL
             
             async def _operation():
@@ -93,7 +91,7 @@ class RedisService:
             )
     
     async def get(self, key: str, default: Any = None) -> Any:
-        """获取键值"""
+        """Get a key value."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -106,7 +104,7 @@ class RedisService:
             if result is None:
                 return default
             
-            # 尝试解析JSON
+            # Try decoding JSON payloads.
             try:
                 return json.loads(result)
             except (json.JSONDecodeError, TypeError):
@@ -120,7 +118,7 @@ class RedisService:
             )
     
     async def delete(self, *keys: str) -> int:
-        """删除键"""
+        """Delete keys."""
         try:
             client = await self._get_client()
             full_keys = [self._build_key(key) for key in keys]
@@ -138,7 +136,7 @@ class RedisService:
             )
     
     async def exists(self, key: str) -> bool:
-        """检查键是否存在"""
+        """Check whether a key exists."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -157,7 +155,7 @@ class RedisService:
             )
     
     async def expire(self, key: str, ttl: int) -> bool:
-        """设置键过期时间"""
+        """Set a key TTL."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -175,7 +173,7 @@ class RedisService:
             )
 
     async def ttl(self, key: str) -> int:
-        """获取键的剩余TTL（秒）"""
+        """Get the remaining TTL for a key in seconds."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -193,15 +191,15 @@ class RedisService:
                 original_exception=e
             )
     
-    # ==================== 列表操作 ====================
+    # ==================== List Operations ====================
     
     async def lpush(self, key: str, *values: Any) -> int:
-        """从列表左侧推入元素"""
+        """Push elements onto the left side of a list."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
             
-            # 序列化值
+            # Serialize values before writing them.
             serialized_values = []
             for value in values:
                 if isinstance(value, (dict, list)):
@@ -222,12 +220,12 @@ class RedisService:
             )
     
     async def rpush(self, key: str, *values: Any) -> int:
-        """从列表右侧推入元素"""
+        """Push elements onto the right side of a list."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
             
-            # 序列化值
+            # Serialize values before writing them.
             serialized_values = []
             for value in values:
                 if isinstance(value, (dict, list)):
@@ -248,7 +246,7 @@ class RedisService:
             )
     
     async def lpop(self, key: str) -> Any:
-        """从列表左侧弹出元素"""
+        """Pop an element from the left side of a list."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -261,7 +259,7 @@ class RedisService:
             if result is None:
                 return None
             
-            # 尝试解析JSON
+            # Try decoding JSON payloads.
             try:
                 return json.loads(result)
             except (json.JSONDecodeError, TypeError):
@@ -275,7 +273,7 @@ class RedisService:
             )
     
     async def rpop(self, key: str) -> Any:
-        """从列表右侧弹出元素"""
+        """Pop an element from the right side of a list."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -288,7 +286,7 @@ class RedisService:
             if result is None:
                 return None
             
-            # 尝试解析JSON
+            # Try decoding JSON payloads.
             try:
                 return json.loads(result)
             except (json.JSONDecodeError, TypeError):
@@ -302,7 +300,7 @@ class RedisService:
             )
     
     async def lrange(self, key: str, start: int = 0, end: int = -1) -> List[Any]:
-        """获取列表范围内的元素"""
+        """Get elements from a list range."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -312,7 +310,7 @@ class RedisService:
             
             result = await self._execute_with_retry(_operation)
             
-            # 尝试解析每个元素的JSON
+            # Try decoding each element as JSON.
             parsed_result = []
             for item in result:
                 try:
@@ -329,17 +327,17 @@ class RedisService:
                 original_exception=e
             )
     
-    # ==================== 哈希操作 ====================
+    # ==================== Hash Operations ====================
     
     async def hset(self, key: str, field: str = None, value: Any = None, mapping: Dict[str, Any] = None) -> int:
-        """设置哈希字段"""
+        """Set one or more hash fields."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
             
             async def _operation():
                 if mapping is not None:
-                    # 序列化mapping中的值
+                    # Serialize mapping values before writing them.
                     serialized_mapping = {}
                     for k, v in mapping.items():
                         if isinstance(v, (dict, list)):
@@ -348,7 +346,7 @@ class RedisService:
                             serialized_mapping[k] = str(v)
                     return await client.hset(full_key, mapping=serialized_mapping)
                 else:
-                    # 处理单个字段值
+                    # Handle a single field value.
                     serialized_value = value
                     if isinstance(value, (dict, list)):
                         serialized_value = json.dumps(value, ensure_ascii=False)
@@ -364,7 +362,7 @@ class RedisService:
             )
     
     async def hget(self, key: str, field: str, default: Any = None) -> Any:
-        """获取哈希字段值"""
+        """Get a hash field value."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -377,7 +375,7 @@ class RedisService:
             if result is None:
                 return default
             
-            # 尝试解析JSON
+            # Try decoding JSON payloads.
             try:
                 return json.loads(result)
             except (json.JSONDecodeError, TypeError):
@@ -391,7 +389,7 @@ class RedisService:
             )
     
     async def hgetall(self, key: str) -> Dict[str, Any]:
-        """获取所有哈希字段"""
+        """Get all hash fields."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -401,7 +399,7 @@ class RedisService:
             
             result = await self._execute_with_retry(_operation)
             
-            # 尝试解析每个值的JSON
+            # Try decoding each value as JSON.
             parsed_result = {}
             for field, value in result.items():
                 try:
@@ -418,15 +416,15 @@ class RedisService:
                 original_exception=e
             )
     
-    # ==================== 集合操作 ====================
+    # ==================== Set Operations ====================
     
     async def sadd(self, key: str, *values: Any) -> int:
-        """向集合添加元素"""
+        """Add elements to a set."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
             
-            # 序列化值
+            # Serialize values before writing them.
             serialized_values = []
             for value in values:
                 if isinstance(value, (dict, list)):
@@ -447,12 +445,12 @@ class RedisService:
             )
     
     async def srem(self, key: str, *values: Any) -> int:
-        """从集合移除元素"""
+        """Remove elements from a set."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
             
-            # 序列化值
+            # Serialize values before writing them.
             serialized_values = []
             for value in values:
                 if isinstance(value, (dict, list)):
@@ -473,7 +471,7 @@ class RedisService:
             )
     
     async def smembers(self, key: str) -> set:
-        """获取集合所有成员"""
+        """Get all set members."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -492,7 +490,7 @@ class RedisService:
             )
     
     async def incr(self, key: str) -> int:
-        """递增计数器"""
+        """Increment a counter."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
@@ -509,10 +507,10 @@ class RedisService:
                 original_exception=e
             )
     
-    # ==================== 健康检查 ====================
+    # ==================== Health Checks ====================
     
     async def ping(self) -> bool:
-        """检查Redis连接"""
+        """Ping Redis."""
         try:
             client = await self._get_client()
             
@@ -526,15 +524,15 @@ class RedisService:
             return False
     
     async def is_healthy(self) -> bool:
-        """检查Redis是否健康"""
+        """Check whether Redis is healthy."""
         if self._health_checker:
             return await self._health_checker.is_healthy()
         return await self.ping()
     
-    # ==================== 连接管理 ====================
+    # ==================== Connection Management ====================
     
     async def close(self):
-        """关闭Redis连接"""
+        """Close the Redis connection."""
         if self._client:
             await self._client.close()
             self._client = None
@@ -542,9 +540,9 @@ class RedisService:
             logger.info("Redis连接已关闭")
     
     async def __aenter__(self):
-        """异步上下文管理器入口"""
+        """Enter the async context manager."""
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """异步上下文管理器出口"""
+        """Exit the async context manager."""
         await self.close()
