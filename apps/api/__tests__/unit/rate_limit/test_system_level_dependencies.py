@@ -215,7 +215,7 @@ async def test_with_current_user_reuses_stashed_apikey_tier_without_redis_lookup
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
 
-    request = make_request(authorization="Bearer sk_guest")
+    request = make_request(authorization="Bearer sk_test_guest_cached")
     request.state.cached_user_tier = "tier_3"
     request.state.cached_identity_hit = True
     request.state.user_id = "u_apikey"
@@ -232,7 +232,7 @@ async def test_with_current_user_backfills_apikey_cache_from_stashed_db_identity
 ):
     redis = fakeredis.FakeRedis(decode_responses=True)
     redis_service = FakeRedisService(redis)
-    api_key_token = "sk_test_123"
+    api_key_token = "sk_test_apikey_stash_backfill"
     api_key_hash = hashlib.sha256(api_key_token.encode()).hexdigest()
     cache_lookup_calls = 0
     apikey_set_calls: list[tuple[str, str, str, int]] = []
@@ -333,7 +333,7 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
 ):
     redis = fakeredis.FakeRedis(decode_responses=True)
     redis_service = FakeRedisService(redis)
-    api_key_token = "sk_test_123"
+    api_key_token = "sk_test_apikey_cache_miss"
     api_key_hash = hashlib.sha256(api_key_token.encode()).hexdigest()
 
     observed_cache_keys: list[str] = []
@@ -471,7 +471,7 @@ async def test_with_current_user_identity_revalidates_after_invalidate_user_apik
     redis = fakeredis.FakeRedis(decode_responses=True)
     redis_service = FakeRedisService(redis)
     db_tiers = iter(["free", "tier_4"])
-    api_key_token = "sk_revalidate_token"
+    api_key_token = "sk_test_apikey_revalidate"
     api_key_hash = hashlib.sha256(api_key_token.encode()).hexdigest()
     user_id = "u_revalidate_apikey"
 

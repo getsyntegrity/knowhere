@@ -48,8 +48,18 @@ def build_manager(
         cast(SyncRedisService, FakeSyncRedisService(redis_client)),
         tokens
         or [
-            MinerUTokenConfig("primary", "sk-1", rpm_limit=300, daily_limit=10000),
-            MinerUTokenConfig("backup", "sk-2", rpm_limit=300, daily_limit=10000),
+            MinerUTokenConfig(
+                "primary",
+                "test-mineru-key-1",
+                rpm_limit=300,
+                daily_limit=10000,
+            ),
+            MinerUTokenConfig(
+                "backup",
+                "test-mineru-key-2",
+                rpm_limit=300,
+                daily_limit=10000,
+            ),
         ],
     )
     return manager, redis_client
@@ -57,13 +67,13 @@ def build_manager(
 
 def test_parse_token_specs_supports_json_entries():
     specs = MinerUQuotaManager.parse_token_specs(
-        '[{"id":"primary","key":"sk-1","rpm_limit":250},{"id":"backup","key":"sk-2","daily_limit":9000}]',
+        '[{"id":"primary","key":"test-mineru-key-1","rpm_limit":250},{"id":"backup","key":"test-mineru-key-2","daily_limit":9000}]',
         default_rpm_limit=300,
         default_daily_limit=10000,
     )
 
     assert [spec.token_id for spec in specs] == ["primary", "backup"]
-    assert specs[0].api_key == "sk-1"
+    assert specs[0].api_key == "test-mineru-key-1"
     assert specs[0].rpm_limit == 250
     assert specs[0].daily_limit == 10000
     assert specs[1].rpm_limit == 300
@@ -80,7 +90,7 @@ def test_acquire_request_skips_exhausted_token(monkeypatch):
     lease = manager.acquire_request(operation="upload_url")
 
     assert lease.token_id == "backup"
-    assert lease.api_key == "sk-2"
+    assert lease.api_key == "test-mineru-key-2"
 
 
 def test_acquire_request_reports_shortest_retry_window(monkeypatch):
@@ -112,7 +122,7 @@ def test_lua_reservation_enforces_rpm_limit():
         [
             MinerUTokenConfig(
                 token_id="primary",
-                api_key="sk-1",
+                api_key="test-mineru-key-1",
                 rpm_limit=2,
                 daily_limit=100,
             )
@@ -146,7 +156,7 @@ def test_lua_reservation_respects_daily_limit(monkeypatch):
         [
             MinerUTokenConfig(
                 token_id="primary",
-                api_key="sk-1",
+                api_key="test-mineru-key-1",
                 rpm_limit=10,
                 daily_limit=1,
             )
@@ -174,8 +184,18 @@ def test_lua_round_robin_uses_backup_token_after_cooldown():
     manager = MinerUQuotaManager(
         redis_service,
         [
-            MinerUTokenConfig("primary", "sk-1", rpm_limit=10, daily_limit=100),
-            MinerUTokenConfig("backup", "sk-2", rpm_limit=10, daily_limit=100),
+            MinerUTokenConfig(
+                "primary",
+                "test-mineru-key-1",
+                rpm_limit=10,
+                daily_limit=100,
+            ),
+            MinerUTokenConfig(
+                "backup",
+                "test-mineru-key-2",
+                rpm_limit=10,
+                daily_limit=100,
+            ),
         ],
     )
 
@@ -209,8 +229,18 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     manager = MinerUQuotaManager(
         redis_service,
         [
-            MinerUTokenConfig("primary", "sk-primary", rpm_limit=10, daily_limit=100),
-            MinerUTokenConfig("backup", "sk-backup", rpm_limit=10, daily_limit=100),
+            MinerUTokenConfig(
+                "primary",
+                "test-mineru-key-primary",
+                rpm_limit=10,
+                daily_limit=100,
+            ),
+            MinerUTokenConfig(
+                "backup",
+                "test-mineru-key-backup",
+                rpm_limit=10,
+                daily_limit=100,
+            ),
         ],
     )
     monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
@@ -298,7 +328,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
 
     assert mineru_calls[0] == (
         "post",
-        "Bearer sk-primary",
+        "Bearer test-mineru-key-primary",
         "https://mineru.net/api/v4/file-urls/batch",
     )
     assert mineru_calls[1] == (
@@ -308,7 +338,7 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     )
     assert mineru_calls[2] == (
         "get",
-        "Bearer sk-primary",
+        "Bearer test-mineru-key-primary",
         "https://mineru.net/api/v4/extract-results/batch/batch-1",
     )
     assert extracted["url"] == "https://mineru-results.example/full.zip"

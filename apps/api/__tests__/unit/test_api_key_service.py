@@ -46,7 +46,9 @@ async def test_validate_api_key_schedules_last_used_update(monkeypatch):
         scalar_one_or_none=lambda: "free",
     )
 
-    user_id = await service.validate_api_key(session, "sk_test_token")
+    user_id = await service.validate_api_key(
+        session, "sk_test_api_key_validation"
+    )
 
     assert user_id == "user_1"
     assert scheduled == ["api_key_id_1"]
@@ -72,7 +74,9 @@ async def test_validate_api_key_identity_returns_user_tier(monkeypatch):
         scalar_one_or_none=lambda: "guest",
     )
 
-    identity = await service.validate_api_key_identity(session, "sk_test_guest")
+    identity = await service.validate_api_key_identity(
+        session, "sk_test_api_key_identity"
+    )
 
     assert identity == APIKeyIdentity(
         user_id="user_2",

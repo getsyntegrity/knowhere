@@ -582,12 +582,24 @@ def test_public_ci_workflow_uses_explicit_read_only_token_permissions() -> None:
 def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     retained_test_text: str = read_text("apps/api/__tests__/unit/test_qstash_callbacks.py")
     auth_dependencies_test_text: str = read_text("apps/api/__tests__/unit/test_auth_dependencies.py")
+    api_key_service_test_text: str = read_text(
+        "apps/api/__tests__/unit/test_api_key_service.py"
+    )
+    system_level_dependencies_test_text: str = read_text(
+        "apps/api/__tests__/unit/rate_limit/test_system_level_dependencies.py"
+    )
     mcp_query_test_text: str = read_text("apps/api/__tests__/unit/test_mcp_query_tool.py")
     openai_timeout_test_text: str = read_text(
         "packages/shared-python/shared/tests/test_openai_timeout_defaults.py"
     )
     guest_registration_test_text: str = read_text(
         "apps/api/__tests__/unit/test_guest_registration_service.py"
+    )
+    mineru_quota_test_text: str = read_text(
+        "apps/worker/tests/services/test_mineru_quota_manager.py"
+    )
+    ali_quota_test_text: str = read_text(
+        "apps/worker/tests/services/test_ali_quota_manager.py"
     )
 
     assert "api.internal" not in retained_test_text
@@ -599,6 +611,11 @@ def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     assert "sk_guest_billing_credits" not in auth_dependencies_test_text
     assert "sk_guest_billing" not in auth_dependencies_test_text
     assert "sk_guest_extended" not in auth_dependencies_test_text
+    assert "sk_test_token" not in api_key_service_test_text
+    assert "sk_test_guest" not in api_key_service_test_text
+    assert "sk_guest" not in system_level_dependencies_test_text
+    assert "sk_test_123" not in system_level_dependencies_test_text
+    assert "sk_revalidate_token" not in system_level_dependencies_test_text
     assert "api-staging.knowhereto.ai" not in mcp_query_test_text
     assert "sk-explicit" not in openai_timeout_test_text
     assert "dummy-openai-key-for-tests" not in openai_timeout_test_text
@@ -606,6 +623,17 @@ def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     assert "codex-guest-registration-smoke" not in guest_registration_test_text
     assert "codex-smoke" not in guest_registration_test_text
     assert "codex-test" not in mcp_query_test_text
+    assert "sk-1" not in mineru_quota_test_text
+    assert "sk-2" not in mineru_quota_test_text
+    assert "sk-primary" not in mineru_quota_test_text
+    assert "sk-backup" not in mineru_quota_test_text
+    assert "sk-ali-1" not in ali_quota_test_text
+    assert "sk-ali-2" not in ali_quota_test_text
+    assert "sk-abc" not in ali_quota_test_text
+    assert "sk-def" not in ali_quota_test_text
+    assert "sk-ghi" not in ali_quota_test_text
+    assert "sk-1" not in ali_quota_test_text
+    assert "sk-2" not in ali_quota_test_text
 
 
 def test_selected_retained_fixtures_avoid_personal_contact_strings() -> None:

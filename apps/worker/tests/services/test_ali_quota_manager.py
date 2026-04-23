@@ -34,8 +34,8 @@ def build_ali_manager(*, tokens=None):
         cast(SyncRedisService, FakeSyncRedisService(redis_client)),
         tokens
         or [
-            TokenConfig("ali-1", "sk-ali-1", rpm_limit=300, daily_limit=10000),
-            TokenConfig("ali-2", "sk-ali-2", rpm_limit=300, daily_limit=10000),
+            TokenConfig("ali-1", "test-ali-key-1", rpm_limit=300, daily_limit=10000),
+            TokenConfig("ali-2", "test-ali-key-2", rpm_limit=300, daily_limit=10000),
         ],
     )
     return manager, redis_client
@@ -44,7 +44,7 @@ def build_ali_manager(*, tokens=None):
 def test_acquire_request_returns_token():
     manager, _ = build_ali_manager()
     lease = manager.acquire_request(operation="chat_completion")
-    assert lease.api_key in {"sk-ali-1", "sk-ali-2"}
+    assert lease.api_key in {"test-ali-key-1", "test-ali-key-2"}
     assert lease.token_id in {"ali-1", "ali-2"}
 
 
@@ -67,7 +67,7 @@ def test_cooldown_skips_rate_limited_token():
 def test_exhaustion_raises_unavailable():
     manager, redis_client = build_ali_manager(
         tokens=[
-            TokenConfig("ali-1", "sk-ali-1", rpm_limit=1, daily_limit=10000),
+            TokenConfig("ali-1", "test-ali-key-1", rpm_limit=1, daily_limit=10000),
         ]
     )
     manager.acquire_request(operation="test")
@@ -90,19 +90,19 @@ def test_redis_keys_use_ali_prefix():
 
 def test_parse_token_specs_comma_separated():
     specs = AliQuotaManager.parse_token_specs(
-        "sk-abc,sk-def,sk-ghi",
+        "test-ali-key-abc,test-ali-key-def,test-ali-key-ghi",
         default_rpm_limit=300,
         default_daily_limit=10000,
     )
     assert len(specs) == 3
-    assert specs[0].api_key == "sk-abc"
-    assert specs[1].api_key == "sk-def"
-    assert specs[2].api_key == "sk-ghi"
+    assert specs[0].api_key == "test-ali-key-abc"
+    assert specs[1].api_key == "test-ali-key-def"
+    assert specs[2].api_key == "test-ali-key-ghi"
 
 
 def test_parse_token_specs_json_array():
     specs = AliQuotaManager.parse_token_specs(
-        '[{"key":"sk-1","rpm_limit":200},{"key":"sk-2"}]',
+        '[{"key":"test-ali-key-json-1","rpm_limit":200},{"key":"test-ali-key-json-2"}]',
         default_rpm_limit=300,
         default_daily_limit=10000,
     )
@@ -112,13 +112,21 @@ def test_parse_token_specs_json_array():
 
 
 def test_parse_tokens_from_settings_uses_ali_api_keys(monkeypatch):
-    monkeypatch.setattr(settings, "ALI_API_KEYS", "ali-1=sk-abc,ali-2=sk-def", raising=False)
+    monkeypatch.setattr(
+        settings,
+        "ALI_API_KEYS",
+        "ali-1=test-ali-key-abc,dummy-ali-key-for-tests",
+        raising=False,
+    )
     monkeypatch.setattr(settings, "ALI_TOKEN_RPM_LIMIT", 300, raising=False)
     monkeypatch.setattr(settings, "ALI_TOKEN_DAILY_LIMIT", 10000, raising=False)
 
     specs = AliQuotaManager.parse_tokens_from_settings()
 
-    assert [spec.api_key for spec in specs] == ["sk-abc", "sk-def"]
+    assert [spec.api_key for spec in specs] == [
+        "test-ali-key-abc",
+        "test-ali-key-def",
+    ]
 
 
 def test_parse_tokens_from_settings_requires_ali_api_keys(monkeypatch):
