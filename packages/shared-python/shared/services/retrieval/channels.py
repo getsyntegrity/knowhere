@@ -66,7 +66,10 @@ WITH scoped_chunks AS (
 def _build_exclude_clause(exclude_document_ids: list[str]) -> str:
     if not exclude_document_ids:
         return ""
-    return "AND d.document_id NOT IN :excluded_doc_ids"
+    # Use PostgreSQL array ANY() to avoid asyncpg tuple-binding pitfalls with
+    # raw text() + `NOT IN :param` (which asyncpg treats as a record parameter
+    # and fails with a syntax error).
+    return "AND d.document_id <> ALL(:excluded_doc_ids)"
 
 
 def _build_base_params(
@@ -80,7 +83,7 @@ def _build_base_params(
         "namespace": namespace,
     }
     if exclude_document_ids:
-        params["excluded_doc_ids"] = tuple(exclude_document_ids)
+        params["excluded_doc_ids"] = list(exclude_document_ids)
     return params
 
 

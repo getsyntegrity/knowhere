@@ -26,6 +26,39 @@ async def _empty_channel(*_args, **_kwargs):
 
 
 @pytest.mark.asyncio
+async def test_run_retrieval_query_filters_empty_query_before_cache_and_db(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError('empty query should not reach downstream retrieval components')
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fail)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fail)
+    monkeypatch.setattr(app_service, 'path_channel', fail)
+    monkeypatch.setattr(app_service, 'content_channel', fail)
+    monkeypatch.setattr(app_service, 'term_channel', fail)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fail)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', fail)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='   ',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert result == {
+        'namespace': 'default',
+        'query': '',
+        'router_used': 'empty_query_filtered',
+        'results': [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_lexical_chunks_does_not_overlap_db_execute_calls(monkeypatch):
     from shared.services.retrieval import app_service
 

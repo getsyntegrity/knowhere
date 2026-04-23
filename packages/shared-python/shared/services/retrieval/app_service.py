@@ -709,12 +709,22 @@ async def run_retrieval_query(
 ) -> dict[str, Any]:
     """Checkerboard retrieval: 3 independent channels -> RRF -> agent/graph union -> assembly."""
     t_start = time.monotonic()
+    query = query.strip()
     logger.info('\n' + '█' * 70)
     logger.info('  🚀 RETRIEVAL PIPELINE START')
     logger.info(f'  query="{query}"')
     logger.info(f'  user={user_id}  ns={namespace}  top_k={top_k}  data_type={data_type}')
     logger.info(f'  exclude_docs={exclude_document_ids}  exclude_secs={len(exclude_sections)}')
     logger.info('█' * 70)
+
+    if not query:
+        logger.info('  ⛔ Empty query filtered, skipping retrieval pipeline')
+        return {
+            "namespace": namespace,
+            "query": query,
+            "router_used": "empty_query_filtered",
+            "results": [],
+        }
 
     allowed_chunk_types = _resolve_allowed_chunk_types(data_type)
     effective_recall_k = internal_recall_k if internal_recall_k is not None else top_k * _INTERNAL_RECALL_K_MULTIPLIER
