@@ -1,6 +1,6 @@
-"""
-安全相关工具函数 - 已迁移到FastAPI Users
-此文件保留用于向后兼容，但建议使用FastAPI Users的认证功能
+"""Security helpers retained for backward compatibility.
+
+Authentication has largely moved to FastAPI Users.
 """
 
 import bcrypt
@@ -9,8 +9,10 @@ import bcrypt
 
 def get_password_hash(password: str) -> str:
     """
-    生成密码的哈希值
-    注意：FastAPI Users有自己的密码处理机制，此函数仅用于向后兼容
+    Generate a password hash.
+
+    FastAPI Users has its own password flow; this helper remains only for
+    backward compatibility.
     """
     password_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
@@ -19,8 +21,10 @@ def get_password_hash(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
-    验证明文密码和哈希密码是否匹配
-    注意：FastAPI Users有自己的密码验证机制，此函数仅用于向后兼容
+    Verify a plain password against a hashed password.
+
+    FastAPI Users has its own password flow; this helper remains only for
+    backward compatibility.
     """
     plain_password_bytes = plain_password.encode('utf-8')
     hashed_password_bytes = hashed_password.encode('utf-8')

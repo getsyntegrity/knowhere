@@ -1,6 +1,6 @@
-"""
-Celery任务路由器 - 基于用户订阅的动态路由
-整合了TaskPriorityService的优先级计算逻辑
+"""Celery task router with subscription-aware dynamic routing.
+
+This module keeps the priority logic migrated from TaskPriorityService.
 """
 from dataclasses import dataclass
 from enum import Enum
@@ -10,11 +10,11 @@ from loguru import logger
 
 from shared.core.celery_app import get_celery_app
 
-# 注意：get_queue_for_job 已简化，不再需要直接访问数据库
+# Note: get_queue_for_job has been simplified and no longer needs direct DB access.
 
 
 class TaskType(Enum):
-    """任务类型枚举"""
+    """Task-type enum."""
     AI_QUERY = "ai_query"
     USER_AUTH = "user_auth"
     URGENT_DOCUMENT = "urgent_document"
@@ -27,14 +27,14 @@ class TaskType(Enum):
     KB_MANAGEMENT = "kb_management"
 
 class UserLevel(Enum):
-    """用户等级枚举"""
+    """User-level enum."""
     VIP = "vip"
     PREMIUM = "premium"
     STANDARD = "standard"
     BASIC = "basic"
 
 class DocumentImportance(Enum):
-    """文档重要性枚举"""
+    """Document-importance enum."""
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -42,26 +42,26 @@ class DocumentImportance(Enum):
 
 @dataclass
 class TaskContext:
-    """任务上下文"""
+    """Task execution context."""
     task_type: TaskType
     user_id: str
     user_level: UserLevel = UserLevel.STANDARD
     document_importance: DocumentImportance = DocumentImportance.MEDIUM
     is_urgent: bool = False
     resource_requirements: str = "medium"
-    estimated_duration: int = 300  # 秒
+    estimated_duration: int = 300  # Seconds.
     retry_count: int = 0
     metadata: Dict[str, Any] = None
 
 
 class CeleryTaskRouter:
-    """Celery任务路由器"""
+    """Celery task router."""
     
     def __init__(self):
         self.celery_app = get_celery_app()
-        # 注意：get_queue_for_job 已简化，不再需要 subscription_repo
-        
-        # 基础优先级配置（从TaskPriorityService迁移）
+        # Note: get_queue_for_job no longer needs subscription_repo.
+
+        # Base priority config migrated from TaskPriorityService.
         self.base_priorities = {
             TaskType.AI_QUERY: 10,
             TaskType.USER_AUTH: 10,
@@ -75,7 +75,7 @@ class CeleryTaskRouter:
             TaskType.KB_MANAGEMENT: 6,
         }
         
-        # 用户等级权重
+        # User-level weights.
         self.user_level_weights = {
             UserLevel.VIP: 1.2,
             UserLevel.PREMIUM: 1.1,
@@ -83,7 +83,7 @@ class CeleryTaskRouter:
             UserLevel.BASIC: 0.9,
         }
         
-        # 文档重要性权重
+        # Document-importance weights.
         self.document_importance_weights = {
             DocumentImportance.CRITICAL: 1.3,
             DocumentImportance.HIGH: 1.1,
@@ -91,43 +91,43 @@ class CeleryTaskRouter:
             DocumentImportance.LOW: 0.8,
         }
         
-        # 紧急任务权重
+        # Urgent-task weight.
         self.urgent_weight = 1.5
         
-        # 重试惩罚权重
+        # Retry penalty weight.
         self.retry_penalty = 0.1
     
     def calculate_priority(self, context: TaskContext) -> int:
         """
-        计算任务优先级（从TaskPriorityService迁移）
-        
+        Calculate task priority using the migrated TaskPriorityService logic.
+
         Args:
-            context: 任务上下文
-            
+            context: Task context.
+
         Returns:
-            计算后的优先级 (1-10)
+            Calculated priority in the range 1-10.
         """
         try:
-            # 获取基础优先级
+            # Get the base priority.
             base_priority = self.base_priorities.get(context.task_type, 5)
-            
-            # 应用用户等级权重
+
+            # Apply the user-level weight.
             user_weight = self.user_level_weights.get(context.user_level, 1.0)
-            
-            # 应用文档重要性权重
+
+            # Apply the document-importance weight.
             doc_weight = self.document_importance_weights.get(context.document_importance, 1.0)
-            
-            # 应用紧急任务权重
+
+            # Apply the urgent-task weight.
             urgent_weight = self.urgent_weight if context.is_urgent else 1.0
-            
-            # 应用重试惩罚
+
+            # Apply the retry penalty.
             retry_penalty = 1.0 - (context.retry_count * self.retry_penalty)
-            retry_penalty = max(0.1, retry_penalty)  # 最小权重0.1
-            
-            # 计算最终优先级
+            retry_penalty = max(0.1, retry_penalty)  # Minimum weight is 0.1.
+
+            # Compute the final priority.
             final_priority = base_priority * user_weight * doc_weight * urgent_weight * retry_penalty
-            
-            # 限制在1-10范围内
+
+            # Clamp the result to the 1-10 range.
             final_priority = max(1, min(10, int(final_priority)))
             
             logger.debug(f"任务优先级计算: 基础={base_priority}, 用户权重={user_weight}, "
@@ -138,28 +138,28 @@ class CeleryTaskRouter:
             
         except Exception as e:
             logger.error(f"计算任务优先级失败: {e}")
-            return 5  # 默认中等优先级
+            return 5  # Default medium priority.
     
     def create_task_context(self, task_type: str, user_id: str, **kwargs) -> TaskContext:
         """
-        创建任务上下文（从TaskPriorityService迁移）
-        
+        Create task context from the migrated TaskPriorityService inputs.
+
         Args:
-            task_type: 任务类型
-            user_id: 用户ID
-            **kwargs: 其他参数
-            
+            task_type: Task type.
+            user_id: User ID.
+            **kwargs: Additional context values.
+
         Returns:
-            任务上下文
+            Task context.
         """
         try:
-            # 解析任务类型
+            # Parse the task type.
             task_type_enum = TaskType(task_type)
-            
-            # 解析用户等级
+
+            # Parse the user level.
             user_level = UserLevel(kwargs.get('user_level', 'standard'))
-            
-            # 解析文档重要性
+
+            # Parse the document importance.
             document_importance = DocumentImportance(kwargs.get('document_importance', 'medium'))
             
             return TaskContext(
@@ -175,7 +175,7 @@ class CeleryTaskRouter:
             )
         except Exception as e:
             logger.error(f"创建任务上下文失败: {e}")
-            # 返回默认上下文
+            # Return a safe default context.
             return TaskContext(
                 task_type=TaskType.DOCUMENT_PROCESSING,
                 user_id=user_id,
@@ -184,20 +184,20 @@ class CeleryTaskRouter:
     
     def get_queue_for_job(self, job_type: str, user_id: str) -> str:
         """
-        根据用户订阅级别获取队列名称
-        
+        Resolve the queue name for a job based on job type and subscription.
+
         Args:
-            job_type: 任务类型 (kb_management, ai_query, document_processing, etc.)
-            user_id: 用户ID
-            
+            job_type: Task type such as kb_management or ai_query.
+            user_id: User ID.
+
         Returns:
-            str: 队列名称
+            Queue name.
         """
         try:
-            # TODO:简化版本：直接返回默认队列，避免异步操作（后续优化）
-            priority_level = 1  # 默认Free订阅
-            
-            # 根据任务类型和优先级选择队列
+            # TODO: temporary simplified path to avoid async work here.
+            priority_level = 1  # Default free-subscription level.
+
+            # Choose the queue by task type and priority level.
             if job_type in ["kb_management", "kb_encoding"]:
                 if priority_level >= 9:
                     return "kb_high"
@@ -218,12 +218,12 @@ class CeleryTaskRouter:
             elif job_type in ["log_processing"]:
                 return "log_processing"
             else:
-                # 默认中等优先级
+                # Default to the medium-priority queue.
                 return f"{job_type}_medium"
                 
         except Exception as e:
             logger.error(f"获取用户 {user_id} 队列失败: {e}")
-            # 默认返回中等优先级队列
+            # Default to a medium-priority queue on failure.
             if job_type in ["kb_management", "kb_encoding"]:
                 return "kb_medium"
             elif job_type in ["ai_query", "user_auth", "urgent_document"]:
@@ -233,22 +233,22 @@ class CeleryTaskRouter:
     
     def route_task(self, name, args, kwargs, options, task=None, **kwds):
         """
-        Celery任务路由函数
-        
-        这个函数会被Celery调用来自动路由任务
-        支持基于任务类型和用户优先级的动态路由
+        Route a Celery task dynamically.
+
+        Celery calls this hook to determine task routing based on task type and
+        user-priority signals.
         """
         try:
-            # 从kwargs中提取job_type和user_id
+            # Extract job_type and user_id from kwargs.
             job_type = kwargs.get('job_type')
             user_id = kwargs.get('user_id')
-            
-            # 如果kwargs中没有user_id，尝试从args中提取（针对upload_url_file_task）
+
+            # Fall back to positional args for upload_url_file_task-style calls.
             if not user_id and len(args) >= 3:
-                user_id = args[2]  # upload_url_file_task的第三个参数是user_id
-            
+                user_id = args[2]  # The third argument is user_id.
+
             if job_type and user_id:
-                # 创建任务上下文并计算优先级
+                # Build context and compute the priority.
                 context = self.create_task_context(
                     task_type=job_type,
                     user_id=user_id,
@@ -258,11 +258,11 @@ class CeleryTaskRouter:
                     retry_count=kwargs.get('retry_count', 0),
                     metadata=kwargs.get('metadata', {})
                 )
-                
-                # 获取队列名称
+
+                # Resolve the queue name.
                 queue_name = self.get_queue_for_job(job_type, user_id)
-                
-                # 计算优先级
+
+                # Compute the final priority.
                 priority = self.calculate_priority(context)
                 
                 logger.info(f"路由任务 {name} 到队列 {queue_name} (用户: {user_id}, 类型: {job_type}, 优先级: {priority})")
@@ -272,7 +272,7 @@ class CeleryTaskRouter:
                     'priority': priority
                 }
             else:
-                # 使用默认路由
+                # Use the default Celery routing behavior.
                 return None
                 
         except Exception as e:
@@ -296,6 +296,5 @@ celery_app.conf.task_routes = [
     task_router.route_task,  # Dynamic routing priority
     static_routes,           # Fallback to static configuration
 ]
-
 
 

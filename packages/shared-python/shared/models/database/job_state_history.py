@@ -1,6 +1,4 @@
-"""
-Job状态历史数据模型
-"""
+"""Job state-history model."""
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -12,27 +10,27 @@ from shared.core.database import Base
 
 
 class JobStateHistory(Base):
-    """Job状态历史模型 - 记录状态机每次转换"""
+    """Job state-history model for individual state-machine transitions."""
     __tablename__ = "job_state_history"
     
-    # 主键
+    # Primary key.
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
-    # 关联Job
+    # Job association.
     job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False)
     
-    # 状态转换信息
+    # Transition details.
     from_state: Mapped[str] = mapped_column(String(50), nullable=False)
     to_state: Mapped[str] = mapped_column(String(50), nullable=False)
-    transition_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # JSON存储
+    transition_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # Stored as JSON.
     
-    # 时间戳
+    # Timestamp.
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     
-    # 关系
+    # Relationships.
     job: Mapped["Job"] = relationship("Job", back_populates="state_history")
     
-    # 索引
+    # Indexes.
     __table_args__ = (
         Index('idx_job_state_history_job_id', 'job_id'),
         Index('idx_job_state_history_created_at', 'created_at'),

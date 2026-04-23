@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
+from io import StringIO
 from pathlib import Path
 import json
 import re
 import tomllib
+import tokenize
 
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[4]
@@ -12,6 +15,43 @@ CHINESE_TEXT_PATTERN: re.Pattern[str] = re.compile(r"[\u4e00-\u9fff]")
 
 def read_text(relative_path: str) -> str:
     return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def collect_docstrings(tree: ast.AST) -> list[str]:
+    docstrings: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(
+            node,
+            (
+                ast.Module,
+                ast.ClassDef,
+                ast.AsyncFunctionDef,
+                ast.FunctionDef,
+            ),
+        ):
+            docstring: str | None = ast.get_docstring(node, clean=False)
+            if docstring:
+                docstrings.append(docstring)
+    return docstrings
+
+
+def find_chinese_comments_and_docstrings(relative_path: str) -> list[str]:
+    source_text: str = read_text(relative_path)
+    snippets: list[str] = []
+
+    tree = ast.parse(source_text, filename=relative_path)
+    for docstring in collect_docstrings(tree):
+        if CHINESE_TEXT_PATTERN.search(docstring):
+            snippets.append(docstring.strip())
+
+    for token in tokenize.generate_tokens(StringIO(source_text).readline):
+        if token.type != tokenize.COMMENT:
+            continue
+        comment_text: str = token.string.lstrip("#").strip()
+        if CHINESE_TEXT_PATTERN.search(comment_text):
+            snippets.append(comment_text)
+
+    return snippets
 
 
 def test_publication_foundation_files_exist() -> None:
@@ -300,6 +340,19 @@ def test_selected_state_and_model_support_surfaces_are_english_first() -> None:
         assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
 
 
+def test_selected_files_only_keep_english_comments_and_docstrings() -> None:
+    for relative_path in (
+        "packages/shared-python/shared/core/celery_router.py",
+        "packages/shared-python/shared/core/database.py",
+        "packages/shared-python/shared/core/security.py",
+        "packages/shared-python/shared/utils/json_utils.py",
+        "packages/shared-python/shared/utils/device_utils.py",
+        "packages/shared-python/shared/models/database/job_state_audit_log.py",
+        "packages/shared-python/shared/models/database/job_state_history.py",
+    ):
+        assert not find_chinese_comments_and_docstrings(relative_path), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -370,6 +423,7 @@ def main() -> None:
     test_selected_api_support_surfaces_are_english_first()
     test_selected_module_support_surfaces_are_english_first()
     test_selected_state_and_model_support_surfaces_are_english_first()
+    test_selected_files_only_keep_english_comments_and_docstrings()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
