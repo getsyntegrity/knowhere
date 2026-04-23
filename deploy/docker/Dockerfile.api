@@ -14,15 +14,19 @@ RUN apt-get update && apt-get install -y \
 # Install uv
 RUN python -m pip install --no-cache-dir uv
 
+# Copy workspace metadata so uv can resolve workspace dependencies
+COPY pyproject.toml uv.lock /app/
+
 # Copy shared package code for editable installation
 COPY packages/shared-python /app/packages/shared-python
 
-# Copy the API dependency definition
+# Copy workspace member dependency definitions
 COPY apps/api/pyproject.toml /app/apps/api/pyproject.toml
+COPY apps/worker/pyproject.toml /app/apps/worker/pyproject.toml
 
 # Sync dependencies into the fixed virtualenv path
 RUN cd /app/apps/api && \
-    UV_PROJECT_ENVIRONMENT=/app/venv uv sync --no-dev
+    UV_PROJECT_ENVIRONMENT=/app/venv uv sync --locked --no-dev
 
 # Runtime stage
 # Use the official Python base image
