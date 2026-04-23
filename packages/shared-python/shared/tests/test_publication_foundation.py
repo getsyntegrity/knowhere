@@ -353,6 +353,17 @@ def test_selected_files_only_keep_english_comments_and_docstrings() -> None:
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
+def test_selected_repository_files_only_keep_english_comments_and_docstrings() -> None:
+    for relative_path in (
+        "apps/api/app/repositories/base_repository.py",
+        "apps/api/app/repositories/api_key_repository.py",
+        "apps/api/app/repositories/payment_record_repository.py",
+        "apps/api/app/repositories/stripe_price_config_repository.py",
+        "apps/api/app/repositories/job_result_repository.py",
+    ):
+        assert not find_chinese_comments_and_docstrings(relative_path), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -424,6 +435,7 @@ def main() -> None:
     test_selected_module_support_surfaces_are_english_first()
     test_selected_state_and_model_support_surfaces_are_english_first()
     test_selected_files_only_keep_english_comments_and_docstrings()
+    test_selected_repository_files_only_keep_english_comments_and_docstrings()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()

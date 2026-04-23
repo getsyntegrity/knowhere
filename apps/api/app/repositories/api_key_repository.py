@@ -1,6 +1,4 @@
-"""
-API Key 数据访问层
-"""
+"""API key repository."""
 from typing import List, Optional, Sequence
 
 from datetime import datetime, timezone
@@ -11,27 +9,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
-    """API Key 数据访问"""
+    """API key data access."""
     
     def __init__(self):
         super().__init__(APIKey)
     
     async def get_by_id(self, session: AsyncSession, api_key_id: str) -> Optional[APIKey]:
-        """根据ID获取API Key"""
+        """Get an API key by ID."""
         result = await session.execute(
             select(APIKey).where(APIKey.id == api_key_id)
         )
         return result.scalar_one_or_none()
     
     async def get_by_key_hash(self, session: AsyncSession, key_hash: str) -> Optional[APIKey]:
-        """根据key_hash获取API Key"""
+        """Get an API key by key hash."""
         result = await session.execute(
             select(APIKey).where(APIKey.key_hash == key_hash)
         )
         return result.scalar_one_or_none()
     
     async def get_by_user_id(self, session: AsyncSession, user_id: str) -> Sequence[APIKey]:
-        """获取用户的所有API Key"""
+        """Get all API keys for a user."""
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)
@@ -40,15 +38,15 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         return result.scalars().all()
     
     async def get_unexpired_by_user_id(self, session: AsyncSession, user_id: str) -> Sequence[APIKey]:
-        """获取用户的所有未过期API Key（包含禁用的）"""
+        """Get all unexpired API keys for a user, including disabled ones."""
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)
             .where(
                 or_(
-                    APIKey.expires_at.is_(None),  # 永不过期
-                    APIKey.expires_at > now       # 未过期
+                    APIKey.expires_at.is_(None),  # Never expires.
+                    APIKey.expires_at > now       # Not expired yet.
                 )
             )
             .order_by(APIKey.created_at.desc())
@@ -56,7 +54,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         return result.scalars().all()
     
     async def get_active_by_user_id(self, session: AsyncSession, user_id: str) -> Sequence[APIKey]:
-        """获取用户的所有活跃API Key"""
+        """Get all active API keys for a user."""
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)
@@ -66,7 +64,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         return result.scalars().all()
     
     async def update_last_used(self, session: AsyncSession, api_key_id: str) -> bool:
-        """更新最后使用时间"""
+        """Update the last-used timestamp."""
         from datetime import datetime, timezone
         result = await session.execute(
             update(APIKey)
@@ -76,7 +74,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         return result.rowcount > 0
     
     async def deactivate(self, session: AsyncSession, api_key_id: str) -> bool:
-        """停用API Key"""
+        """Deactivate an API key."""
         result = await session.execute(
             update(APIKey)
             .where(APIKey.id == api_key_id)
@@ -85,7 +83,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         return result.rowcount > 0
     
     async def delete_by_id(self, session: AsyncSession, api_key_id: str) -> bool:
-        """删除API Key"""
+        """Delete an API key."""
         result = await session.execute(
             delete(APIKey)
             .where(APIKey.id == api_key_id)
@@ -93,7 +91,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         return result.rowcount > 0
     
     async def get_by_user_and_name(self, session: AsyncSession, user_id: str, name: str) -> Optional[APIKey]:
-        """根据用户ID和名称获取API Key"""
+        """Get an API key by user ID and name."""
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)
@@ -102,7 +100,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         return result.scalar_one_or_none()
     
     async def count_by_user(self, session: AsyncSession, user_id: str) -> int:
-        """获取用户的API Key数量"""
+        """Count active API keys for a user."""
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)

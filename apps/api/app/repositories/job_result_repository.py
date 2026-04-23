@@ -1,6 +1,4 @@
-"""
-Job结果仓储
-"""
+"""Job-result repository."""
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -12,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 
 class JobResultRepository:
-    """Job结果持久化访问层"""
+    """Persistence access for job results."""
 
     async def get_by_job_id(
         self,
@@ -20,7 +18,7 @@ class JobResultRepository:
         job_id: str,
         with_chunks: bool = False
     ) -> Optional[JobResult]:
-        """根据Job ID获取结果"""
+        """Get a result by job ID."""
         stmt = select(JobResult).where(JobResult.job_id == job_id)
         if with_chunks:
             stmt = stmt.options(selectinload(JobResult.chunks))
@@ -38,7 +36,7 @@ class JobResultRepository:
         result_s3_key: Optional[str] = None,
         result_size: Optional[int] = None
     ) -> JobResult:
-        """创建或更新Job结果"""
+        """Create or update a job result."""
         existing = await self.get_by_job_id(db, job_id)
         if existing:
             existing.delivery_mode = delivery_mode
@@ -71,7 +69,7 @@ class JobResultRepository:
         job_result_id: str,
         chunks: List[Dict[str, Any]]
     ) -> None:
-        """替换指定JobResult的Chunk列表"""
+        """Replace the chunk list for the specified JobResult."""
         await db.execute(delete(JobChunk).where(JobChunk.job_result_id == job_result_id))
 
         if chunks:
@@ -92,7 +90,7 @@ class JobResultRepository:
         await db.flush()
 
     async def delete_by_job_id(self, db: AsyncSession, job_id: str) -> None:
-        """删除某个Job的结果及Chunk"""
+        """Delete a job result and its chunks."""
         result = await self.get_by_job_id(db, job_id)
         if not result:
             return

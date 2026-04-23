@@ -1,6 +1,6 @@
-"""
-基础Repository类
-提供通用的CRUD操作，其他Repository应该继承此类
+"""Base repository helpers.
+
+Provides common CRUD operations for repository subclasses.
 """
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
 
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import DeclarativeBase
 
-# 定义泛型类型
+# Generic type definitions.
 ModelType = TypeVar("ModelType", bound=DeclarativeBase)
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
 UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
@@ -18,40 +18,40 @@ UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
 
 class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     """
-    基础Repository类，提供通用的CRUD操作
-    
-    Generic参数:
-    - ModelType: SQLAlchemy模型类型
-    - CreateSchemaType: 创建数据的Pydantic模型类型
-    - UpdateSchemaType: 更新数据的Pydantic模型类型
+    Base repository class with common CRUD operations.
+
+    Generic parameters:
+    - ModelType: SQLAlchemy model type
+    - CreateSchemaType: Pydantic type used for creation
+    - UpdateSchemaType: Pydantic type used for updates
     """
     
     def __init__(self, model: Type[ModelType]):
         """
-        初始化Repository
-        
+        Initialize the repository.
+
         Args:
-            model: SQLAlchemy模型类
+            model: SQLAlchemy model class.
         """
         self.model = model
     
     async def create(self, db: AsyncSession, obj_in: CreateSchemaType) -> ModelType:
         """
-        创建新记录
-        
+        Create a new record.
+
         Args:
-            db: 数据库会话
-            obj_in: 创建数据的模型
-            
+            db: Database session.
+            obj_in: Input model for creation.
+
         Returns:
-            创建的模型实例
+            Created model instance.
         """
         if hasattr(obj_in, 'model_dump'):
             obj_data = obj_in.model_dump()
         elif hasattr(obj_in, 'dict'):
             obj_data = obj_in.dict()
         else:
-            # 如果是SQLAlchemy模型实例，直接使用其属性
+            # If this is already a SQLAlchemy model instance, reuse its fields.
             obj_data = {key: getattr(obj_in, key) for key in obj_in.__table__.columns.keys() if hasattr(obj_in, key)}
         db_obj = self.model(**obj_data)
         db.add(db_obj)
@@ -61,14 +61,14 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     
     async def get(self, db: AsyncSession, id: Any) -> Optional[ModelType]:
         """
-        根据ID获取记录
-        
+        Get a record by ID.
+
         Args:
-            db: 数据库会话
-            id: 记录ID
-            
+            db: Database session.
+            id: Record ID.
+
         Returns:
-            模型实例或None
+            Model instance or None.
         """
         result = await db.execute(select(self.model).where(self.model.id == id))
         return result.scalars().first()
@@ -81,20 +81,20 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         filters: Optional[Dict[str, Any]] = None
     ) -> List[ModelType]:
         """
-        获取多条记录
-        
+        Get multiple records.
+
         Args:
-            db: 数据库会话
-            skip: 跳过记录数
-            limit: 限制记录数
-            filters: 过滤条件字典
-            
+            db: Database session.
+            skip: Number of records to skip.
+            limit: Maximum records to return.
+            filters: Field-equality filters.
+
         Returns:
-            模型实例列表
+            Model instance list.
         """
         query = select(self.model)
         
-        # 应用过滤条件
+        # Apply field filters.
         if filters:
             for key, value in filters.items():
                 if hasattr(self.model, key):
@@ -111,15 +111,15 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         obj_in: UpdateSchemaType
     ) -> ModelType:
         """
-        更新记录
-        
+        Update a record.
+
         Args:
-            db: 数据库会话
-            db_obj: 要更新的数据库对象
-            obj_in: 更新数据的模型
-            
+            db: Database session.
+            db_obj: Database object to update.
+            obj_in: Input model with updated fields.
+
         Returns:
-            更新后的模型实例
+            Updated model instance.
         """
         obj_data = obj_in.model_dump(exclude_unset=True) if hasattr(obj_in, 'model_dump') else obj_in.dict(exclude_unset=True)
         
@@ -133,14 +133,14 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     
     async def delete(self, db: AsyncSession, id: Any) -> bool:
         """
-        删除记录
-        
+        Delete a record.
+
         Args:
-            db: 数据库会话
-            id: 记录ID
-            
+            db: Database session.
+            id: Record ID.
+
         Returns:
-            是否删除成功
+            Whether the delete succeeded.
         """
         result = await db.execute(delete(self.model).where(self.model.id == id))
         await db.commit()
@@ -148,33 +148,33 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     
     async def exists(self, db: AsyncSession, id: Any) -> bool:
         """
-        检查记录是否存在
-        
+        Check whether a record exists.
+
         Args:
-            db: 数据库会话
-            id: 记录ID
-            
+            db: Database session.
+            id: Record ID.
+
         Returns:
-            是否存在
+            Whether the record exists.
         """
         result = await db.execute(select(self.model).where(self.model.id == id))
         return result.scalars().first() is not None
     
     async def count(self, db: AsyncSession, filters: Optional[Dict[str, Any]] = None) -> int:
         """
-        统计记录数量
-        
+        Count matching records.
+
         Args:
-            db: 数据库会话
-            filters: 过滤条件字典
-            
+            db: Database session.
+            filters: Field-equality filters.
+
         Returns:
-            记录数量
+            Record count.
         """
         from sqlalchemy import func
         query = select(func.count(self.model.id))
         
-        # 应用过滤条件
+        # Apply field filters.
         if filters:
             for key, value in filters.items():
                 if hasattr(self.model, key):
@@ -190,15 +190,15 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         field_value: Any
     ) -> Optional[ModelType]:
         """
-        根据指定字段获取记录
-        
+        Get a record by a specific field.
+
         Args:
-            db: 数据库会话
-            field_name: 字段名
-            field_value: 字段值
-            
+            db: Database session.
+            field_name: Field name.
+            field_value: Field value.
+
         Returns:
-            模型实例或None
+            Model instance or None.
         """
         if not hasattr(self.model, field_name):
             raise ValueError(f"Field '{field_name}' does not exist in model {self.model.__name__}")
@@ -217,17 +217,17 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         limit: int = 100
     ) -> List[ModelType]:
         """
-        根据指定字段获取多条记录
-        
+        Get multiple records by a specific field.
+
         Args:
-            db: 数据库会话
-            field_name: 字段名
-            field_value: 字段值
-            skip: 跳过记录数
-            limit: 限制记录数
-            
+            db: Database session.
+            field_name: Field name.
+            field_value: Field value.
+            skip: Number of records to skip.
+            limit: Maximum records to return.
+
         Returns:
-            模型实例列表
+            Model instance list.
         """
         if not hasattr(self.model, field_name):
             raise ValueError(f"Field '{field_name}' does not exist in model {self.model.__name__}")
