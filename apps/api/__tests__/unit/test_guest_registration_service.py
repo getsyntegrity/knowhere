@@ -24,7 +24,7 @@ def create_mock_session() -> AsyncMock:
 async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> None:
     service = GuestRegistrationService()
     session = create_mock_session()
-    device_id = "codex-guest-registration-smoke"
+    device_id = "guest-registration-test-device"
 
     monkeypatch.setattr(
         service._credits_service,
@@ -57,13 +57,13 @@ async def test_register_guest_assigns_name_when_creating_guest(monkeypatch) -> N
         device_id=device_id,
         client="knowhere-hub",
         platform="macos",
-        app_version="codex-smoke",
+        app_version="guest-registration-test",
     )
 
     created_user = session.add.call_args_list[0].args[0]
 
     assert isinstance(created_user, User)
-    assert created_user.name == "Guest codex-guest-registration-smoke"
+    assert created_user.name == "Guest guest-registration-test-device"
     assert created_user.email.startswith("guest+")
     assert created_user.email.endswith("@guest.knowhere.local")
     assert response.device_id == device_id

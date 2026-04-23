@@ -565,6 +565,9 @@ def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     assert "sk-explicit" not in openai_timeout_test_text
     assert "dummy-openai-key-for-tests" not in openai_timeout_test_text
     assert "codex-staging-smoke-20260406" not in guest_registration_test_text
+    assert "codex-guest-registration-smoke" not in guest_registration_test_text
+    assert "codex-smoke" not in guest_registration_test_text
+    assert "codex-test" not in mcp_query_test_text
 
 
 def test_selected_retained_fixtures_avoid_personal_contact_strings() -> None:

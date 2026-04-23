@@ -75,7 +75,7 @@ async def test_mcp_streamable_http_endpoint_reaches_protocol_handler():
                         'protocolVersion': '2025-11-25',
                         'capabilities': {},
                         'clientInfo': {
-                            'name': 'codex-test',
+                            'name': 'test-client',
                             'version': '0.1.0',
                         },
                     },
@@ -140,7 +140,7 @@ async def test_mcp_streamable_http_endpoint_handles_follow_up_requests_without_s
                         'protocolVersion': '2025-11-25',
                         'capabilities': {},
                         'clientInfo': {
-                            'name': 'codex-test',
+                            'name': 'test-client',
                             'version': '0.1.0',
                         },
                     },
