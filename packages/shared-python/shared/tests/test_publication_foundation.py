@@ -136,6 +136,15 @@ def test_build_images_workflow_only_targets_ghcr() -> None:
     assert "aws ecr get-login-password" not in workflow_text
 
 
+def test_build_images_workflow_keeps_pr_permissions_read_only() -> None:
+    workflow_text: str = read_text(".github/workflows/build-images.yml")
+
+    assert "github.event_name == 'pull_request'" in workflow_text
+    assert "github.event_name != 'pull_request'" in workflow_text
+    assert "packages: read" in workflow_text
+    assert "packages: write" in workflow_text
+
+
 def test_repo_surface_is_python_first() -> None:
     readme_text: str = read_text("README.md")
 
@@ -534,6 +543,7 @@ def main() -> None:
     test_private_root_only_files_are_removed_from_publication_branch()
     test_readme_links_public_foundation_documents()
     test_build_images_workflow_only_targets_ghcr()
+    test_build_images_workflow_keeps_pr_permissions_read_only()
     test_repo_surface_is_python_first()
     test_public_docs_cover_services_release_and_local_verification()
     test_public_env_examples_and_selected_dev_assets_are_english_first()
