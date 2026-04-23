@@ -1,6 +1,4 @@
-"""
-中间件模块
-"""
+"""Middleware exports."""
 from .cors import setup_cors
 from .logging import LoggingMiddleware
 

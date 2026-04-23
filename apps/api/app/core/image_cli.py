@@ -4,7 +4,8 @@ import httpx
 
 
 class ImageCli:
-    """图像处理客户端"""
+    """Image-processing client."""
+
     http_client: Optional[httpx.AsyncClient] = None
 
 

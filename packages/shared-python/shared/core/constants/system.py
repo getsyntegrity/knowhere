@@ -1,13 +1,11 @@
-"""
-系统常量
-"""
+"""System constants."""
 
 
 class SystemConstants:
-    """系统级常量"""
+    """System-level constants."""
 
-    # 环境类型
-    ENVIRONMENTS = ['development', 'staging', 'production']
-    
-    # 日志级别
-    LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+    # Supported environments.
+    ENVIRONMENTS = ["development", "staging", "production"]
+
+    # Log levels.
+    LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
