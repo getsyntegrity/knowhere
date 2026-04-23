@@ -155,6 +155,7 @@ def test_repo_surface_is_python_first() -> None:
         "turbo.json",
         "packages/openapi-specs",
         "packages/shared-types",
+        "apps/worker/app/sample_pdfs",
     ):
         assert not (REPO_ROOT / removed_path).exists(), removed_path
 
