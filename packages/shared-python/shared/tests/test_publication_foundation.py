@@ -562,6 +562,7 @@ def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     assert "api.internal" not in retained_test_text
     assert "workers.dev" not in retained_test_text
     assert "wangbinqi" not in retained_test_text
+    assert "job_af999f445be6" not in retained_test_text
     assert "api-staging.knowhereto.ai" not in mcp_query_test_text
     assert "sk-explicit" not in openai_timeout_test_text
     assert "dummy-openai-key-for-tests" not in openai_timeout_test_text

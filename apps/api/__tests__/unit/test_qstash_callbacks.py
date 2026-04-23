@@ -140,11 +140,12 @@ def test_process_qstash_callback_stores_qstash_message_id_separately(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = MagicMock()
+    job_id: str = "job_test_qstash_callback"
     event = SimpleNamespace(
         id="6d3c9753-4547-4471-b6af-1a0aeb925a70",
-        job_id="job_af999f445be6",
+        job_id=job_id,
         target_url="https://worker.example.com/drugs",
-        payload={"event": "job.completed", "job_id": "job_af999f445be6"},
+        payload={"event": "job.completed", "job_id": job_id},
         status=WebhookEventStatus.DELIVERING,
         attempts=0,
         updated_at=None,
