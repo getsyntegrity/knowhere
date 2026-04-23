@@ -260,7 +260,8 @@ def _compute_keyword_score(
     """
     Compute keyword overlap score using character-length-weighted scoring.
 
-    Longer tokens contribute more: '施工现场'(4) has 2x weight of '交底'(2).
+    Longer tokens contribute more: a four-character term contributes twice the
+    weight of a two-character term.
     Formula: score = weight * sum(len(kw) for shared) / min(sum(len) for A, sum(len) for B)
 
     Args:

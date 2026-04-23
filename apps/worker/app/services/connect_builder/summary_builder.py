@@ -182,7 +182,7 @@ def _recursive_summarize(
 
     When use_llm=False, always uses title enumeration instead of calling
     the LLM. This produces a lightweight summary like:
-      "This section covers: 第1章, 第2章, 第3章"
+      "This section covers: Section 1, Section 2, Section 3"
 
     Writes the summary into the tree dict in-place as `_summary`.
 
@@ -275,7 +275,7 @@ def enrich_hierarchy_summaries(
         force: If True, regenerate summaries even if _summary already exists.
         use_llm: If True, use LLM to generate coherent summaries for long
             content. If False, always use lightweight title enumeration
-            (e.g. "This section covers: 第1章, 第2章"). Defaults to True.
+            (e.g. "This section covers: Section 1, Section 2"). Defaults to True.
 
     Returns:
         Dict mapping file_name → top-level summary string.

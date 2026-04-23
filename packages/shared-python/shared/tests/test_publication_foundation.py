@@ -452,6 +452,20 @@ def test_selected_worker_parser_files_only_keep_english_comments_and_docstrings(
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
+def test_remaining_support_files_only_keep_english_comments_and_docstrings() -> None:
+    for relative_path in (
+        "apps/worker/app/services/connect_builder/builder.py",
+        "apps/worker/app/services/connect_builder/graph_builder.py",
+        "apps/worker/app/services/connect_builder/summary_builder.py",
+        "packages/shared-python/shared/core/constants/processing.py",
+        "packages/shared-python/shared/utils/CommonHelper.py",
+        "packages/shared-python/shared/utils/FileDownUpUtils.py",
+        "packages/shared-python/shared/utils/redis_key_builder.py",
+        "packages/shared-python/shared/utils/redis_retry.py",
+    ):
+        assert not find_chinese_comments_and_docstrings(relative_path), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -532,6 +546,7 @@ def main() -> None:
     test_selected_storage_support_files_only_keep_english_comments_and_docstrings()
     test_storage_upload_service_only_keeps_english_comments_and_docstrings()
     test_selected_worker_parser_files_only_keep_english_comments_and_docstrings()
+    test_remaining_support_files_only_keep_english_comments_and_docstrings()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()

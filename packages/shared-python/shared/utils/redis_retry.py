@@ -1,6 +1,4 @@
-"""
-Redis重试机制工具
-"""
+"""Retry helpers for Redis operations."""
 import asyncio
 import random
 from typing import Any, Callable
@@ -15,7 +13,7 @@ from shared.core.exceptions.redis_exceptions import (
 
 
 class RedisRetry:
-    """Redis操作重试机制"""
+    """Retry helper for Redis operations."""
     
     @staticmethod
     async def with_retry(
@@ -27,21 +25,21 @@ class RedisRetry:
         jitter: bool = True
     ) -> Any:
         """
-        执行Redis操作并支持重试
+        Execute a Redis operation with retry support.
         
         Args:
-            operation: 要执行的操作函数
-            max_retries: 最大重试次数
-            base_delay: 基础延迟时间（秒）
-            max_delay: 最大延迟时间（秒）
-            exponential_base: 指数退避基数
-            jitter: 是否添加随机抖动
+            operation: Operation callback to execute.
+            max_retries: Maximum retry count.
+            base_delay: Base delay in seconds.
+            max_delay: Maximum delay in seconds.
+            exponential_base: Exponential backoff base.
+            jitter: Whether to add random jitter.
         
         Returns:
-            操作结果
+            Operation result.
             
         Raises:
-            RedisOperationError: 重试次数用尽后仍失败
+            RedisOperationError: Raised when all retries are exhausted.
         """
         last_exception = None
         
@@ -58,10 +56,10 @@ class RedisRetry:
                         original_exception=e
                     )
                 
-                # 计算延迟时间
+                # Compute the retry delay.
                 delay = min(base_delay * (exponential_base ** attempt), max_delay)
                 
-                # 添加随机抖动
+                # Add random jitter when enabled.
                 if jitter:
                     delay *= (0.5 + random.random() * 0.5)
                 
@@ -82,42 +80,42 @@ class RedisRetry:
         expected_exception: type = Exception
     ) -> Any:
         """
-        带熔断器的Redis操作
+        Execute a Redis operation with a circuit-breaker placeholder.
         
         Args:
-            operation: 要执行的操作函数
-            failure_threshold: 失败阈值
-            recovery_timeout: 恢复超时时间
-            expected_exception: 预期的异常类型
+            operation: Operation callback to execute.
+            failure_threshold: Failure threshold.
+            recovery_timeout: Recovery timeout.
+            expected_exception: Expected exception type.
         
         Returns:
-            操作结果
+            Operation result.
         """
-        # 这里可以实现熔断器逻辑
-        # 为了简化，暂时直接执行操作
+        # Circuit-breaker logic can be implemented here later.
+        # For now, execute the operation directly.
         return await operation()
 
 
 class RedisHealthChecker:
-    """Redis健康检查器"""
+    """Health checker for Redis connections."""
     
     def __init__(self, redis_client):
         self.redis_client = redis_client
         self._is_healthy = True
         self._last_check = 0
-        self._check_interval = 30  # 30秒检查一次
+        self._check_interval = 30  # Check every 30 seconds.
     
     async def is_healthy(self) -> bool:
-        """检查Redis是否健康"""
+        """Check whether Redis is healthy."""
         import time
         current_time = time.time()
         
-        # 如果距离上次检查时间不足，直接返回缓存结果
+        # Return the cached result if the last check is still fresh.
         if current_time - self._last_check < self._check_interval:
             return self._is_healthy
         
         try:
-            # 执行PING命令检查连接
+            # Use PING to validate the connection.
             await self.redis_client.ping()
             self._is_healthy = True
             self._last_check = current_time
@@ -129,7 +127,7 @@ class RedisHealthChecker:
             return False
     
     async def wait_for_healthy(self, timeout: float = 30.0) -> bool:
-        """等待Redis恢复健康"""
+        """Wait for Redis to become healthy again."""
         import time
         start_time = time.time()
         

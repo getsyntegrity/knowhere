@@ -51,7 +51,7 @@ def _build_tree_from_paths(paths: List[str]) -> Dict[str, Any]:
     Replicates ZipResultService._restore_graph_by_paths logic.
 
     Args:
-        paths: List of chunk paths, e.g. ["Default_Root/报告.pdf/第1章/1.1", ...]
+        paths: List of chunk paths, e.g. ["Default_Root/report.pdf/Section 1/1.1", ...]
 
     Returns:
         Nested dict tree rooted at Default_Root.
@@ -1123,8 +1123,8 @@ def build_and_deploy(
             chunks (legacy behavior).
         summary_use_llm: If True, use LLM to generate coherent hierarchical
             summaries (slow, costs API tokens). If False (default), use
-            lightweight title enumeration (e.g. "This section covers: 第1章,
-            第2章"). Only affects `top_summary` and `_summary` fields.
+            lightweight title enumeration (e.g. "This section covers: Section 1,
+            Section 2"). Only affects `top_summary` and `_summary` fields.
 
     Returns:
         The knowledge graph dict.
@@ -1316,5 +1316,4 @@ def build_and_deploy(
             logger.debug(f"MCP auto-registration skipped: {e}")
 
     return graph
-
 

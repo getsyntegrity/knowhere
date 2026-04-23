@@ -18,17 +18,17 @@ from shared.models.schemas.s3_file import FliesDownload
 
 def s3_upload_file(file: UploadFile , prefix: str ):
     """
-    根据文件和文件路径上传文件到S3存储。
-    :param file: 文件 abc15sa25ww.doc
-    :param prefix: 文件真实路径 upload/123
-    :return:
+    Upload a file object to S3 storage.
+    :param file: Input file such as ``abc15sa25ww.doc``
+    :param prefix: Storage prefix such as ``upload/123``
+    :return: Upload result payload
     """
     if prefix and not prefix.endswith('/'):
         prefix += '/'
     object_key = f"{prefix}{file.filename}"
     adapter = get_cached_storage_adapter()
     try:
-        # 使用 upload_fileobj 可以高效地以流式方式上传，避免占用过多内存
+        # ``upload_fileobj`` streams efficiently and avoids large in-memory copies.
         adapter.upload_fileobj(
             file.file,
             object_key,
@@ -46,7 +46,7 @@ def s3_upload_file(file: UploadFile , prefix: str ):
     except KnowhereException:
         raise
     except Exception as e:
-        # 捕获存储上传错误
+        # Wrap storage upload failures in a domain exception.
         raise StorageServiceException(
             internal_message=f"存储上传失败: {str(e)}",
             operation="upload",
@@ -65,7 +65,7 @@ def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, file
     from shared.core.constants import APIConstants, ProcessingConstants
     import fnmatch
 
-    # 使用默认值
+    # Use defaults when optional arguments are omitted.
     if timeout is None:
         timeout = APIConstants.S3_FILE_DOWNLOAD_TIMEOUT
     if chunk_size is None:
@@ -75,7 +75,7 @@ def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, file
     dest_dir.mkdir(parents=True, exist_ok=True)
     zip_path = dest_dir / filename
 
-    # 1) 下载到 zip_path 并解压
+    # 1) Download to zip_path and extract.
     with requests.get(url, headers=headers or {}, timeout=timeout, stream=True, allow_redirects=True) as r:
         r.raise_for_status()
         with open(zip_path, "wb") as f:
@@ -86,7 +86,7 @@ def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, file
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(dest_dir)
 
-    # 2) 删除非 keep_exts 文件，以及匹配 exclude_patterns 的文件
+    # 2) Remove files outside keep_exts or matching exclude_patterns.
     kept_files = []
     for p in dest_dir.rglob("*"):
         if p.is_file():
@@ -104,7 +104,7 @@ def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, file
             else:
                 p.unlink()
     
-    # 4) 删除空目录（可选）
+    # 4) Remove empty directories when requested.
     if clean_empty_dirs:
         for d in sorted([p for p in dest_dir.rglob("*") if p.is_dir()],
                         key=lambda x: len(x.parts), reverse=True):
@@ -112,29 +112,29 @@ def s3_download_extract_zip(url: str, dest_dir: Union[str, os.PathLike], *, file
                 next(d.iterdir())
             except StopIteration:
                 d.rmdir()
-    # 5) 删除 zip 文件
+    # 5) Delete the downloaded zip file.
     zip_path.unlink(missing_ok=True)
 
 def s3_get_download_url(file_key: str, expires_in: int = 3600):
     """
-    根据文件路径和文件名获得文件url
-    :param file_key: 文件路径与完整的文件名
-    :param expires_in: 你希望的有效时间
-    :return:
+    Get a file download URL from its storage key.
+    :param file_key: Full file path and name
+    :param expires_in: Desired URL lifetime
+    :return: Signed download payload
     """
     s3_client = settings.get_s3_client()
     try:
-        # 生成预签名 URL (pre-signed URL)
+        # Generate a pre-signed URL.
         presigned_url = s3_client.generate_presigned_url(
             'get_object',
             Params={'Bucket': settings.S3_BUCKET_NAME, 'Key': file_key},
-            ExpiresIn=expires_in  # URL 有效期
+            ExpiresIn=expires_in  # URL lifetime.
         )
         fsdl = FliesDownload(message="已经成功签名", file_key=file_key, download_url=presigned_url, expires_in_seconds=expires_in)
         return fsdl
 
     except ClientError as e:
-        # 如果文件不存在，boto3 不会立即报错，但生成的链接访问时会404
+        # boto3 may still sign missing objects; the resulting URL can later 404.
         raise NotFoundException(
             resource="File",
             resource_id=file_key,
@@ -143,17 +143,17 @@ def s3_get_download_url(file_key: str, expires_in: int = 3600):
 
 def get_url_file(path):
     file_sig = s3_get_download_url(path, expires_in=3600)
-    #组装url
+    # Assemble the final URL.
     file_url = file_sig.download_url
     response = requests.get(file_url, verify=True)
-    response.raise_for_status() # 确保请求成功
+    response.raise_for_status() # Ensure the request succeeds.
     return response
 
 def get_pub_fileurl(path):
     """
-    根据文件路径返回公共路径
+    Build a public URL from a storage path.
     :param path:
-    :return:
+    :return: Public URL
     """
     base_url = settings.S3_PRIVATE_DOMAIN.rstrip('/')
     clean_path = path.replace('\\','/').strip()
@@ -166,34 +166,34 @@ def s3_public_file_url(file_key: str) -> str:
 
 async def download_and_upload_image(img_url: str, prefix: str="images/", temp_store_path=None) -> dict:
     """
-    下载图片，重命名后上传到S3存储，并返回新的下载链接，上传完成后自动删除本地文件
-    :param img_url: 图片的URL地址
-    :param prefix: S3存储的前缀路径
-    :return: 包含上传结果和下载链接的字典
+    Download an image, rename it, upload it to S3, and clean up locally.
+    :param img_url: Image URL
+    :param prefix: S3 storage prefix
+    :return: Dict containing upload results and the new download reference
     """
-    # 生成唯一的文件名
+    # Generate a unique filename.
     unique_filename = f"{uuid.uuid4()}.jpg"
-    #临时文件夹
+    # Temporary directory.
     if temp_store_path is None:
         temp_store_path = r'/Volumes/U/temp/output/'
     local_file_path = Path(f'{settings.S3_TEMP_PATH or "/tmp"}{unique_filename}')
     # Path(f"{temp_store_path}{unique_filename}")
     try:
-        # 异步下载图片
+        # Download the image asynchronously.
         async with aiohttp.ClientSession() as session:
             async with session.get(img_url) as response:
                 response.raise_for_status()
                 with open(local_file_path, "wb") as f:
                     f.write(await response.read())
 
-        # 创建一个模拟的UploadFile对象
+        # Create a temporary UploadFile wrapper.
         from fastapi import UploadFile
         upload_file = UploadFile(filename=unique_filename, file=open(local_file_path, "rb"))
 
-        # 上传到S3
+        # Upload to S3.
         result = s3_upload_file(upload_file, prefix)
 
-        # 关闭文件并删除本地文件
+        # Close the file handle and delete the local file.
         upload_file.file.close()
         os.remove(local_file_path)
         return result
@@ -203,7 +203,7 @@ async def download_and_upload_image(img_url: str, prefix: str="images/", temp_st
             os.remove(local_file_path)
         raise
     except Exception as e:
-        # 确保即使出错也删除本地文件
+        # Always remove the local file on failure as well.
         if local_file_path.exists():
             os.remove(local_file_path)
         raise StorageServiceException(
