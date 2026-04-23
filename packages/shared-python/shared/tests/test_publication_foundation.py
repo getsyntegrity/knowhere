@@ -549,6 +549,18 @@ def test_public_safety_scan_blocks_private_cloud_identifiers() -> None:
     assert "workers\\\\.dev" in scan_script_text
 
 
+def test_public_workflows_do_not_persist_checkout_credentials() -> None:
+    for relative_path in (
+        ".github/workflows/build-images.yml",
+        ".github/workflows/ci.yml",
+    ):
+        workflow_text: str = read_text(relative_path)
+        checkout_step_count: int = workflow_text.count("uses: actions/checkout@v4")
+
+        assert checkout_step_count > 0, relative_path
+        assert workflow_text.count("persist-credentials: false") == checkout_step_count, relative_path
+
+
 def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     retained_test_text: str = read_text("apps/api/__tests__/unit/test_qstash_callbacks.py")
     mcp_query_test_text: str = read_text("apps/api/__tests__/unit/test_mcp_query_tool.py")
@@ -625,6 +637,7 @@ def main() -> None:
     test_public_typecheck_script_targets_selected_api_entrypoints()
     test_public_check_script_runs_public_safety_scan()
     test_public_safety_scan_blocks_private_cloud_identifiers()
+    test_public_workflows_do_not_persist_checkout_credentials()
     test_selected_retained_test_surfaces_avoid_private_callback_hosts()
     test_selected_retained_fixtures_avoid_personal_contact_strings()
     test_worker_tests_do_not_keep_stale_runtime_artifacts()
