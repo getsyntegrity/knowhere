@@ -561,6 +561,19 @@ def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     assert "dummy-openai-key-for-tests" not in openai_timeout_test_text
 
 
+def test_selected_retained_fixtures_avoid_personal_contact_strings() -> None:
+    for relative_path in (
+        "apps/worker/tests/fixtures/full.md",
+        "apps/worker/tests/fixtures/full_notoc.md",
+    ):
+        fixture_text: str = read_text(relative_path)
+        assert "764796421@qq.c0m" not in fixture_text
+        assert "@qq.com" not in fixture_text
+        assert "@163.com" not in fixture_text
+        assert "@gmail.com" not in fixture_text
+        assert "@outlook.com" not in fixture_text
+
+
 def main() -> None:
     test_publication_foundation_files_exist()
     test_license_and_notice_match_apache_2_baseline()
@@ -598,6 +611,7 @@ def main() -> None:
     test_public_check_script_runs_public_safety_scan()
     test_public_safety_scan_blocks_private_cloud_identifiers()
     test_selected_retained_test_surfaces_avoid_private_callback_hosts()
+    test_selected_retained_fixtures_avoid_personal_contact_strings()
 
 
 if __name__ == "__main__":
