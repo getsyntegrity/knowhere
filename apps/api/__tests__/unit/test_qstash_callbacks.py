@@ -127,8 +127,9 @@ def test_find_event_id_uses_case_insensitive_fallback_for_list_header_value() ->
 
 
 def test_build_callback_log_idempotency_key_derives_uuid_from_qstash_message_id() -> None:
+    qstash_message_id: str = "msg_test_qstash_callback"
     idempotency_key = qstash_callbacks._build_callback_log_idempotency_key(
-        "msg_SsSaiS4nUd1vhMifwgiRxyLsvKwQpyiTbotjmvhgmnKYCsdHnYL9b4DQ28WN8euniUHdZYYufg1FMF4sRjuNRPTHhRBbvTA",
+        qstash_message_id,
         "6d3c9753-4547-4471-b6af-1a0aeb925a70",
     )
 
@@ -141,6 +142,7 @@ def test_process_qstash_callback_stores_qstash_message_id_separately(
 ) -> None:
     db = MagicMock()
     job_id: str = "job_test_qstash_callback"
+    qstash_message_id: str = "msg_test_qstash_callback"
     event = SimpleNamespace(
         id="6d3c9753-4547-4471-b6af-1a0aeb925a70",
         job_id=job_id,
@@ -162,7 +164,7 @@ def test_process_qstash_callback_stores_qstash_message_id_separately(
         data={
             "status": 201,
             "body": "ok",
-            "sourceMessageId": "msg_SsSaiS4nUd1vhMifwgiRxyLsvKwQpyiTbotjmvhgmnKYCsdHnYL9b4DQ28WN8euniUHdZYYufg1FMF4sRjuNRPTHhRBbvTA",
+            "sourceMessageId": qstash_message_id,
             "retried": 0,
         },
         event_id=event.id,
@@ -173,8 +175,6 @@ def test_process_qstash_callback_stores_qstash_message_id_separately(
     webhook_log = db.add.call_args.args[0]
     assert response.status_code == 200
     assert webhook_log.idempotency_key == "dummy-idempotency-key-for-tests"
-    assert webhook_log.qstash_message_id == (
-        "msg_SsSaiS4nUd1vhMifwgiRxyLsvKwQpyiTbotjmvhgmnKYCsdHnYL9b4DQ28WN8euniUHdZYYufg1FMF4sRjuNRPTHhRBbvTA"
-    )
+    assert webhook_log.qstash_message_id == qstash_message_id
     assert len(webhook_log.idempotency_key) == 36
     db.commit.assert_called_once()
