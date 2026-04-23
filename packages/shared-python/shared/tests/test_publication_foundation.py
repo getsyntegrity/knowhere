@@ -264,6 +264,7 @@ def test_selected_api_support_surfaces_are_english_first() -> None:
         "packages/shared-python/shared/models/schemas/word.py",
         "apps/api/app/core/__init__.py",
         "apps/api/app/core/middleware/cors.py",
+        "apps/api/app/core/response/ResponseCode.py",
     ):
         assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
 
