@@ -545,10 +545,17 @@ def test_public_safety_scan_blocks_private_cloud_identifiers() -> None:
 
 def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     retained_test_text: str = read_text("apps/api/__tests__/unit/test_qstash_callbacks.py")
+    mcp_query_test_text: str = read_text("apps/api/__tests__/unit/test_mcp_query_tool.py")
+    openai_timeout_test_text: str = read_text(
+        "packages/shared-python/shared/tests/test_openai_timeout_defaults.py"
+    )
 
     assert "api.internal" not in retained_test_text
     assert "workers.dev" not in retained_test_text
     assert "wangbinqi" not in retained_test_text
+    assert "api-staging.knowhereto.ai" not in mcp_query_test_text
+    assert "sk-explicit" not in openai_timeout_test_text
+    assert "dummy-openai-key-for-tests" not in openai_timeout_test_text
 
 
 def main() -> None:

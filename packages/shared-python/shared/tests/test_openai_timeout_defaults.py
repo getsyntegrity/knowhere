@@ -68,6 +68,7 @@ def test_openai_compatible_client_skips_direct_client_for_qwen_pool(monkeypatch)
 def test_openai_compatible_client_builds_direct_qwen_client_for_explicit_key(monkeypatch):
     captured_api_key: str = ""
     captured_base_url: str = ""
+    explicit_api_key = "ali-explicit-placeholder-key"
 
     class FakeOpenAI:
         def __init__(
@@ -94,20 +95,25 @@ def test_openai_compatible_client_builds_direct_qwen_client_for_explicit_key(mon
         raising=False,
     )
 
-    sync_client = OpenAICompatibleClientSync(default_model="qwen-vl-plus", api_key="sk-explicit")
+    sync_client = OpenAICompatibleClientSync(
+        default_model="qwen-vl-plus",
+        api_key=explicit_api_key,
+    )
 
     assert sync_client._client is not None
-    assert captured_api_key == "sk-explicit"
+    assert captured_api_key == explicit_api_key
     assert captured_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 def test_ali_pool_errors_include_masked_api_key_in_internal_message(monkeypatch):
+    pool_api_key = "ali-pool-placeholder-key-123456"
+
     class FakeAliQuotaManager:
         def acquire_request(self, operation: str) -> SimpleNamespace:
             assert operation == "chat_completion"
             return SimpleNamespace(
                 token_id="ali-2",
-                api_key="dummy-openai-key-for-tests",
+                api_key=pool_api_key,
                 rpm_limit=300,
                 daily_limit=10000,
             )
@@ -136,7 +142,7 @@ def test_ali_pool_errors_include_masked_api_key_in_internal_message(monkeypatch)
         base_url: str | None,
         max_retries: int,
     ) -> FakeOpenAIClient:
-        assert api_key == "dummy-openai-key-for-tests"
+        assert api_key == pool_api_key
         assert max_retries == settings.ALI_SDK_MAX_RETRIES
         return FakeOpenAIClient(base_url or "")
 
@@ -158,10 +164,10 @@ def test_ali_pool_errors_include_masked_api_key_in_internal_message(monkeypatch)
         sync_client.chat_completion("hello")
 
     internal_message = exc_info.value.internal_message
-    expected_masked_api_key = mask_api_key("dummy-openai-key-for-tests")
+    expected_masked_api_key = mask_api_key(pool_api_key)
     assert "token_id=ali-2" in internal_message
     assert f"api_key={expected_masked_api_key}" in internal_message
-    assert "dummy-openai-key-for-tests" not in internal_message
+    assert pool_api_key not in internal_message
 
 
 def test_openai_compatible_client_mock_short_circuits_direct_provider(monkeypatch):

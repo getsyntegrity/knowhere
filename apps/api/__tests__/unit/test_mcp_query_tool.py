@@ -93,15 +93,16 @@ async def test_mcp_streamable_http_endpoint_initializes_with_public_host():
 
     test_app = app_main.create_app()
     mcp_server = test_app.state.retrieval_mcp_server
+    public_base_url = 'https://api.example.test'
 
     async with mcp_server.session_manager.run():
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
             transport=transport,
-            base_url='https://api-staging.knowhereto.ai',
+            base_url=public_base_url,
         ) as http_client:
             async with streamable_http_client(
-                'https://api-staging.knowhereto.ai/mcp',
+                f'{public_base_url}/mcp',
                 http_client=http_client,
             ) as (read_stream, write_stream, get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
@@ -117,12 +118,13 @@ async def test_mcp_streamable_http_endpoint_handles_follow_up_requests_without_s
 
     test_app = app_main.create_app()
     mcp_server = test_app.state.retrieval_mcp_server
+    public_base_url = 'https://api.example.test'
 
     async with mcp_server.session_manager.run():
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
             transport=transport,
-            base_url='https://api-staging.knowhereto.ai',
+            base_url=public_base_url,
         ) as client:
             initialize_response = await client.post(
                 '/mcp',
