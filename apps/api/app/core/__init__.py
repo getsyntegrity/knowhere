@@ -1,10 +1,10 @@
-"""
-核心模块统一导入接口
-重构后的配置管理、Redis管理等功能
-注意：共享包内容需要从共享包导入
+"""Unified imports for API core modules.
+
+Configuration, Redis management, and other shared functionality should be
+imported from the shared package.
 """
 
-# 从共享包导入
+# Import shared infrastructure from the shared package.
 from shared.core.config import app_config, redis_config_manager, redis_pool_manager
 from shared.core.constants import (APIConstants, BusinessConstants,
                                    ProcessingConstants, SystemConstants)
@@ -12,37 +12,37 @@ from shared.core.database import get_db
 from shared.core.logging import setup_logging
 from shared.core.security import get_password_hash, verify_password
 
-# 响应处理 - API专用，保留在API中
+# Response helpers remain API-specific.
 from .response import ResponseCode
 
-# 向后兼容的别名
+# Backward-compatible alias.
 settings = app_config
 
 __all__ = [
-    # 配置
-    'app_config',
-    'settings',  # 向后兼容
+    # Configuration
+    "app_config",
+    "settings",  # Backward-compatible alias
 
     # Redis
-    'redis_config_manager',
-    'redis_pool_manager',
+    "redis_config_manager",
+    "redis_pool_manager",
 
-    # 数据库
-    'get_db',
+    # Database
+    "get_db",
 
-    # 安全
-    'get_password_hash',
-    'verify_password',
+    # Security
+    "get_password_hash",
+    "verify_password",
 
-    # 响应
-    'ResponseCode',
+    # Response handling
+    "ResponseCode",
 
-    # 常量
-    'SystemConstants',
-    'BusinessConstants',
-    'APIConstants',
-    'ProcessingConstants',
+    # Constants
+    "SystemConstants",
+    "BusinessConstants",
+    "APIConstants",
+    "ProcessingConstants",
 
-    # 日志
-    'setup_logging'
+    # Logging
+    "setup_logging",
 ]

@@ -1,6 +1,4 @@
-"""
-Dashboard 相关 Schema
-"""
+"""Dashboard schemas."""
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -8,7 +6,8 @@ from pydantic import BaseModel, ConfigDict
 
 
 class OverviewResponse(BaseModel):
-    """总览数据响应"""
+    """Overview response payload."""
+
     user_info: Dict[str, Any]
     subscription_info: Dict[str, Any]
     credits_info: Dict[str, Any]
@@ -18,7 +17,8 @@ class OverviewResponse(BaseModel):
 
 
 class UsageAnalyticsResponse(BaseModel):
-    """使用分析响应"""
+    """Usage analytics response payload."""
+
     period: str
     total_api_calls: int
     total_credits_used: int
@@ -29,19 +29,21 @@ class UsageAnalyticsResponse(BaseModel):
 
 
 class NotificationResponse(BaseModel):
-    """通知响应"""
+    """Notification response payload."""
+
     id: str
     type: str
     title: str
     message: str
     is_read: bool
     created_at: datetime
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class DashboardStatsResponse(BaseModel):
-    """Dashboard统计响应"""
+    """Dashboard stats response payload."""
+
     overview: OverviewResponse
     usage_analytics: UsageAnalyticsResponse
     notifications: List[NotificationResponse]

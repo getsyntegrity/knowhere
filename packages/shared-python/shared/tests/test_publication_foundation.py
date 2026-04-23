@@ -257,6 +257,17 @@ def test_selected_shared_python_public_surfaces_are_english_first() -> None:
         assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
 
 
+def test_selected_api_support_surfaces_are_english_first() -> None:
+    for relative_path in (
+        "packages/shared-python/shared/core/config/app.py",
+        "packages/shared-python/shared/models/schemas/dashboard.py",
+        "packages/shared-python/shared/models/schemas/word.py",
+        "apps/api/app/core/__init__.py",
+        "apps/api/app/core/middleware/cors.py",
+    ):
+        assert not CHINESE_TEXT_PATTERN.search(read_text(relative_path)), relative_path
+
+
 def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     api_pyproject_text: str = read_text("apps/api/pyproject.toml")
     worker_pyproject_text: str = read_text("apps/worker/pyproject.toml")
@@ -324,6 +335,7 @@ def main() -> None:
     test_active_alembic_assets_and_local_init_files_are_public_safe()
     test_selected_active_api_text_surfaces_are_english_first()
     test_selected_shared_python_public_surfaces_are_english_first()
+    test_selected_api_support_surfaces_are_english_first()
     test_workspace_pyprojects_use_uv_workspace_sources()
     test_public_scripts_pin_python_3_11_for_uv_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
