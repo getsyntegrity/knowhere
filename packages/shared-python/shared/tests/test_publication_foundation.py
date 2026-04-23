@@ -581,6 +581,7 @@ def test_public_ci_workflow_uses_explicit_read_only_token_permissions() -> None:
 
 def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     retained_test_text: str = read_text("apps/api/__tests__/unit/test_qstash_callbacks.py")
+    auth_dependencies_test_text: str = read_text("apps/api/__tests__/unit/test_auth_dependencies.py")
     mcp_query_test_text: str = read_text("apps/api/__tests__/unit/test_mcp_query_tool.py")
     openai_timeout_test_text: str = read_text(
         "packages/shared-python/shared/tests/test_openai_timeout_defaults.py"
@@ -594,6 +595,10 @@ def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     assert "wangbinqi" not in retained_test_text
     assert "job_af999f445be6" not in retained_test_text
     assert "msg_SsSaiS4nUd1vhMifwgiRxyLsvKwQpyiTbotjmvhgmnKYCsdHnYL9b4DQ28WN8euniUHdZYYufg1FMF4sRjuNRPTHhRBbvTA" not in retained_test_text
+    assert "sk_guest_jobs" not in auth_dependencies_test_text
+    assert "sk_guest_billing_credits" not in auth_dependencies_test_text
+    assert "sk_guest_billing" not in auth_dependencies_test_text
+    assert "sk_guest_extended" not in auth_dependencies_test_text
     assert "api-staging.knowhereto.ai" not in mcp_query_test_text
     assert "sk-explicit" not in openai_timeout_test_text
     assert "dummy-openai-key-for-tests" not in openai_timeout_test_text

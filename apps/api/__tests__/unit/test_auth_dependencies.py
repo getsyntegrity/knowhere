@@ -53,14 +53,15 @@ def stub_guest_identity_lookup(monkeypatch, *, identity: APIKeyIdentity) -> None
 
 @pytest.mark.asyncio
 async def test_get_current_user_id_allows_guest_api_key_for_jobs(monkeypatch) -> None:
-    request = make_request("/v1/jobs", "Bearer sk_guest_jobs")
+    guest_api_key: str = "Bearer sk_test_guest_jobs"
+    request = make_request("/v1/jobs", guest_api_key)
     identity = APIKeyIdentity(user_id="guest-user", user_tier="guest")
 
     stub_guest_identity_lookup(monkeypatch, identity=identity)
 
     user_id = await core_dependencies.get_current_user_id(
         request=request,
-        authorization="Bearer sk_guest_jobs",
+        authorization=guest_api_key,
         db=cast(AsyncSession, object()),
     )
 
@@ -74,7 +75,8 @@ async def test_get_current_user_id_allows_guest_api_key_for_jobs(monkeypatch) ->
 async def test_get_current_user_id_allows_guest_api_key_for_billing_credits_from_cache(
     monkeypatch,
 ) -> None:
-    request = make_request("/v1/billing/credits", "Bearer sk_guest_billing_credits")
+    guest_api_key: str = "Bearer sk_test_guest_billing_credits"
+    request = make_request("/v1/billing/credits", guest_api_key)
 
     stub_guest_identity_cache(
         monkeypatch,
@@ -86,7 +88,7 @@ async def test_get_current_user_id_allows_guest_api_key_for_billing_credits_from
 
     user_id = await core_dependencies.get_current_user_id(
         request=request,
-        authorization="Bearer sk_guest_billing_credits",
+        authorization=guest_api_key,
         db=cast(AsyncSession, object()),
     )
 
@@ -100,14 +102,15 @@ async def test_get_current_user_id_allows_guest_api_key_for_billing_credits_from
 async def test_get_current_user_id_allows_guest_api_key_for_billing_credits_after_db_lookup(
     monkeypatch,
 ) -> None:
-    request = make_request("/v1/billing/credits", "Bearer sk_guest_billing_credits")
+    guest_api_key: str = "Bearer sk_test_guest_billing_credits"
+    request = make_request("/v1/billing/credits", guest_api_key)
     identity = APIKeyIdentity(user_id="guest-user", user_tier="guest")
 
     stub_guest_identity_lookup(monkeypatch, identity=identity)
 
     user_id = await core_dependencies.get_current_user_id(
         request=request,
-        authorization="Bearer sk_guest_billing_credits",
+        authorization=guest_api_key,
         db=cast(AsyncSession, object()),
     )
 
@@ -121,7 +124,8 @@ async def test_get_current_user_id_allows_guest_api_key_for_billing_credits_afte
 async def test_get_current_user_id_rejects_guest_api_key_for_other_billing_routes_from_cache(
     monkeypatch,
 ) -> None:
-    request = make_request("/v1/billing/usage", "Bearer sk_guest_billing")
+    guest_api_key: str = "Bearer sk_test_guest_billing"
+    request = make_request("/v1/billing/usage", guest_api_key)
 
     stub_guest_identity_cache(
         monkeypatch,
@@ -134,7 +138,7 @@ async def test_get_current_user_id_rejects_guest_api_key_for_other_billing_route
     with pytest.raises(PermissionDeniedException):
         await core_dependencies.get_current_user_id(
             request=request,
-            authorization="Bearer sk_guest_billing",
+            authorization=guest_api_key,
             db=cast(AsyncSession, object()),
         )
 
@@ -162,7 +166,8 @@ async def test_get_current_user_id_allows_guest_api_key_for_retrieval_document_a
     monkeypatch,
     path: str,
 ) -> None:
-    request = make_request(path, "Bearer sk_guest_extended")
+    guest_api_key: str = "Bearer sk_test_guest_extended"
+    request = make_request(path, guest_api_key)
 
     stub_guest_identity_cache(
         monkeypatch,
@@ -174,7 +179,7 @@ async def test_get_current_user_id_allows_guest_api_key_for_retrieval_document_a
 
     user_id = await core_dependencies.get_current_user_id(
         request=request,
-        authorization="Bearer sk_guest_extended",
+        authorization=guest_api_key,
         db=cast(AsyncSession, object()),
     )
 
