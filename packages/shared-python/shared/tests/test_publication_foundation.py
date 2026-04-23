@@ -216,6 +216,17 @@ def test_public_docs_cover_services_release_and_local_verification() -> None:
     assert "curl http://localhost:5005/health" in local_dev_readme_text
 
 
+def test_local_dev_bootstrap_docs_and_scripts_use_non_secret_demo_api_key() -> None:
+    for relative_path in (
+        "README.md",
+        "deploy/local-dev/README.md",
+        "deploy/local-dev/start-dev.sh",
+        "apps/api/scripts/local_dev_bootstrap_service.py",
+    ):
+        file_text: str = read_text(relative_path)
+        assert "sk_local_dev_tier5_full_access" not in file_text, relative_path
+
+
 def test_public_env_examples_and_selected_dev_assets_are_english_first() -> None:
     api_env_text: str = read_text("apps/api/env.example")
     worker_env_text: str = read_text("apps/worker/env.example")
@@ -620,6 +631,7 @@ def main() -> None:
     test_build_images_workflow_keeps_pr_permissions_read_only()
     test_repo_surface_is_python_first()
     test_public_docs_cover_services_release_and_local_verification()
+    test_local_dev_bootstrap_docs_and_scripts_use_non_secret_demo_api_key()
     test_public_env_examples_and_selected_dev_assets_are_english_first()
     test_active_alembic_assets_and_local_init_files_are_public_safe()
     test_selected_active_api_text_surfaces_are_english_first()

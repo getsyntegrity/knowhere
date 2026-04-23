@@ -122,7 +122,7 @@ Deterministic local developer account:
 - `user_id`: `local-dev-user`
 - `email`: `local-dev-user@knowhere.local`
 - `tier`: `tier_5`
-- `api_key`: `sk_local_dev_tier5_full_access`
+- `api_key`: `local_dev_demo_key_tier5_full_access`
 
 ## Local Endpoints
 
