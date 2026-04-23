@@ -561,6 +561,13 @@ def test_public_workflows_do_not_persist_checkout_credentials() -> None:
         assert workflow_text.count("persist-credentials: false") == checkout_step_count, relative_path
 
 
+def test_public_ci_workflow_uses_explicit_read_only_token_permissions() -> None:
+    ci_workflow_text: str = read_text(".github/workflows/ci.yml")
+
+    assert "permissions:" in ci_workflow_text
+    assert "contents: read" in ci_workflow_text
+
+
 def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     retained_test_text: str = read_text("apps/api/__tests__/unit/test_qstash_callbacks.py")
     mcp_query_test_text: str = read_text("apps/api/__tests__/unit/test_mcp_query_tool.py")
@@ -638,6 +645,7 @@ def main() -> None:
     test_public_check_script_runs_public_safety_scan()
     test_public_safety_scan_blocks_private_cloud_identifiers()
     test_public_workflows_do_not_persist_checkout_credentials()
+    test_public_ci_workflow_uses_explicit_read_only_token_permissions()
     test_selected_retained_test_surfaces_avoid_private_callback_hosts()
     test_selected_retained_fixtures_avoid_personal_contact_strings()
     test_worker_tests_do_not_keep_stale_runtime_artifacts()
