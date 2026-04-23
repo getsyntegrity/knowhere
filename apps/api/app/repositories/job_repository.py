@@ -1,6 +1,4 @@
-"""
-Job仓储层
-"""
+"""Job repository."""
 from typing import Any, Dict, List, Optional, Sequence
 from datetime import datetime
 
@@ -15,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 
 class JobRepository:
-    """Job仓储类"""
+    """Repository for Job persistence operations."""
     
     def __init__(self):
         self.state_machine = JobStateMachine()
@@ -33,7 +31,7 @@ class JobRepository:
         initial_state: Optional[str] = "pending",
         s3_key: Optional[str] = None
     ) -> Optional[Job]:
-        """创建Job"""
+        """Create a Job."""
         try:
             job_kwargs = dict(
                 user_id=user_id,
@@ -69,7 +67,7 @@ class JobRepository:
             return None
     
     async def get_job_by_id(self, db: AsyncSession, job_id: str) -> Optional[Job]:
-        """根据ID获取Job (only loads job_result; state_history loaded on demand)"""
+        """Get a Job by ID, loading only job_result eagerly."""
         try:
             stmt = (
                 select(Job)
@@ -93,7 +91,7 @@ class JobRepository:
         job_type: Optional[str] = None,
         job_status: Optional[str] = None,
     ) -> Sequence[Job]:
-        """获取用户的Jobs"""
+        """Get jobs for a user."""
         try:
             stmt = (
                 select(Job)
@@ -126,7 +124,7 @@ class JobRepository:
         job_type: Optional[str] = None,
         job_status: Optional[str] = None,
     ) -> int:
-        """获取用户的Jobs总数"""
+        """Count jobs for a user."""
         try:
             from sqlalchemy import func
             stmt = select(func.count()).select_from(Job).where(Job.user_id == user_id)
@@ -151,7 +149,7 @@ class JobRepository:
         to_state: str, 
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """更新Job状态（通过状态机）"""
+        """Update Job state through the state machine."""
         return await self.state_machine.transition(
             db, job_id, to_state, 
             "repository_update", None, "system", metadata
@@ -163,7 +161,7 @@ class JobRepository:
         job_id: str,
         s3_key: str
     ) -> bool:
-        """更新Job的S3键"""
+        """Update the Job S3 key."""
         try:
             stmt = (
                 update(Job)
@@ -185,7 +183,7 @@ class JobRepository:
         job_id: str,
         file_url: str
     ) -> bool:
-        """更新Job的文件URL (direct UPDATE + Redis, no ORM load)"""
+        """Update the Job file URL using direct UPDATE plus Redis refresh."""
         try:
             from sqlalchemy import func
             from sqlalchemy.dialects.postgresql import JSONB, array as pg_array
@@ -227,7 +225,7 @@ class JobRepository:
         job_id: str, 
         error_message: str
     ) -> bool:
-        """标记Job为失败"""
+        """Mark a Job as failed."""
         return await self.state_machine.mark_failed(db, job_id, error_message)
     
     async def mark_job_completed(
@@ -236,7 +234,7 @@ class JobRepository:
         job_id: str, 
         result_metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """标记Job为完成"""
+        """Mark a Job as completed."""
         return await self.state_machine.mark_completed(db, job_id, result_metadata)
     
     async def get_job_state_history(
@@ -244,7 +242,7 @@ class JobRepository:
         db: AsyncSession, 
         job_id: str
     ) -> Sequence[JobStateHistory]:
-        """获取Job状态历史"""
+        """Get Job state history."""
         try:
             result = await db.execute(
                 select(JobStateHistory)
@@ -262,7 +260,7 @@ class JobRepository:
         status: str, 
         limit: int = 100
     ) -> Sequence[Job]:
-        """根据状态获取Jobs"""
+        """Get Jobs by status."""
         try:
             result = await db.execute(
                 select(Job)
@@ -283,7 +281,7 @@ class JobRepository:
         status: str,
         error_message: Optional[str] = None
     ) -> bool:
-        """更新Job状态 (direct UPDATE, no ORM load)"""
+        """Update Job status with a direct UPDATE and no ORM load."""
         try:
             values: Dict[str, Any] = {"status": status}
             if error_message:
@@ -309,7 +307,7 @@ class JobRepository:
         state: str, 
         metadata_key: str
     ) -> Optional[Any]:
-        """获取Job状态历史中的特定元数据"""
+        """Get specific metadata from Job state history."""
         try:
             result = await db.execute(
                 select(JobStateHistory.transition_metadata)
@@ -325,7 +323,7 @@ class JobRepository:
             metadata = result.scalar_one_or_none()
             
             if metadata:
-                # 如果metadata是字符串，尝试解析JSON
+                # If metadata is a string, try to parse it as JSON.
                 if isinstance(metadata, str):
                     try:
                         import json
@@ -334,7 +332,7 @@ class JobRepository:
                         logger.error(f"解析Job {job_id} 状态 {state} 元数据JSON失败: {e}")
                         return None
                 
-                # 如果metadata是字典，返回指定key的值
+                # If metadata is already a dict, return the requested key.
                 if isinstance(metadata, dict):
                     return metadata.get(metadata_key)
             
@@ -351,17 +349,17 @@ class JobRepository:
         redis_service: Optional[Any] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        获取job_metadata（优先从Redis读取，2小时缓存）
+        Get job_metadata, preferring Redis with a two-hour cache window.
 
         Args:
-            db: 数据库会话
-            job_id: 任务ID
-            redis_service: Redis服务
+            db: Database session.
+            job_id: Job ID.
+            redis_service: Redis service.
 
         Returns:
-            job_metadata字典或None
+            job_metadata dict or None.
         """
-        # 1. 尝试从Redis获取
+        # 1. Try Redis first.
         if redis_service:
             from shared.services.redis.job_metadata_service import \
                 JobMetadataService
@@ -370,7 +368,7 @@ class JobRepository:
             if metadata:
                 return metadata
 
-        # 2. Lightweight scalar query — only fetch the JSON column, no ORM load
+        # 2. Lightweight scalar query — fetch only the JSON column.
         try:
             result = await db.execute(
                 select(Job.job_metadata).where(Job.job_id == job_id)
@@ -381,7 +379,7 @@ class JobRepository:
             metadata = None
 
         if metadata:
-            # 回写到Redis（2小时缓存）
+            # Write back to Redis with a two-hour cache.
             if redis_service:
                 from shared.services.redis.job_metadata_service import \
                     JobMetadataService

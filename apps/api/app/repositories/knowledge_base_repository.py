@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bool:
     """
-    创建或更新知识库
+    Create or update knowledge-base content.
+
     :param kbs: Vector Objects
     :param db: Optional external database session. If provided, transaction is NOT committed here.
     :return: Success boolean
@@ -62,7 +63,8 @@ async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bo
 
 async def create_update_path(paths:list[PathPydantic]) -> bool:
     """
-    创建或更新知识库路径
+    Create or update knowledge-base paths.
+
     :param paths:
     :return:
     """
@@ -92,35 +94,38 @@ async def create_update_path(paths:list[PathPydantic]) -> bool:
 
 async def get_kb_by_id(kb_id:str) -> KBPydantic|None:
     """
-    根据id获取知识库
+    Get a knowledge base by ID.
+
     :param kb_id:
     :return:
     """
 
 async def get_directories(db: AsyncSession, user_id: str) -> List[dict]:
     """
-    获取用户的目录树结构
-    :param db: 数据库会话
-    :param user_id: 用户ID
-    :return: 目录树结构列表
+    Get the directory-tree structure for a user.
+
+    :param db: Database session.
+    :param user_id: User ID.
+    :return: Directory-tree structure list.
     """
     return await build_directory_tree(db, user_id)
 
 async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[dict]:
     """
-    根据目录ID获取该目录下的知识库内容
-    :param db: 数据库会话
-    :param directory_id: 目录ID
-    :return: 知识库内容列表
+    Get knowledge-base content under a directory ID.
+
+    :param db: Database session.
+    :param directory_id: Directory ID.
+    :return: Knowledge-base content list.
     """
     try:
-        # 首先获取目录信息
+        # Load the directory first.
         directory = await get_directory_by_id(db, directory_id)
         if not directory:
             return []
         
-        # 根据目录title在ContentBase的path字段中查找相关内容
-        # 使用 ; 分隔符进行前缀匹配，格式：{kb_dir};{document_name};{section}
+        # Match related content by the directory title in the ContentBase path.
+        # Prefix format: {kb_dir};{document_name};{section}
         split_char = ";"
         directory_prefix = directory.title + split_char
         result = await db.execute(
@@ -130,7 +135,7 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
         )
         contents = result.scalars().all()
         
-        # 转换为字典格式
+        # Convert ORM rows to dictionaries.
         content_list = []
         for content in contents:
             content_dict = {
@@ -154,10 +159,11 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
 
 async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
     """
-    根据内容ID删除知识库内容
-    :param db: 数据库会话
-    :param content_id: 内容ID
-    :return: 是否删除成功
+    Delete knowledge-base content by content ID.
+
+    :param db: Database session.
+    :param content_id: Content ID.
+    :return: Whether deletion succeeded.
     """
     try:
         result = await db.execute(select(ContentBase).filter(ContentBase.id == content_id))
@@ -176,9 +182,10 @@ async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
 
 async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:
     """
-    创建用户目录
+    Create a user directory.
+
     :param db:
-    :param kbf:知识库路径构造
+    :param kbf: Knowledge-base path payload.
     :return:
     """
     db_directory = FileDirectory(
@@ -195,14 +202,14 @@ async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:
 
 async def get_directory_by_id(db: AsyncSession, directory_id: str) -> Optional[FileDirectory]:
     """
-    根据ID获取目录
+    Get a directory by ID.
     """
     result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
     return result.scalars().first()
 
 async def get_root_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDirectory]:
     """
-    获取用户的所有根目录（没有父级的目录）
+    Get all root directories for a user.
     """
     result = await db.execute(
         select(FileDirectory)
@@ -213,7 +220,7 @@ async def get_root_directories_by_user(db: AsyncSession, user_id: str) -> List[F
 
 async def get_directories_by_parent(db: AsyncSession, parent_id: str) -> List[FileDirectory]:
     """
-    根据父级ID获取所有子目录
+    Get all child directories by parent ID.
     """
     result = await db.execute(
         select(FileDirectory)
@@ -224,7 +231,7 @@ async def get_directories_by_parent(db: AsyncSession, parent_id: str) -> List[Fi
 
 async def get_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDirectory]:
     """
-    获取用户的所有目录
+    Get all directories for a user.
     """
     result = await db.execute(
         select(FileDirectory)
@@ -236,7 +243,7 @@ async def get_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDi
 async def update_directory(db: AsyncSession, directory_id: str,
                            directory_data: FileDirectoryUpdateDto) -> bool:
     """
-    更新目录
+    Update a directory.
     """
     try:
         result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
@@ -257,7 +264,7 @@ async def update_directory(db: AsyncSession, directory_id: str,
 
 async def delete_directory(db: AsyncSession, directory_id: str) -> bool:
     """
-    删除目录
+    Delete a directory.
     """
     result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
     db_directory = result.scalars().first()
@@ -270,15 +277,15 @@ async def delete_directory(db: AsyncSession, directory_id: str) -> bool:
 
 async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
     """
-    构建用户的完整目录树结构
+    Build the full directory tree for a user.
     """
-    # 获取用户的所有目录
+    # Load all directories for the user.
     all_directories = await get_directories_by_user(db, user_id)
 
-    # 创建一个字典，以目录ID为键，目录对象为值
+    # Build a dictionary keyed by directory ID.
     directory_dict = {directory.id: directory for directory in all_directories}
 
-    # 创建一个字典，用于存储每个目录的子目录
+    # Build a dictionary that stores children for each directory.
     children_dict = {}
     for directory in all_directories:
         if directory.parent_id:
@@ -292,7 +299,7 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
 
     def build_tree(directory):
         """
-        递归构建目录树
+        Recursively build the directory tree.
         """
         node = {
             "id": directory.id,
@@ -304,14 +311,14 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
             "children": []
         }
 
-        # 添加子目录
+        # Attach child directories.
         if directory.id in children_dict:
             for child in children_dict[directory.id]:
                 node["children"].append(build_tree(child))
 
         return node
 
-    # 构建根目录树
+    # Build the root directory tree.
     tree = []
     if 'root' in children_dict:
         for root_directory in children_dict['root']:
