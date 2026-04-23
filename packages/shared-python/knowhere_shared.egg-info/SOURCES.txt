@@ -129,7 +129,6 @@ shared/services/retrieval/publication_service.py
 shared/services/storage/__init__.py
 shared/services/storage/file_encryptor_service.py
 shared/services/storage/file_upload_service.py
-shared/services/storage/hierarchy_html_generator.py
 shared/services/storage/result_storage.py
 shared/services/storage/storage_adapter.py
 shared/services/storage/zip_result_service.py

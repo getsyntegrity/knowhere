@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import logging
+import math
+import re
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from shared.models.database.document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode
 from shared.models.database.job_result import JobResult
 
+logger = logging.getLogger(__name__)
+
 _SECTION_EXCLUSION_PAGE_MULTIPLIER = 2
+
+# ── Keyword overlap config (aligned with connect_builder DEFAULT_CONFIG) ──
+_MIN_KEYWORD_OVERLAP = 3
+_KEYWORD_SCORE_WEIGHT = 1.0
+_MIN_SCORE_THRESHOLD = 0.8
+_CROSS_FILE_ONLY = True
+_MAX_CONTENT_OVERLAP = 0.8
 
 
 def _build_lexical_match_predicate(query: str):
@@ -39,6 +52,89 @@ def is_excluded_section(
     return False
 
 
+# ── Keyword extraction & scoring (aligned with connect_builder/builder.py) ──
+
+def _normalize_keyword(keyword: str) -> str:
+    """Normalize a keyword: lowercase, strip, collapse spaces."""
+    kw = keyword.lower().strip()
+    return re.sub(r'\s+', ' ', kw)
+
+
+def _extract_keywords_from_chunk_metadata(meta: dict) -> list[str]:
+    """Extract keywords from chunk metadata, same logic as builder._get_keywords."""
+    if not isinstance(meta, dict):
+        return []
+    # Try metadata.keywords
+    kws = meta.get('keywords', [])
+    if isinstance(kws, list) and kws:
+        return [str(k) for k in kws if k]
+    # Fallback: tokens
+    tokens = meta.get('tokens', [])
+    if isinstance(tokens, list) and tokens:
+        return [str(t) for t in tokens if t and len(str(t)) > 1]
+    return []
+
+
+def _compute_tfidf_keywords(
+    chunk_metadata_list: list[dict[str, Any]],
+    top_k: int = 10,
+) -> list[str]:
+    """Compute TF-IDF keywords from chunk metadata, aligned with graph_builder."""
+    df_count: dict[str, int] = {}
+    tf_count: dict[str, int] = {}
+    total = len(chunk_metadata_list) or 1
+    for meta in chunk_metadata_list:
+        kws = _extract_keywords_from_chunk_metadata(meta)
+        seen: set[str] = set()
+        for k in kws:
+            if len(str(k)) <= 1 or re.match(r'^\d+[.,%]*$', str(k)):
+                continue
+            lower = _normalize_keyword(str(k))
+            if not lower:
+                continue
+            tf_count[lower] = tf_count.get(lower, 0) + 1
+            if lower not in seen:
+                df_count[lower] = df_count.get(lower, 0) + 1
+                seen.add(lower)
+    scored = [
+        (term, freq * (math.log(total / (df_count.get(term, 1))) + 1))
+        for term, freq in tf_count.items()
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [s[0] for s in scored[:top_k]]
+
+
+def _compute_keyword_score(
+    shared_kws: set[str],
+    kws_a: set[str],
+    kws_b: set[str],
+    weight: float = 1.0,
+) -> float:
+    """Character-length-weighted keyword overlap score (aligned with builder.py).
+
+    Longer tokens contribute more: '施工现场'(4) has 2x weight of '交底'(2).
+    Formula: score = weight * sum(len(kw) for shared) / min(sum(len) for A, sum(len) for B)
+    """
+    weighted_a = sum(len(k) for k in kws_a)
+    weighted_b = sum(len(k) for k in kws_b)
+    denominator = min(weighted_a, weighted_b)
+    if denominator == 0:
+        return 0.0
+    weighted_shared = sum(len(k) for k in shared_kws)
+    return weight * weighted_shared / denominator
+
+
+def _get_normalized_keyword_set(chunk_metadata_list: list[dict[str, Any]]) -> set[str]:
+    """Collect all normalized keywords from chunk metadata for a document."""
+    result: set[str] = set()
+    for meta in chunk_metadata_list:
+        for k in _extract_keywords_from_chunk_metadata(meta):
+            normalized = _normalize_keyword(str(k))
+            if normalized and len(normalized) > 1 and not re.match(r'^\d+[.,%]*$', normalized):
+                result.add(normalized)
+    return result
+
+
 @dataclass
 class GraphScope:
     user_id: str
@@ -46,26 +142,57 @@ class GraphScope:
 
 
 class DocumentGraphService:
-    """Write-side graph publication over persisted graph_nodes/graph_edges."""
+    """Write-side graph publication over persisted graph_nodes/graph_edges.
+
+    Aligned with KB's knowledge_graph.json structure:
+    - Only document-level nodes (no section nodes)
+    - Document nodes carry rich metadata: top_keywords, chunks_count, types, top_summary
+    - Edges are keyword-overlap-based cross-document connections with meaningful scores
+    - Edge scoring uses connect_builder DEFAULT_CONFIG thresholds
+    """
 
     def publish_document_graph(self, db: Session, *, user_id: str, namespace: str, document_id: str, job_result_id: str) -> None:
-        sections = list(
-            db.execute(
-                select(DocumentSection)
-                .where(DocumentSection.document_id == document_id)
-                .where(DocumentSection.job_result_id == job_result_id)
-                .order_by(DocumentSection.sort_order)
-            ).scalars()
-        )
-
         document = db.execute(
             select(Document).where(Document.document_id == document_id)
         ).scalar_one_or_none()
         if document is None:
             return
 
+        # ── Gather chunk metadata for keyword extraction ──
+        chunk_meta_rows = list(
+            db.execute(
+                select(DocumentChunk.chunk_type, DocumentChunk.chunk_metadata)
+                .where(DocumentChunk.document_id == document_id)
+                .where(DocumentChunk.job_result_id == job_result_id)
+            ).all()
+        )
+        chunk_metadata_list = [row[1] or {} for row in chunk_meta_rows]
+
+        # Compute document-level metadata (aligned with KB knowledge_graph.json files dict)
+        top_keywords = _compute_tfidf_keywords(chunk_metadata_list)
+        new_doc_kws = _get_normalized_keyword_set(chunk_metadata_list)
+
+        types_breakdown: dict[str, int] = defaultdict(int)
+        for chunk_type, _ in chunk_meta_rows:
+            types_breakdown[chunk_type or 'text'] += 1
+        chunks_count = len(chunk_meta_rows)
+
+        # Build top_summary from level <= 2 section titles
+        sections = list(
+            db.execute(
+                select(DocumentSection.section_title)
+                .where(DocumentSection.document_id == document_id)
+                .where(DocumentSection.job_result_id == job_result_id)
+                .where(DocumentSection.section_level <= 2)
+                .order_by(DocumentSection.sort_order)
+            ).scalars()
+        )
+        top_summary = ' / '.join(t for t in sections if t)[:300]
+
+        # ── Clean up old graph data for this document ──
         self.remove_document_graph(db, scope=GraphScope(user_id=user_id, namespace=namespace), document_id=document_id)
 
+        # ── Create document-level node (no section nodes — aligned with KB KG) ──
         document_node_id = f"doc:{document_id}"
         db.add(
             GraphNode(
@@ -79,91 +206,84 @@ class DocumentGraphService:
                 ref_section_id=None,
                 properties={
                     'source_file_name': document.source_file_name,
+                    'top_keywords': top_keywords,
+                    'chunks_count': chunks_count,
+                    'types': dict(types_breakdown),
+                    'top_summary': top_summary,
                 },
             )
         )
-
-        contains_edges = []
-        for section in sections:
-            section_node_id = f"sec:{section.section_id}"
-            db.add(
-                GraphNode(
-                    node_id=section_node_id,
-                    user_id=user_id,
-                    namespace=namespace,
-                    node_kind='section',
-                    owner_document_id=document_id,
-                    job_result_id=job_result_id,
-                    ref_document_id=document_id,
-                    ref_section_id=section.section_id,
-                    properties={
-                        'section_path': section.section_path,
-                        'section_title': section.section_title,
-                        'section_level': section.section_level,
-                    },
-                )
-            )
-            parent_node_id = f"sec:{section.parent_section_id}" if section.parent_section_id else document_node_id
-            contains_edges.append((parent_node_id, section_node_id))
-
-        # Persist nodes before any edge rows can be flushed.
         db.flush()
 
-        for parent_node_id, section_node_id in contains_edges:
-            db.add(
-                GraphEdge(
-                    edge_id=f"contains:{parent_node_id}->{section_node_id}",
-                    user_id=user_id,
-                    namespace=namespace,
-                    edge_kind='contains',
-                    source_node_id=parent_node_id,
-                    target_node_id=section_node_id,
-                    owner_document_id=document_id,
-                    job_result_id=job_result_id,
-                    is_directed=True,
-                    weight=1.0,
-                    properties={},
-                )
-            )
-
-        other_documents: Sequence[Document] = list(
+        # ── Keyword-overlap-based cross-document edges (aligned with KB edges) ──
+        # Only create edges where keyword overlap score >= threshold,
+        # matching connect_builder DEFAULT_CONFIG parameters.
+        other_doc_nodes = list(
             db.execute(
-                select(Document)
-                .where(Document.user_id == user_id)
-                .where(Document.namespace == namespace)
-                .where(Document.status == 'active')
-                .where(Document.document_id != document_id)
+                select(GraphNode)
+                .where(GraphNode.user_id == user_id)
+                .where(GraphNode.namespace == namespace)
+                .where(GraphNode.node_kind == 'document')
+                .where(GraphNode.owner_document_id != document_id)
             ).scalars()
         )
-        peer_node_ids = [f"doc:{other.document_id}" for other in other_documents]
-        existing_peer_nodes: set[str] = set()
-        if peer_node_ids:
-            existing_peer_nodes = set(
-                db.execute(
-                    select(GraphNode.node_id).where(GraphNode.node_id.in_(peer_node_ids))
-                ).scalars()
-            )
-        for other in other_documents:
-            peer_node_id = f"doc:{other.document_id}"
-            if peer_node_id not in existing_peer_nodes:
+
+        for peer_node in other_doc_nodes:
+            peer_props = peer_node.properties or {}
+            peer_keywords = peer_props.get('top_keywords', [])
+
+            # Build normalized keyword sets for comparison
+            peer_kws: set[str] = set()
+            for k in peer_keywords:
+                normalized = _normalize_keyword(str(k))
+                if normalized:
+                    peer_kws.add(normalized)
+
+            if not peer_kws or not new_doc_kws:
                 continue
+
+            # Find shared keywords
+            shared_kws = new_doc_kws & peer_kws
+            if len(shared_kws) < _MIN_KEYWORD_OVERLAP:
+                continue
+
+            # Compute character-length-weighted score
+            score = _compute_keyword_score(
+                shared_kws=shared_kws,
+                kws_a=new_doc_kws,
+                kws_b=peer_kws,
+                weight=_KEYWORD_SCORE_WEIGHT,
+            )
+            if score < _MIN_SCORE_THRESHOLD:
+                continue
+
+            # Create edge with meaningful weight and metadata
+            peer_doc_id = peer_node.owner_document_id
+            edge_pair = tuple(sorted([document_id, peer_doc_id]))
             db.add(
                 GraphEdge(
-                    edge_id=f"similar:{document_id}<->{other.document_id}",
+                    edge_id=f"related:{edge_pair[0]}<->{edge_pair[1]}",
                     user_id=user_id,
                     namespace=namespace,
-                    edge_kind='similar',
+                    edge_kind='related',
                     source_node_id=document_node_id,
-                    target_node_id=peer_node_id,
+                    target_node_id=peer_node.node_id,
                     owner_document_id=document_id,
                     job_result_id=job_result_id,
                     is_directed=False,
-                    weight=1.0,
-                    properties={},
+                    weight=round(score, 4),
+                    properties={
+                        'shared_keywords': sorted(shared_kws),
+                        'connection_count': len(shared_kws),
+                    },
                 )
             )
 
         db.flush()
+        logger.info(
+            f"publish_document_graph: doc={document_id} "
+            f"keywords={len(top_keywords)} chunks={chunks_count}"
+        )
 
     def remove_document_graph(self, db: Session, *, scope: GraphScope | None, document_id: str) -> None:
         edge_delete = delete(GraphEdge).where(GraphEdge.owner_document_id == document_id)

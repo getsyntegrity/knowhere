@@ -248,9 +248,8 @@ class ChunksRedisService:
                     metadata["file_path"] = embedded_image_path
                     metadata["original_name"] = img_name
                 else:
-                    normalized_path = path.replace("-->", "/")
                     img_name = (
-                        os.path.basename(normalized_path) if normalized_path else f"image_{chunk_id}.jpg"
+                        os.path.basename(path) if path else f"image_{chunk_id}.jpg"
                     )
                     _, img_ext = os.path.splitext(img_name)
                     # Atlas image paths may lack an extension entirely; keep any real suffix.
@@ -263,9 +262,8 @@ class ChunksRedisService:
                 if embedded_table_path:
                     metadata["file_path"] = embedded_table_path
                 else:
-                    normalized_path = path.replace("-->", "/")
                     tbl_name = (
-                        os.path.basename(normalized_path) if normalized_path else f"table_{chunk_id}.html"
+                        os.path.basename(path) if path else f"table_{chunk_id}.html"
                     )
                     metadata["file_path"] = f"tables/{tbl_name}"
 

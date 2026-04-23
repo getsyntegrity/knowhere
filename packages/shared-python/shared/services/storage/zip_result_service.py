@@ -426,32 +426,24 @@ class ZipResultService:
         return formatted
 
     def _clean_path(self, path: str) -> str:
-        """Clean path, keep only logical path"""
+        """Clean path, keep only logical path.
+
+        Example input: ./users/KB_DATA_xxx/dir/file.pdf/chapter/section
+        Example output: chapter/section
+        """
         if not path:
             return "/"
-        
-        # Remove filesystem path prefix
-        # Example: .-->users-->KB_DATA_xxx-->dir-->file.pdf-->chapter-->section
-        # Should extract: chapter-->section
-        
-        # Find the last .pdf, .docx, etc. file extension
+
         import re
 
-        # Match filename pattern (with extension)
         file_pattern = r'[^/]+\.(pdf|docx|doc|txt|md|xlsx|xls|pptx|ppt)'
         match = re.search(file_pattern, path, re.IGNORECASE)
-        
+
         if match:
-            # Extract the part after filename
-            path_after_file = path[match.end():]
-            # Clean path separators
-            path_after_file = path_after_file.replace("-->", "/").strip("/")
+            path_after_file = path[match.end():].strip("/")
             if path_after_file:
                 return path_after_file
-        
-        # If no file pattern found, try to clean common prefixes
-        path = path.replace("-->", "/")
-        # Remove leading path separators and empty segments
+
         path = "/".join([p for p in path.split("/") if p and p not in ["", ".", "users"]])
         return path if path else "/"
 
@@ -482,7 +474,7 @@ class ZipResultService:
         def add_candidate(candidates: List[str], value: Optional[str]) -> None:
             if not value:
                 return
-            candidate = os.path.basename(str(value).strip().replace("-->", "/"))
+            candidate = os.path.basename(str(value).strip())
             if not candidate:
                 return
             if candidate.startswith("[") and candidate.endswith("]"):
@@ -541,9 +533,7 @@ class ZipResultService:
             original_path = chunk.get("path", "")
             if original_path:
                 add_candidate(candidate_names, original_path)
-                # Normalize path separators: replace --> with /, then extract filename
-                normalized_path = original_path.replace("-->", "/")
-                original_name = os.path.basename(normalized_path)
+                original_name = os.path.basename(original_path)
 
             source_path, matched_name, ext = resolve_source_path(
                 candidate_names, str(chunk_id)
@@ -626,7 +616,7 @@ class ZipResultService:
         def add_candidate(candidates: List[str], value: Optional[str]) -> None:
             if not value:
                 return
-            candidate = os.path.basename(str(value).strip().replace("-->", "/"))
+            candidate = os.path.basename(str(value).strip())
             if not candidate:
                 return
             if candidate.startswith("[") and candidate.endswith("]"):
@@ -669,9 +659,7 @@ class ZipResultService:
             # Try to get original filename from chunk's path field
             original_path = chunk.get("path", "")
             if original_path:
-                # Normalize path separators: replace --> with /, then extract filename
-                normalized_path = original_path.replace("-->", "/")
-                original_name = os.path.basename(normalized_path)
+                original_name = os.path.basename(original_path)
                 add_candidate(candidate_names, original_path)
             else:
                 original_name = None
@@ -783,12 +771,9 @@ class ZipResultService:
         for path in paths:
             if not path:
                 continue
-            
-            # Only normalize '-->' legacy separator; do NOT replace '\' since
-            # heading text may contain LaTeX backslashes (e.g. \mathrm, \mathbf)
-            normalized_path = path.replace("-->", "/")
-            nodes = [n.strip() for n in normalized_path.split("/") if n.strip()]
-            
+
+            nodes = [n.strip() for n in path.split("/") if n.strip()]
+
             current_dict = root_dict
             for node in nodes:
                 if node not in current_dict:

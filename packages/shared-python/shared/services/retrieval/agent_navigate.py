@@ -340,6 +340,7 @@ async def _grep_discover_document_ids(
     """
     # Tokenize query into searchable units (Chinese groups + English words)
     units = re.findall(r'[\u4e00-\u9fff]{2,4}|[a-zA-Z0-9]{2,}', query.lower())
+    logger.info(f'  GREP tokenized units (cap 8): {units[:8]}  (total={len(units)})')
     if not units:
         return []
 
@@ -391,34 +392,34 @@ async def _expand_by_edges(
     """Expand document set by following GraphEdge relationships.
 
     Aligned with KB's KGIndex.neighbors(): traverse edges to include
-    related documents. If no edges exist, returns original document_ids unchanged.
+    related documents. Only queries document-level nodes (no section nodes).
+    No weight filtering — edges already passed threshold during publication.
     """
     if not document_ids:
         return document_ids
 
     current = set(document_ids)
 
-    for _ in range(hops):
-        # Find graph nodes owned by current documents
+    for hop_idx in range(hops):
+        # Find document-level graph nodes for current document set
+        doc_node_ids = [f"doc:{did}" for did in current]
         node_stmt = (
-            select(GraphNode.node_id, GraphNode.owner_document_id, GraphNode.ref_document_id)
+            select(GraphNode.node_id, GraphNode.owner_document_id)
             .where(GraphNode.user_id == user_id)
             .where(GraphNode.namespace == namespace)
-            .where(GraphNode.owner_document_id.in_(list(current)))
+            .where(GraphNode.node_kind == 'document')
+            .where(GraphNode.node_id.in_(doc_node_ids))
         )
         node_result = await db.execute(node_stmt)
         node_rows = node_result.all()
+        logger.info(f'  edge_expand hop={hop_idx}: doc_nodes_found={len(node_rows)} (of {len(doc_node_ids)} requested)')
 
         if not node_rows:
             break
 
         node_ids = {row[0] for row in node_rows}
-        # Also add any ref_document_id from nodes directly
-        for _, _, ref_doc_id in node_rows:
-            if ref_doc_id:
-                current.add(ref_doc_id)
 
-        # Follow edges from/to these nodes
+        # Follow edges from/to these document nodes
         edge_stmt = (
             select(GraphEdge.source_node_id, GraphEdge.target_node_id)
             .where(GraphEdge.user_id == user_id)
@@ -429,13 +430,15 @@ async def _expand_by_edges(
             ))
         )
         edge_result = await db.execute(edge_stmt)
+        edge_rows = edge_result.all()
 
         neighbor_node_ids: set[str] = set()
-        for src, tgt in edge_result.all():
+        for src, tgt in edge_rows:
             if src in node_ids:
                 neighbor_node_ids.add(tgt)
             if tgt in node_ids:
                 neighbor_node_ids.add(src)
+        logger.info(f'  edge_expand hop={hop_idx}: edges_traversed={len(edge_rows)} neighbor_nodes={len(neighbor_node_ids)}')
 
         if not neighbor_node_ids:
             break
@@ -444,6 +447,7 @@ async def _expand_by_edges(
         neighbor_doc_stmt = (
             select(GraphNode.owner_document_id)
             .where(GraphNode.node_id.in_(list(neighbor_node_ids)))
+            .where(GraphNode.node_kind == 'document')
         )
         neighbor_doc_result = await db.execute(neighbor_doc_stmt)
         for (doc_id,) in neighbor_doc_result.all():
@@ -485,19 +489,26 @@ async def agent_navigate(
         Empty list if no documents or LLM fails.
     """
     t0 = time.monotonic()
+    logger.info('\n' + '=' * 70)
+    logger.info('  🧭 AGENT NAVIGATE START')
+    logger.info(f'  query="{query}"  max_files={max_files}  max_chunks/file={max_chunks_per_file}')
+    logger.info('=' * 70)
 
     overview_text, doc_id_to_name = await _build_knowledge_map_overview(
         db, user_id=user_id, namespace=namespace,
     )
     if overview_text == '(empty)':
-        logger.info('retrieval: agent_navigate: no active documents, skipping')
+        logger.info('  ⚠️  No active documents in namespace, skipping agent navigate')
         return []
 
-    logger.info(
-        f'retrieval: agent_navigate: kg_overview={len(doc_id_to_name)} files'
-    )
+    logger.info(f'\n  📋 STEP 0: Knowledge Map Overview ({len(doc_id_to_name)} files)')
+    logger.info(f'  {"─" * 60}')
+    for line in overview_text.split('\n'):
+        logger.info(f'  {line}')
+    logger.info(f'  {"─" * 60}')
 
     # ── Step 1: LLM selects files ──
+    logger.info(f'\n  📄 STEP 1: LLM File Selection')
     file_prompt = _FILE_SELECT_PROMPT.format(
         overview=overview_text, query=query, max_files=max_files,
     )
@@ -505,8 +516,10 @@ async def agent_navigate(
     try:
         file_response = await llm_fn(file_prompt)
         selected_ids = _parse_json_array(file_response)
+        logger.info(f'  LLM raw response: {file_response[:300]}')
+        logger.info(f'  Parsed IDs: {selected_ids}')
     except Exception as exc:
-        logger.error(f'retrieval: agent_navigate: LLM file selection failed: {exc}')
+        logger.error(f'  ❌ LLM file selection failed: {exc}')
         return []
 
     elapsed_file = round((time.monotonic() - t1) * 1000)
@@ -516,50 +529,61 @@ async def agent_navigate(
 
     if not valid_ids:
         logger.warning(
-            f'retrieval: agent_navigate: LLM returned no valid files '
-            f'(raw={selected_ids}) in {elapsed_file}ms'
+            f'  ⚠️  LLM returned no valid files (raw={selected_ids}) in {elapsed_file}ms'
         )
         return []
 
-    logger.info(
-        f'retrieval: agent_navigate: llm_file_select → '
-        f'{[doc_id_to_name.get(d, d) for d in valid_ids]} in {elapsed_file}ms'
-    )
+    logger.info(f'  ✅ LLM selected {len(valid_ids)} files in {elapsed_file}ms:')
+    for did in valid_ids:
+        logger.info(f'     → [{did}] {doc_id_to_name.get(did, "?")}')
 
     # ── GREP discovery: include parent documents of term-hit chunks ──
+    logger.info(f'\n  🔎 STEP 1b: GREP Discovery')
     try:
         grep_doc_ids = await _grep_discover_document_ids(
             db, user_id=user_id, namespace=namespace, query=query,
             exclude_document_ids=exclude_document_ids,
         )
+        logger.info(f'  GREP hit document_ids: {grep_doc_ids}')
         if grep_doc_ids:
             pre_count = len(valid_ids)
             for did in grep_doc_ids:
                 if did not in valid_ids and did in doc_id_to_name:
                     valid_ids.append(did)
-            if len(valid_ids) > pre_count:
-                logger.info(
-                    f'retrieval: agent_navigate: grep_discover added '
-                    f'{len(valid_ids) - pre_count} more documents'
-                )
+            added = len(valid_ids) - pre_count
+            if added > 0:
+                logger.info(f'  ✅ GREP added {added} new documents')
+            else:
+                logger.info(f'  ℹ️  GREP found {len(grep_doc_ids)} docs but all already selected')
+        else:
+            logger.info(f'  ℹ️  GREP found no matching documents')
     except Exception as exc:
-        logger.warning(f'retrieval: agent_navigate: grep_discover failed (ignored): {exc}')
+        logger.warning(f'  ⚠️  GREP discovery failed (ignored): {exc}')
 
     # ── Edge expansion: include neighbor documents ──
+    logger.info(f'\n  🔗 STEP 1c: Edge Expansion')
+    logger.info(f'  Input documents: {valid_ids}')
     try:
         expanded_ids = await _expand_by_edges(
             db, document_ids=valid_ids, user_id=user_id, namespace=namespace,
         )
         if len(expanded_ids) > len(valid_ids):
-            logger.info(
-                f'retrieval: agent_navigate: edge_expand '
-                f'{len(valid_ids)}->{len(expanded_ids)} documents'
-            )
+            new_from_edges = [d for d in expanded_ids if d not in valid_ids]
+            logger.info(f'  ✅ Edge expansion: {len(valid_ids)} → {len(expanded_ids)} documents')
+            for did in new_from_edges:
+                logger.info(f'     → added neighbor: [{did}] {doc_id_to_name.get(did, "?")}')
             valid_ids = expanded_ids
+        else:
+            logger.info(f'  ℹ️  No new neighbors found via edges')
     except Exception as exc:
-        logger.warning(f'retrieval: agent_navigate: edge_expand failed (ignored): {exc}')
+        logger.warning(f'  ⚠️  Edge expansion failed (ignored): {exc}')
+
+    logger.info(f'\n  📊 STEP 1 SUMMARY: {len(valid_ids)} documents after all expansions:')
+    for did in valid_ids:
+        logger.info(f'     [{did}] {doc_id_to_name.get(did, "?")}')
 
     # ── Step 2: For each file, LLM selects chunk paths ──
+    logger.info(f'\n  📑 STEP 2: LLM Chunk Path Selection')
     doc_job_map: dict[str, str] = {}
     doc_stmt = (
         select(Document.document_id, Document.current_job_result_id)
@@ -575,18 +599,29 @@ async def agent_navigate(
     for doc_id in valid_ids:
         job_result_id = doc_job_map.get(doc_id)
         if not job_result_id:
+            logger.warning(f'  ⚠️  doc={doc_id} has no job_result_id, skipping')
             continue
+
+        doc_name = doc_id_to_name.get(doc_id, doc_id)
+        logger.info(f'\n  {"─" * 50}')
+        logger.info(f'  📖 Processing: {doc_name} [{doc_id}]')
 
         chunks_slim = await _build_chunks_slim(
             db, document_id=doc_id, job_result_id=job_result_id,
         )
         if not chunks_slim:
-            logger.debug(f'retrieval: agent_navigate: no chunks for doc={doc_id}')
+            logger.info(f'  ⚠️  No chunks found for this document')
             continue
+
+        logger.info(f'  chunks_slim: {len(chunks_slim)} entries')
+        for ci, c in enumerate(chunks_slim[:10]):
+            logger.info(f'    [{ci}] [{c.get("type","?")}] path="{c.get("path","")}"  preview="{c.get("preview","")[:80]}"')
+        if len(chunks_slim) > 10:
+            logger.info(f'    ... and {len(chunks_slim) - 10} more')
 
         chunks_text = _format_chunks_for_llm(chunks_slim)
         chunk_prompt = _CHUNK_SELECT_PROMPT.format(
-            doc_name=doc_id_to_name.get(doc_id, doc_id),
+            doc_name=doc_name,
             doc_id=doc_id,
             chunks_overview=chunks_text,
             query=query,
@@ -598,31 +633,32 @@ async def agent_navigate(
         t2 = time.monotonic()
         try:
             chunk_response = await llm_fn(chunk_prompt)
+            logger.info(f'  LLM raw response: {chunk_response[:300]}')
             selected_paths = [
                 path for path in _parse_json_array(chunk_response)
                 if path in valid_paths
             ]
         except Exception as exc:
-            logger.error(
-                f'retrieval: agent_navigate: LLM chunk path selection failed '
-                f'for doc={doc_id}: {exc}'
-            )
+            logger.error(f'  ❌ LLM chunk selection failed: {exc}')
             continue
 
         elapsed_chunk = round((time.monotonic() - t2) * 1000)
-        logger.info(
-            f'retrieval: agent_navigate: llm_chunk_select '
-            f'doc={doc_id_to_name.get(doc_id, doc_id)} → '
-            f'{len(selected_paths)} paths in {elapsed_chunk}ms'
-        )
+        logger.info(f'  ✅ Selected {len(selected_paths)} paths in {elapsed_chunk}ms:')
+        for p in selected_paths:
+            logger.info(f'     → {p}')
+
+        rejected = [p for p in _parse_json_array(chunk_response) if p not in valid_paths]
+        if rejected:
+            logger.warning(f'  ⚠️  {len(rejected)} paths rejected (not in valid_paths): {rejected[:5]}')
 
         for path in selected_paths:
             if path not in all_selected_paths:
                 all_selected_paths.append(path)
 
     elapsed_total = round((time.monotonic() - t0) * 1000)
-    logger.info(
-        f'retrieval: agent_navigate: total={len(all_selected_paths)} chunk paths '
-        f'from {len(valid_ids)} files in {elapsed_total}ms'
-    )
+    logger.info(f'\n{"=" * 70}')
+    logger.info(f'  🧭 AGENT NAVIGATE COMPLETE: {len(all_selected_paths)} paths from {len(valid_ids)} files in {elapsed_total}ms')
+    for i, p in enumerate(all_selected_paths):
+        logger.info(f'    [{i+1}] {p}')
+    logger.info(f'{"=" * 70}')
     return all_selected_paths

@@ -34,21 +34,15 @@ def build_content_lexical_text(chunk: dict[str, Any]) -> Optional[str]:
 
 
 def section_path_from_chunk_path(source_path: Optional[str]) -> str:
+    """Extract section hierarchy from chunk path.
+
+    Expected format: "<kb_root>/<file>.ext/<Section>/<Subsection>/..."
+    Returns " / "-joined section parts, or "Root" if no section hierarchy.
+    """
     if not source_path:
         return "Root"
-
-    # Primary format: "Default_Root/file.md-->Section-->Subsection"
-    # Legacy format:  "Default_Root-->file.md-->Section"
-    if "/" in source_path:
-        _, _, section_tail = source_path.partition("/")
-        # section_tail is "file.md-->Section-->Subsection"; split on "-->" and skip filename
-        arrow_parts = [p.strip() for p in section_tail.split("-->") if p.strip()]
-        section_parts = arrow_parts[1:]  # skip filename
-    else:
-        # Legacy all-arrow format: "Default_Root-->file.md-->Section"
-        arrow_parts = [p.strip() for p in source_path.split("-->") if p.strip()]
-        section_parts = arrow_parts[2:]  # skip root dir and filename
-
+    parts = [p.strip() for p in source_path.split("/") if p.strip()]
+    section_parts = parts[2:]  # skip kb_root + filename
     if not section_parts:
         return "Root"
     return " / ".join(section_parts)

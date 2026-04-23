@@ -46,7 +46,7 @@ def test_finalize_job_success_publishes_canonical_document_state(monkeypatch) ->
             "type": "text",
             "content": "Annual plans may be refunded within 30 days.",
             "metadata": {
-                "path": "Default_Root/refund-policy.md-->Billing-->Refunds",
+                "path": "Default_Root/refund-policy.md/Billing/Refunds",
             },
             "order": 0,
         }
@@ -121,7 +121,7 @@ def test_publish_document_state_creates_default_namespace_document(monkeypatch) 
                 'chunk_id': 'chunk_1',
                 'type': 'text',
                 'content': 'Refunds within 30 days are allowed.',
-                'metadata': {'path': 'Default_Root/refund-policy.md-->Billing-->Refunds'},
+                'metadata': {'path': 'Default_Root/refund-policy.md/Billing/Refunds'},
                 'order': 0,
             }
         ],
@@ -162,7 +162,7 @@ def test_publish_document_state_uses_file_path_as_internal_media_reference(monke
                 'type': 'image',
                 'content': 'Image caption',
                 'metadata': {
-                    'path': 'Default_Root/drawing.pdf-->Images',
+                    'path': 'Default_Root/drawing.pdf/Images',
                     'file_path': 'images/page-1.png',
                 },
                 'order': 0,
@@ -318,7 +318,7 @@ def test_publish_document_state_preserves_historical_canonical_rows() -> None:
                 'chunk_id': 'chunk_1',
                 'type': 'text',
                 'content': 'Refunds within 30 days are allowed.',
-                'metadata': {'path': 'Default_Root/refund-policy.md-->Billing-->Refunds'},
+                'metadata': {'path': 'Default_Root/refund-policy.md/Billing/Refunds'},
                 'order': 0,
             }
         ],
@@ -377,7 +377,7 @@ def test_publish_document_state_rejects_stale_completion_for_existing_document()
                 'chunk_id': 'chunk_1',
                 'type': 'text',
                 'content': 'Older revision content',
-                'metadata': {'path': 'Default_Root/refund-policy.md-->Billing-->Refunds'},
+                'metadata': {'path': 'Default_Root/refund-policy.md/Billing/Refunds'},
                 'order': 0,
             }
         ],

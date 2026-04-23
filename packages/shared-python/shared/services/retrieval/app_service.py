@@ -676,6 +676,16 @@ async def _hydrate_paths_to_rows(
         })
 
     rows.sort(key=lambda r: path_order.get(_get_row_path(r), 10**9))
+    missed = len(paths) - len(rows)
+    if missed > 0:
+        hydrated_paths = {_get_row_path(r) for r in rows}
+        missing_paths = [p for p in paths if p not in hydrated_paths]
+        logger.warning(
+            f'  hydrate: {len(rows)}/{len(paths)} paths resolved (missed={missed}); '
+            f'missing[:5]={missing_paths[:5]}'
+        )
+    else:
+        logger.info(f'  hydrate: {len(rows)}/{len(paths)} paths resolved')
     return rows
 
 
@@ -699,13 +709,16 @@ async def run_retrieval_query(
 ) -> dict[str, Any]:
     """Checkerboard retrieval: 3 independent channels -> RRF -> agent/graph union -> assembly."""
     t_start = time.monotonic()
-    logger.info(
-        f'retrieval: query="{query[:80]}" user={user_id} ns={namespace} '
-        f'top_k={top_k} exclude_docs={len(exclude_document_ids)} exclude_secs={len(exclude_sections)}'
-    )
+    logger.info('\n' + '█' * 70)
+    logger.info('  🚀 RETRIEVAL PIPELINE START')
+    logger.info(f'  query="{query}"')
+    logger.info(f'  user={user_id}  ns={namespace}  top_k={top_k}  data_type={data_type}')
+    logger.info(f'  exclude_docs={exclude_document_ids}  exclude_secs={len(exclude_sections)}')
+    logger.info('█' * 70)
 
     allowed_chunk_types = _resolve_allowed_chunk_types(data_type)
     effective_recall_k = internal_recall_k if internal_recall_k is not None else top_k * _INTERNAL_RECALL_K_MULTIPLIER
+    logger.info(f'  allowed_chunk_types={allowed_chunk_types}  effective_recall_k={effective_recall_k}  signal_paths={signal_paths}  filter_mode={filter_mode}  rerank={rerank}  threshold={threshold}')
 
     cache_extra = dict(
         data_type=data_type,
@@ -743,7 +756,7 @@ async def run_retrieval_query(
     except Exception as e:
         logger.warning(f"Failed to read retrieval cache (ignored): {e}")
 
-    logger.debug(f'retrieval: cache_hit=False version={cache_version}')
+    logger.debug(f'  📦 Cache miss (version={cache_version}), running full pipeline')
 
     # ── Small KB optimization ──
     total_chunk_count = await _count_scoped_chunks(
@@ -751,8 +764,9 @@ async def run_retrieval_query(
         exclude_document_ids=exclude_document_ids,
         allowed_chunk_types=allowed_chunk_types,
     )
+    logger.info(f'\n  📊 Total chunks in scope: {total_chunk_count}')
     if total_chunk_count <= top_k:
-        logger.info(f'retrieval: small_kb_optimization total_chunks={total_chunk_count} <= top_k={top_k}')
+        logger.info(f'  ⚡ Small KB optimization: {total_chunk_count} chunks <= top_k={top_k}, returning all')
         all_rows = await _load_all_scoped_chunks(
             db, user_id=user_id, namespace=namespace,
             exclude_document_ids=exclude_document_ids,
@@ -761,6 +775,7 @@ async def run_retrieval_query(
             signal_paths=signal_paths or [],
             filter_mode=filter_mode,
         )
+        logger.info(f'  small_kb load: loaded={len(all_rows)} rows after signal/exclude filters')
         assembled_rows = await assemble_retrieval_results(
             db=db, rows=all_rows,
             exclude_document_ids=exclude_document_ids,
@@ -788,11 +803,13 @@ async def run_retrieval_query(
         except Exception as e:
             logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
         elapsed_total = round((time.monotonic() - t_start) * 1000)
-        logger.info(f'retrieval: small_kb response={len(results)} results, total_time={elapsed_total}ms')
+        logger.info(f'  ✅ Small KB: {len(results)} results in {elapsed_total}ms')
         return await _to_public_response(response)
 
     # ── Channel execution ──
     active_channels = set(channels) if channels else {'path', 'content', 'term'}
+    logger.info(f'\n  📡 PHASE 1: Bottom-Layer Discovery (channels={sorted(active_channels)})')
+    logger.info(f'  effective_recall_k={effective_recall_k}')
 
     path_rows: list[dict[str, Any]] = []
     content_rows: list[dict[str, Any]] = []
@@ -806,7 +823,12 @@ async def run_retrieval_query(
             exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
             signal_paths=signal_paths, filter_mode=filter_mode,
         )
-        logger.info(f'retrieval: path_channel={len(path_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+        elapsed_ch = round((time.monotonic() - t_ch) * 1000)
+        logger.info(f'\n  📡 path_channel: {len(path_rows)} rows in {elapsed_ch}ms')
+        for i, r in enumerate(path_rows[:5]):
+            logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  type={r.get("chunk_type","?")}')
+        if len(path_rows) > 5:
+            logger.info(f'    ... and {len(path_rows) - 5} more')
 
     if 'content' in active_channels:
         t_ch = time.monotonic()
@@ -816,7 +838,12 @@ async def run_retrieval_query(
             exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
             signal_paths=signal_paths, filter_mode=filter_mode,
         )
-        logger.info(f'retrieval: content_channel={len(content_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+        elapsed_ch = round((time.monotonic() - t_ch) * 1000)
+        logger.info(f'\n  📡 content_channel: {len(content_rows)} rows in {elapsed_ch}ms')
+        for i, r in enumerate(content_rows[:5]):
+            logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  content={str(r.get("content",""))[:80]}')
+        if len(content_rows) > 5:
+            logger.info(f'    ... and {len(content_rows) - 5} more')
 
     if 'term' in active_channels:
         t_ch = time.monotonic()
@@ -826,7 +853,12 @@ async def run_retrieval_query(
             exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
             signal_paths=signal_paths, filter_mode=filter_mode,
         )
-        logger.info(f'retrieval: term_channel={len(term_rows)} rows in {round((time.monotonic() - t_ch) * 1000)}ms')
+        elapsed_ch = round((time.monotonic() - t_ch) * 1000)
+        logger.info(f'\n  📡 term_channel: {len(term_rows)} rows in {elapsed_ch}ms')
+        for i, r in enumerate(term_rows[:5]):
+            logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  type={r.get("chunk_type","?")}')
+        if len(term_rows) > 5:
+            logger.info(f'    ... and {len(term_rows) - 5} more')
 
     # ── RRF fusion with configurable weights ──
     default_weights = {
@@ -850,7 +882,11 @@ async def run_retrieval_query(
         weight_list.append(effective_weights.get('term', _CHANNEL_WEIGHT_TERM))
 
     fused_rows = merge_channels_rrf(channel_lists, weight_list, top_k) if channel_lists else []
-    logger.info(f'retrieval: rrf_fusion={len(fused_rows)} rows from {len(channel_lists)} channels')
+    logger.info(f'\n  🔀 RRF Fusion: {len(fused_rows)} rows from {len(channel_lists)} channels (weights={dict(zip(["path","content","term"][:len(weight_list)], weight_list))})')
+    for i, r in enumerate(fused_rows[:5]):
+        logger.info(f'    [{i}] rrf_score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}')
+    if len(fused_rows) > 5:
+        logger.info(f'    ... and {len(fused_rows) - 5} more')
 
     # ── Section merging ──
     pre_merge = len(fused_rows)
@@ -866,11 +902,13 @@ async def run_retrieval_query(
 
     # ── Agent navigation or lexical graph fallback ──
     # Aligned with KB: agent_navigate returns chunk paths, union on section_path
+    logger.info(f'\n  🧭 PHASE 2: Agent Navigation')
     router_used = 'discovery_only'
     llm_fn = create_retrieval_llm_fn()
     agent_rows: list[dict[str, Any]] = []
 
     if llm_fn is not None:
+        logger.info(f'  LLM configured, running agent_navigate...')
         t_agent = time.monotonic()
         try:
             agent_paths = await agent_navigate(
@@ -885,41 +923,41 @@ async def run_retrieval_query(
                 # Filter out paths already in discovery results
                 discovery_paths = {_get_row_path(r) for r in fused_rows}
                 new_paths = [p for p in agent_paths if p not in discovery_paths]
+                logger.info(f'\n  🔗 Agent→Discovery union:')
+                logger.info(f'    agent_paths={len(agent_paths)}, discovery_paths={len(discovery_paths)}, new_paths={len(new_paths)}')
                 if new_paths:
+                    logger.info(f'    New paths from agent (not in discovery):')
+                    for p in new_paths[:10]:
+                        logger.info(f'      → {p}')
                     agent_rows = await _hydrate_paths_to_rows(
                         db, paths=new_paths,
                         user_id=user_id, namespace=namespace,
                     )
+                    logger.info(f'    Hydrated {len(agent_rows)} rows from {len(new_paths)} new paths')
                 router_used = 'discovery+agent'
-                logger.info(
-                    f'retrieval: agent_navigate={len(agent_paths)} paths '
-                    f'({len(new_paths)} new) '
-                    f'in {round((time.monotonic() - t_agent) * 1000)}ms (router={router_used})'
-                )
+                elapsed_agent = round((time.monotonic() - t_agent) * 1000)
+                logger.info(f'  ✅ Agent navigate: {len(agent_paths)} paths ({len(new_paths)} new) in {elapsed_agent}ms')
             else:
-                logger.info(
-                    f'retrieval: agent_navigate=0 paths '
-                    f'in {round((time.monotonic() - t_agent) * 1000)}ms, '
-                    f'falling back to lexical graph routing'
-                )
+                elapsed_agent = round((time.monotonic() - t_agent) * 1000)
+                logger.info(f'  ⚠️  Agent returned 0 paths in {elapsed_agent}ms, falling back to lexical graph')
                 agent_rows = await list_graph_routed_chunks(
                     db, user_id=user_id, namespace=namespace, query=query,
                     top_k=top_k, exclude_document_ids=exclude_document_ids,
                     exclude_sections=exclude_sections,
                 )
                 if agent_rows:
-                    logger.info(f'retrieval: graph_fallback={len(agent_rows)} rows')
+                    logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
         except Exception as exc:
-            logger.error(f'retrieval: agent_navigate failed, falling back to lexical: {exc}')
+            logger.error(f'  ❌ Agent navigate failed: {exc}, falling back to lexical')
             agent_rows = await list_graph_routed_chunks(
                 db, user_id=user_id, namespace=namespace, query=query,
                 top_k=top_k, exclude_document_ids=exclude_document_ids,
                 exclude_sections=exclude_sections,
             )
             if agent_rows:
-                logger.info(f'retrieval: graph_fallback={len(agent_rows)} rows')
+                logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
     else:
-        logger.debug('retrieval: no LLM configured, using lexical graph routing')
+        logger.info(f'  ⚠️  No LLM configured (DS_KEY missing?), using lexical graph routing')
         try:
             agent_rows = await list_graph_routed_chunks(
                 db, user_id=user_id, namespace=namespace, query=query,
@@ -927,14 +965,15 @@ async def run_retrieval_query(
                 exclude_sections=exclude_sections,
             )
             if agent_rows:
-                logger.info(f'retrieval: graph_fallback={len(agent_rows)} rows')
+                logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
         except Exception as exc:
-            logger.error(f'retrieval: graph routing failed (ignored): {exc}')
+            logger.error(f'  ❌ Graph routing failed (ignored): {exc}')
             agent_rows = []
 
     if agent_rows:
+        pre_union = len(fused_rows)
         fused_rows = _union_by_path(fused_rows, agent_rows, top_k)
-        logger.info(f'retrieval: union={len(fused_rows)} rows after path merge')
+        logger.info(f'\n  🔄 Union: {pre_union} discovery + {len(agent_rows)} agent → {len(fused_rows)} merged')
 
     assembled_rows = await assemble_retrieval_results(
         db=db,
@@ -944,7 +983,6 @@ async def run_retrieval_query(
         allowed_chunk_types=allowed_chunk_types,
     )
     results = [_with_citation(row) for row in assembled_rows]
-    logger.info(f'retrieval: assembled={len(results)} results')
 
     response = {
         "namespace": namespace,
@@ -979,9 +1017,17 @@ async def run_retrieval_query(
         logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
 
     elapsed_total = round((time.monotonic() - t_start) * 1000)
-    logger.info(
-        f'retrieval: response={len(results)} results, '
-        f'router={router_used}, total_time={elapsed_total}ms'
-    )
+    logger.info(f'\n{"█" * 70}')
+    logger.info(f'  ✅ RETRIEVAL COMPLETE: {len(results)} results | router={router_used} | {elapsed_total}ms')
+    for i, r in enumerate(results[:10]):
+        src = r.get('source', {})
+        logger.info(
+            f'    [{i+1}] type={r.get("chunk_type","?")}  score={r.get("score",0):.4f}'
+            f'  path={src.get("section_path","")}'
+            f'  file={src.get("source_file_name","")}'
+        )
+    if len(results) > 10:
+        logger.info(f'    ... and {len(results) - 10} more')
+    logger.info(f'{"█" * 70}')
 
     return await _to_public_response(response)

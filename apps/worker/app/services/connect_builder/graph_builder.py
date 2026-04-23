@@ -60,8 +60,7 @@ def _build_tree_from_paths(paths: List[str]) -> Dict[str, Any]:
     for path in paths:
         if not path:
             continue
-        normalized = path.replace("-->", "/")
-        nodes = [n.strip() for n in normalized.split("/") if n.strip()]
+        nodes = [n.strip() for n in path.split("/") if n.strip()]
         current = root
         for node in nodes:
             if node not in current:
