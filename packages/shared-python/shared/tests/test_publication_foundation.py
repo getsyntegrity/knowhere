@@ -576,6 +576,10 @@ def test_selected_retained_fixtures_avoid_personal_contact_strings() -> None:
         assert "@outlook.com" not in fixture_text
 
 
+def test_worker_tests_do_not_keep_stale_runtime_artifacts() -> None:
+    assert not (REPO_ROOT / "apps/worker/tests/.tmp_layout_parser").exists()
+
+
 def main() -> None:
     test_publication_foundation_files_exist()
     test_license_and_notice_match_apache_2_baseline()
@@ -614,6 +618,7 @@ def main() -> None:
     test_public_safety_scan_blocks_private_cloud_identifiers()
     test_selected_retained_test_surfaces_avoid_private_callback_hosts()
     test_selected_retained_fixtures_avoid_personal_contact_strings()
+    test_worker_tests_do_not_keep_stale_runtime_artifacts()
 
 
 if __name__ == "__main__":
