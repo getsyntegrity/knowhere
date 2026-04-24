@@ -441,7 +441,7 @@ async def get_database_performance() -> dict:
     return db_performance_monitor.get_performance_stats()
 
 
-async def safe_dispose_engine(db_engine):
+async def safe_dispose_engine(db_engine: AsyncEngine) -> None:
     """
     Close a database engine safely.
 
@@ -449,10 +449,8 @@ async def safe_dispose_engine(db_engine):
         db_engine: SQLAlchemy async engine instance.
     """
     try:
-        if db_engine:
-            # dispose() is synchronous, so run it in a worker thread.
-            await asyncio.to_thread(db_engine.dispose)
-            logger.info("Database engine shut down safely")
+        await db_engine.dispose()
+        logger.info("Database engine shut down safely")
     except Exception as e:
         logger.error(f"Error while shutting down the database engine: {e}")
         # Suppress dispose failures to avoid blocking app shutdown.

@@ -31,6 +31,7 @@ venv = ".venv"
 include = [
     "apps/api/app",
     "apps/api/main.py",
+    "apps/api/tests",
     "apps/worker/app",
     "apps/worker/worker.py",
     "packages/shared-python/shared",
@@ -68,6 +69,5 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]
-"apps/api/__tests__/**/*.py" = ["E402"]
 "apps/worker/tests/**/*.py" = ["E402"]
 "packages/shared-python/shared/tests/**/*.py" = ["E402"]

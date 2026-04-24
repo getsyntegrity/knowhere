@@ -52,7 +52,6 @@ packages/shared-types/generated/
 
 # custom
 apps/api/users/
-apps/api/tests/
 apps/worker/debug_*.py
 apps/worker/test_*.py
 apps/worker/debug_users/
