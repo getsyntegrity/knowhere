@@ -9,7 +9,9 @@
   "exclude": [
     "**/__tests__",
     "**/.venv",
-    "**/__pycache__"
+    "**/__pycache__",
+    "**/node_modules",
+    "**/.*"
   ],
   "typeCheckingMode": "basic"
 }

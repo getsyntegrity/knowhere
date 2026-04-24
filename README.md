@@ -86,6 +86,32 @@ cd apps/api && uv run main.py
 cd apps/worker && uv run worker.py
 ```
 
+## Quality Checks
+
+Run lint checks from the repository root:
+
+```bash
+make lint
+```
+
+Apply safe Ruff fixes:
+
+```bash
+make lint-fix
+```
+
+Run type checks across the API, worker, and shared package:
+
+```bash
+make typecheck
+```
+
+Run both lint and type checks:
+
+```bash
+make check
+```
+
 ## Local Endpoints
 
 - API: `http://localhost:5005`
@@ -104,4 +130,3 @@ cd apps/worker && uv run worker.py
   [docs/self-hosting.md](docs/self-hosting.md)
 - Release distribution policy:
   [docs/release-distribution.md](docs/release-distribution.md)
-

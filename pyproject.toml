@@ -6,6 +6,14 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 
+[dependency-groups]
+lint = [
+    "ruff>=0.11.13",
+]
+typecheck = [
+    "pyright>=1.1.396",
+]
+
 [tool.uv]
 package = false
 
@@ -15,3 +23,21 @@ members = [
     "apps/worker",
     "packages/shared-python",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = [
+    "apps/api",
+    "apps/worker",
+    "packages/shared-python",
+]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+"apps/api/__tests__/**/*.py" = ["E402"]
+"apps/worker/tests/**/*.py" = ["E402"]
+"packages/shared-python/shared/tests/**/*.py" = ["E402"]

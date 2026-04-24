@@ -1,0 +1,14 @@
+{
+  "include": [
+    "shared"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    "build",
+    "dist"
+  ],
+  "typeCheckingMode": "basic"
+}
