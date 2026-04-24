@@ -129,7 +129,6 @@ shared/services/retrieval/publication_service.py
 shared/services/storage/__init__.py
 shared/services/storage/file_encryptor_service.py
 shared/services/storage/file_upload_service.py
-shared/services/storage/hierarchy_html_generator.py
 shared/services/storage/result_storage.py
 shared/services/storage/storage_adapter.py
 shared/services/storage/zip_result_service.py
@@ -153,6 +152,7 @@ shared/tests/test_openai_timeout_defaults.py
 shared/tests/test_result_storage.py
 shared/tests/test_retrieval_app_service.py
 shared/tests/test_retrieval_cache_service.py
+shared/tests/test_retrieval_channels.py
 shared/tests/test_retrieval_hit_stats.py
 shared/tests/test_retrieval_publication_sync.py
 shared/tests/test_sync_credits_service.py

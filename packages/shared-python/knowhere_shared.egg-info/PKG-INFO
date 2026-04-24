@@ -43,3 +43,5 @@ Requires-Dist: psycogreen>=1.0.2
 Requires-Dist: pytest==8.3.4
 Requires-Dist: pytest-asyncio==0.24.0
 Requires-Dist: pytest-mock==3.14.0
+Requires-Dist: blingfire>=0.1.8
+Requires-Dist: syntok>=1.4.4

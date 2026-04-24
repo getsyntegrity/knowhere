@@ -37,6 +37,19 @@ def _should_mock_llm_calls() -> bool:
     return bool(getattr(settings, "LLM_MOCK_ENABLED", False))
 
 
+def _summarize_exception_chain(exc: Exception, *, max_depth: int = 4) -> str:
+    parts: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+
+    while current is not None and len(parts) < max_depth and id(current) not in seen:
+        seen.add(id(current))
+        parts.append(f"{type(current).__name__}: {current}")
+        current = current.__cause__ or current.__context__
+
+    return " <- ".join(parts)
+
+
 class OpenAICompatibleClientSync:
     """Sync OpenAI-compatible client backed by the official OpenAI SDK."""
 
@@ -323,9 +336,14 @@ class OpenAICompatibleClientSync:
         except LLMServiceException:
             raise
         except Exception as exc:
-            logger.error(f"LLM request failed: model={effective_model}, base_url={client.base_url}, error={exc}")
+            logger.error(
+                "LLM request failed: model={model}, base_url={base_url}, error_chain={error_chain}",
+                model=effective_model,
+                base_url=client.base_url,
+                error_chain=_summarize_exception_chain(exc),
+            )
             raise LLMServiceException(
-                internal_message=f"API request failed: {str(exc)}",
+                internal_message=f"API request failed: {_summarize_exception_chain(exc)}",
                 provider=self.default_model,
                 original_exception=exc,
             ) from exc

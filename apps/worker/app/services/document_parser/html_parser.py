@@ -26,13 +26,13 @@ class HTMLHeaderExpander:
     Handles:
     - rowspan: cells that span multiple rows
     - colspan: cells that span multiple columns
-    - Multi-row headers: combines parent->child relationships with "-->"
+    - Multi-row headers: combines parent -> child relationships with " > "
     
     Example:
         Row 0: | A(rs=2) | B(cs=2) |
         Row 1: |         | B1 | B2 |
         
-        Output: ["A", "B-->B1", "B-->B2"]
+        Output: ["A", "B > B1", "B > B2"]
     
     Ported from snap-fill's HeaderMatrixExpander, using BeautifulSoup instead of PyQuery.
     """
@@ -58,7 +58,7 @@ class HTMLHeaderExpander:
             start_row: Starting row index for headers (default 0)
             
         Returns:
-            List of column header strings, with nested headers joined by "-->"
+            List of column header strings, with nested headers joined by " > "
         """
         grid = self._build_grid(header_row_count, start_row)
         if not grid or not grid[0]:
@@ -79,7 +79,7 @@ class HTMLHeaderExpander:
                     prev_text = text
             
             if parts:
-                headers.append("-->".join(parts))
+                headers.append(" > ".join(parts))
             else:
                 headers.append("")  # Empty column
         

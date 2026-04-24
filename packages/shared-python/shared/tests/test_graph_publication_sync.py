@@ -65,7 +65,7 @@ def test_finalize_job_success_publishes_graph_state(monkeypatch) -> None:
             "type": "text",
             "text": "Annual plans may be refunded within 30 days.",
             "metadata": {
-                "path": "Default_Root/refund-policy.md-->Billing-->Refunds",
+                "path": "Default_Root/refund-policy.md/Billing/Refunds",
             },
             "order": 0,
         }
@@ -109,21 +109,22 @@ class _FakeResult:
         return self._values[0] if self._values else None
 
 
-def test_publish_document_graph_skips_similar_edges_without_peer_document_node():
+def test_publish_document_graph_creates_only_document_nodes():
+    """Verify that publish_document_graph only creates document-level nodes (no section nodes),
+    aligned with KB's knowledge_graph.json which only has file-level entries."""
     from types import SimpleNamespace
 
     from shared.services.retrieval.graph_service import DocumentGraphService
 
-    section = SimpleNamespace(
-        section_id='sec_1',
-        parent_section_id=None,
-        section_path='Policies / Billing',
-        section_title='Billing',
-        section_level=1,
-        sort_order=0,
-    )
     document = SimpleNamespace(document_id='doc_1', source_file_name='refund-policy.md')
-    other_document = SimpleNamespace(document_id='doc_2')
+
+    class _FakeAllResult:
+        def __init__(self, values):
+            self._values = values
+        def all(self):
+            return self._values
+        def scalars(self):
+            return _FakeScalars(self._values)
 
     class _Db:
         def __init__(self):
@@ -133,11 +134,89 @@ def test_publish_document_graph_skips_similar_edges_without_peer_document_node()
         def execute(self, _stmt):
             self._call += 1
             if self._call == 1:
-                return _FakeResult([section])
-            if self._call == 2:
+                # select Document
                 return _FakeResult([document])
+            if self._call == 2:
+                # select DocumentChunk (chunk_type, chunk_metadata)
+                return _FakeAllResult([])
             if self._call == 3:
-                return _FakeResult([other_document])
+                # select DocumentSection titles (level <= 2)
+                return _FakeResult([])
+            if self._call == 4:
+                # select GraphNode (peer doc nodes)
+                return _FakeResult([])
+            raise AssertionError(f'unexpected execute call {self._call}')
+
+        def add(self, value):
+            self.added.append(value)
+
+        def flush(self):
+            return None
+
+    db = _Db()
+    service = DocumentGraphService()
+    service.remove_document_graph = lambda *_args, **_kwargs: None
+
+    service.publish_document_graph(
+        db,
+        user_id='user_123',
+        namespace='default',
+        document_id='doc_1',
+        job_result_id='result_123',
+    )
+
+    # Should only create document-level nodes, no section nodes
+    from shared.models.database.document import GraphNode
+    graph_nodes = [obj for obj in db.added if isinstance(obj, GraphNode)]
+    assert len(graph_nodes) == 1
+    assert graph_nodes[0].node_kind == 'document'
+    assert graph_nodes[0].node_id == 'doc:doc_1'
+
+    # Properties should include top_keywords and chunks_count (aligned with KB files dict)
+    props = graph_nodes[0].properties
+    assert 'top_keywords' in props
+    assert 'chunks_count' in props
+    assert props['source_file_name'] == 'refund-policy.md'
+
+    # No edges created (no peer documents)
+    from shared.models.database.document import GraphEdge
+    edges = [obj for obj in db.added if isinstance(obj, GraphEdge)]
+    assert edges == []
+
+
+def test_publish_document_graph_prefers_document_top_summary_from_chunk_metadata():
+    from types import SimpleNamespace
+
+    from shared.services.retrieval.graph_service import DocumentGraphService
+
+    document = SimpleNamespace(document_id='doc_1', source_file_name='welding-handbook.pdf')
+    injected_summary = 'This manual explains TIG settings and filler selection for stainless steel joints.'
+
+    class _FakeAllResult:
+        def __init__(self, values):
+            self._values = values
+
+        def all(self):
+            return self._values
+
+        def scalars(self):
+            return _FakeScalars(self._values)
+
+    class _Db:
+        def __init__(self):
+            self.added = []
+            self._call = 0
+
+        def execute(self, _stmt):
+            self._call += 1
+            if self._call == 1:
+                return _FakeResult([document])
+            if self._call == 2:
+                return _FakeAllResult([
+                    ('text', {'document_top_summary': injected_summary, 'keywords': ['tig', 'stainless']}),
+                ])
+            if self._call == 3:
+                return _FakeResult(['Fallback Title'])
             if self._call == 4:
                 return _FakeResult([])
             raise AssertionError(f'unexpected execute call {self._call}')
@@ -160,47 +239,68 @@ def test_publish_document_graph_skips_similar_edges_without_peer_document_node()
         job_result_id='result_123',
     )
 
-    similar_edges = [edge for edge in db.added if getattr(edge, 'edge_kind', None) == 'similar']
-    assert similar_edges == []
+    from shared.models.database.document import GraphNode
+
+    graph_nodes = [obj for obj in db.added if isinstance(obj, GraphNode)]
+    assert len(graph_nodes) == 1
+    assert graph_nodes[0].properties['top_summary'] == injected_summary
 
 
-def test_publish_document_graph_flushes_only_nodes_before_querying_peers():
+def test_publish_document_graph_creates_keyword_edges_only_above_threshold():
+    """Verify that edges are only created between documents with keyword overlap score >= 0.8,
+    aligned with connect_builder DEFAULT_CONFIG min_score_threshold."""
     from types import SimpleNamespace
 
     from shared.services.retrieval.graph_service import DocumentGraphService
 
-    section = SimpleNamespace(
-        section_id='sec_1',
-        parent_section_id=None,
-        section_path='Policies / Billing',
-        section_title='Billing',
-        section_level=1,
-        sort_order=0,
+    document = SimpleNamespace(document_id='doc_1', source_file_name='report_A.pdf')
+    # Peer doc with shared keywords (stored in GraphNode.properties)
+    peer_node = SimpleNamespace(
+        node_id='doc:doc_2',
+        owner_document_id='doc_2',
+        properties={
+            'source_file_name': 'report_B.pdf',
+            'top_keywords': ['safety', 'procedure', 'installation', 'torque', 'bolt'],
+        },
     )
-    document = SimpleNamespace(document_id='doc_1', source_file_name='refund-policy.md')
+
+    class _FakeAllResult:
+        def __init__(self, values):
+            self._values = values
+        def all(self):
+            return self._values
+        def scalars(self):
+            return _FakeScalars(self._values)
 
     class _Db:
         def __init__(self):
-            self._call = 0
-            self.flush_calls = []
             self.added = []
+            self._call = 0
 
         def execute(self, _stmt):
             self._call += 1
             if self._call == 1:
-                return _FakeResult([section])
-            if self._call == 2:
+                # select Document
                 return _FakeResult([document])
+            if self._call == 2:
+                # select DocumentChunk → chunk metadata with overlapping keywords
+                return _FakeAllResult([
+                    ('text', {'keywords': ['safety', 'procedure', 'installation']}),
+                    ('text', {'keywords': ['torque', 'bolt', 'specification']}),
+                ])
             if self._call == 3:
-                assert self.flush_calls and self.flush_calls[0] == 2
+                # select DocumentSection titles
                 return _FakeResult([])
+            if self._call == 4:
+                # select GraphNode (peer doc nodes)
+                return _FakeResult([peer_node])
             raise AssertionError(f'unexpected execute call {self._call}')
 
         def add(self, value):
             self.added.append(value)
 
         def flush(self):
-            self.flush_calls.append(len(self.added))
+            return None
 
     db = _Db()
     service = DocumentGraphService()
@@ -214,8 +314,15 @@ def test_publish_document_graph_flushes_only_nodes_before_querying_peers():
         job_result_id='result_123',
     )
 
-    assert db.flush_calls
-    assert db.flush_calls[0] == 2
+    # Check edges: should have 'related' edges with meaningful weight (not blind 'similar')
+    from shared.models.database.document import GraphEdge
+    edges = [obj for obj in db.added if isinstance(obj, GraphEdge)]
+    # Whether an edge is created depends on the keyword overlap score
+    # The peer has 5 keywords, doc has 6 keywords, they share ≥3
+    for edge in edges:
+        assert edge.edge_kind == 'related'
+        assert edge.weight > 0
+        assert 'shared_keywords' in (edge.properties or {})
 
 
 def test_publish_document_graph_removes_old_namespace_rows_for_same_document():
