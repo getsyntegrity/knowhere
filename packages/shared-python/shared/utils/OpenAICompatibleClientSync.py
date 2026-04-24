@@ -6,7 +6,6 @@ and built-in 429 retry with exponential backoff.
 For Aliyun (qwen) models, api keys are drawn from the AliQuotaManager
 token pool and automatically rotated on 429 RateLimitError.
 """
-
 import os
 import threading
 from typing import Any, Dict, List, Optional, Union
@@ -38,6 +37,19 @@ def _should_mock_llm_calls() -> bool:
     return bool(getattr(settings, "LLM_MOCK_ENABLED", False))
 
 
+def _summarize_exception_chain(exc: Exception, *, max_depth: int = 4) -> str:
+    parts: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+
+    while current is not None and len(parts) < max_depth and id(current) not in seen:
+        seen.add(id(current))
+        parts.append(f"{type(current).__name__}: {current}")
+        current = current.__cause__ or current.__context__
+
+    return " <- ".join(parts)
+
+
 class OpenAICompatibleClientSync:
     """Sync OpenAI-compatible client backed by the official OpenAI SDK."""
 
@@ -49,9 +61,7 @@ class OpenAICompatibleClientSync:
         timeout: int = 300,
         max_retries: int = 2,
     ):
-        self.default_model = default_model or getattr(
-            settings, "NORMOL_MODEL", "deepseek-chat"
-        )
+        self.default_model = default_model or getattr(settings, "NORMOL_MODEL", "deepseek-chat")
         self._explicit_api_key = api_key
         self._explicit_api_url = api_url
         self._max_retries = max_retries
@@ -111,15 +121,11 @@ class OpenAICompatibleClientSync:
 
         model_lower = (model_name or "").lower()
         if "qwen" in model_lower:
-            ali_base = getattr(
-                settings, "ALI_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            )
+            ali_base = getattr(settings, "ALI_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
             return self._strip_chat_completions(ali_base)
 
         if "glm" in model_lower:
-            glm_base = getattr(
-                settings, "GLM_URL", "https://open.bigmodel.cn/api/paas/v4"
-            )
+            glm_base = getattr(settings, "GLM_URL", "https://open.bigmodel.cn/api/paas/v4")
             return self._strip_chat_completions(glm_base)
 
         if "doubao" in model_lower or model_lower.startswith("ep-"):
@@ -256,18 +262,9 @@ class OpenAICompatibleClientSync:
             api_kwargs["timeout"] = timeout
 
         allowed_api_params = {
-            "n",
-            "stop",
-            "presence_penalty",
-            "frequency_penalty",
-            "logit_bias",
-            "user",
-            "seed",
-            "tools",
-            "tool_choice",
-            "response_format",
-            "logprobs",
-            "top_logprobs",
+            "n", "stop", "presence_penalty", "frequency_penalty",
+            "logit_bias", "user", "seed", "tools", "tool_choice",
+            "response_format", "logprobs", "top_logprobs",
         }
         for key, value in kwargs.items():
             if key in allowed_api_params:
@@ -303,9 +300,7 @@ class OpenAICompatibleClientSync:
             except LLMServiceException:
                 raise
             except Exception as exc:
-                logger.error(
-                    f"LLM request failed (Ali pool): model={effective_model}, error={exc}"
-                )
+                logger.error(f"LLM request failed (Ali pool): model={effective_model}, error={exc}")
                 raise LLMServiceException(
                     internal_message=f"API request failed: {str(exc)}",
                     provider=self.default_model,
@@ -342,10 +337,13 @@ class OpenAICompatibleClientSync:
             raise
         except Exception as exc:
             logger.error(
-                f"LLM request failed: model={effective_model}, base_url={client.base_url}, error={exc}"
+                "LLM request failed: model={model}, base_url={base_url}, error_chain={error_chain}",
+                model=effective_model,
+                base_url=client.base_url,
+                error_chain=_summarize_exception_chain(exc),
             )
             raise LLMServiceException(
-                internal_message=f"API request failed: {str(exc)}",
+                internal_message=f"API request failed: {_summarize_exception_chain(exc)}",
                 provider=self.default_model,
                 original_exception=exc,
             ) from exc
@@ -355,9 +353,7 @@ def _parse_retry_after(exc: openai.RateLimitError) -> int:
     """Extract Retry-After seconds from a RateLimitError, with sane bounds."""
     try:
         if hasattr(exc, "response") and exc.response is not None:
-            header_value = exc.response.headers.get(
-                "retry-after"
-            ) or exc.response.headers.get("Retry-After")
+            header_value = exc.response.headers.get("retry-after") or exc.response.headers.get("Retry-After")
             if header_value:
                 return max(1, min(int(header_value), 120))
     except (ValueError, TypeError, AttributeError):

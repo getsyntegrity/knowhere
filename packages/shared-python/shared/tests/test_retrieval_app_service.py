@@ -5,24 +5,61 @@ from types import SimpleNamespace
 
 import pytest
 
+_TEST_ROOT = Path(__file__).resolve().parents[2]
+
 os.environ.setdefault("DS_KEY", "test-key")
 os.environ.setdefault("DS_URL", "https://example.com")
 os.environ.setdefault("S3_BUCKET_NAME", "test-bucket")
 os.environ.setdefault("S3_ACCESS_KEY_ID", "test-access-key")
 os.environ.setdefault("S3_SECRET_ACCESS_KEY", "test-secret-key")
-os.environ.setdefault("S3_TEMP_PATH", "/tmp")
-os.environ.setdefault("USERS_DATA_PATH", "/tmp")
+os.environ.setdefault("S3_TEMP_PATH", str(_TEST_ROOT))
+os.environ.setdefault("USERS_DATA_PATH", str(_TEST_ROOT))
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb"
 )
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
-os.environ.setdefault("TMP_PATH", "/tmp")
-os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
-os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
+os.environ.setdefault("TMP_PATH", str(_TEST_ROOT))
+os.environ.setdefault("FONT_PATH", str(_TEST_ROOT / "shared/tests/.tmp_layout_parser/font.ttf"))
+os.environ.setdefault(
+    "CHROMEDRIVER_PATH", str(_TEST_ROOT / "shared/tests/.tmp_layout_parser/chromedriver")
+)
 
 
 async def _empty_channel(*_args, **_kwargs):
     return []
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_filters_empty_query_before_cache_and_db(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError('empty query should not reach downstream retrieval components')
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fail)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fail)
+    monkeypatch.setattr(app_service, 'path_channel', fail)
+    monkeypatch.setattr(app_service, 'content_channel', fail)
+    monkeypatch.setattr(app_service, 'term_channel', fail)
+    monkeypatch.setattr(app_service, 'list_graph_routed_chunks', fail)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', fail)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='   ',
+        top_k=5,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert result == {
+        'namespace': 'default',
+        'query': '',
+        'router_used': 'empty_query_filtered',
+        'results': [],
+    }
 
 
 @pytest.mark.asyncio
@@ -368,6 +405,145 @@ def test_merge_channels_rrf_applies_plan_scores_and_ranking():
     assert results[0]["score"] == 0.090164
     assert results[1]["score"] == 0.032258
     assert results[2]["score"] == 0.016393
+
+
+def test_rank_candidates_by_path_uses_importance_only_after_evidence_ties():
+    from shared.services.retrieval import app_service
+
+    ranked = app_service._rank_candidates_by_path(
+        discovery_rows=[
+            {
+                'chunk_id': 'chunk_high_evidence',
+                'section_path': 'Guide / A',
+                'discovery_score': 0.9,
+                'importance_norm_score': 0.0,
+            },
+            {
+                'chunk_id': 'chunk_low_importance',
+                'section_path': 'Guide / B',
+                'discovery_score': 0.8,
+                'importance_norm_score': 0.1,
+            },
+            {
+                'chunk_id': 'chunk_high_importance',
+                'section_path': 'Guide / C',
+                'discovery_score': 0.8,
+                'importance_norm_score': 0.9,
+            },
+        ],
+        routed_rows=[],
+        top_k=3,
+    )
+
+    assert [row['chunk_id'] for row in ranked] == [
+        'chunk_high_evidence',
+        'chunk_high_importance',
+        'chunk_low_importance',
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_retrieval_query_reranks_agent_only_path_into_topk(monkeypatch):
+    from shared.services.retrieval import app_service
+
+    discovery_rows = [
+        {
+            'document_id': 'doc_a',
+            'chunk_id': 'chunk_a',
+            'section_id': 'sec_a',
+            'section_path': 'Guide / Alpha',
+            'source_file_name': 'guide-a.md',
+            'chunk_type': 'text',
+            'content': 'alpha',
+            'score': 0.09,
+            'file_path': None,
+        },
+        {
+            'document_id': 'doc_b',
+            'chunk_id': 'chunk_b',
+            'section_id': 'sec_b',
+            'section_path': 'Guide / Beta',
+            'source_file_name': 'guide-b.md',
+            'chunk_type': 'text',
+            'content': 'beta',
+            'score': 0.05,
+            'file_path': None,
+        },
+    ]
+    hydrated_agent_rows = [
+        {
+            'document_id': 'doc_c',
+            'chunk_id': 'chunk_c',
+            'section_id': 'sec_c',
+            'section_path': 'Guide / Gamma',
+            'source_file_name': 'guide-c.md',
+            'chunk_type': 'text',
+            'content': 'gamma',
+            'score': 0.95,
+            'agent_score': 0.95,
+            'file_path': None,
+            'source_chunk_path': 'Guide / Gamma',
+        },
+    ]
+
+    async def fake_get_cached_retrieval_query_result(**_kwargs):
+        return 1, None
+
+    async def fake_set_cached_retrieval_query_result(**_kwargs):
+        return None
+
+    async def fake_count_scoped_chunks(*_args, **_kwargs):
+        return 99
+
+    async def fake_empty_channel(*_args, **_kwargs):
+        return []
+
+    async def fake_content_channel(*_args, **_kwargs):
+        return [dict(row) for row in discovery_rows]
+
+    def fake_merge_channels_rrf(channels, weights, top_k):
+        return [dict(row) for row in discovery_rows[:top_k]]
+
+    async def fake_agent_navigate(*_args, **_kwargs):
+        return [{'path': 'Guide / Gamma', 'confidence': 0.95}]
+
+    async def fake_hydrate_paths_to_rows(*_args, **_kwargs):
+        return [dict(row) for row in hydrated_agent_rows]
+
+    async def fake_load_chunk_importance_scores(*_args, **_kwargs):
+        return {}
+
+    async def fake_assemble_retrieval_results(**kwargs):
+        return kwargs['rows']
+
+    monkeypatch.setattr(app_service, 'get_cached_retrieval_query_result', fake_get_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, 'set_cached_retrieval_query_result', fake_set_cached_retrieval_query_result)
+    monkeypatch.setattr(app_service, '_count_scoped_chunks', fake_count_scoped_chunks)
+    monkeypatch.setattr(app_service, 'path_channel', fake_empty_channel)
+    monkeypatch.setattr(app_service, 'content_channel', fake_content_channel)
+    monkeypatch.setattr(app_service, 'term_channel', fake_empty_channel)
+    monkeypatch.setattr(app_service, 'merge_channels_rrf', fake_merge_channels_rrf)
+    monkeypatch.setattr(app_service, 'create_retrieval_llm_fn', lambda: object())
+    monkeypatch.setattr(app_service, 'agent_navigate', fake_agent_navigate)
+    monkeypatch.setattr(app_service, '_hydrate_paths_to_rows', fake_hydrate_paths_to_rows)
+    monkeypatch.setattr(app_service, '_load_chunk_importance_scores', fake_load_chunk_importance_scores)
+    monkeypatch.setattr(app_service, 'assemble_retrieval_results', fake_assemble_retrieval_results)
+    monkeypatch.setattr(app_service, 'schedule_retrieval_hit_stats_update', lambda **_kwargs: None)
+
+    result = await app_service.run_retrieval_query(
+        db=object(),
+        user_id='user_123',
+        namespace='default',
+        query='welding parameters',
+        top_k=2,
+        exclude_document_ids=[],
+        exclude_sections=[],
+    )
+
+    assert [row['source']['section_path'] for row in result['results']] == [
+        'Guide / Alpha',
+        'Guide / Gamma',
+    ]
 
 
 @pytest.mark.asyncio

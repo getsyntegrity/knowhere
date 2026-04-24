@@ -123,6 +123,7 @@ def test_generate_zip_package_preserves_actual_extension_for_vector_images(tmp_p
     )
 
     chunks = ChunksRedisService(None)._dataframe_to_chunks(df)
+    chunks[0]["metadata"]["document_top_summary"] = "This document includes the following contents:\n- image-16"
 
     zip_file_path, _, _, _ = ZipResultService().generate_zip_package(
         job_id="job-vector-image",
@@ -143,6 +144,9 @@ def test_generate_zip_package_preserves_actual_extension_for_vector_images(tmp_p
 
     assert zip_image_entries == [f"images/{vector_filename}"]
     assert chunk_payload[0]["metadata"]["file_path"] == f"images/{vector_filename}"
+    assert chunk_payload[0]["metadata"]["document_top_summary"] == (
+        "This document includes the following contents:\n- image-16"
+    )
 
 
 def test_collect_image_files_raises_when_declared_image_is_missing(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from shared.utils.text_utils import tokenize2stw_remove
+from shared.utils.text_utils import tokenize_contents_for_retrieval
 
 
 def build_lexical_text(value: str) -> str:
@@ -14,7 +14,7 @@ def build_lexical_text(value: str) -> str:
     if not text:
         return ""
 
-    tokens = tokenize2stw_remove([text], stopwords=[], link_char=" ")
+    tokens = tokenize_contents_for_retrieval([text], stopwords=[], link_char=" ", dedupe=True)
     token_text = tokens[0] if tokens else ""
     lexical_parts = [part for part in [text, token_text] if part]
     return "\n".join(lexical_parts) if lexical_parts else text
@@ -37,21 +37,15 @@ def build_content_lexical_text(chunk: dict[str, Any]) -> Optional[str]:
 
 
 def section_path_from_chunk_path(source_path: Optional[str]) -> str:
+    """Extract section hierarchy from chunk path.
+
+    Expected format: "<kb_root>/<file>.ext/<Section>/<Subsection>/..."
+    Returns " / "-joined section parts, or "Root" if no section hierarchy.
+    """
     if not source_path:
         return "Root"
-
-    # Primary format: "Default_Root/file.md-->Section-->Subsection"
-    # Legacy format:  "Default_Root-->file.md-->Section"
-    if "/" in source_path:
-        _, _, section_tail = source_path.partition("/")
-        # section_tail is "file.md-->Section-->Subsection"; split on "-->" and skip filename
-        arrow_parts = [p.strip() for p in section_tail.split("-->") if p.strip()]
-        section_parts = arrow_parts[1:]  # skip filename
-    else:
-        # Legacy all-arrow format: "Default_Root-->file.md-->Section"
-        arrow_parts = [p.strip() for p in source_path.split("-->") if p.strip()]
-        section_parts = arrow_parts[2:]  # skip root dir and filename
-
+    parts = [p.strip() for p in source_path.split("/") if p.strip()]
+    section_parts = parts[2:]  # skip kb_root + filename
     if not section_parts:
         return "Root"
     return " / ".join(section_parts)
@@ -70,7 +64,7 @@ def build_content_search_text(
     *,
     section_summary: Optional[str] = None,
 ) -> Optional[str]:
-    """Pre-tokenized content field for FTS: content + section summary, jieba space-separated."""
+    """Pre-tokenized content field for retrieval BM25 scoring."""
     content = str(chunk.get("content") or chunk.get("text") or "").strip()
     if not content:
         return None
@@ -78,7 +72,7 @@ def build_content_search_text(
     if section_summary and str(section_summary).strip():
         parts.append(str(section_summary).strip())
     raw = " ".join(parts)
-    tokens = tokenize2stw_remove([raw], stopwords=[], link_char=" ")
+    tokens = tokenize_contents_for_retrieval([raw], stopwords=[], link_char=" ")
     return tokens[0] if tokens else raw
 
 
@@ -89,7 +83,7 @@ def build_path_search_text(
     section_title: Optional[str],
     section_summary: Optional[str],
 ) -> Optional[str]:
-    """Pre-tokenized path field for FTS: filename + path + title + summary, jieba space-separated."""
+    """Pre-tokenized path field for retrieval BM25 scoring."""
     parts = [
         str(v).strip()
         for v in [source_file_name, section_path, section_title, section_summary]
@@ -98,7 +92,7 @@ def build_path_search_text(
     if not parts:
         return None
     raw = " ".join(parts)
-    tokens = tokenize2stw_remove([raw], stopwords=[], link_char=" ")
+    tokens = tokenize_contents_for_retrieval([raw], stopwords=[], link_char=" ")
     return tokens[0] if tokens else raw
 
 

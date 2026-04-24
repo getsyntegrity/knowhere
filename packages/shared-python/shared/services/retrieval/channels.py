@@ -4,10 +4,8 @@ Independent retrieval channels for checkerboard search.
 Each channel queries the full scoped corpus independently and returns
 ranked rows. Channels are fused via RRF in the orchestrator.
 """
-
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from loguru import logger
@@ -15,13 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.services.retrieval.graph_service import is_excluded_section
-from shared.utils.text_utils import tokenize2stw_remove
-
-
-def tokenize_query_for_fts(query: str, stopwords: list[str] | None = None) -> str:
-    """Jieba-tokenize a query string for plainto_tsquery('simple', ...) compatibility."""
-    tokens = tokenize2stw_remove([query], stopwords=stopwords, link_char=" ")
-    return tokens[0] if tokens else query
+from shared.utils.text_utils import tokenize_for_retrieval
 
 
 _SCOPED_CORPUS_CTE = """
@@ -67,7 +59,10 @@ WITH scoped_chunks AS (
 def _build_exclude_clause(exclude_document_ids: list[str]) -> str:
     if not exclude_document_ids:
         return ""
-    return "AND d.document_id NOT IN :excluded_doc_ids"
+    # Use PostgreSQL array ANY() to avoid asyncpg tuple-binding pitfalls with
+    # raw text() + `NOT IN :param` (which asyncpg treats as a record parameter
+    # and fails with a syntax error).
+    return "AND d.document_id <> ALL(:excluded_doc_ids)"
 
 
 def _build_base_params(
@@ -81,7 +76,7 @@ def _build_base_params(
         "namespace": namespace,
     }
     if exclude_document_ids:
-        params["excluded_doc_ids"] = tuple(exclude_document_ids)
+        params["excluded_doc_ids"] = list(exclude_document_ids)
     return params
 
 
@@ -96,24 +91,24 @@ def _build_extra_filters(
     params: dict[str, Any] = {}
 
     if allowed_chunk_types is not None:
-        placeholders = ", ".join(f":_act_{i}" for i in range(len(allowed_chunk_types)))
-        clauses.append(f"AND LOWER(dc.chunk_type) IN ({placeholders})")
+        placeholders = ', '.join(f':_act_{i}' for i in range(len(allowed_chunk_types)))
+        clauses.append(f'AND LOWER(dc.chunk_type) IN ({placeholders})')
         for i, ct in enumerate(sorted(allowed_chunk_types)):
-            params[f"_act_{i}"] = ct
+            params[f'_act_{i}'] = ct
 
     if signal_paths:
         ilike_parts = []
         for i, kw in enumerate(signal_paths):
-            key = f"_sig_{i}"
+            key = f'_sig_{i}'
             ilike_parts.append(f"LOWER(COALESCE(ds.section_path, '')) LIKE :{key}")
-            params[key] = f"%{kw.lower()}%"
-        combined = " OR ".join(ilike_parts)
-        if filter_mode == "keep":
-            clauses.append(f"AND ({combined})")
+            params[key] = f'%{kw.lower()}%'
+        combined = ' OR '.join(ilike_parts)
+        if filter_mode == 'keep':
+            clauses.append(f'AND ({combined})')
         else:
-            clauses.append(f"AND NOT ({combined})")
+            clauses.append(f'AND NOT ({combined})')
 
-    return "\n        ".join(clauses), params
+    return '\n        '.join(clauses), params
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
@@ -127,8 +122,7 @@ def _filter_excluded_sections(
     if not exclude_sections:
         return rows
     return [
-        row
-        for row in rows
+        row for row in rows
         if not is_excluded_section(
             document_id=row.get("document_id"),
             section_path=row.get("section_path"),
@@ -148,25 +142,26 @@ async def path_channel(
     exclude_sections: list[dict[str, str]],
     allowed_chunk_types: set[str] | None = None,
     signal_paths: list[str] | None = None,
-    filter_mode: str = "delete",
+    filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
-    """Path channel: semantic vector similarity on path embeddings.
+    """Path channel: BM25 over pre-tokenized path search text.
 
-    Aligned with KB checkerboard_find() path channel which uses:
-        cos_sim(q_vec, path_vecs) — cosine similarity on path embeddings.
-
-    NOTE: Currently returns [] because embedding index is not yet available.
-    When pgvector infrastructure is ready, this will:
-        1. Embed the query via do_embedding()
-        2. SELECT ... ORDER BY path_embedding <=> :query_vec LIMIT :recall_k
-        3. Optionally combine with BM25 (hybrid=True in KB)
-
-    The RRF merger in app_service automatically skips empty channels,
-    so this has no functional impact on current retrieval quality.
+    This keeps the channel useful when vector search is unavailable. A future
+    vector score can be fused on top of the returned BM25 score.
     """
-    # TODO: Implement vector search when embedding infrastructure is ready
-    # KB reference: find_closest(all_paths, path_vecs, q_vector, internal_recall_k)
-    return []
+    return await _bm25_channel(
+        db,
+        user_id=user_id,
+        namespace=namespace,
+        query=query,
+        top_k=top_k,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+        allowed_chunk_types=allowed_chunk_types,
+        signal_paths=signal_paths,
+        filter_mode=filter_mode,
+        search_field="path_search_text",
+    )
 
 
 async def content_channel(
@@ -180,23 +175,95 @@ async def content_channel(
     exclude_sections: list[dict[str, str]],
     allowed_chunk_types: set[str] | None = None,
     signal_paths: list[str] | None = None,
-    filter_mode: str = "delete",
+    filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
-    """Content channel: FTS recall on content_search_tsv, then BM25 re-rank in Python.
+    """Content channel: BM25 over pre-tokenized content search text."""
+    return await _bm25_channel(
+        db,
+        user_id=user_id,
+        namespace=namespace,
+        query=query,
+        top_k=top_k,
+        exclude_document_ids=exclude_document_ids,
+        exclude_sections=exclude_sections,
+        allowed_chunk_types=allowed_chunk_types,
+        signal_paths=signal_paths,
+        filter_mode=filter_mode,
+        search_field="content_search_text",
+    )
 
-    Aligned with KB checkerboard_find() content channel which uses:
-        cos_sim(q_vec, content_vecs) + BM25 hybrid scoring.
-    API uses FTS recall (keyword match) + BM25 re-rank as an interim
-    approximation until vector search is available.
 
-    Note: top_k is already effective_recall_k from app_service (= final_topk * 2),
-    matching KB's internal_recall_k = 12 when final_topk = 6.
-    """
-    tokenized_query = tokenize_query_for_fts(query)
-    if not tokenized_query.strip():
+def _tokenize_query(query: str) -> list[str]:
+    return tokenize_for_retrieval(query, dedupe=True)
+
+
+def _bm25_rerank(
+    rows: list[dict[str, Any]],
+    query_tokens: list[str],
+    *,
+    search_field: str,
+) -> list[dict[str, Any]]:
+    """Rank matching rows with BM25 over pre-tokenized search text."""
+    try:
+        from rank_bm25 import BM25Okapi
+    except ImportError:
+        logger.warning("rank_bm25 not installed, skipping BM25 re-rank")
+        ranked_rows: list[dict[str, Any]] = []
+        query_token_set = set(query_tokens)
+        for row in rows:
+            tokens = [token for token in str(row.get(search_field) or "").split() if token]
+            overlap = len(query_token_set.intersection(tokens))
+            if overlap <= 0:
+                continue
+            row["score"] = float(overlap)
+            ranked_rows.append(row)
+        ranked_rows.sort(key=lambda r: r["score"], reverse=True)
+        return ranked_rows
+
+    corpus: list[list[str]] = []
+    ranked_rows: list[dict[str, Any]] = []
+    query_token_set = set(query_tokens)
+    for row in rows:
+        tokens = [token for token in str(row.get(search_field) or "").split() if token]
+        if not tokens or not query_token_set.intersection(tokens):
+            continue
+        corpus.append(tokens)
+        ranked_rows.append(row)
+
+    if not corpus or not query_tokens:
         return []
 
-    recall_k = top_k  # Already effective_recall_k from app_service (aligned with KB)
+    bm25 = BM25Okapi(corpus)
+    scores = bm25.get_scores(query_tokens)
+
+    for i, row in enumerate(ranked_rows):
+        row["score"] = float(scores[i])
+
+    ranked_rows.sort(key=lambda r: r["score"], reverse=True)
+    return ranked_rows
+
+
+async def _bm25_channel(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    query: str,
+    top_k: int,
+    exclude_document_ids: list[str],
+    exclude_sections: list[dict[str, str]],
+    allowed_chunk_types: set[str] | None,
+    signal_paths: list[str] | None,
+    filter_mode: str,
+    search_field: str,
+) -> list[dict[str, Any]]:
+    if search_field not in {"content_search_text", "path_search_text"}:
+        raise ValueError(f"Unsupported search_field: {search_field}")
+
+    query_tokens = _tokenize_query(query)
+    if not query_tokens:
+        return []
+
     exclude_clause = _build_exclude_clause(exclude_document_ids)
     extra_sql, extra_params = _build_extra_filters(
         allowed_chunk_types=allowed_chunk_types,
@@ -209,63 +276,19 @@ async def content_channel(
         exclude_document_ids=exclude_document_ids,
     )
     params.update(extra_params)
-    params["tokenized_query"] = tokenized_query
-    params["recall_k"] = recall_k
 
-    sql = (
-        _SCOPED_CORPUS_CTE.format(
-            exclude_clause=exclude_clause, extra_filters=extra_sql
-        )
-        + """
-    SELECT
-        sc.*,
-        ts_rank(sc.content_search_tsv, plainto_tsquery('simple', :tokenized_query)) AS rank_score
+    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + f"""
+    SELECT sc.*
     FROM scoped_chunks sc
-    WHERE sc.content_search_tsv @@ plainto_tsquery('simple', :tokenized_query)
-    ORDER BY rank_score DESC
-    LIMIT :recall_k
+    WHERE COALESCE(sc.{search_field}, '') <> ''
     """
-    )
 
     result = await db.execute(text(sql), params)
     rows = [_row_to_dict(r) for r in result.all()]
     rows = _filter_excluded_sections(rows, exclude_sections)
 
-    if not rows:
-        return []
-
-    rows = _bm25_rerank(rows, tokenized_query)
-    return rows
-
-
-def _bm25_rerank(
-    rows: list[dict[str, Any]], tokenized_query: str
-) -> list[dict[str, Any]]:
-    """Re-rank FTS recall set using BM25Okapi over pre-tokenized content_search_text."""
-    try:
-        from rank_bm25 import BM25Okapi
-    except ImportError:
-        logger.warning("rank_bm25 not installed, skipping BM25 re-rank")
-        for row in rows:
-            row["score"] = row.get("rank_score", 0.0)
-        return rows
-
-    corpus = [(row.get("content_search_text") or "").split() for row in rows]
-    query_tokens = tokenized_query.split()
-
-    if not corpus or not query_tokens:
-        for row in rows:
-            row["score"] = row.get("rank_score", 0.0)
-        return rows
-
-    bm25 = BM25Okapi(corpus)
-    scores = bm25.get_scores(query_tokens)
-
-    for i, row in enumerate(rows):
-        row["score"] = float(scores[i])
-
-    rows.sort(key=lambda r: r["score"], reverse=True)
-    return rows
+    ranked_rows = _bm25_rerank(rows, query_tokens, search_field=search_field)
+    return ranked_rows[:top_k]
 
 
 async def term_channel(
@@ -279,7 +302,7 @@ async def term_channel(
     exclude_sections: list[dict[str, str]],
     allowed_chunk_types: set[str] | None = None,
     signal_paths: list[str] | None = None,
-    filter_mode: str = "delete",
+    filter_mode: str = 'delete',
 ) -> list[dict[str, Any]]:
     """Term/grep channel: substring matching on term_search_text.
 
@@ -289,13 +312,8 @@ async def term_channel(
     Note: top_k is already effective_recall_k from app_service.
     """
     query_lower = query.lower().strip()
-    if not query_lower:
-        return []
-
-    units = re.findall(r"[一-鿿]+|[a-zA-Z0-9]+", query_lower)
-    units = [u for u in units if len(u) > 1]
-
-    if not units and not query_lower:
+    query_tokens = _tokenize_query(query)
+    if not query_lower or not query_tokens:
         return []
 
     exclude_clause = _build_exclude_clause(exclude_document_ids)
@@ -312,7 +330,7 @@ async def term_channel(
     params.update(extra_params)
 
     ilike_conditions = []
-    for i, unit in enumerate(units):
+    for i, unit in enumerate(query_tokens):
         param_key = f"unit_{i}"
         ilike_conditions.append(f"LOWER(sc.term_search_text) LIKE :{param_key}")
         params[param_key] = f"%{unit}%"
@@ -322,21 +340,12 @@ async def term_channel(
         params["full_query"] = f"%{query_lower}%"
 
     where_clause = " OR ".join(ilike_conditions)
-    recall_k = top_k  # Already effective_recall_k from app_service (aligned with KB)
-    params["recall_k"] = recall_k
-
-    sql = (
-        _SCOPED_CORPUS_CTE.format(
-            exclude_clause=exclude_clause, extra_filters=extra_sql
-        )
-        + f"""
+    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + f"""
     SELECT sc.*
     FROM scoped_chunks sc
     WHERE sc.term_search_text IS NOT NULL
         AND ({where_clause})
-    LIMIT :recall_k
     """
-    )
 
     result = await db.execute(text(sql), params)
     rows = [_row_to_dict(r) for r in result.all()]
@@ -348,11 +357,11 @@ async def term_channel(
         if query_lower in haystack:
             row["score"] = 100.0
             scored.append(row)
-        elif units:
-            hit_count = sum(1 for u in units if u in haystack)
+        else:
+            hit_count = sum(1 for u in query_tokens if u in haystack)
             if hit_count > 0:
                 row["score"] = float(hit_count)
                 scored.append(row)
 
     scored.sort(key=lambda r: r["score"], reverse=True)
-    return scored
+    return scored[:top_k]

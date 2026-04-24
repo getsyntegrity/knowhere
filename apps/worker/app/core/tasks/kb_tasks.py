@@ -63,6 +63,10 @@ from shared.services.redis.redis_sync_service import (
 )
 from shared.services.storage.result_storage import get_result_storage
 from shared.services.storage.zip_result_service import ZipResultService
+from app.services.connect_builder.summary_builder import (
+    ensure_hierarchy_json,
+    load_navigation_top_summary,
+)
 
 # Get Celery application
 celery_app = get_celery_app()
@@ -578,6 +582,22 @@ def _parse(job_id: str, user_id: str | None):
             ) or JobMetadataHelper.get_field(job_metadata, "source_url")
             if isinstance(source_file_name, str) and "/" in source_file_name:
                 source_file_name = os.path.basename(source_file_name)
+
+            document_top_summary = ""
+            if add_dir and source_file_name:
+                if add_contents_df is not None and "path" in add_contents_df.columns:
+                    ensure_hierarchy_json(
+                        str(add_dir),
+                        add_contents_df["path"].dropna().astype(str).tolist(),
+                    )
+                document_top_summary = load_navigation_top_summary(str(add_dir), str(source_file_name))
+            if document_top_summary:
+                for chunk in chunks:
+                    metadata = chunk.get("metadata")
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                        chunk["metadata"] = metadata
+                    metadata["document_top_summary"] = document_top_summary
 
             data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 

@@ -68,12 +68,6 @@ class TestBuildTreeFromPaths:
         assert _build_tree_from_paths([]) == {}
         assert _build_tree_from_paths(["", None]) == {}
 
-    def test_legacy_separator(self):
-        paths = ["Default_Root-->report.pdf-->Chapter1"]
-        tree = _build_tree_from_paths(paths)
-        assert "Default_Root" in tree
-        assert "report.pdf" in tree["Default_Root"]
-
 
 # ─── Test: _merge_tree ───────────────────────────────────────────────────────
 

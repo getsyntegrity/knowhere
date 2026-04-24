@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -585,10 +586,121 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
     )
     assert "chunks_job_id" not in lifecycle_service.success_calls[0]
 
+def test_parse_builds_hierarchy_and_injects_document_top_summary(monkeypatch, tmp_path):
+    redis_service = MagicMock()
+    job = type("JobRow", (), {"billing_status": "charged"})()
+    metadata_service = _FakeSuccessMetadataService(redis_service)
+    lifecycle_service = _FakeLifecycleService()
+    captured = {}
 
-def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact_refs(
-    monkeypatch, tmp_path
-):
+    class _SummaryChunksRedisService:
+        def __init__(self, redis_service):
+            self.redis_service = redis_service
+
+        def dataframe_to_chunks(self, dataframe: pd.DataFrame):
+            return [
+                {
+                    "chunk_id": "chunk-1",
+                    "type": "text",
+                    "path": "Default_Root/test.pdf/公司研究/自主可控加强，寒武纪或迎来营收快速放量周期",
+                    "content": "chunk-1",
+                    "metadata": {},
+                },
+                {
+                    "chunk_id": "chunk-2",
+                    "type": "text",
+                    "path": "Default_Root/test.pdf/相关研报/要点",
+                    "content": "chunk-2",
+                    "metadata": {},
+                },
+            ]
+
+    def fake_checkerboard_inject_parse(**kwargs):
+        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "full.md").write_text("body", encoding="utf-8")
+        return str(output_dir), pd.DataFrame(
+            [
+                {
+                    "content": "chunk-1",
+                    "path": "Default_Root/test.pdf/公司研究/自主可控加强，寒武纪或迎来营收快速放量周期",
+                    "type": "text",
+                    "length": 7,
+                    "keywords": "",
+                    "summary": "",
+                    "know_id": "kid-1",
+                    "tokens": "",
+                    "connectto": "",
+                    "addtime": "now",
+                    "page_nums": "1",
+                },
+                {
+                    "content": "chunk-2",
+                    "path": "Default_Root/test.pdf/相关研报/要点",
+                    "type": "text",
+                    "length": 7,
+                    "keywords": "",
+                    "summary": "",
+                    "know_id": "kid-2",
+                    "tokens": "",
+                    "connectto": "",
+                    "addtime": "now",
+                    "page_nums": "2",
+                },
+            ]
+        )
+
+    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+        source_path = Path(temp_dir) / f"downloaded{file_ext}"
+        source_path.write_bytes(b"pdf")
+        return str(source_path)
+
+    def fake_generate_zip_package(self, **kwargs):
+        hierarchy_path = Path(kwargs["add_dir"]) / "hierarchy.json"
+        assert hierarchy_path.exists()
+        hierarchy = json.loads(hierarchy_path.read_text(encoding="utf-8"))
+        assert "Default_Root" in hierarchy
+        chunk_meta = kwargs["chunks"][0]["metadata"]
+        captured["document_top_summary"] = chunk_meta.get("document_top_summary")
+        zip_path = Path(kwargs["temp_dir"]) / "result.zip"
+        zip_path.write_bytes(b"zip")
+        return str(zip_path), {"value": "checksum"}, {"total_chunks": 2}, 3
+
+    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks.SyncRedisServiceFactory,
+        "get_service",
+        staticmethod(lambda: redis_service),
+    )
+    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
+    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _SummaryChunksRedisService)
+    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
+    monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
+    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
+    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
+    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
+    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+    monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
+    monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: _FakeResultStorage())
+
+    kb_tasks._parse("job_123", "user_123")
+
+    expected = (
+        "This document includes the following contents:\n"
+        "- 公司研究\n"
+        "  - 自主可控加强，寒武纪或迎来营收快速放量周期\n"
+        "- 相关研报\n"
+        "  - 要点"
+    )
+    assert captured["document_top_summary"] == expected
+    assert lifecycle_service.success_calls[0]["chunks"][0]["metadata"]["document_top_summary"] == expected
+
+
+def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact_refs(monkeypatch, tmp_path):
     redis_service = MagicMock()
     job = type("JobRow", (), {"billing_status": "charged"})()
     metadata_service = _FakeSuccessMetadataService(redis_service)
