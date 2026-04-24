@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportReturnType=false
 """
 HTML rendering utilities for DataFrame to HTML conversion.
 

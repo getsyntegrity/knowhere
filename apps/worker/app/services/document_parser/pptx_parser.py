@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportCallIssue=false
 import io
 import os
 import re

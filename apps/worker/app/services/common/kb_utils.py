@@ -123,6 +123,8 @@ def merge_df(input_df):
 def process_path_texts(path_, last=50):
     """Normalize path text for downstream use."""
     temp_path = path_handle(path_, mode="sanitize")
+    if temp_path is None:
+        return ""
     return "_".join(temp_path.split(os.sep))[:last]
 
 
@@ -336,6 +338,11 @@ def detect_primary_lang(text: str) -> str:
         return "en"
     cn_count = sum(1 for t in tokens if _CN_CHAR_RE.fullmatch(t))
     return "zh" if (cn_count / len(tokens)) >= CN_RATIO_THRESHOLD else "en"
+
+
+def count_cn_en(text: str) -> int:
+    """Count semantic Chinese/English/number tokens in a string."""
+    return len(_CN_EN_NUM_RE.findall(str(text)))
 
 
 def truncate_text_by_tokens(

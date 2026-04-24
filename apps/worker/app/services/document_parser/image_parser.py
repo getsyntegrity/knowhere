@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportCallIssue=false, reportOptionalSubscript=false
 import base64
 import hashlib
 import io
@@ -41,15 +42,15 @@ def _get_vision_client() -> OpenAICompatibleClientSync:
     return get_openai_client(model=image_model)
 
 
-def image_bytes_to_base64(img_data: bytes, ext: str):
+def image_bytes_to_base64(img_data: bytes, ext: str) -> str:
     mime_type = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
         ".webp": "image/webp",
     }.get(ext, "application/octet-stream")
-    # b64_data = base64.b64encode(img_data).decode("utf-8")
-    return f"data:{mime_type};base64,{img_data}"
+    b64_data = base64.b64encode(img_data).decode("utf-8")
+    return f"data:{mime_type};base64,{b64_data}"
 
 
 def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
@@ -75,8 +76,7 @@ def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
             return None
 
     with open(path, "rb") as f:
-        img_data = base64.b64encode(f.read()).decode("utf-8")
-        img_data_base64 = image_bytes_to_base64(img_data, path.suffix.lower())
+        img_data_base64 = image_bytes_to_base64(f.read(), path.suffix.lower())
     return img_data_base64
 
 

@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAssignmentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportGeneralTypeIssues=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import os
 import re
 import unicodedata

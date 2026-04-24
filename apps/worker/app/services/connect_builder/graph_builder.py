@@ -541,45 +541,43 @@ def _aggregate_file_level_edges(
     if chunk_paths is None:
         chunk_paths = {}
 
-    pair_data: Dict[Tuple[str, str], Dict] = {}
+    pair_data: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
     for edge in chunk_edges:
-        src_id = edge.get("source", "")
-        tgt_id = edge.get("target", "")
+        src_id = str(edge.get("source", "") or "")
+        tgt_id = str(edge.get("target", "") or "")
         sf = chunk_to_file.get(src_id, "")
         tf = chunk_to_file.get(tgt_id, "")
         if not sf or not tf or sf == tf:
             continue
-        pk = tuple(sorted([sf, tf]))
-        if pk not in pair_data:
-            pair_data[pk] = {"connections": []}
-        # Extract readable chunk name from path's last segment
-        src_path = chunk_paths.get(src_id, src_id)
-        tgt_path = chunk_paths.get(tgt_id, tgt_id)
+        src_path = chunk_paths.get(src_id) or src_id
+        tgt_path = chunk_paths.get(tgt_id) or tgt_id
         src_name = src_path.rsplit("/", 1)[-1] if "/" in src_path else src_path
         tgt_name = tgt_path.rsplit("/", 1)[-1] if "/" in tgt_path else tgt_path
-        # Ensure source_chunk is from the first file in sorted pair
-        if chunk_to_file.get(src_id) == pk[0]:
-            pair_data[pk]["connections"].append(
-                {
-                    "source_chunk": src_name,
-                    "source_id": src_id,
-                    "target_chunk": tgt_name,
-                    "target_id": tgt_id,
-                    "relation": edge.get("relation", "related"),
-                    "score": edge.get("score", 0),
-                }
-            )
+
+        if sf <= tf:
+            pk: Tuple[str, str] = (sf, tf)
+            connection = {
+                "source_chunk": src_name,
+                "source_id": src_id,
+                "target_chunk": tgt_name,
+                "target_id": tgt_id,
+                "relation": edge.get("relation", "related"),
+                "score": edge.get("score", 0),
+            }
         else:
-            pair_data[pk]["connections"].append(
-                {
-                    "source_chunk": tgt_name,
-                    "source_id": tgt_id,
-                    "target_chunk": src_name,
-                    "target_id": src_id,
-                    "relation": edge.get("relation", "related"),
-                    "score": edge.get("score", 0),
-                }
-            )
+            pk = (tf, sf)
+            connection = {
+                "source_chunk": tgt_name,
+                "source_id": tgt_id,
+                "target_chunk": src_name,
+                "target_id": src_id,
+                "relation": edge.get("relation", "related"),
+                "score": edge.get("score", 0),
+            }
+
+        if pk not in pair_data:
+            pair_data[pk] = {"connections": []}
+        pair_data[pk]["connections"].append(connection)
 
     file_edges = []
     for (f1, f2), data in pair_data.items():
@@ -1221,7 +1219,7 @@ def build_and_deploy(
         existing_chunks = []
 
     # ── Deploy parsed output (images, tables, hierarchy, etc.) ──
-    if parsed_output_dir and os.path.isdir(parsed_output_dir):
+    if parsed_output_dir and os.path.isdir(parsed_output_dir) and source_file is not None:
         deploy_target = os.path.join(kb_dir, source_file)
 
         # Skip copy if parsed output is already in the target location

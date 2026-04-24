@@ -6,16 +6,18 @@ that needs to be injected into the knowledge base without requiring a physical f
 """
 
 import os
+from typing import Any, Optional
 
 from app.services.document_parser.md_parser import parse_md
 from loguru import logger
+from openai.types.chat import ChatCompletionMessageParam
 
 from shared.core.config import settings
 from shared.utils.file_utils import path_handle
 from shared.utils.OpenAICompatibleClientSync import get_openai_client
 
 
-def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
+def generate_fragment_title(content: str, max_tokens: int = 30) -> Optional[str]:
     """
     Generate a concise title for fragment content using AI.
 
@@ -32,8 +34,11 @@ def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
             "Return ONLY the title, no quotes or explanation:\n\n"
             f"{content[:500]}"
         )
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "user", "content": title_prompt}
+        ]
         generated_title = get_openai_client().chat_completion(
-            messages=[{"role": "user", "content": title_prompt}],
+            messages=messages,
             max_tokens=max_tokens,
             timeout=30,
         )
@@ -47,10 +52,10 @@ def generate_fragment_title(content: str, max_tokens: int = 30) -> str:
 
 def parse_fragment(
     fragment_content: str,
-    filename: str = None,
-    output_dir: str = None,
+    filename: Optional[str] = None,
+    output_dir: Optional[str] = None,
     kb_dir: str = "Default_Root",
-    base_llm_paras: dict = None,
+    base_llm_paras: Optional[dict[str, Any]] = None,
     **kwargs,
 ):
     """
@@ -67,14 +72,21 @@ def parse_fragment(
         tuple: (full_output_dir, relative_root, parsed_df)
     """
     split_char = settings.SPLIT_CHAR or "/"
+    if output_dir is None:
+        raise ValueError("output_dir is required for fragment parsing")
 
     # Generate filename if not provided or is just ".fragment"
     if not filename or filename.lower() in [".fragment", "fragment", ""]:
         generated_title = generate_fragment_title(fragment_content)
         if generated_title:
-            filename = path_handle(generated_title, mode="clean_single") + ".fragment"
+            cleaned_title = path_handle(generated_title, mode="clean_single")
+            if isinstance(cleaned_title, str) and cleaned_title:
+                filename = f"{cleaned_title}.fragment"
+            else:
+                filename = f"fragment_{os.urandom(4).hex()}.fragment"
         else:
             filename = f"fragment_{os.urandom(4).hex()}.fragment"
+    assert filename is not None
 
     logger.debug(f"Fragment filename: {filename}")
 
@@ -82,7 +94,10 @@ def parse_fragment(
     kb_dir_parts = kb_dir.split(split_char)
     relative_root = "/".join(kb_dir_parts + [filename])
     full_output_dir = os.path.join(output_dir, relative_root.replace("/", os.sep))
-    full_output_dir = path_handle(full_output_dir, mode="sanitize")
+    sanitized_output_dir = path_handle(full_output_dir, mode="sanitize")
+    if not isinstance(sanitized_output_dir, str):
+        raise ValueError("sanitized fragment output path must be a string")
+    full_output_dir = sanitized_output_dir
     os.makedirs(full_output_dir, exist_ok=True)
 
     logger.debug(f"Fragment relative_root: {relative_root}")
@@ -94,7 +109,7 @@ def parse_fragment(
         full_output_dir,
         source_type="md",
         md_lines=txt_lines,
-        base_llm_paras=base_llm_paras,
+        base_llm_paras=base_llm_paras or {},
         relative_root=relative_root,
     )
 

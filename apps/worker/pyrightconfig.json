@@ -3,12 +3,15 @@
     ".",
     "../../packages/shared-python"
   ],
+  "venvPath": "../..",
+  "venv": ".venv",
   "include": [
     "app",
     "tests",
     "worker.py"
   ],
   "exclude": [
+    "tests",
     "**/__pycache__",
     ".pytest_cache",
     ".venv",

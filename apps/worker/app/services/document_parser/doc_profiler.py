@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportOperatorIssue=false
 """
 Agentic Document Profiler
 

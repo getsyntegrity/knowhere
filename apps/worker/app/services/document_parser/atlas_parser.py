@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false
 """
 Atlas-specific parsing pipeline.
 

@@ -18,6 +18,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from openai.types.chat import ChatCompletionMessageParam
 
 from shared.utils.chunk_refs import CHUNK_REF_PATTERN, REFERENCE_LABEL_PATTERN
 
@@ -64,7 +65,7 @@ def _llm_summarize(snippets_text: str, node_name: str) -> str:
                 "lang": detected_lang,
             },
         )
-        messages = [
+        messages: List[ChatCompletionMessageParam] = [
             {"role": "system", "content": "you are a helpful assistant"},
             {"role": "user", "content": prompt},
         ]

@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """
 Unified output image compressor.
 

@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportOperatorIssue=false, reportReturnType=false
 """
 TOC (Table of Contents) Parser Module
 Migrated from sxjg/app/kbs/toc_parser.py

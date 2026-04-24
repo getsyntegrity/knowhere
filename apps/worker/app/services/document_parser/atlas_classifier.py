@@ -19,6 +19,12 @@ from typing import Optional
 
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 from loguru import logger
+from openai.types.chat import (
+    ChatCompletionContentPartImageParam,
+    ChatCompletionContentPartParam,
+    ChatCompletionContentPartTextParam,
+    ChatCompletionMessageParam,
+)
 
 # ── Prompt ──────────────────────────────────────────────────────────────────
 _ATLAS_JUDGE_PROMPT = """You are a document classification expert. Please observe the following PDF page screenshots and determine whether the document is an engineering atlas (drawing collection).
@@ -101,11 +107,23 @@ def _call_vlm(image_data_urls: list[str]) -> bool:
     model = settings.IMAGE_MODEL or "qwen-vl-plus"
     client = get_openai_client(model=model)
 
-    content: list[dict] = [{"type": "text", "text": _ATLAS_JUDGE_PROMPT}]
+    content: list[ChatCompletionContentPartParam] = [
+        ChatCompletionContentPartTextParam(
+            type="text",
+            text=_ATLAS_JUDGE_PROMPT,
+        )
+    ]
     for url in image_data_urls:
-        content.append({"type": "image_url", "image_url": {"url": url}})
+        content.append(
+            ChatCompletionContentPartImageParam(
+                type="image_url",
+                image_url={"url": url},
+            )
+        )
 
-    messages = [{"role": "user", "content": content}]
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "user", "content": content}
+    ]
     resp: str = client.chat_completion(
         messages=messages,
         model=model,

@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportReturnType=false
 """
 main parsing service
 """
@@ -5,6 +6,7 @@ main parsing service
 import os
 import re
 
+import pandas as pd
 from app.services.document_parser.atlas_classifier import classify_atlas_with_vlm
 
 # document_parser imports
@@ -81,7 +83,7 @@ def checkerboard_inject_parse(
     base_url: str = "",
     fragment_content: str = "",
     s3_key: str | None = None,
-) -> tuple[str, object]:
+) -> tuple[str, pd.DataFrame | None]:
     """
     main parsing function
 

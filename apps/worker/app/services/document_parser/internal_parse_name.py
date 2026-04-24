@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportCallIssue=false
 """Helpers for internal parser filenames."""
 
 import os

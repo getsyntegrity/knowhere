@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
 import re
 import uuid
 

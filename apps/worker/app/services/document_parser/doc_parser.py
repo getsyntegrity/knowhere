@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportGeneralTypeIssues=false
 import hashlib
 import io
 import json

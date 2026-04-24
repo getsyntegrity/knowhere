@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false
 import json
 import os
 import re

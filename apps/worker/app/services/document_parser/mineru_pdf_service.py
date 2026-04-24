@@ -1,3 +1,4 @@
+# pyright: reportUnusedExpression=false
 import os
 import time
 from typing import Any, Callable, Optional

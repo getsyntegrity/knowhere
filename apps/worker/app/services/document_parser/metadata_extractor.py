@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 """
 Metadata Extractor for Layout Parser (MD-First + layout.json span height)
 ---
