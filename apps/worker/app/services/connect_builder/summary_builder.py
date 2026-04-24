@@ -23,9 +23,10 @@ from loguru import logger
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-# Summary output max length (≤100 chars)
+# Summary output max length for recursive LLM aggregation (≤100 chars per node)
 SUMMARY_MAX_LEN = 100
-NAVIGATION_TOP_SUMMARY_MAX_LEN = 200
+# Navigation top-summary budget measured in semantic tokens (count_cn_en)
+NAVIGATION_TOP_SUMMARY_MAX_TOKENS = 200
 # TODO: revisit this cap after we collect more real-world prompt/token budget data.
 NON_LLM_TOP_SUMMARY_MAX_SECTIONS = 20
 NON_LLM_TOP_SUMMARY_MAX_DEPTH = 2
@@ -35,6 +36,9 @@ SUMMARY_KEY = "_summary"
 
 # Keys in hierarchy.json that are not content tree nodes
 RESERVED_KEYS = {"images", "tables", SUMMARY_KEY}
+_TREE_EXCLUDED_TITLES = {"root", "images", "tables"}
+_TREE_TITLE_MAX_TOKENS_START = 20
+_TREE_TITLE_MAX_TOKENS_END = 5
 _TITLE_ENUM_PREFIXES = (
     "this section covers:",
     "this section includes",
@@ -111,65 +115,49 @@ def _looks_like_title_enum(text: str) -> bool:
     return any(normalized.startswith(prefix) for prefix in _TITLE_ENUM_PREFIXES)
 
 
-def _split_sentences(text: str) -> List[str]:
-    normalized = _normalize_whitespace(text)
+def _truncate_navigation_summary(text: str, max_tokens: int = NAVIGATION_TOP_SUMMARY_MAX_TOKENS) -> str:
+    """Truncate navigation summary while preserving multiline tree structure.
+
+    Budget is measured in semantic tokens via ``count_cn_en`` (1 Chinese
+    char = 1 token, 1 English word = 1 token) so the limit is
+    language-fair.  For multiline tree previews, truncation removes
+    trailing branches.  For single-line LLM summaries, the first
+    sentence is kept; if still too long, ``truncate_text_by_tokens``
+    is used (same middle-ellipsis strategy as layout_parser headings).
+    """
+    from shared.utils.text_utils import count_cn_en
+    from app.services.common.kb_utils import truncate_text_by_tokens
+
+    normalized = _normalize_multiline_text(text)
     if not normalized:
-        return []
-    parts = re.split(r'(?<=[。！？；.!?;])\s+', normalized)
-    return [part.strip() for part in parts if part and part.strip()]
-
-
-def _split_soft_segments(text: str) -> List[str]:
-    normalized = _normalize_whitespace(text)
-    if not normalized:
-        return []
-    parts = re.split(r'(?<=[，、,：:/])\s*', normalized)
-    return [part.strip() for part in parts if part and part.strip()]
-
-
-def _truncate_navigation_summary(text: str, max_len: int = NAVIGATION_TOP_SUMMARY_MAX_LEN) -> str:
-    normalized_multiline = _normalize_multiline_text(text)
-    if not normalized_multiline:
         return ""
-    if len(normalized_multiline) <= max_len:
-        return normalized_multiline
+    if count_cn_en(normalized) <= max_tokens:
+        return normalized
 
-    normalized = _normalize_whitespace(normalized_multiline)
-
-    sentences = _split_sentences(normalized)
-    if sentences:
-        first_sentence = sentences[0]
-        if len(first_sentence) > max_len:
-            return first_sentence
-
+    # Multiline content (tree preview) — truncate by keeping lines
+    lines = normalized.split('\n')
+    if len(lines) > 1:
         kept: List[str] = []
-        current_len = 0
-        for sentence in sentences:
-            sentence_len = len(sentence) + (1 if kept else 0)
-            if kept and current_len + sentence_len > max_len:
+        current_tokens = 0
+        for line in lines:
+            line_tokens = count_cn_en(line)
+            if kept and current_tokens + line_tokens > max_tokens:
                 break
-            kept.append(sentence)
-            current_len += sentence_len
+            kept.append(line)
+            current_tokens += line_tokens
         if kept:
-            return " ".join(kept)
+            return '\n'.join(kept)
 
-    segments = _split_soft_segments(normalized)
-    if segments:
-        first_segment = segments[0]
-        if len(first_segment) > max_len:
-            return first_segment[:max_len].rstrip() + "..."
-        kept = []
-        current_len = 0
-        for segment in segments:
-            segment_len = len(segment) + (1 if kept else 0)
-            if kept and current_len + segment_len > max_len:
-                break
-            kept.append(segment)
-            current_len += segment_len
-        if kept:
-            return " ".join(kept)
+    # Single-line content (LLM summary) — keep first sentence
+    flat = _normalize_whitespace(normalized)
+    sentences = re.split(r'(?<=[。！？；.!?;])\s+', flat)
+    if sentences and sentences[0]:
+        first = sentences[0]
+        if count_cn_en(first) <= max_tokens:
+            return first
 
-    return normalized[:max_len].rstrip() + "..."
+    # Absolute fallback: token-aware truncation with middle '...'
+    return truncate_text_by_tokens(flat, max_tokens, 0, lang_aware=False)
 
 
 def _dedupe_summary_blocks(items: List[str]) -> List[str]:
@@ -238,12 +226,33 @@ def ensure_hierarchy_json(
     return hierarchy_path
 
 
+def _truncate_tree_title(title: str) -> str:
+    """Truncate an individual section title for tree preview display.
+
+    Uses the same token-aware truncation as layout_parser headings:
+    keeps start and end tokens with '...' in the middle.
+    """
+    from app.services.common.kb_utils import truncate_text_by_tokens
+
+    return truncate_text_by_tokens(
+        title,
+        _TREE_TITLE_MAX_TOKENS_START,
+        _TREE_TITLE_MAX_TOKENS_END,
+        lang_aware=True,
+    )
+
+
 def _build_section_tree_preview(
     document_tree: Dict[str, Any],
     *,
     max_depth: int = NON_LLM_TOP_SUMMARY_MAX_DEPTH,
     max_items: int = NON_LLM_TOP_SUMMARY_MAX_SECTIONS,
 ) -> str:
+    """BFS-based compact section tree preview.
+
+    Excludes system placeholder nodes (Root, images, tables) and
+    truncates individual long titles using token-aware heading truncation.
+    """
     selected_paths: set[tuple[str, ...]] = set()
     queue = deque()
     collected = 0
@@ -251,12 +260,14 @@ def _build_section_tree_preview(
     for key, subtree in document_tree.items():
         if key in RESERVED_KEYS or not isinstance(subtree, dict):
             continue
-        queue.append(((key,), key, subtree, 1))
+        normalized = _normalize_whitespace(key)
+        if not normalized or normalized.lower() in _TREE_EXCLUDED_TITLES:
+            continue
+        queue.append(((normalized,), normalized, subtree, 1))
 
     while queue and collected < max_items:
         path, title, subtree, depth = queue.popleft()
-        normalized = _normalize_whitespace(title)
-        if normalized:
+        if title:
             selected_paths.add(path)
             collected += 1
 
@@ -266,7 +277,7 @@ def _build_section_tree_preview(
             if child_key in RESERVED_KEYS or not isinstance(child_subtree, dict):
                 continue
             child_title = _normalize_whitespace(child_key)
-            if not child_title:
+            if not child_title or child_title.lower() in _TREE_EXCLUDED_TITLES:
                 continue
             queue.append((path + (child_title,), child_title, child_subtree, depth + 1))
 
@@ -279,13 +290,14 @@ def _build_section_tree_preview(
             if key in RESERVED_KEYS or not isinstance(child_subtree, dict):
                 continue
             title = _normalize_whitespace(key)
-            if not title:
+            if not title or title.lower() in _TREE_EXCLUDED_TITLES:
                 continue
             current_path = path_prefix + (title,)
             if current_path not in selected_paths:
                 continue
             indent = "  " * (depth - 1)
-            lines.append(f"{indent}- {title}")
+            display_title = _truncate_tree_title(title)
+            lines.append(f"{indent}- {display_title}")
             _render(child_subtree, depth + 1, current_path)
 
     _render(document_tree, 1, ())
@@ -295,11 +307,10 @@ def _build_section_tree_preview(
 def _build_navigation_top_summary(hierarchy: Dict[str, Any], file_name: str) -> str:
     """Build the navigation-facing top summary from enriched hierarchy.json.
 
-    Rules:
-    - If the root/file node summary looks LLM-generated, use it directly.
-    - If it looks like deterministic title-enum fallback (or is missing), use a
-      depth-limited BFS selection and render it as a compact indented tree.
-    - Final result is deduped and truncated gracefully at sentence boundaries.
+    Strategy (aligned with production kb_tasks.py):
+    - If root has a high-quality LLM-generated _summary → use it directly.
+    - If _summary is missing or is a low-quality title-enum fallback →
+      generate a depth-limited BFS tree preview instead.
     """
     document_tree = _resolve_document_tree(hierarchy, file_name)
     if not isinstance(document_tree, dict):
@@ -307,20 +318,21 @@ def _build_navigation_top_summary(hierarchy: Dict[str, Any], file_name: str) -> 
 
     root_summary = _normalize_whitespace(document_tree.get(SUMMARY_KEY, ""))
 
-    parts: List[str] = []
-    if root_summary:
-        parts.append(root_summary)
+    # High-quality LLM summary → use directly, no tree needed
+    if root_summary and not _looks_like_title_enum(root_summary):
+        return _truncate_navigation_summary(root_summary)
 
-    if not root_summary or _looks_like_title_enum(root_summary):
-        tree_preview = _build_section_tree_preview(
-            document_tree,
-            max_depth=NON_LLM_TOP_SUMMARY_MAX_DEPTH,
-            max_items=NON_LLM_TOP_SUMMARY_MAX_SECTIONS,
+    # No summary or title-enum fallback → generate tree preview
+    tree_preview = _build_section_tree_preview(
+        document_tree,
+        max_depth=NON_LLM_TOP_SUMMARY_MAX_DEPTH,
+        max_items=NON_LLM_TOP_SUMMARY_MAX_SECTIONS,
+    )
+    if tree_preview:
+        return _truncate_navigation_summary(
+            "This document includes the following contents:\n" + tree_preview
         )
-        if tree_preview:
-            parts.append("This document includes the following contents:\n" + tree_preview)
-
-    return _truncate_navigation_summary("\n".join(_dedupe_summary_blocks(parts)))
+    return ""
 
 
 # ─── Chunk Lookup ─────────────────────────────────────────────────────────────
@@ -592,26 +604,12 @@ def _strip_summaries(tree: Dict[str, Any]) -> None:
 
 
 def _extract_top_summary(hierarchy: Dict[str, Any], file_name: str) -> str:
-    """
-    Extract the top-level summary for a file from its enriched hierarchy.
+    """Extract the top-level summary for a file from its enriched hierarchy.
 
-    Looks for the file_name key in the hierarchy tree and returns its _summary.
-    Falls back to the first content node's _summary.
+    Delegates entirely to _build_navigation_top_summary which handles
+    both LLM-generated summaries and tree-preview fallback.
     """
-    top_summary = _build_navigation_top_summary(hierarchy, file_name)
-    if top_summary:
-        return top_summary
-
-    content_keys = [k for k in hierarchy.keys() if k not in RESERVED_KEYS]
-    for root_key in content_keys:
-        subtree = hierarchy.get(root_key, {})
-        if not isinstance(subtree, dict):
-            continue
-        if SUMMARY_KEY in subtree:
-            return _truncate_navigation_summary(str(subtree[SUMMARY_KEY]))
-    if SUMMARY_KEY in hierarchy:
-        return _truncate_navigation_summary(str(hierarchy[SUMMARY_KEY]))
-    return ""
+    return _build_navigation_top_summary(hierarchy, file_name)
 
 
 def load_navigation_top_summary(file_dir: str, file_name: str) -> str:

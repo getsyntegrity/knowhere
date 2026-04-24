@@ -139,13 +139,19 @@ def _extract_document_top_summary(
     chunk_metadata_list: list[dict[str, Any]],
     section_titles: Sequence[str],
 ) -> str:
+    """Extract document_top_summary from chunk metadata.
+
+    The summary is injected by kb_tasks.py via load_navigation_top_summary()
+    at parse time, so it should always be present.  If missing, return empty
+    string rather than fabricating a low-quality fallback.
+    """
     for meta in chunk_metadata_list:
         if not isinstance(meta, dict):
             continue
         summary = str(meta.get('document_top_summary') or '').strip()
         if summary:
             return summary
-    return ' / '.join(title for title in section_titles if title)[:300]
+    return ''
 
 
 @dataclass
