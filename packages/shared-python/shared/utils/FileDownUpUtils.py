@@ -8,7 +8,7 @@ from urllib.parse import urljoin
 import aiohttp
 import requests
 from botocore.exceptions import ClientError
-from fastapi import UploadFile
+from starlette.datastructures import UploadFile
 
 from shared.core.config import settings
 from shared.core.config.storage import get_cached_storage_adapter
@@ -66,8 +66,8 @@ def s3_download_extract_zip(
     *,
     filename: str = "parsed.zip",
     headers: Optional[dict] = None,
-    timeout: int = None,
-    chunk_size: int = None,
+    timeout: int | None = None,
+    chunk_size: int | None = None,
     keep_exts: tuple[str, ...] = (".md", ".json"),
     exclude_patterns: tuple[str, ...] = (),
     clean_empty_dirs: bool = True,

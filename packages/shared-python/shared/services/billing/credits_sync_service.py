@@ -284,6 +284,13 @@ class SyncCreditsService:
 
         result = session.execute(query)
         stats = result.first()
+        if stats is None:
+            return {
+                "period": period,
+                "total_used": 0,
+                "transaction_count": 0,
+                "avg_response_time": 0.0,
+            }
 
         return {
             "period": period,

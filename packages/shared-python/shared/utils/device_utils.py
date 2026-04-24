@@ -1,5 +1,6 @@
 """Shared device-check helpers used by multiple services."""
 
+import importlib
 from typing import Any, Dict
 
 import requests
@@ -42,7 +43,7 @@ def check_device_capabilities() -> Dict[str, Any]:
     """
     # Import torch lazily to avoid forcing it into API service startup.
     try:
-        import torch
+        torch = importlib.import_module("torch")
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:

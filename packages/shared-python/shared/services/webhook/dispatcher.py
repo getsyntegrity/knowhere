@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
+from aiohttp.abc import AbstractResolver
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -228,12 +229,14 @@ class WebhookDispatcher:
             # IP Pinning: Use a custom resolver that returns ONLY the pre-validated IP.
             # This eliminates the DNS rebinding TOCTOU window — aiohttp will connect
             # to the pinned IP while the Host header preserves the original hostname.
-            pinned_ip: str = validation.validated_ip
+            pinned_ip = validation.validated_ip
+            if not pinned_ip:
+                return False, 400, 0, "SSRF validation did not return a pinned IP"
 
             # Detect address family from the pinned IP
             pinned_family: int = socket.AF_INET6 if ":" in pinned_ip else socket.AF_INET
 
-            class PinnedResolver(aiohttp.abc.AbstractResolver):
+            class PinnedResolver(AbstractResolver):
                 """Resolver that always returns the pre-validated IP address."""
 
                 async def resolve(

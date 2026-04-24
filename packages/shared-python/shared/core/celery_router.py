@@ -3,7 +3,7 @@
 This module keeps the priority logic migrated from TaskPriorityService.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict
 
@@ -59,7 +59,7 @@ class TaskContext:
     resource_requirements: str = "medium"
     estimated_duration: int = 300  # Seconds.
     retry_count: int = 0
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class CeleryTaskRouter:

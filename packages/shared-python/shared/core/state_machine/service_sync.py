@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import cast, literal, select, update
 from sqlalchemy.orm import Session, load_only
 
 from shared.core.state_machine.states import (
@@ -257,9 +257,9 @@ class SyncStateMachineService:
                 from sqlalchemy.dialects.postgresql import array as pg_array
 
                 update_values["job_metadata"] = func.jsonb_set(
-                    func.coalesce(Job.job_metadata.cast(JSONB), func.cast("{}", JSONB)),
+                    func.coalesce(Job.job_metadata.cast(JSONB), cast(literal("{}"), JSONB)),
                     pg_array(["error_details"]),
-                    func.cast(_json.dumps(error_details), JSONB),
+                    cast(literal(_json.dumps(error_details)), JSONB),
                 )
 
             db.execute(update(Job).where(Job.job_id == job_id).values(**update_values))

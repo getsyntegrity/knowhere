@@ -1,8 +1,9 @@
 """Async Redis service abstraction layer."""
 
 import asyncio
+import builtins
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar, cast
 
 import redis.asyncio as redis
 from loguru import logger
@@ -13,6 +14,16 @@ from shared.core.exceptions.redis_exceptions import (
     RedisOperationError,
 )
 from shared.utils.redis_retry import RedisHealthChecker, RedisRetry
+
+ResponseT = TypeVar("ResponseT")
+
+
+async def _await_redis_result(
+    result: ResponseT | Awaitable[ResponseT],
+) -> ResponseT:
+    if hasattr(result, "__await__"):
+        return await cast(Awaitable[ResponseT], result)
+    return cast(ResponseT, result)
 
 
 class RedisService:
@@ -49,7 +60,9 @@ class RedisService:
                         )
         return self._client
 
-    async def _execute_with_retry(self, operation: callable) -> Any:
+    async def _execute_with_retry(
+        self, operation: Callable[[], Awaitable[ResponseT]]
+    ) -> ResponseT:
         """Execute a Redis operation with retry support."""
         return await RedisRetry.with_retry(
             operation,
@@ -216,7 +229,7 @@ class RedisService:
                     serialized_values.append(str(value))
 
             async def _operation():
-                return await client.lpush(full_key, *serialized_values)
+                return await _await_redis_result(client.lpush(full_key, *serialized_values))
 
             return await self._execute_with_retry(_operation)
         except Exception as e:
@@ -242,7 +255,7 @@ class RedisService:
                     serialized_values.append(str(value))
 
             async def _operation():
-                return await client.rpush(full_key, *serialized_values)
+                return await _await_redis_result(client.rpush(full_key, *serialized_values))
 
             return await self._execute_with_retry(_operation)
         except Exception as e:
@@ -260,7 +273,7 @@ class RedisService:
             full_key = self._build_key(key)
 
             async def _operation():
-                return await client.lpop(full_key)
+                return await _await_redis_result(client.lpop(full_key))
 
             result = await self._execute_with_retry(_operation)
 
@@ -268,10 +281,12 @@ class RedisService:
                 return None
 
             # Try decoding JSON payloads.
-            try:
-                return json.loads(result)
-            except (json.JSONDecodeError, TypeError):
-                return result
+            if isinstance(result, (str, bytes, bytearray)):
+                try:
+                    return json.loads(result)
+                except json.JSONDecodeError:
+                    return result
+            return result
         except Exception as e:
             logger.error(f"Redis LPOP operation failed: {e}")
             raise RedisOperationError(
@@ -287,7 +302,7 @@ class RedisService:
             full_key = self._build_key(key)
 
             async def _operation():
-                return await client.rpop(full_key)
+                return await _await_redis_result(client.rpop(full_key))
 
             result = await self._execute_with_retry(_operation)
 
@@ -295,10 +310,12 @@ class RedisService:
                 return None
 
             # Try decoding JSON payloads.
-            try:
-                return json.loads(result)
-            except (json.JSONDecodeError, TypeError):
-                return result
+            if isinstance(result, (str, bytes, bytearray)):
+                try:
+                    return json.loads(result)
+                except json.JSONDecodeError:
+                    return result
+            return result
         except Exception as e:
             logger.error(f"Redis RPOP operation failed: {e}")
             raise RedisOperationError(
@@ -314,7 +331,7 @@ class RedisService:
             full_key = self._build_key(key)
 
             async def _operation():
-                return await client.lrange(full_key, start, end)
+                return await _await_redis_result(client.lrange(full_key, start, end))
 
             result = await self._execute_with_retry(_operation)
 
@@ -340,9 +357,9 @@ class RedisService:
     async def hset(
         self,
         key: str,
-        field: str = None,
+        field: str | None = None,
         value: Any = None,
-        mapping: Dict[str, Any] = None,
+        mapping: Dict[str, Any] | None = None,
     ) -> int:
         """Set one or more hash fields."""
         try:
@@ -358,13 +375,17 @@ class RedisService:
                             serialized_mapping[k] = json.dumps(v, ensure_ascii=False)
                         else:
                             serialized_mapping[k] = str(v)
-                    return await client.hset(full_key, mapping=serialized_mapping)
+                    return await _await_redis_result(
+                        client.hset(full_key, mapping=serialized_mapping)
+                    )
                 else:
                     # Handle a single field value.
                     serialized_value = value
                     if isinstance(value, (dict, list)):
                         serialized_value = json.dumps(value, ensure_ascii=False)
-                    return await client.hset(full_key, field, serialized_value)
+                    return await _await_redis_result(
+                        client.hset(full_key, field, serialized_value)
+                    )
 
             return await self._execute_with_retry(_operation)
         except Exception as e:
@@ -382,7 +403,7 @@ class RedisService:
             full_key = self._build_key(key)
 
             async def _operation():
-                return await client.hget(full_key, field)
+                return await _await_redis_result(client.hget(full_key, field))
 
             result = await self._execute_with_retry(_operation)
 
@@ -409,7 +430,7 @@ class RedisService:
             full_key = self._build_key(key)
 
             async def _operation():
-                return await client.hgetall(full_key)
+                return await _await_redis_result(client.hgetall(full_key))
 
             result = await self._execute_with_retry(_operation)
 
@@ -447,7 +468,7 @@ class RedisService:
                     serialized_values.append(str(value))
 
             async def _operation():
-                return await client.sadd(full_key, *serialized_values)
+                return await _await_redis_result(client.sadd(full_key, *serialized_values))
 
             return await self._execute_with_retry(_operation)
         except Exception as e:
@@ -473,7 +494,7 @@ class RedisService:
                     serialized_values.append(str(value))
 
             async def _operation():
-                return await client.srem(full_key, *serialized_values)
+                return await _await_redis_result(client.srem(full_key, *serialized_values))
 
             return await self._execute_with_retry(_operation)
         except Exception as e:
@@ -484,14 +505,14 @@ class RedisService:
                 original_exception=e,
             )
 
-    async def smembers(self, key: str) -> set:
+    async def smembers(self, key: str) -> builtins.set[Any]:
         """Get all set members."""
         try:
             client = await self._get_client()
             full_key = self._build_key(key)
 
             async def _operation():
-                return await client.smembers(full_key)
+                return await _await_redis_result(client.smembers(full_key))
 
             result = await self._execute_with_retry(_operation)
             return result
@@ -500,6 +521,24 @@ class RedisService:
             raise RedisOperationError(
                 internal_message=f"SMEMBERS operation failed: {str(e)}",
                 operation="SMEMBERS",
+                original_exception=e,
+            )
+
+    async def llen(self, key: str) -> int:
+        """Get the length of a list."""
+        try:
+            client = await self._get_client()
+            full_key = self._build_key(key)
+
+            async def _operation():
+                return await _await_redis_result(client.llen(full_key))
+
+            return await self._execute_with_retry(_operation)
+        except Exception as e:
+            logger.error(f"Redis LLEN operation failed: {e}")
+            raise RedisOperationError(
+                internal_message=f"LLEN operation failed: {str(e)}",
+                operation="LLEN",
                 original_exception=e,
             )
 

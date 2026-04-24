@@ -40,7 +40,7 @@ class CreditsRepository:
                 CreditsTransaction.user_id == user_id
             )
         )
-        return int(result.scalar())
+        return int(result.scalar() or 0)
 
     async def get_balance(self, session: AsyncSession, user_id: str) -> int:
         """

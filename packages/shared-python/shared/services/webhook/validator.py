@@ -33,6 +33,8 @@ async def async_validate_url(hostname: str) -> str:
 
     for family, _, _, _, sockaddr in addrinfo:
         ip_address = sockaddr[0]
+        if not isinstance(ip_address, str):
+            continue
         if family in (socket.AF_INET, socket.AF_INET6) and is_public_ip(ip_address):
             return ip_address
 
@@ -48,6 +50,8 @@ def validate_url(hostname: str) -> str:
 
     for family, _, _, _, sockaddr in addrinfo:
         ip_address = sockaddr[0]
+        if not isinstance(ip_address, str):
+            continue
         if family in (socket.AF_INET, socket.AF_INET6) and is_public_ip(ip_address):
             return ip_address
 

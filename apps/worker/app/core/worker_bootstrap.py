@@ -35,10 +35,14 @@ def init_worker(**kwargs) -> None:
                     f"relying on RedisJobLock for dedup on redelivery"
                 )
 
-            GeventTaskPool._original_terminate_job = getattr(
+            setattr(
                 GeventTaskPool,
-                "terminate_job",
-                None,
+                "_original_terminate_job",
+                getattr(
+                    GeventTaskPool,
+                    "terminate_job",
+                    None,
+                ),
             )
             GeventTaskPool.terminate_job = _graceful_terminate_job
             logger.info("Patched gevent TaskPool.terminate_job for graceful recovery")

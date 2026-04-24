@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from loguru import logger
 from sqlalchemy import and_, select
@@ -15,7 +15,9 @@ from shared.models.database.knowledge_base import (
 from shared.models.schemas.files import FileDirectoryCreateDto, FileDirectoryUpdateDto
 
 
-async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bool:
+async def create_update_kb(
+    kbs: list[KBPydantic], db: Optional[AsyncSession] = None
+) -> bool:
     """
     Create or update knowledge-base content.
 
@@ -37,11 +39,11 @@ async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bo
         object_mappings.append(processed_dict)
 
     try:
-        if db:
+        if db is not None:
             # Use provided session, do not commit
             await db.run_sync(
                 lambda session: session.bulk_insert_mappings(
-                    ContentBase, object_mappings
+                    ContentBase.__mapper__, object_mappings
                 )
             )
             # Flush to ensure constraints are checked, but don't commit
@@ -52,7 +54,9 @@ async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bo
             # Use internal session management
             async with get_db_context() as session:
                 await session.run_sync(
-                    lambda s: s.bulk_insert_mappings(ContentBase, object_mappings)
+                    lambda s: s.bulk_insert_mappings(
+                        ContentBase.__mapper__, object_mappings
+                    )
                 )
                 await session.commit()
                 logger.info(f"Bulk inserted {len(object_mappings)} records (Committed)")
@@ -60,11 +64,11 @@ async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bo
 
     except Exception as e:
         logger.error(f"Error bulk inserting records: {e}")
-        if not db:  # Only catch/rollback if we own the session
+        if db is None:  # Only catch/rollback if we own the session
             # Context manager handles rollback for critical errors, but safe to log
             pass
         # Propagate error if external session (let caller handle rollback)
-        if db:
+        if db is not None:
             raise e
         return False
 
@@ -90,7 +94,9 @@ async def create_update_path(paths: list[PathPydantic]) -> bool:
     async with get_db_context() as db:
         try:
             await db.run_sync(
-                lambda session: session.bulk_insert_mappings(PathBase, path_mappings)
+                lambda session: session.bulk_insert_mappings(
+                    PathBase.__mapper__, path_mappings
+                )
             )
             await db.commit()
             logger.info(f"Bulk inserted {len(path_mappings)} records successfully")
@@ -239,7 +245,7 @@ async def get_root_directories_by_user(
         )
         .order_by(FileDirectory.create_time)
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
 
 async def get_directories_by_parent(
@@ -253,7 +259,7 @@ async def get_directories_by_parent(
         .filter(FileDirectory.parent_id == parent_id)
         .order_by(FileDirectory.create_time)
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
 
 async def get_directories_by_user(
@@ -267,7 +273,7 @@ async def get_directories_by_user(
         .filter(FileDirectory.user_id == user_id)
         .order_by(FileDirectory.create_time)
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
 
 async def update_directory(
@@ -283,9 +289,9 @@ async def update_directory(
         db_directory = result.scalars().first()
         if db_directory:
             if directory_data.title is not None:
-                db_directory.title = directory_data.title
+                setattr(db_directory, "title", directory_data.title)
             if directory_data.parent_id is not None:
-                db_directory.parent_id = directory_data.parent_id
+                setattr(db_directory, "parent_id", directory_data.parent_id)
 
             await db.commit()
             await db.refresh(db_directory)
@@ -319,16 +325,14 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
     # Load all directories for the user.
     all_directories = await get_directories_by_user(db, user_id)
 
-    # Build a dictionary keyed by directory ID.
-    {directory.id: directory for directory in all_directories}
-
     # Build a dictionary that stores children for each directory.
-    children_dict = {}
+    children_dict: dict[str, list[FileDirectory]] = {}
     for directory in all_directories:
-        if directory.parent_id:
-            if directory.parent_id not in children_dict:
-                children_dict[directory.parent_id] = []
-            children_dict[directory.parent_id].append(directory)
+        parent_id = cast(Optional[str], getattr(directory, "parent_id", None))
+        if parent_id is not None:
+            if parent_id not in children_dict:
+                children_dict[parent_id] = []
+            children_dict[parent_id].append(directory)
         else:
             if "root" not in children_dict:
                 children_dict["root"] = []

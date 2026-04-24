@@ -6,6 +6,8 @@
   "extraPaths": [
     "../../packages/shared-python"
   ],
+  "venvPath": "../..",
+  "venv": ".venv",
   "exclude": [
     "**/__tests__",
     "**/.venv",

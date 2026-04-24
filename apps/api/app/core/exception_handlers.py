@@ -48,7 +48,8 @@ Exception Sources:
 """
 
 import uuid
-from typing import List
+from collections.abc import Awaitable, Callable
+from typing import List, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -61,7 +62,7 @@ from shared.core.exceptions import (
     UnknownException,
     ValidationException,
 )
-from shared.core.exceptions.domain_exceptions import RateLimitException
+from shared.core.exceptions.domain_exceptions import RateLimitException, Violation
 from shared.core.logging import LogEvent
 from shared.core.response import ErrorCodeMapper
 
@@ -119,8 +120,9 @@ async def knowhere_exception_handler(
 
     # Always include request ID header for client-side correlation
     headers = {"X-Request-ID": request_id}
-    if hasattr(exc, "retry_after") and exc.retry_after:
-        headers["Retry-After"] = str(exc.retry_after)
+    retry_after = exc.details.get("retry_after")
+    if retry_after:
+        headers["Retry-After"] = str(retry_after)
 
     # Add rate limit headers when the exception is a RateLimitException
     if isinstance(exc, RateLimitException):
@@ -224,7 +226,7 @@ async def validation_exception_handler(
     This is a 4xx error, so user_message is passed directly to client.
     """
     # Transform Pydantic errors into violations format
-    violations: List[dict] = []
+    violations: List[Violation] = []
     for error in exc.errors():
         field = ".".join(str(loc) for loc in error.get("loc", []))
         violations.append(
@@ -264,6 +266,27 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
     return await knowhere_exception_handler(request, unknown_exc)
 
 
+async def _knowhere_exception_handler_adapter(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """Adapt the typed Knowhere handler to FastAPI's generic signature."""
+    return await knowhere_exception_handler(request, cast(KnowhereException, exc))
+
+
+async def _http_exception_handler_adapter(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """Adapt the HTTP handler to FastAPI's generic signature."""
+    return await http_exception_handler(request, cast(HTTPException, exc))
+
+
+async def _validation_exception_handler_adapter(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """Adapt the validation handler to FastAPI's generic signature."""
+    return await validation_exception_handler(request, cast(RequestValidationError, exc))
+
+
 def setup_exception_handlers(app: FastAPI) -> None:
     """
     Register all exception handlers with the FastAPI app.
@@ -272,14 +295,19 @@ def setup_exception_handlers(app: FastAPI) -> None:
     More specific types (KnowhereException subclasses) are matched before base.
     """
     # KnowhereException and all subclasses
-    app.add_exception_handler(KnowhereException, knowhere_exception_handler)
+    app.add_exception_handler(KnowhereException, _knowhere_exception_handler_adapter)
 
     # FastAPI/Starlette HTTP exceptions (convert then delegate)
-    app.add_exception_handler(HTTPException, http_exception_handler)
-    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    http_handler: Callable[[Request, Exception], Awaitable[JSONResponse]] = (
+        _http_exception_handler_adapter
+    )
+    app.add_exception_handler(HTTPException, http_handler)
+    app.add_exception_handler(StarletteHTTPException, http_handler)
 
     # Pydantic validation errors (convert then delegate)
-    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(
+        RequestValidationError, _validation_exception_handler_adapter
+    )
 
     # Catch-all for unexpected exceptions (MUST be last conceptually)
     app.add_exception_handler(Exception, general_exception_handler)

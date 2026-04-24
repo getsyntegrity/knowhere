@@ -2,7 +2,7 @@
 
 from typing import Any, BinaryIO, Dict, Iterator, Optional
 
-import boto3
+from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 from loguru import logger
 
@@ -13,7 +13,7 @@ from shared.services.storage.storage_adapter import StorageAdapter
 class S3StorageAdapter(StorageAdapter):
     """S3 storage adapter supporting AWS S3 and MinIO."""
 
-    def __init__(self, s3_client: "boto3.client", default_bucket: str):
+    def __init__(self, s3_client: BaseClient, default_bucket: str):
         """
         Initialize the S3 adapter.
 

@@ -28,7 +28,7 @@ class KBOrchestrator:
         source_type: str,
         file_path: Optional[str] = None,
         file_url: Optional[str] = None,
-        user_id: str = None,
+        user_id: Optional[str] = None,
     ) -> str:
         """
         Start the knowledge-base workflow.
@@ -60,9 +60,12 @@ class KBOrchestrator:
                 file_url = JobMetadataHelper.get_field(job_metadata, "file_url")
 
             # Resolve the queue name for this job.
-            queue_name = self.task_router.get_queue_for_job("kb_management", user_id)
+            effective_user_id = user_id or ""
+            queue_name = self.task_router.get_queue_for_job(
+                "kb_management", effective_user_id
+            )
             task_kwargs = {
-                "user_id": user_id,
+                "user_id": effective_user_id,
                 "job_type": "kb_management",
             }
 
@@ -75,10 +78,29 @@ class KBOrchestrator:
                 "app.core.tasks.kb_tasks.parse_task",
                 args=[job_id],
                 kwargs=task_kwargs,
-            ).set(queue=queue_name)
+            )
+            if task_signature is None:
+                raise WorkerHandlingException(
+                    internal_message=(
+                        "Failed to build knowledge-base workflow: missing Celery signature"
+                    )
+                )
+            task_signature = task_signature.set(queue=queue_name)
+            if task_signature is None:
+                raise WorkerHandlingException(
+                    internal_message=(
+                        "Failed to configure knowledge-base workflow queue"
+                    )
+                )
 
             # Enqueue the task.
             result = task_signature.apply_async()
+            if result is None or result.id is None:
+                raise WorkerHandlingException(
+                    internal_message=(
+                        "Failed to start knowledge-base workflow: missing Celery task id"
+                    )
+                )
 
             logger.info(
                 f"Knowledge-base workflow started: job_id={job_id}, task_id={result.id}, queue={queue_name}"
@@ -95,7 +117,9 @@ class KBOrchestrator:
                 original_exception=e,
             )
 
-    def create_workflow_chain(self, job_id: str, user_id: str, queue_name: str = None):
+    def create_workflow_chain(
+        self, job_id: str, user_id: str, queue_name: Optional[str] = None
+    ):
         """
         Create the workflow signature for tests or manual execution.
 
@@ -119,11 +143,23 @@ class KBOrchestrator:
         # Return the single-task signature. Parsing, vectorization, ZIP generation,
         # S3 upload, and publication happen in the worker. Webhook and email
         # delivery remain in the API service.
-        return signature(
+        task_signature = signature(
             "app.core.tasks.kb_tasks.parse_task",
             args=[job_id],
             kwargs=task_kwargs,
-        ).set(queue=queue_name)
+        )
+        if task_signature is None:
+            raise WorkerHandlingException(
+                internal_message=(
+                    "Failed to build knowledge-base workflow: missing Celery signature"
+                )
+            )
+        configured_signature = task_signature.set(queue=queue_name)
+        if configured_signature is None:
+            raise WorkerHandlingException(
+                internal_message="Failed to configure knowledge-base workflow queue"
+            )
+        return configured_signature
 
     def cancel_workflow(self, workflow_id: str) -> bool:
         """

@@ -150,7 +150,7 @@ class FileUploadService:
 
     async def generate_download_url(
         self, s3_key: str, bucket: Optional[str] = None, expires_in: int = 3600
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
         Generate a presigned download URL.
 

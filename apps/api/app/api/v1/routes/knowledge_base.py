@@ -11,7 +11,10 @@ from app.services.rate_limit.dependencies import CurrentUser, with_current_user
 from fastapi import APIRouter, Depends
 from starlette import status
 
-from shared.core.exceptions.domain_exceptions import KnowledgeBaseOperationException
+from shared.core.exceptions.domain_exceptions import (
+    KnowledgeBaseOperationException,
+    ValidationException,
+)
 from shared.models.schemas.files import (
     FileDirectoryCreateDto,
     FileDirectoryDto,
@@ -110,8 +113,19 @@ async def update_sql_path(
         request_data.user_id = current_user.user_id
         from shared.core.database import get_db_context
 
+        if request_data.id is None:
+            raise ValidationException(
+                user_message="Directory id is required",
+                violations=[
+                    {
+                        "field": "id",
+                        "description": "Directory id is required for updates",
+                    }
+                ],
+            )
+
         async with get_db_context() as db:
-            if await update_directory(db, request_data):
+            if await update_directory(db, request_data.id, request_data):
                 return {"message": "Directory updated"}
         raise KnowledgeBaseOperationException(
             internal_message="Failed to update directory"

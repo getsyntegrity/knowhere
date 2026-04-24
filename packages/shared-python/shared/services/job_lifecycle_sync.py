@@ -331,7 +331,7 @@ class SyncJobLifecycleService:
         job_id: str,
         published_document_state: Optional[Dict[str, str]],
         previous_document_scope: Optional[Dict[str, str]],
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if not job:
             return None
@@ -386,7 +386,7 @@ class SyncJobLifecycleService:
             object_mappings.append(processed)
 
         if object_mappings:
-            db.bulk_insert_mappings(ContentBase, object_mappings)
+            db.bulk_insert_mappings(ContentBase.__mapper__, object_mappings)
             db.flush()
 
     def _maybe_create_webhook_event(

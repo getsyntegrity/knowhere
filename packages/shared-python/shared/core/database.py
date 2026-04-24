@@ -3,11 +3,16 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import AsyncGenerator, Awaitable, Callable, TypeVar
+from typing import Any, AsyncGenerator, Awaitable, Callable, TypeVar
 
 from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import declarative_base
 
 from shared.core.config import settings
 from shared.core.constants import ProcessingConstants
@@ -43,9 +48,8 @@ engine = create_async_engine(
     pool_events=[],
 )
 # Create the async session factory.
-AsyncSessionFactory = sessionmaker(
+AsyncSessionFactory = async_sessionmaker(
     bind=engine,
-    class_=AsyncSession,
     expire_on_commit=False,  # Keep ORM objects usable after commit.
 )
 
@@ -67,7 +71,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 # Create an app-level context manager for operations without an injected DB session.
 @asynccontextmanager
 async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
-    session = None
+    session: AsyncSession | None = None
     try:
         session = AsyncSessionFactory()
         yield session
@@ -133,12 +137,19 @@ async def create_tables():
 class DatabaseHealthChecker:
     """Database health checker."""
 
-    def __init__(self, engine):
+    def __init__(self, engine: AsyncEngine):
         self.engine = engine
-        self.last_check = None
+        self.last_check: datetime | None = None
         self.is_healthy = False
 
-    async def check_health(self) -> dict:
+    def _pool_metric(self, name: str) -> int:
+        metric = getattr(self.engine.pool, name, None)
+        if callable(metric):
+            value = metric()
+            return int(value) if isinstance(value, (int, float)) else 0
+        return 0
+
+    async def check_health(self) -> dict[str, object]:
         """Check database connection health."""
         try:
             start_time = time.time()
@@ -178,29 +189,27 @@ class DatabaseHealthChecker:
                 "last_check": self.last_check.isoformat() if self.last_check else None,
             }
 
-    def get_pool_status(self) -> dict:
+    def get_pool_status(self) -> dict[str, int]:
         """Return connection-pool status details."""
-        pool = self.engine.pool
         status = {
-            "size": pool.size(),
-            "checked_in": pool.checkedin(),
-            "checked_out": pool.checkedout(),
-            "overflow": pool.overflow(),
+            "size": self._pool_metric("size"),
+            "checked_in": self._pool_metric("checkedin"),
+            "checked_out": self._pool_metric("checkedout"),
+            "overflow": self._pool_metric("overflow"),
         }
-        # Some pool implementations do not expose invalid().
-        if hasattr(pool, "invalid"):
-            status["invalid"] = pool.invalid()
-        else:
-            status["invalid"] = 0
+        status["invalid"] = self._pool_metric("invalid")
         return status
 
-    async def get_database_info(self) -> dict:
+    async def get_database_info(self) -> dict[str, object]:
         """Return database metadata and connection status."""
         try:
             async with self.engine.begin() as conn:
                 # Read the database version.
                 version_result = await conn.execute(text("SELECT version()"))
-                version = version_result.fetchone()[0]
+                version_row = version_result.fetchone()
+                if version_row is None:
+                    return {"error": "Failed to read database version"}
+                version = version_row[0]
 
                 # Read the current active-connection count.
                 connections_result = await conn.execute(
@@ -210,7 +219,10 @@ class DatabaseHealthChecker:
                     WHERE state = 'active'
                 """)
                 )
-                active_connections = connections_result.fetchone()[0]
+                active_connections_row = connections_result.fetchone()
+                if active_connections_row is None:
+                    return {"error": "Failed to read active connection count"}
+                active_connections = active_connections_row[0]
 
                 # Read the current database size.
                 size_result = await conn.execute(
@@ -218,7 +230,10 @@ class DatabaseHealthChecker:
                     SELECT pg_size_pretty(pg_database_size(current_database())) as db_size
                 """)
                 )
-                db_size = size_result.fetchone()[0]
+                db_size_row = size_result.fetchone()
+                if db_size_row is None:
+                    return {"error": "Failed to read database size"}
+                db_size = db_size_row[0]
 
                 return {
                     "version": version,
@@ -249,14 +264,21 @@ async def get_database_info() -> dict:
 class DatabaseRetryManager:
     """Database retry manager."""
 
-    def __init__(self, max_retries=3, retry_delay=1.0, backoff_factor=2.0):
+    def __init__(
+        self, max_retries: int = 3, retry_delay: float = 1.0, backoff_factor: float = 2.0
+    ):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.backoff_factor = backoff_factor
 
-    async def execute_with_retry(self, operation, *args, **kwargs):
+    async def execute_with_retry(
+        self,
+        operation: Callable[..., Awaitable[T]],
+        *args: object,
+        **kwargs: object,
+    ) -> T:
         """Execute a database operation with retries."""
-        last_exception = None
+        last_exception: Exception | None = None
 
         for attempt in range(self.max_retries + 1):
             try:
@@ -275,14 +297,18 @@ class DatabaseRetryManager:
                     logger.error("All retry attempts failed for database operation")
                     raise last_exception
 
-        raise last_exception
+        raise RuntimeError("Database retry manager exhausted without raising") from (
+            last_exception
+        )
 
 
 # Shared retry-manager instance.
 db_retry_manager = DatabaseRetryManager()
 
 
-async def safe_db_operation(operation, *args, **kwargs):
+async def safe_db_operation(
+    operation: Callable[..., Awaitable[T]], *args: object, **kwargs: object
+) -> T:
     """Run a database operation through the retry manager."""
     return await db_retry_manager.execute_with_retry(operation, *args, **kwargs)
 

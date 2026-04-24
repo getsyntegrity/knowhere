@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Literal, Optional, cast
 from urllib.parse import urlparse
 
 from app.repositories.job_repository import JobRepository
@@ -58,6 +58,9 @@ from shared.utils.error_details import normalize_error_details
 from shared.utils.url_file_type import resolve_file_extension_async
 
 router = APIRouter(tags=["Jobs"])
+JobStatusValue = Literal[
+    "pending", "waiting-file", "running", "converting", "done", "failed"
+]
 
 
 # ==================== Shared Helpers ====================
@@ -262,9 +265,24 @@ def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.replace(tzinfo=timezone.utc)
 
 
+def require_utc(dt: Optional[datetime], *, field_name: str) -> datetime:
+    """Normalize a required datetime to UTC."""
+    normalized_dt = ensure_utc(dt)
+    if normalized_dt is None:
+        raise JobOperationException(
+            internal_message=f"Job is missing required datetime field: {field_name}"
+        )
+    return normalized_dt
+
+
+def to_job_status_value(status: str) -> JobStatusValue:
+    """Cast a persisted job status into the response literal type."""
+    return cast(JobStatusValue, status)
+
+
 @router.post("", response_model=JobResponse, summary="Create a parsing job")
 @router.post("/", include_in_schema=False)
-async def create_job(
+async def create_job(  # pyright: ignore[reportGeneralTypeIssues]
     payload: JobCreate,
     http_request: Request,
     current_user: CurrentUser = Depends(require_billing_limits),
@@ -324,6 +342,7 @@ async def create_job(
                 ],
             )
         elif payload.source_type == "url":
+            assert payload.source_url is not None
             # Resolve file type from URL path or Content-Type header
             file_ext = await resolve_file_extension_async(payload.source_url)
             if not file_ext:
@@ -475,6 +494,7 @@ async def create_job(
         else:
             # URL mode: create the job first, then download and upload asynchronously.
             try:
+                assert payload.source_url is not None
                 # Resolve file extension (URL path first, then Content-Type header)
                 file_extension = await resolve_file_extension_async(payload.source_url)
                 if not file_extension:
@@ -708,7 +728,7 @@ async def list_jobs(
                 db, job.job_id, redis_service
             )
             job_result = job.job_result
-            status_for_api = job.status
+            status_for_api = to_job_status_value(job.status)
 
             result_url = None
             result = None
@@ -780,15 +800,20 @@ async def list_jobs(
             job_responses.append(
                 JobResultResponse(
                     job_id=job.job_id,
+                    namespace=JobMetadataHelper.get_field(job_metadata, "namespace"),
+                    document_id=resolve_public_document_id(job),
                     status=status_for_api,
                     source_type=job.source_type,
                     data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-                    created_at=ensure_utc(job.created_at),
+                    created_at=require_utc(job.created_at, field_name="created_at"),
                     progress=None,  # The list view does not expose detailed progress.
                     error=_build_error_response(job, job_metadata),
                     result=result,
                     result_url=result_url,
-                    result_url_expires_at=ensure_utc(result_url_expires_at),
+                    result_url_expires_at=require_utc(
+                        result_url_expires_at,
+                        field_name="result_url_expires_at",
+                    ),
                     file_name=file_name,
                     file_extension=file_extension,
                     model=model,
@@ -841,7 +866,7 @@ async def get_job_result(
         check_job_permission(job, current_user.user_id)
         assert job is not None
 
-        status_for_api = job.status
+        status_for_api = to_job_status_value(job.status)
 
         # Load detailed progress from Redis while the job is running.
         progress = None
@@ -929,12 +954,15 @@ async def get_job_result(
             status=status_for_api,
             source_type=job.source_type,
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-            created_at=ensure_utc(job.created_at),
+            created_at=require_utc(job.created_at, field_name="created_at"),
             progress=progress,
             error=_build_error_response(job, job_metadata),
             result=result,
             result_url=result_url,
-            result_url_expires_at=ensure_utc(result_url_expires_at),
+            result_url_expires_at=require_utc(
+                result_url_expires_at,
+                field_name="result_url_expires_at",
+            ),
             file_name=file_name,
             file_extension=file_extension,
             model=model,
@@ -984,6 +1012,7 @@ async def confirm_upload(
         # Load the job and verify access.
         job = await job_repo.get_job_by_id(db, job_id)
         check_job_permission(job, current_user.user_id)
+        assert job is not None
 
         # Check the current job state.
         logger.info(f"Confirm upload - Job {job_id} current status: {job.status}")

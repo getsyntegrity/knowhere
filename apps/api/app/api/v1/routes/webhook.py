@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
+    NotFoundException,
     PermissionDeniedException,
     WebhookServiceException,
 )
@@ -66,7 +67,7 @@ async def get_webhook_logs(
                     job_id=log.job_id,
                     webhook_url=log.webhook_url,
                     attempt_number=log.attempt_number,
-                    request_payload=log.request_payload,
+                    request_payload=log.request_payload or {},
                     signature=log.signature,
                     idempotency_key=log.idempotency_key,
                     response_status_code=log.response_status_code,
@@ -107,15 +108,13 @@ async def trigger_webhook(
         # 1. Fetch Job
         job = await job_repo.get_job_by_id(db, request.job_id)
         if not job:
-            from shared.core.exceptions.domain_exceptions import NotFoundException
-
             raise NotFoundException(resource="Job", resource_id=request.job_id)
 
         # Verify ownership
         if str(job.user_id) != current_user.user_id:
             raise PermissionDeniedException(
                 user_message="You don't have permission to trigger webhook for this job",
-                resource="Job",
+                required_permission="job:webhook:trigger",
             )
 
         # 2. Validation - client errors (400)
@@ -152,12 +151,13 @@ async def trigger_webhook(
         event = result.scalars().first()
 
         if not event:
-            from shared.core.exceptions.domain_exceptions import NotFoundException
-
             raise NotFoundException(
                 resource="WebhookEvent",
                 resource_id=request.job_id,
-                user_message="No webhook event found for this job. Ensure the job has completed and webhooks are configured.",
+                internal_message=(
+                    "No webhook event found for this job. Ensure the job has "
+                    "completed and webhooks are configured."
+                ),
             )
 
         # Use dispatcher to send synchronously

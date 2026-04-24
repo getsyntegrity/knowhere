@@ -1,6 +1,6 @@
-"""
-Application configuration — assembles all config components.
-"""
+"""Application configuration — assembles all config components."""
+
+from typing import Callable, cast
 
 from pydantic_settings import SettingsConfigDict
 
@@ -50,7 +50,7 @@ class AppConfig(
 
 
 # Create the shared application config instance.
-app_config = AppConfig()
+app_config = cast(Callable[[], AppConfig], AppConfig)()
 
 # Backward-compatible alias.
 settings = app_config

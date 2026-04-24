@@ -41,7 +41,5 @@ async def upload_dataframe_to_s3(df: pd.DataFrame, filename: str, prefix: str):
     df.to_csv(buffer, index=False)
     buffer.seek(0)  # Reset the cursor to the buffer start.
 
-    upload_file = StarletteUploadFile(
-        filename=filename, file=buffer, content_type="text/csv"
-    )
+    upload_file = StarletteUploadFile(file=buffer, filename=filename)
     s3_upload_file(upload_file, prefix)

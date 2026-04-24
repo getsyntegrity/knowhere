@@ -9,12 +9,15 @@ Suppressing the ValueError is a pragmatic choice: span creation and export are
 independent of detach(), and the unpopped context is GC'd with the greenlet.
 """
 
+import contextvars
+
 import opentelemetry.context
+from opentelemetry.context import Context
 
 _original_detach = opentelemetry.context.detach
 
 
-def _safe_detach(token: object) -> None:
+def _safe_detach(token: contextvars.Token[Context]) -> None:
     try:
         _original_detach(token)
     except ValueError:

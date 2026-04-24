@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from fastapi import Request, Response
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from shared.core.config import settings
 
@@ -16,12 +17,12 @@ from shared.core.config import settings
 class MoesifMiddleware(BaseHTTPMiddleware):
     """Send request and response telemetry to Moesif."""
 
-    def __init__(self, app, moesif_application_id: str = None):
+    def __init__(self, app: ASGIApp, moesif_application_id: Optional[str] = None):
         super().__init__(app)
         self.moesif_application_id = (
             moesif_application_id or settings.MOESIF_APPLICATION_ID
         )
-        self.moesif_client = None
+        self.moesif_client: object | None = None
 
         if self.moesif_application_id:
             try:
@@ -29,7 +30,7 @@ class MoesifMiddleware(BaseHTTPMiddleware):
                 from moesifapi.moesif_api_client import MoesifAPIClient
 
                 configuration = Configuration()
-                configuration.api_key = self.moesif_application_id
+                setattr(configuration, "api_key", self.moesif_application_id)
 
                 self.moesif_client = MoesifAPIClient(configuration)
                 logger.info("Initialized the Moesif client")
@@ -181,11 +182,17 @@ class MoesifMiddleware(BaseHTTPMiddleware):
 
             def send_sync():
                 try:
+                    client = self.moesif_client
+                    if client is None:
+                        return
+
                     # Use whichever send method the installed client exposes.
-                    if hasattr(self.moesif_client, "create_event"):
-                        self.moesif_client.create_event(event)
-                    elif hasattr(self.moesif_client, "create_events"):
-                        self.moesif_client.create_events([event])
+                    create_event = getattr(client, "create_event", None)
+                    create_events = getattr(client, "create_events", None)
+                    if callable(create_event):
+                        create_event(event)
+                    elif callable(create_events):
+                        create_events([event])
                     else:
                         logger.warning(
                             "The Moesif client does not expose create_event or create_events"

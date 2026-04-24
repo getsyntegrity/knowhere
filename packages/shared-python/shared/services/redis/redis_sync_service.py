@@ -135,7 +135,7 @@ class SyncRedisService:
         try:
             client = self._get_client()
             full_key = self._build_key(key)
-            return int(client.incr(full_key))
+            return cast(int, client.incr(full_key))
         except Exception as e:
             logger.error(f"Redis INCR failed: key={key}, error={e}")
             raise

@@ -63,7 +63,7 @@ class WebhookService:
         error_type: Optional[str] = None,
         error_code: str = "UNKNOWN",
         error_details: Optional[Dict[str, Any]] = None,
-        webhook_url: str = None,
+        webhook_url: Optional[str] = None,
     ) -> WebhookEvent:
         """
         Create webhook event for job failure.
@@ -93,6 +93,12 @@ class WebhookService:
                 details=error_details,
             ),
         }
+
+        if webhook_url is None:
+            raise WebhookConfigException(
+                internal_message="Missing webhook target_url",
+                user_message="Webhook URL is required.",
+            )
 
         # Create event
         event = await self._create_event(

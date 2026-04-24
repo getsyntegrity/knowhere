@@ -2,13 +2,16 @@
   "include": [
     "shared"
   ],
+  "venvPath": "../..",
+  "venv": ".venv",
   "exclude": [
     "**/__pycache__",
     ".pytest_cache",
     ".venv",
     "venv",
     "build",
-    "dist"
+    "dist",
+    "shared/tests"
   ],
   "typeCheckingMode": "basic"
 }

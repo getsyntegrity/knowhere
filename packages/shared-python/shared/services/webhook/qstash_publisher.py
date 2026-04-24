@@ -218,12 +218,11 @@ class QStashWebhookPublisher:
 
             job_result = job.job_result
             if job_result.result_s3_key:
-                from app.services.storage.sync_storage_service import (
-                    generate_download_url,
+                payload["result_url"] = app_config.get_storage_adapter().generate_presigned_url(
+                    job_result.result_s3_key,
+                    expiration=3600,
+                    method="GET",
                 )
-
-                url_info = generate_download_url(job_result.result_s3_key)
-                payload["result_url"] = url_info["download_url"]
 
             if job_result.inline_payload:
                 payload["result"] = job_result.inline_payload

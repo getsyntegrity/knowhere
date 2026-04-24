@@ -8,6 +8,7 @@ All I/O operations use sync services that yield cooperatively under gevent.
 import os
 from datetime import datetime, timezone
 
+import pandas as pd
 
 # Base task class
 from app.core.tasks.base_task import KBBaseTask
@@ -308,15 +309,17 @@ def _parse(job_id: str, user_id: str | None):
             f"Recovered JobInfo from database: job_id={job_id}, s3_key={s3_key}"
         )
     else:
-        s3_key = job_info.get("s3_key")
-        if not s3_key:
+        raw_s3_key = job_info.get("s3_key")
+        if not isinstance(raw_s3_key, str) or not raw_s3_key:
             raise NotFoundException(
                 resource="JobInfo",
                 resource_id="s3_key",
                 internal_message="Missing s3_key in job_info",
             )
 
-        job_user_id = job_info.get("user_id") or user_id
+        s3_key = raw_s3_key
+        raw_job_user_id = job_info.get("user_id")
+        job_user_id = raw_job_user_id if isinstance(raw_job_user_id, str) else user_id
 
     # Verify S3 file exists (sync)
     file_info = verify_s3_file_exists(s3_key)
@@ -435,6 +438,13 @@ def _parse(job_id: str, user_id: str | None):
             billing_reason = billing_calculator.format_description(page_count, filename)
             processing_started_at = datetime.now(timezone.utc)
 
+            if not job_user_id:
+                raise NotFoundException(
+                    resource="JobInfo",
+                    resource_id="user_id",
+                    internal_message=f"Missing user_id in job info for job_id={job_id}",
+                )
+
             with get_sync_db_context() as db:
                 job_result = db.execute(
                     select(Job).where(Job.job_id == job_id).with_for_update()
@@ -531,18 +541,19 @@ def _parse(job_id: str, user_id: str | None):
                     ),
                     s3_key=s3_key,
                 )
+                parsed_contents_df: pd.DataFrame | None = add_contents_df
 
             logger.info(
-                f"File parsing completed: job_id={job_id}, add_dir={add_dir}, chunks={len(add_contents_df) if add_contents_df is not None else 0}"
+                f"File parsing completed: job_id={job_id}, add_dir={add_dir}, chunks={len(parsed_contents_df) if parsed_contents_df is not None else 0}"
             )
 
-            if add_contents_df is None:
+            if parsed_contents_df is None:
                 raise WorkerHandlingException(
                     user_message="We could not extract content from your file",
                     internal_message="File parsing failed, no content returned from parser",
                 )
 
-            if add_contents_df.empty:
+            if parsed_contents_df.empty:
                 logger.warning(
                     f"No content returned from file parsing: job_id={job_id}, filename={filename}"
                 )
@@ -553,9 +564,8 @@ def _parse(job_id: str, user_id: str | None):
 
             chunks = []
 
-            if add_contents_df is not None:
-                chunks_redis_service = SyncChunksRedisService(redis_service)
-                chunks = chunks_redis_service.dataframe_to_chunks(add_contents_df)
+            chunks_redis_service = SyncChunksRedisService(redis_service)
+            chunks = chunks_redis_service.dataframe_to_chunks(parsed_contents_df)
 
             lifecycle_service.update_progress(
                 job_id, progress=70, message="Chunks ready, generating zip..."
@@ -600,7 +610,7 @@ def _parse(job_id: str, user_id: str | None):
                     source_file_name=source_file_name,
                     data_id=data_id,
                     job_metadata=job_metadata,
-                    parsed_df=add_contents_df,
+                    parsed_df=parsed_contents_df,
                     temp_dir=task_workspace_dir,
                 )
             )
@@ -650,9 +660,7 @@ def _parse(job_id: str, user_id: str | None):
                 "job_id": job_id,
                 "add_dir": None,
                 "vectors_count": 0,
-                "contents_count": (
-                    len(add_contents_df) if add_contents_df is not None else 0
-                ),
+                "contents_count": len(parsed_contents_df),
                 "stored_count": stored_count,
                 "delivery_mode": "url",
                 "result_s3_key": result_s3_key,

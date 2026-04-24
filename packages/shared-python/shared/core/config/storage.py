@@ -4,6 +4,7 @@ import os
 import threading
 
 import boto3
+from botocore.client import BaseClient
 from botocore.config import Config
 from pydantic import BaseModel, Field, model_validator
 
@@ -107,10 +108,10 @@ class StorageConfig(BaseModel):
         default=True, description="Verify OSS event signatures"
     )
 
-    def get_s3_client(self) -> "boto3.client":
+    def get_s3_client(self) -> BaseClient:
         """Return an S3 client for S3-compatible backends."""
         # Build the client config.
-        config_kwargs = {}
+        config_kwargs: dict[str, object] = {}
 
         # Configure addressing style.
         if self.S3_ADDRESSING_STYLE in ["path", "virtual"]:
@@ -122,7 +123,7 @@ class StorageConfig(BaseModel):
         config = Config(**config_kwargs) if config_kwargs else None
 
         # Build client kwargs.
-        client_kwargs = {
+        client_kwargs: dict[str, object] = {
             "service_name": "s3",
             "aws_access_key_id": self.S3_ACCESS_KEY_ID,
             "aws_secret_access_key": self.S3_SECRET_ACCESS_KEY,

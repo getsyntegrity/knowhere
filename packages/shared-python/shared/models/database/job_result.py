@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
+
+if TYPE_CHECKING:
+    from shared.models.database.job import Job
 
 
 class JobResult(Base):
@@ -50,7 +53,7 @@ class JobResult(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    job: Mapped["Job"] = relationship(  # noqa: F821
+    job: Mapped["Job"] = relationship(
         "Job", back_populates="job_result", lazy="joined"
     )
     chunks: Mapped[List["JobChunk"]] = relationship(

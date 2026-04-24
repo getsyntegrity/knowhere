@@ -171,10 +171,10 @@ async def with_current_user(
     if isinstance(user_tier, str) and stashed_user_id == user_id:
         if cached_identity_hit is False:
             token = _extract_bearer_token(request.headers.get("authorization"))
-            is_api_key_auth = bool(token and token.startswith("sk_"))
-            api_key_hash = (
-                hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
-            )
+            api_key_hash = None
+            is_api_key_auth = isinstance(token, str) and token.startswith("sk_")
+            if token is not None and is_api_key_auth:
+                api_key_hash = hashlib.sha256(token.encode()).hexdigest()
             if is_api_key_auth and api_key_hash:
                 try:
                     ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
@@ -193,10 +193,10 @@ async def with_current_user(
                     )
     else:
         token = _extract_bearer_token(request.headers.get("authorization"))
-        is_api_key_auth = bool(token and token.startswith("sk_"))
-        api_key_hash = (
-            hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
-        )
+        api_key_hash = None
+        is_api_key_auth = isinstance(token, str) and token.startswith("sk_")
+        if token is not None and is_api_key_auth:
+            api_key_hash = hashlib.sha256(token.encode()).hexdigest()
         cache_key: str = (
             identity_cache._apikey_key(api_key_hash)
             if is_api_key_auth and api_key_hash

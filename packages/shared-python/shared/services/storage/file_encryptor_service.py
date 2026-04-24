@@ -1,5 +1,6 @@
 import os
 import pickle
+from typing import Any
 
 from cryptography.fernet import Fernet
 
@@ -10,7 +11,7 @@ class FernetPickleEncryptor:
     def __init__(self, key: bytes = b"nc1BPZSkNb7Oc82_Wo3QoZTmJCEnQtpKZ2n-Z5F4CwY="):
         self.cipher = Fernet(key)
 
-    def save_to_file(self, data: any, file_path: str):
+    def save_to_file(self, data: Any, file_path: str) -> None:
         serialized_data = pickle.dumps(data)  # Serialize the input payload.
         encrypted_data = self.cipher.encrypt(
             serialized_data
@@ -18,7 +19,7 @@ class FernetPickleEncryptor:
         with open(file_path, "wb") as f:
             f.write(encrypted_data)
 
-    def load_from_file(self, file_path: str) -> any:
+    def load_from_file(self, file_path: str) -> Any:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File {file_path} does not exist.")
         with open(file_path, "rb") as f:

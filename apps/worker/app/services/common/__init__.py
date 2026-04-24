@@ -4,10 +4,13 @@ from shared.utils.device_utils import check_internet
 from shared.utils.file_utils import clean_file, path_handle
 from shared.utils.gc_utils import gc_collect as _gc
 from shared.utils.math_utils import min_max_normalize
-from shared.utils.text_utils import remove_duplicates_orderkept, tokenize2stw_remove
+from shared.utils.text_utils import (
+    count_cn_en,
+    remove_duplicates_orderkept,
+    tokenize2stw_remove,
+)
 
 from .kb_utils import (
-    count_cn_en,
     find_images,
     find_matches_parsing,
     flatten_dic2paths,

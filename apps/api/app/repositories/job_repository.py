@@ -177,7 +177,7 @@ class JobRepository:
     ) -> bool:
         """Update the Job file URL using direct UPDATE plus Redis refresh."""
         try:
-            from sqlalchemy import func
+            from sqlalchemy import func, literal
             from sqlalchemy.dialects.postgresql import JSONB
             from sqlalchemy.dialects.postgresql import array as pg_array
 
@@ -191,7 +191,8 @@ class JobRepository:
                 .values(
                     job_metadata=func.jsonb_set(
                         func.coalesce(
-                            Job.job_metadata.cast(JSONB), func.cast("{}", JSONB)
+                            Job.job_metadata.cast(JSONB),
+                            func.cast(literal("{}"), JSONB),
                         ),
                         pg_array(["file_url"]),
                         func.to_jsonb(file_url),

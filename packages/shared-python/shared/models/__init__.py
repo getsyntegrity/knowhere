@@ -13,5 +13,4 @@ __all__ = [
     "CreditsTransaction",
     "JobStateHistory",
     "WebhookLog",
-    "OAuthProvider",
 ]

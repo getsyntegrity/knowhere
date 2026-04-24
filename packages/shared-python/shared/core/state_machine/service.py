@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import cast, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
@@ -350,9 +350,9 @@ class AsyncStateMachineService:
                 import json as _json
 
                 update_values["job_metadata"] = func.jsonb_set(
-                    func.coalesce(Job.job_metadata.cast(JSONB), func.cast("{}", JSONB)),
+                    func.coalesce(Job.job_metadata.cast(JSONB), cast(literal("{}"), JSONB)),
                     pg_array(["error_details"]),
-                    func.cast(_json.dumps(error_details), JSONB),
+                    cast(literal(_json.dumps(error_details)), JSONB),
                 )
 
                 from shared.services.redis.job_metadata_service import (

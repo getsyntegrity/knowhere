@@ -54,7 +54,8 @@ def to_mcp_query_response(response: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(row, dict):
             continue
 
-        source = row.get("source") if isinstance(row.get("source"), dict) else row
+        source_value = row.get("source")
+        source = source_value if isinstance(source_value, dict) else row
         result: dict[str, Any] = {
             "content": row.get("content"),
             "source_file_name": source.get("source_file_name"),

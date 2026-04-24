@@ -64,11 +64,11 @@ async def lifespan(app: FastAPI):
     # Initialize rate limiter rules from DB.
     # Changes now require a pod restart to take effect.
     from app.services.rate_limit.config import RateLimitConfig
-    from shared.core.database import AsyncSessionFactory
+    from shared.core.database import get_db_context
 
     redis_url = redis_pool_manager.config.get_connection_url()
     RateLimitConfig.get_instance(redis_url)
-    async with AsyncSessionFactory() as session:
+    async with get_db_context() as session:
         await load_rules(session)
     logger.info("rate limit rules loaded at startup; restart the pod to apply changes")
 

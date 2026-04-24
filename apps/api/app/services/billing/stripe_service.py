@@ -648,6 +648,8 @@ class StripeService:
                     "event_type": "charge.refunded",
                 }
 
+        user_id_str = str(user_id)
+
         # Compute the incremental refund amount from the cumulative Stripe total.
         # total_refund_amount_cents already includes the current refund event.
         total_refund_amount_cents = charge.get("amount_refunded") or 0
@@ -724,7 +726,7 @@ class StripeService:
         if credits_refunded is not None and credits_refunded < 0:
             await self.credits_service.add_credits(
                 session=db,
-                user_id=user_id,
+                user_id=user_id_str,
                 amount=credits_refunded,
                 reason="Refund adjustment",
                 transaction_type="refund",
