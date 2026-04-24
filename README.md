@@ -40,8 +40,7 @@ knowhere-api/
 │   ├── docker/
 │   └── local-dev/
 └── .github/workflows/
-    ├── build-images.yml
-    └── ci.yml
+    └── build-images.yml
 ```
 
 ## Prerequisites
@@ -174,7 +173,7 @@ define the published API contract and auth wiring:
 
 ## Tests
 
-Run the vetted regression suites used by the public CI:
+Run the retained regression suites:
 
 ```bash
 cd packages/shared-python
@@ -216,15 +215,12 @@ uv run --python 3.11 pytest tests/tasks/test_kb_tasks.py -q
 Docker build assets live in `deploy/docker/`.
 
 The active workflow in `.github/workflows/build-images.yml` only builds and
-publishes Docker images for the `api` and `worker` services. This
-publication-preparation branch keeps the registry path limited to GHCR.
+publishes Docker images for the `api` and `worker` services.
 
 - `main` and Git tags build production-tagged images
 - `staging` builds staging-tagged images
 - pull requests run build validation without publishing
 - `workflow_dispatch` can build a selected service for `staging` or `prod`
-- `docs/self-hosting.md` documents how to pull and run
-  `ghcr.io/ontos-ai/knowhere-backend` and `ghcr.io/ontos-ai/knowhere-worker`
 
 ## Deployment Boundary
 
