@@ -30,6 +30,7 @@ from shared.models.database.job_result import JobResult
 from shared.services.retrieval.hit_stats_service import compute_importance_score
 from shared.services.retrieval.llm_adapter import LLMFn
 from shared.models.database.document import RetrievalHitStat
+from shared.utils.text_utils import tokenize_for_retrieval
 
 _CONTENT_PREVIEW_LEN = 120
 _MAX_OVERVIEW_FILES = 50
@@ -338,8 +339,7 @@ async def _grep_discover_document_ids(
     Aligned with KB's do_discover_files(): if a chunk's term_search_text
     contains query terms, its parent document is included in the KG scope.
     """
-    # Tokenize query into searchable units (Chinese groups + English words)
-    units = re.findall(r'[\u4e00-\u9fff]{2,4}|[a-zA-Z0-9]{2,}', query.lower())
+    units = tokenize_for_retrieval(query, dedupe=True)
     logger.info(f'  GREP tokenized units (cap 8): {units[:8]}  (total={len(units)})')
     if not units:
         return []

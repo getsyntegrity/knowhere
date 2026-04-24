@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from shared.utils.text_utils import tokenize2stw_remove
+from shared.utils.text_utils import tokenize_contents_for_retrieval
 
 
 def build_lexical_text(value: str) -> str:
@@ -13,7 +13,7 @@ def build_lexical_text(value: str) -> str:
     if not text:
         return ""
 
-    tokens = tokenize2stw_remove([text], stopwords=[], link_char=" ")
+    tokens = tokenize_contents_for_retrieval([text], stopwords=[], link_char=" ", dedupe=True)
     token_text = tokens[0] if tokens else ""
     lexical_parts = [part for part in [text, token_text] if part]
     return "\n".join(lexical_parts) if lexical_parts else text
@@ -61,7 +61,7 @@ def build_content_search_text(
     *,
     section_summary: Optional[str] = None,
 ) -> Optional[str]:
-    """Pre-tokenized content field for FTS: content + section summary, jieba space-separated."""
+    """Pre-tokenized content field for retrieval BM25 scoring."""
     content = str(chunk.get("content") or chunk.get("text") or "").strip()
     if not content:
         return None
@@ -69,7 +69,7 @@ def build_content_search_text(
     if section_summary and str(section_summary).strip():
         parts.append(str(section_summary).strip())
     raw = " ".join(parts)
-    tokens = tokenize2stw_remove([raw], stopwords=[], link_char=" ")
+    tokens = tokenize_contents_for_retrieval([raw], stopwords=[], link_char=" ")
     return tokens[0] if tokens else raw
 
 
@@ -80,7 +80,7 @@ def build_path_search_text(
     section_title: Optional[str],
     section_summary: Optional[str],
 ) -> Optional[str]:
-    """Pre-tokenized path field for FTS: filename + path + title + summary, jieba space-separated."""
+    """Pre-tokenized path field for retrieval BM25 scoring."""
     parts = [
         str(v).strip()
         for v in [source_file_name, section_path, section_title, section_summary]
@@ -89,7 +89,7 @@ def build_path_search_text(
     if not parts:
         return None
     raw = " ".join(parts)
-    tokens = tokenize2stw_remove([raw], stopwords=[], link_char=" ")
+    tokens = tokenize_contents_for_retrieval([raw], stopwords=[], link_char=" ")
     return tokens[0] if tokens else raw
 
 

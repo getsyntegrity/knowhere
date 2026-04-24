@@ -5,20 +5,24 @@ import pytest
 from types import SimpleNamespace
 from pathlib import Path
 
+_TEST_ROOT = Path(__file__).resolve().parents[2]
+
 os.environ.setdefault("DS_KEY", "test-key")
 os.environ.setdefault("DS_URL", "https://example.com")
 os.environ.setdefault("S3_BUCKET_NAME", "test-bucket")
 os.environ.setdefault("S3_ACCESS_KEY_ID", "test-access-key")
 os.environ.setdefault("S3_SECRET_ACCESS_KEY", "test-secret-key")
-os.environ.setdefault("S3_TEMP_PATH", "/tmp")
-os.environ.setdefault("USERS_DATA_PATH", "/tmp")
+os.environ.setdefault("S3_TEMP_PATH", str(_TEST_ROOT))
+os.environ.setdefault("USERS_DATA_PATH", str(_TEST_ROOT))
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb"
 )
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
-os.environ.setdefault("TMP_PATH", "/tmp")
-os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
-os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
+os.environ.setdefault("TMP_PATH", str(_TEST_ROOT))
+os.environ.setdefault("FONT_PATH", str(_TEST_ROOT / "shared/tests/.tmp_layout_parser/font.ttf"))
+os.environ.setdefault(
+    "CHROMEDRIVER_PATH", str(_TEST_ROOT / "shared/tests/.tmp_layout_parser/chromedriver")
+)
 
 
 async def _empty_channel(*_args, **_kwargs):

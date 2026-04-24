@@ -4,6 +4,7 @@
 """
 import re
 import warnings
+from collections.abc import Iterable
 from typing import List, Optional
 from shared.utils.chunk_refs import CHUNK_REF_PATTERN
 
@@ -15,6 +16,16 @@ warnings.filterwarnings(
 )
 
 import jieba
+
+try:
+    from blingfire import text_to_words as _blingfire_text_to_words
+except (ImportError, OSError):  # pragma: no cover - dependency is declared in pyproject
+    _blingfire_text_to_words = None
+
+try:
+    from syntok.tokenizer import Tokenizer as _SyntokTokenizer
+except ImportError:  # pragma: no cover - dependency is declared in pyproject
+    _SyntokTokenizer = None
 
 
 def remove_duplicates_orderkept(input_list: List) -> List:
@@ -38,6 +49,7 @@ def remove_duplicates_orderkept(input_list: List) -> List:
 
 # Single regex for Chinese chars, English words, and number groups
 _CN_EN_NUM_RE = re.compile(r'[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?')
+_CJK_CHAR_RE = re.compile(r'[\u4e00-\u9fff]')
 
 def count_cn_en(text: str) -> int:
     """统计中英文单词和数字的数量（单次正则扫描）"""
@@ -57,6 +69,14 @@ def _is_meaningful_token(token: str) -> bool:
     return True
 
 
+def _has_cjk_char(text: str) -> bool:
+    return bool(_CJK_CHAR_RE.search(text))
+
+
+def _is_cjk_char(char: str) -> bool:
+    return '\u4e00' <= char <= '\u9fff'
+
+
 # Lazy-loaded default stopwords (module-level cache)
 _DEFAULT_STOPWORDS: Optional[frozenset] = None
 
@@ -69,11 +89,143 @@ def _get_default_stopwords() -> frozenset:
     return _DEFAULT_STOPWORDS
 
 
+_RETRIEVAL_ZH_STOPWORDS: Optional[frozenset[str]] = None
+_RETRIEVAL_EN_STOPWORDS: Optional[frozenset[str]] = None
+
+
+def _get_retrieval_stopwords() -> tuple[frozenset[str], frozenset[str]]:
+    global _RETRIEVAL_ZH_STOPWORDS, _RETRIEVAL_EN_STOPWORDS
+    if _RETRIEVAL_ZH_STOPWORDS is None or _RETRIEVAL_EN_STOPWORDS is None:
+        zh_words: set[str] = set()
+        en_words: set[str] = set()
+        for word in _get_default_stopwords():
+            token = str(word or "").strip()
+            if not token:
+                continue
+            if _has_cjk_char(token):
+                zh_words.add(token)
+            elif re.search(r"[A-Za-z]", token):
+                en_words.add(token.lower())
+        _RETRIEVAL_ZH_STOPWORDS = frozenset(zh_words)
+        _RETRIEVAL_EN_STOPWORDS = frozenset(en_words)
+    return _RETRIEVAL_ZH_STOPWORDS, _RETRIEVAL_EN_STOPWORDS
+
+
 # Pre-clean: strip chunk reference markers before tokenization
 _CHUNK_MARKER_RE = re.compile(
     rf'{CHUNK_REF_PATTERN}|image-\d+|table-\d+',
     re.IGNORECASE,
 )
+
+
+def _normalize_retrieval_token(token: str) -> str:
+    token = str(token or "").strip()
+    if not token:
+        return ""
+    return token.lower() if re.search(r"[A-Za-z]", token) else token
+
+
+def _split_mixed_language_segments(text: str) -> list[tuple[str, bool]]:
+    segments: list[tuple[str, bool]] = []
+    current: list[str] = []
+    current_is_cjk: Optional[bool] = None
+
+    for char in text:
+        char_is_cjk = _is_cjk_char(char)
+        if current_is_cjk is None or char_is_cjk == current_is_cjk:
+            current.append(char)
+            current_is_cjk = char_is_cjk
+            continue
+        segments.append(("".join(current), current_is_cjk))
+        current = [char]
+        current_is_cjk = char_is_cjk
+
+    if current:
+        segments.append(("".join(current), bool(current_is_cjk)))
+    return segments
+
+
+def _tokenize_english_segment(text: str) -> list[str]:
+    if not text.strip():
+        return []
+    if _blingfire_text_to_words is not None:
+        return _blingfire_text_to_words(text).split()
+    if _SyntokTokenizer is not None:
+        return [str(token.value) for token in _SyntokTokenizer().tokenize(text)]
+    return text.split()
+
+
+def _resolve_retrieval_stopwords(
+    stopwords: Optional[Iterable[str]],
+) -> tuple[Optional[set[str]], Optional[set[str]]]:
+    if stopwords is None:
+        zh_stopwords, en_stopwords = _get_retrieval_stopwords()
+        return set(zh_stopwords), set(en_stopwords)
+    normalized = [str(word or "").strip() for word in stopwords if str(word or "").strip()]
+    if not normalized:
+        return None, None
+    zh_words = {word for word in normalized if _has_cjk_char(word)}
+    en_words = {word.lower() for word in normalized if re.search(r"[A-Za-z]", word)}
+    return (zh_words or None), (en_words or None)
+
+
+def tokenize_for_retrieval(
+    text: str,
+    *,
+    stopwords: Optional[Iterable[str]] = None,
+    dedupe: bool = False,
+    min_token_length: int = 2,
+) -> list[str]:
+    """Tokenize mixed-language retrieval text with jieba + English tokenizer.
+
+    Chinese spans are segmented with jieba. Non-Chinese spans are segmented with
+    blingfire when available. Tokens are normalized to lowercase for English,
+    filtered for minimum length / useful characters, and optionally deduplicated.
+    """
+    content = _CHUNK_MARKER_RE.sub('', str(text or ""))
+    zh_stopwords, en_stopwords = _resolve_retrieval_stopwords(stopwords)
+    tokens: list[str] = []
+
+    for segment, is_cjk in _split_mixed_language_segments(content):
+        raw_tokens = jieba.lcut(segment) if is_cjk else _tokenize_english_segment(segment)
+        for raw_token in raw_tokens:
+            token = _normalize_retrieval_token(raw_token)
+            if not token or not _is_meaningful_token(token):
+                continue
+            if len(token) < min_token_length:
+                continue
+            if _has_cjk_char(token):
+                if zh_stopwords and token in zh_stopwords:
+                    continue
+            elif en_stopwords and token in en_stopwords:
+                continue
+            tokens.append(token)
+
+    if dedupe:
+        tokens = remove_duplicates_orderkept(tokens)
+    return tokens
+
+
+def tokenize_contents_for_retrieval(
+    contents: List[str],
+    *,
+    stopwords: Optional[Iterable[str]] = None,
+    link_char: str = ';',
+    dedupe: bool = False,
+    min_token_length: int = 2,
+) -> List[str]:
+    """Batch wrapper around `tokenize_for_retrieval()`."""
+    return [
+        link_char.join(
+            tokenize_for_retrieval(
+                content,
+                stopwords=stopwords,
+                dedupe=dedupe,
+                min_token_length=min_token_length,
+            )
+        )
+        for content in contents
+    ]
 
 def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = None, link_char: str = ';') -> List[str]:
     """

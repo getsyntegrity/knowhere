@@ -769,11 +769,15 @@ async def run_retrieval_query(
     logger.debug(f'  📦 Cache miss (version={cache_version}), running full pipeline')
 
     # ── Small KB optimization ──
-    total_chunk_count = await _count_scoped_chunks(
-        db, user_id=user_id, namespace=namespace,
-        exclude_document_ids=exclude_document_ids,
-        allowed_chunk_types=allowed_chunk_types,
-    )
+    try:
+        total_chunk_count = await _count_scoped_chunks(
+            db, user_id=user_id, namespace=namespace,
+            exclude_document_ids=exclude_document_ids,
+            allowed_chunk_types=allowed_chunk_types,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to count scoped chunks, skipping small KB optimization: {e}")
+        total_chunk_count = top_k + 1
     logger.info(f'\n  📊 Total chunks in scope: {total_chunk_count}')
     if total_chunk_count <= top_k:
         logger.info(f'  ⚡ Small KB optimization: {total_chunk_count} chunks <= top_k={top_k}, returning all')
