@@ -184,6 +184,68 @@ def test_publish_document_graph_creates_only_document_nodes():
     assert edges == []
 
 
+def test_publish_document_graph_prefers_document_top_summary_from_chunk_metadata():
+    from types import SimpleNamespace
+
+    from shared.services.retrieval.graph_service import DocumentGraphService
+
+    document = SimpleNamespace(document_id='doc_1', source_file_name='welding-handbook.pdf')
+    injected_summary = 'This manual explains TIG settings and filler selection for stainless steel joints.'
+
+    class _FakeAllResult:
+        def __init__(self, values):
+            self._values = values
+
+        def all(self):
+            return self._values
+
+        def scalars(self):
+            return _FakeScalars(self._values)
+
+    class _Db:
+        def __init__(self):
+            self.added = []
+            self._call = 0
+
+        def execute(self, _stmt):
+            self._call += 1
+            if self._call == 1:
+                return _FakeResult([document])
+            if self._call == 2:
+                return _FakeAllResult([
+                    ('text', {'document_top_summary': injected_summary, 'keywords': ['tig', 'stainless']}),
+                ])
+            if self._call == 3:
+                return _FakeResult(['Fallback Title'])
+            if self._call == 4:
+                return _FakeResult([])
+            raise AssertionError(f'unexpected execute call {self._call}')
+
+        def add(self, value):
+            self.added.append(value)
+
+        def flush(self):
+            return None
+
+    db = _Db()
+    service = DocumentGraphService()
+    service.remove_document_graph = lambda *_args, **_kwargs: None
+
+    service.publish_document_graph(
+        db,
+        user_id='user_123',
+        namespace='default',
+        document_id='doc_1',
+        job_result_id='result_123',
+    )
+
+    from shared.models.database.document import GraphNode
+
+    graph_nodes = [obj for obj in db.added if isinstance(obj, GraphNode)]
+    assert len(graph_nodes) == 1
+    assert graph_nodes[0].properties['top_summary'] == injected_summary
+
+
 def test_publish_document_graph_creates_keyword_edges_only_above_threshold():
     """Verify that edges are only created between documents with keyword overlap score >= 0.8,
     aligned with connect_builder DEFAULT_CONFIG min_score_threshold."""

@@ -365,11 +365,16 @@ class ZipResultService:
 
             # Get or build base metadata
             existing_metadata = chunk.get("metadata", {})
+            if not isinstance(existing_metadata, dict):
+                existing_metadata = {}
             metadata = {
-                "length": existing_metadata.get("length") or len(content),
-                "summary": existing_metadata.get("summary") or chunk.get("summary", ""),
-                "page_nums": existing_metadata.get("page_nums", []),
+                key: value
+                for key, value in existing_metadata.items()
+                if key != "_relationship_refs"
             }
+            metadata["length"] = metadata.get("length") or len(content)
+            metadata["summary"] = metadata.get("summary") or chunk.get("summary", "")
+            metadata["page_nums"] = metadata.get("page_nums", [])
 
             # Add type-specific fields
             if chunk_type == "text":

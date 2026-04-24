@@ -135,6 +135,19 @@ def _get_normalized_keyword_set(chunk_metadata_list: list[dict[str, Any]]) -> se
     return result
 
 
+def _extract_document_top_summary(
+    chunk_metadata_list: list[dict[str, Any]],
+    section_titles: Sequence[str],
+) -> str:
+    for meta in chunk_metadata_list:
+        if not isinstance(meta, dict):
+            continue
+        summary = str(meta.get('document_top_summary') or '').strip()
+        if summary:
+            return summary
+    return ' / '.join(title for title in section_titles if title)[:300]
+
+
 @dataclass
 class GraphScope:
     user_id: str
@@ -177,7 +190,6 @@ class DocumentGraphService:
             types_breakdown[chunk_type or 'text'] += 1
         chunks_count = len(chunk_meta_rows)
 
-        # Build top_summary from level <= 2 section titles
         sections = list(
             db.execute(
                 select(DocumentSection.section_title)
@@ -187,7 +199,7 @@ class DocumentGraphService:
                 .order_by(DocumentSection.sort_order)
             ).scalars()
         )
-        top_summary = ' / '.join(t for t in sections if t)[:300]
+        top_summary = _extract_document_top_summary(chunk_metadata_list, sections)
 
         # ── Clean up old graph data for this document ──
         self.remove_document_graph(db, scope=GraphScope(user_id=user_id, namespace=namespace), document_id=document_id)

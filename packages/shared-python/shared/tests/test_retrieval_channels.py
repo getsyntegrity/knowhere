@@ -22,7 +22,10 @@ os.environ.setdefault(
     "CHROMEDRIVER_PATH", str(_TEST_ROOT / "shared/tests/.tmp_layout_parser/chromedriver")
 )
 
-from shared.services.retrieval.agent_navigate import _grep_discover_document_ids
+from shared.services.retrieval.agent_navigate import (
+    _grep_discover_document_ids,
+    _parse_chunk_path_selections,
+)
 from shared.services.retrieval.channels import content_channel, path_channel, term_channel
 from shared.services.retrieval.lexical_text import (
     build_content_search_text,
@@ -106,6 +109,39 @@ def test_build_content_search_text_preserves_repeated_terms_for_bm25():
 
     assert text is not None
     assert text.split().count("welding") == 2
+
+
+def test_parse_chunk_path_selections_accepts_structured_and_legacy_outputs():
+    structured = _parse_chunk_path_selections(
+        '[{"path":"Welding Processes / TIG","confidence":0.92},{"path":"tables / table-1.html","confidence":"78%"}]'
+    )
+    legacy = _parse_chunk_path_selections(
+        '["Welding Processes / TIG","tables / table-1.html"]'
+    )
+
+    assert structured == [
+        {"path": "Welding Processes / TIG", "confidence": 0.92},
+        {"path": "tables / table-1.html", "confidence": 0.78},
+    ]
+    assert legacy == [
+        {"path": "Welding Processes / TIG", "confidence": None},
+        {"path": "tables / table-1.html", "confidence": None},
+    ]
+
+
+def test_chunk_select_prompt_formats_without_interpreting_json_example():
+    from shared.services.retrieval.agent_navigate import _CHUNK_SELECT_PROMPT
+
+    rendered = _CHUNK_SELECT_PROMPT.format(
+        doc_name="mock_welding_guide",
+        doc_id="doc_debug_ret_02",
+        chunks_overview='- [text] path="Welding Processes / TIG"',
+        query="Welding Processes TIG parameters",
+        max_chunks=10,
+    )
+
+    assert '{"path": "doc_name/Section A/Subsection B", "confidence": 0.92}' in rendered
+    assert 'Welding Processes TIG parameters' in rendered
 
 
 @pytest.mark.asyncio

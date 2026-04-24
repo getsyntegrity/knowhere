@@ -15,25 +15,32 @@ Called by graph_builder.build_and_deploy() after file deploy, before KG build.
 import json
 import os
 import re
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
-from shared.utils.chunk_refs import CHUNK_REF_PATTERN, REFERENCE_LABEL_PATTERN
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 # Summary output max length (≤100 chars)
 SUMMARY_MAX_LEN = 100
-
-# Maximum snippet length per chunk used as input material
-CHUNK_SNIPPET_MAX = 200
+NAVIGATION_TOP_SUMMARY_MAX_LEN = 200
+# TODO: revisit this cap after we collect more real-world prompt/token budget data.
+NON_LLM_TOP_SUMMARY_MAX_SECTIONS = 20
+NON_LLM_TOP_SUMMARY_MAX_DEPTH = 2
 
 # Summary marker key in hierarchy.json
 SUMMARY_KEY = "_summary"
 
 # Keys in hierarchy.json that are not content tree nodes
 RESERVED_KEYS = {"images", "tables", SUMMARY_KEY}
+_TITLE_ENUM_PREFIXES = (
+    "this section covers:",
+    "this section includes",
+    "this document covers:",
+    "this document includes",
+)
 
 
 # ─── LLM Interface ───────────────────────────────────────────────────────────
@@ -83,6 +90,239 @@ def _llm_summarize(snippets_text: str, node_name: str) -> str:
         return ""
 
 
+def _normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _normalize_multiline_text(text: str) -> str:
+    lines = []
+    for raw_line in str(text or "").splitlines():
+        stripped = raw_line.rstrip()
+        if not stripped.strip():
+            continue
+        leading_spaces = len(stripped) - len(stripped.lstrip(" "))
+        compact = re.sub(r"\s+", " ", stripped.lstrip())
+        lines.append((" " * leading_spaces) + compact)
+    return "\n".join(lines).strip()
+
+
+def _looks_like_title_enum(text: str) -> bool:
+    normalized = _normalize_whitespace(text).lower()
+    return any(normalized.startswith(prefix) for prefix in _TITLE_ENUM_PREFIXES)
+
+
+def _split_sentences(text: str) -> List[str]:
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return []
+    parts = re.split(r'(?<=[。！？；.!?;])\s+', normalized)
+    return [part.strip() for part in parts if part and part.strip()]
+
+
+def _split_soft_segments(text: str) -> List[str]:
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return []
+    parts = re.split(r'(?<=[，、,：:/])\s*', normalized)
+    return [part.strip() for part in parts if part and part.strip()]
+
+
+def _truncate_navigation_summary(text: str, max_len: int = NAVIGATION_TOP_SUMMARY_MAX_LEN) -> str:
+    normalized_multiline = _normalize_multiline_text(text)
+    if not normalized_multiline:
+        return ""
+    if len(normalized_multiline) <= max_len:
+        return normalized_multiline
+
+    normalized = _normalize_whitespace(normalized_multiline)
+
+    sentences = _split_sentences(normalized)
+    if sentences:
+        first_sentence = sentences[0]
+        if len(first_sentence) > max_len:
+            return first_sentence
+
+        kept: List[str] = []
+        current_len = 0
+        for sentence in sentences:
+            sentence_len = len(sentence) + (1 if kept else 0)
+            if kept and current_len + sentence_len > max_len:
+                break
+            kept.append(sentence)
+            current_len += sentence_len
+        if kept:
+            return " ".join(kept)
+
+    segments = _split_soft_segments(normalized)
+    if segments:
+        first_segment = segments[0]
+        if len(first_segment) > max_len:
+            return first_segment[:max_len].rstrip() + "..."
+        kept = []
+        current_len = 0
+        for segment in segments:
+            segment_len = len(segment) + (1 if kept else 0)
+            if kept and current_len + segment_len > max_len:
+                break
+            kept.append(segment)
+            current_len += segment_len
+        if kept:
+            return " ".join(kept)
+
+    return normalized[:max_len].rstrip() + "..."
+
+
+def _dedupe_summary_blocks(items: List[str]) -> List[str]:
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = _normalize_multiline_text(item)
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+    return deduped
+
+
+def _resolve_document_tree(hierarchy: Dict[str, Any], file_name: str) -> Dict[str, Any]:
+    content_keys = [k for k in hierarchy.keys() if k not in RESERVED_KEYS]
+    fallback_tree: Dict[str, Any] | None = None
+    for root_key in content_keys:
+        subtree = hierarchy.get(root_key, {})
+        if not isinstance(subtree, dict):
+            continue
+        if fallback_tree is None:
+            fallback_tree = subtree
+        if file_name in subtree and isinstance(subtree[file_name], dict):
+            return subtree[file_name]
+    return fallback_tree or hierarchy
+
+
+def build_hierarchy_from_paths(paths: List[str]) -> Dict[str, Any]:
+    """Rebuild a nested hierarchy tree from chunk paths."""
+    root_dict: Dict[str, Any] = {}
+    for path in paths:
+        path_str = str(path or "").strip()
+        if not path_str:
+            continue
+        nodes = [node.strip() for node in path_str.split("/") if node and node.strip()]
+        current_dict = root_dict
+        for node in nodes:
+            if node not in current_dict or not isinstance(current_dict.get(node), dict):
+                current_dict[node] = {}
+            current_dict = current_dict[node]
+    return root_dict
+
+
+def ensure_hierarchy_json(
+    file_dir: str,
+    paths: List[str],
+    *,
+    overwrite: bool = False,
+) -> str:
+    """Materialize `hierarchy.json` from chunk paths when the parser did not emit one."""
+    hierarchy_path = os.path.join(file_dir, "hierarchy.json")
+    if os.path.exists(hierarchy_path) and not overwrite:
+        return hierarchy_path
+
+    hierarchy = build_hierarchy_from_paths(paths)
+    if not hierarchy:
+        return ""
+
+    os.makedirs(file_dir, exist_ok=True)
+    with open(hierarchy_path, "w", encoding="utf-8") as f:
+        json.dump(hierarchy, f, ensure_ascii=False, indent=2)
+    return hierarchy_path
+
+
+def _build_section_tree_preview(
+    document_tree: Dict[str, Any],
+    *,
+    max_depth: int = NON_LLM_TOP_SUMMARY_MAX_DEPTH,
+    max_items: int = NON_LLM_TOP_SUMMARY_MAX_SECTIONS,
+) -> str:
+    selected_paths: set[tuple[str, ...]] = set()
+    queue = deque()
+    collected = 0
+
+    for key, subtree in document_tree.items():
+        if key in RESERVED_KEYS or not isinstance(subtree, dict):
+            continue
+        queue.append(((key,), key, subtree, 1))
+
+    while queue and collected < max_items:
+        path, title, subtree, depth = queue.popleft()
+        normalized = _normalize_whitespace(title)
+        if normalized:
+            selected_paths.add(path)
+            collected += 1
+
+        if depth >= max_depth:
+            continue
+        for child_key, child_subtree in subtree.items():
+            if child_key in RESERVED_KEYS or not isinstance(child_subtree, dict):
+                continue
+            child_title = _normalize_whitespace(child_key)
+            if not child_title:
+                continue
+            queue.append((path + (child_title,), child_title, child_subtree, depth + 1))
+
+    lines: List[str] = []
+
+    def _render(subtree: Dict[str, Any], depth: int, path_prefix: tuple[str, ...]) -> None:
+        if depth > max_depth:
+            return
+        for key, child_subtree in subtree.items():
+            if key in RESERVED_KEYS or not isinstance(child_subtree, dict):
+                continue
+            title = _normalize_whitespace(key)
+            if not title:
+                continue
+            current_path = path_prefix + (title,)
+            if current_path not in selected_paths:
+                continue
+            indent = "  " * (depth - 1)
+            lines.append(f"{indent}- {title}")
+            _render(child_subtree, depth + 1, current_path)
+
+    _render(document_tree, 1, ())
+    return "\n".join(lines)
+
+
+def _build_navigation_top_summary(hierarchy: Dict[str, Any], file_name: str) -> str:
+    """Build the navigation-facing top summary from enriched hierarchy.json.
+
+    Rules:
+    - If the root/file node summary looks LLM-generated, use it directly.
+    - If it looks like deterministic title-enum fallback (or is missing), use a
+      depth-limited BFS selection and render it as a compact indented tree.
+    - Final result is deduped and truncated gracefully at sentence boundaries.
+    """
+    document_tree = _resolve_document_tree(hierarchy, file_name)
+    if not isinstance(document_tree, dict):
+        return ""
+
+    root_summary = _normalize_whitespace(document_tree.get(SUMMARY_KEY, ""))
+
+    parts: List[str] = []
+    if root_summary:
+        parts.append(root_summary)
+
+    if not root_summary or _looks_like_title_enum(root_summary):
+        tree_preview = _build_section_tree_preview(
+            document_tree,
+            max_depth=NON_LLM_TOP_SUMMARY_MAX_DEPTH,
+            max_items=NON_LLM_TOP_SUMMARY_MAX_SECTIONS,
+        )
+        if tree_preview:
+            parts.append("This document includes the following contents:\n" + tree_preview)
+
+    return _truncate_navigation_summary("\n".join(_dedupe_summary_blocks(parts)))
+
+
 # ─── Chunk Lookup ─────────────────────────────────────────────────────────────
 
 
@@ -94,11 +334,8 @@ def _build_chunk_lookup(
 
     For each chunk, compose a structured snippet:
       - If metadata.summary exists → use it directly
-      - Otherwise → title (node_key) + keywords + content[:200]
+    - Otherwise → title (node_key) + keywords
     """
-    marker_re = re.compile(CHUNK_REF_PATTERN, re.IGNORECASE)
-    # Also strip standalone table/image reference lines like "table-4", "image-1"
-    ref_re = re.compile(REFERENCE_LABEL_PATTERN, re.IGNORECASE)
     lookup: Dict[str, str] = {}
 
     for chunk in chunks:
@@ -124,34 +361,16 @@ def _build_chunk_lookup(
             summary = (meta.get("summary") or "").strip()
 
         if not summary:
-            # Compose from: title + keywords + content[:200]
-            snippet_parts = []
-
-            # Content excerpt (stripped of IMAGE/TABLE markers and ref lines)
-            content = chunk.get("content", "")
-            lines = content.split("\n")
-            clean_lines = [
-                l for l in lines
-                if not marker_re.search(l) and not ref_re.match(l)
-            ]
-            clean_text = "\n".join(clean_lines).strip()
-
-            if not clean_text and not (isinstance(meta, dict) and meta.get("keywords")):
-                # Avoid generating a trivial title-only snippet if there's no actual content
-                summary = ""
-            else:
-                snippet_parts = []
-                snippet_parts.append(node_key)
-                
-                if isinstance(meta, dict):
-                    kw = (meta.get("keywords") or "").strip()
-                    if kw:
-                        snippet_parts.append(f"Keywords: {kw}")
-
-                if clean_text:
-                    snippet_parts.append(clean_text[:CHUNK_SNIPPET_MAX])
-
-                summary = "\n".join(snippet_parts)
+            snippet_parts = [node_key]
+            if isinstance(meta, dict):
+                kw = meta.get("keywords")
+                if isinstance(kw, list):
+                    kw_text = ", ".join(str(item).strip() for item in kw if str(item).strip())
+                else:
+                    kw_text = str(kw or "").strip()
+                if kw_text:
+                    snippet_parts.append(f"Keywords: {kw_text}")
+            summary = "\n".join(snippet_parts)
 
         if summary:
             # Multiple chunks may share the same last segment (e.g. "part 1", "part 2")
@@ -379,25 +598,31 @@ def _extract_top_summary(hierarchy: Dict[str, Any], file_name: str) -> str:
     Looks for the file_name key in the hierarchy tree and returns its _summary.
     Falls back to the first content node's _summary.
     """
-    content_keys = [k for k in hierarchy.keys() if k not in RESERVED_KEYS]
+    top_summary = _build_navigation_top_summary(hierarchy, file_name)
+    if top_summary:
+        return top_summary
 
+    content_keys = [k for k in hierarchy.keys() if k not in RESERVED_KEYS]
     for root_key in content_keys:
         subtree = hierarchy.get(root_key, {})
         if not isinstance(subtree, dict):
             continue
-
-        # Try to find file_name directly under root
-        if file_name in subtree:
-            file_node = subtree[file_name]
-            if isinstance(file_node, dict) and SUMMARY_KEY in file_node:
-                return file_node[SUMMARY_KEY]
-
-        # Root itself might have a summary
         if SUMMARY_KEY in subtree:
-            return subtree[SUMMARY_KEY]
-
-    # Fallback: return root-level summary if present
+            return _truncate_navigation_summary(str(subtree[SUMMARY_KEY]))
     if SUMMARY_KEY in hierarchy:
-        return hierarchy[SUMMARY_KEY]
-
+        return _truncate_navigation_summary(str(hierarchy[SUMMARY_KEY]))
     return ""
+
+
+def load_navigation_top_summary(file_dir: str, file_name: str) -> str:
+    """Load hierarchy.json from a parsed file directory and extract navigation summary."""
+    hierarchy_path = os.path.join(file_dir, "hierarchy.json")
+    if not os.path.exists(hierarchy_path):
+        return ""
+    try:
+        with open(hierarchy_path, "r", encoding="utf-8") as f:
+            hierarchy = json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to read hierarchy for top_summary: dir={file_dir}, error={e}")
+        return ""
+    return _extract_top_summary(hierarchy, file_name)

@@ -77,7 +77,13 @@ def create_retrieval_llm_fn(
             )
             return result
         except Exception as exc:
-            logger.warning(f'retrieval: agent LLM call failed (degrading gracefully): {exc}')
+            logger.warning(
+                "retrieval: agent LLM call failed (degrading gracefully): "
+                "model={} error_type={} error={}",
+                effective_model,
+                type(exc).__name__,
+                exc,
+            )
             return ''
 
     return llm_fn

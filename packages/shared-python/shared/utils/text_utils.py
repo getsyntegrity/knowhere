@@ -19,13 +19,10 @@ import jieba
 
 try:
     from blingfire import text_to_words as _blingfire_text_to_words
-except (ImportError, OSError):  # pragma: no cover - dependency is declared in pyproject
+except (ImportError, OSError):  # blingfire ships a native lib; fall back to syntok when unusable.
     _blingfire_text_to_words = None
 
-try:
-    from syntok.tokenizer import Tokenizer as _SyntokTokenizer
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    _SyntokTokenizer = None
+from syntok.tokenizer import Tokenizer as _SyntokTokenizer
 
 
 def remove_duplicates_orderkept(input_list: List) -> List:
@@ -150,9 +147,13 @@ def _tokenize_english_segment(text: str) -> list[str]:
         return []
     if _blingfire_text_to_words is not None:
         return _blingfire_text_to_words(text).split()
-    if _SyntokTokenizer is not None:
-        return [str(token.value) for token in _SyntokTokenizer().tokenize(text)]
-    return text.split()
+    return [str(token.value) for token in _SyntokTokenizer().tokenize(text)]
+
+
+def _tokenize_cjk_segment(text: str) -> list[str]:
+    if not text.strip():
+        return []
+    return list(jieba.lcut(text))
 
 
 def _resolve_retrieval_stopwords(
@@ -187,7 +188,7 @@ def tokenize_for_retrieval(
     tokens: list[str] = []
 
     for segment, is_cjk in _split_mixed_language_segments(content):
-        raw_tokens = jieba.lcut(segment) if is_cjk else _tokenize_english_segment(segment)
+        raw_tokens = _tokenize_cjk_segment(segment) if is_cjk else _tokenize_english_segment(segment)
         for raw_token in raw_tokens:
             token = _normalize_retrieval_token(raw_token)
             if not token or not _is_meaningful_token(token):
@@ -251,12 +252,7 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
     for content in contents:
         # Pre-clean: remove IMAGE_/TABLE_ markers and reference labels
         content = _CHUNK_MARKER_RE.sub('', content)
-        if hasattr(jieba, "lcut"):
-            raw_tokens = jieba.lcut(content)
-        elif hasattr(jieba, "cut"):
-            raw_tokens = list(jieba.cut(content))
-        else:
-            raw_tokens = re.split(r'[\s,;，；。！？、\-/]+', content)
+        raw_tokens = jieba.lcut(content)
         # Filter: keep only tokens with meaningful characters (Chinese/English/numbers)
         tokens = [t for t in raw_tokens if _is_meaningful_token(t)]
         # Remove stopwords
