@@ -694,6 +694,19 @@ def test_selected_retained_fixtures_avoid_personal_contact_strings() -> None:
         assert "@outlook.com" not in fixture_text
 
 
+def test_selected_runtime_text_surfaces_remove_internal_planning_refs() -> None:
+    prompt_service_text: str = read_text("packages/shared-python/shared/services/ai/prompt_service.py")
+    kb_utils_text: str = read_text("apps/worker/app/services/common/kb_utils.py")
+
+    assert "hierarchy_llm_compact_input_0c446abf.plan.md" not in prompt_service_text
+    assert "build_prompt 调用" not in prompt_service_text
+    assert "process_llm_history 完成" not in prompt_service_text
+    assert "Atlas number (图集号)" not in prompt_service_text
+    assert "Atlas name (图集名)" not in prompt_service_text
+    assert "Page label (页码)" not in prompt_service_text
+    assert " 包括 " not in kb_utils_text
+
+
 def test_worker_tests_do_not_keep_stale_runtime_artifacts() -> None:
     assert not (REPO_ROOT / "apps/worker/tests/.tmp_layout_parser").exists()
 

@@ -68,9 +68,9 @@ def _language_directive(lang) -> str:
 
 def build_prompt(task, texts, query, **kwargs):
     from loguru import logger
-    logger.debug(f"build_prompt 调用: task={task}, texts长度={len(str(texts)) if texts else 0}")
+    logger.debug(f"build_prompt called: task={task}, texts_length={len(str(texts)) if texts else 0}")
     his_record = process_llm_history(kwargs.get('paras', {}))
-    logger.debug("process_llm_history 完成")
+    logger.debug("process_llm_history completed")
     temperature = 0.1
     top_p = 0.1
     max_tokens = 2000
@@ -201,7 +201,7 @@ def build_prompt(task, texts, query, **kwargs):
     # `_compact_for_llm` collapses consecutive body rows into placeholders.
     # Kept as reference; DO NOT delete.  The live prompt below targets the
     # COMPACT input shape used when `KB_LAYOUT_LLM_COMPACT_INPUT` is on
-    # (default).  See plan: hierarchy_llm_compact_input_0c446abf.plan.md.
+    # (default). The live prompt below is the publication baseline.
     # ---------------------------------------------------------------------
     #     elif task == 'eval-headings':
     #         temperature = 0
@@ -589,9 +589,9 @@ def build_prompt(task, texts, query, **kwargs):
         Steps:
         1. FIRST: Find the title block / info bar (usually at the bottom-right corner or bottom edge of the page).
            - Extract:
-             a) Atlas number (图集号): a code with letters and digits, may include hyphens
-             b) Atlas name (图集名): the Chinese or English name of this drawing collection
-             c) Page label (页码): the page number or label shown in the title block
+             a) Atlas number: a code with letters and digits, which may include hyphens
+             b) Atlas name: the drawing collection name, whether shown in Chinese or English
+             c) Page label: the page number or page tag shown in the title block
            - Output EXACTLY this format (replace placeholders with real values):
              <atlas_no (if any)> (<atlas_name>) <page number>
 

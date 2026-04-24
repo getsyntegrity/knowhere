@@ -13,6 +13,10 @@ from shared.core.exceptions.domain_exceptions import WorkerHandlingException, Va
 
 from shared.utils.text_utils import count_cn_en, _CN_EN_NUM_RE
 
+
+SUMMARY_PATH_MARKERS: tuple[str, ...] = ("summary", "\u6458\u8981\u603b\u7ed3")
+
+
 def gen_str_codes(input_string):
     """Generate a UUID5 code from a string."""
     namespace = uuid.NAMESPACE_DNS
@@ -44,7 +48,7 @@ def find_matches_parsing(content, path):
         match_type = '\n'.join((['PTXT'] + matches))
     
     split_char = settings.SPLIT_CHAR or ";"
-    if f'{split_char}摘要总结' in path:
+    if any(f"{split_char}{summary_marker}" in path for summary_marker in SUMMARY_PATH_MARKERS):
         parent_path = path.split(split_char)[-2]
         match_type = ('SUMMARY_' + parent_path + '_SUMMARY')
     return match_type
@@ -212,7 +216,7 @@ def traverse_dict(d, parent=None):
     for key, value in d.items():
         if value:
             child_keys = ', '.join(value.keys())
-            text = f"'{key}' 包括 {child_keys}"
+            text = f"'{key}' includes {child_keys}"
             dic_texts.append(text)
             dic_texts.extend(traverse_dict(value, key))
     return dic_texts
