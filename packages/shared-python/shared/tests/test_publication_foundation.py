@@ -114,6 +114,14 @@ def test_private_root_only_files_are_removed_from_publication_branch() -> None:
         assert not (REPO_ROOT / relative_path).exists(), relative_path
 
 
+def test_private_debug_billing_scripts_are_removed_from_publication_branch() -> None:
+    for relative_path in (
+        "apps/api/test_methods.py",
+        "apps/api/test_stripe.py",
+    ):
+        assert not (REPO_ROOT / relative_path).exists(), relative_path
+
+
 def test_readme_links_public_foundation_documents() -> None:
     readme_text: str = read_text("README.md")
 
