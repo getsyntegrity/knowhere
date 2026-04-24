@@ -1,4 +1,5 @@
 """Redis service exports."""
+
 from .job_info_redis_service import JobInfoRedisService
 from .job_metadata_service import JobMetadataService
 from .redis_alerts import AlertRule, RedisAlertManager, RedisAlertNotifier
@@ -9,14 +10,14 @@ from .task_redis_service import TaskRedisService
 from .user_redis_service import UserRedisService
 
 __all__ = [
-    'RedisService', 
-    'RedisServiceFactory', 
-    'RedisMonitor', 
-    'RedisAlertManager', 
-    'RedisAlertNotifier', 
-    'AlertRule',
-    'TaskRedisService',
-    'UserRedisService',
-    'JobInfoRedisService',
-    'JobMetadataService',
+    "RedisService",
+    "RedisServiceFactory",
+    "RedisMonitor",
+    "RedisAlertManager",
+    "RedisAlertNotifier",
+    "AlertRule",
+    "TaskRedisService",
+    "UserRedisService",
+    "JobInfoRedisService",
+    "JobMetadataService",
 ]

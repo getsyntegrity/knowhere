@@ -8,6 +8,7 @@ Uses QStash's managed retry and callback infrastructure. Every publish includes:
 - Approximate exponential backoff retry (1m → 10m → ~100m → ~100m → ~100m)
 - SSRF pre-validation before publishing
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -63,10 +64,11 @@ class QStashWebhookPublisher:
 
         Returns the QStash message_id on success, or None on failure.
         """
-        from shared.core.database_sync import get_sync_db_context
         from sqlalchemy import select
-        from shared.models.database.webhook import WebhookEvent
+
+        from shared.core.database_sync import get_sync_db_context
         from shared.models.database.job import Job
+        from shared.models.database.webhook import WebhookEvent
 
         with get_sync_db_context() as db:
             event = db.execute(
@@ -108,7 +110,9 @@ class QStashWebhookPublisher:
 
             secret = self._resolve_secret(db, str(user_id), event.target_url)
             if not secret:
-                logger.error(f"QStash publish: secret resolution failed for event {event_id}")
+                logger.error(
+                    f"QStash publish: secret resolution failed for event {event_id}"
+                )
                 event.status = WebhookEventStatus.FAILED
                 db.commit()
                 return None
@@ -195,6 +199,7 @@ class QStashWebhookPublisher:
         """Enrich the webhook payload (e.g., generate fresh presigned S3 URL)."""
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
+
         from shared.models.database.job import Job
 
         payload = dict(event.payload)
@@ -213,7 +218,10 @@ class QStashWebhookPublisher:
 
             job_result = job.job_result
             if job_result.result_s3_key:
-                from app.services.storage.sync_storage_service import generate_download_url
+                from app.services.storage.sync_storage_service import (
+                    generate_download_url,
+                )
+
                 url_info = generate_download_url(job_result.result_s3_key)
                 payload["result_url"] = url_info["download_url"]
 
@@ -226,14 +234,19 @@ class QStashWebhookPublisher:
 
     def _resolve_secret(self, db: Any, user_id: str, endpoint: str) -> Optional[str]:
         """Resolve the webhook signing secret for a user/endpoint."""
+        from datetime import datetime, timezone
+
         from sqlalchemy import and_, select
-        from shared.models.database.webhook_secret import WebhookSecret, WebhookSecretStatus
-        from shared.services.encryption import get_fernet_service
+
         from shared.core.exceptions.domain_exceptions import (
             SystemSettingInvalidException,
             SystemSettingMissingException,
         )
-        from datetime import datetime, timezone
+        from shared.models.database.webhook_secret import (
+            WebhookSecret,
+            WebhookSecretStatus,
+        )
+        from shared.services.encryption import get_fernet_service
 
         try:
             fernet = get_fernet_service()

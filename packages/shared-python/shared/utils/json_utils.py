@@ -1,4 +1,5 @@
 """JSON-serialization helpers."""
+
 from __future__ import annotations
 
 import datetime
@@ -6,7 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping, MutableSet
 
 
-def make_json_safe(value: Any, *, max_preview_rows: int = 5, _visited: MutableSet[int] | None = None) -> Any:
+def make_json_safe(
+    value: Any, *, max_preview_rows: int = 5, _visited: MutableSet[int] | None = None
+) -> Any:
     """
     Convert a complex object into a JSON-safe structure.
 
@@ -30,9 +33,9 @@ def make_json_safe(value: Any, *, max_preview_rows: int = 5, _visited: MutableSe
 
     if isinstance(value, Path):
         return str(value)
-    
+
     # Handle UUID-like types, including asyncpg UUID wrappers.
-    if hasattr(value, '__class__') and 'UUID' in value.__class__.__name__:
+    if hasattr(value, "__class__") and "UUID" in value.__class__.__name__:
         return str(value)
 
     obj_id = id(value)
@@ -82,17 +85,30 @@ def make_json_safe(value: Any, *, max_preview_rows: int = 5, _visited: MutableSe
             }
 
     if isinstance(value, Mapping):
-        serialized = {str(key): make_json_safe(val, max_preview_rows=max_preview_rows, _visited=_visited) for key, val in value.items()}
+        serialized = {
+            str(key): make_json_safe(
+                val, max_preview_rows=max_preview_rows, _visited=_visited
+            )
+            for key, val in value.items()
+        }
         _visited.discard(obj_id)
         return serialized
 
     if isinstance(value, (list, tuple, set, frozenset)):
-        serialized_seq = [make_json_safe(item, max_preview_rows=max_preview_rows, _visited=_visited) for item in value]
+        serialized_seq = [
+            make_json_safe(item, max_preview_rows=max_preview_rows, _visited=_visited)
+            for item in value
+        ]
         _visited.discard(obj_id)
         return serialized_seq
 
     if hasattr(value, "__dict__"):
-        serialized = {str(key): make_json_safe(val, max_preview_rows=max_preview_rows, _visited=_visited) for key, val in vars(value).items()}
+        serialized = {
+            str(key): make_json_safe(
+                val, max_preview_rows=max_preview_rows, _visited=_visited
+            )
+            for key, val in vars(value).items()
+        }
         serialized["__type__"] = value.__class__.__name__
         _visited.discard(obj_id)
         return serialized

@@ -1,4 +1,5 @@
 """Redis service for persisted chunk payloads."""
+
 import json
 import os
 import uuid
@@ -64,7 +65,7 @@ class ChunksRedisService:
 
         def safe_parse_tokens(raw):
             """Parse token payloads while supporting legacy and current formats.
-            
+
             New format: semicolon-delimited `word1;word2;word3`.
             Legacy format: arrow-delimited `word1->word2->word3` or a
             list-like wrapper around that payload.
@@ -77,8 +78,9 @@ class ChunksRedisService:
             # List-like string from DataFrame: "['w1;w2']" or "['w1->w2']"
             if raw_str.startswith("[") and raw_str.endswith("]"):
                 inner = raw_str[1:-1].strip()
-                if (inner.startswith("'") and inner.endswith("'")) or \
-                   (inner.startswith('"') and inner.endswith('"')):
+                if (inner.startswith("'") and inner.endswith("'")) or (
+                    inner.startswith('"') and inner.endswith('"')
+                ):
                     inner = inner[1:-1]
                 raw_str = inner
             # Determine separator: semicolon (current) or arrow (legacy).
@@ -95,7 +97,9 @@ class ChunksRedisService:
             if type_is_valid:
                 type_str = str(type_val)
                 if "\n" in type_str:
-                    lines = [line.strip() for line in type_str.split("\n") if line.strip()]
+                    lines = [
+                        line.strip() for line in type_str.split("\n") if line.strip()
+                    ]
                     rels.extend([line for line in lines[1:] if line.upper() != "PTXT"])
             return rels if rels else []
 
@@ -114,6 +118,7 @@ class ChunksRedisService:
                 if normalized_ref.startswith(resource_prefix):
                     return normalized_ref
             return ""
+
         def parse_connect_to(connects):
             """Parse the connectto field into cross-chunk relationships."""
             if not connects or (pd is not None and pd.isna(connects)):
@@ -130,9 +135,18 @@ class ChunksRedisService:
                         return parsed
                 except json.JSONDecodeError:
                     pass
-            return [{"target": connects_str, "relation": "related", "score": 1.0, "keywords": []}]
+            return [
+                {
+                    "target": connects_str,
+                    "relation": "related",
+                    "score": 1.0,
+                    "keywords": [],
+                }
+            ]
 
-        def build_resource_target_map(chunk_list: List[Dict[str, Any]]) -> Dict[str, str]:
+        def build_resource_target_map(
+            chunk_list: List[Dict[str, Any]],
+        ) -> Dict[str, str]:
             """Build ref/path -> chunk_id aliases for image and table chunks."""
             target_map: Dict[str, str] = {}
             for item in chunk_list:
@@ -155,7 +169,9 @@ class ChunksRedisService:
                         target_map[alias] = item_id
             return target_map
 
-        def refs_to_embed_connections(refs: List[str], target_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        def refs_to_embed_connections(
+            refs: List[str], target_map: Dict[str, str]
+        ) -> List[Dict[str, Any]]:
             """Convert resource refs to connect_to embeds entries."""
             connections: List[Dict[str, Any]] = []
             for ref in refs:
@@ -167,14 +183,18 @@ class ChunksRedisService:
                     target_id = target_map.get(ref_str[1:-1].strip())
                 if not target_id:
                     continue
-                connections.append({
-                    "target": target_id,
-                    "relation": "embeds",
-                    "ref": ref_str,
-                })
+                connections.append(
+                    {
+                        "target": target_id,
+                        "relation": "embeds",
+                        "ref": ref_str,
+                    }
+                )
             return connections
 
-        def merge_connections(*connection_lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        def merge_connections(
+            *connection_lists: List[Dict[str, Any]]
+        ) -> List[Dict[str, Any]]:
             """Merge connect_to entries while keeping stable order."""
             merged: List[Dict[str, Any]] = []
             seen = set()
@@ -232,7 +252,11 @@ class ChunksRedisService:
             raw_page_nums = row.get("page_nums", "")
             if raw_page_nums and not (pd is not None and pd.isna(raw_page_nums)):
                 try:
-                    page_nums_list = [int(p.strip()) for p in str(raw_page_nums).split(",") if p.strip()]
+                    page_nums_list = [
+                        int(p.strip())
+                        for p in str(raw_page_nums).split(",")
+                        if p.strip()
+                    ]
                 except (ValueError, TypeError):
                     page_nums_list = []
             else:
@@ -241,7 +265,9 @@ class ChunksRedisService:
 
             # Add type-specific metadata.
             if chunk_type == "image":
-                embedded_image_path = find_embedded_resource_path(relationship_refs, "images")
+                embedded_image_path = find_embedded_resource_path(
+                    relationship_refs, "images"
+                )
                 if embedded_image_path:
                     img_name = os.path.basename(embedded_image_path)
                     metadata["file_path"] = embedded_image_path
@@ -249,7 +275,9 @@ class ChunksRedisService:
                 else:
                     normalized_path = path.replace("-->", "/")
                     img_name = (
-                        os.path.basename(normalized_path) if normalized_path else f"image_{chunk_id}.jpg"
+                        os.path.basename(normalized_path)
+                        if normalized_path
+                        else f"image_{chunk_id}.jpg"
                     )
                     _, img_ext = os.path.splitext(img_name)
                     # Atlas image paths may lack an extension entirely; keep any real suffix.
@@ -258,13 +286,17 @@ class ChunksRedisService:
                     metadata["file_path"] = f"images/{img_name}"
                     metadata["original_name"] = img_name
             elif chunk_type == "table":
-                embedded_table_path = find_embedded_resource_path(relationship_refs, "tables")
+                embedded_table_path = find_embedded_resource_path(
+                    relationship_refs, "tables"
+                )
                 if embedded_table_path:
                     metadata["file_path"] = embedded_table_path
                 else:
                     normalized_path = path.replace("-->", "/")
                     tbl_name = (
-                        os.path.basename(normalized_path) if normalized_path else f"table_{chunk_id}.html"
+                        os.path.basename(normalized_path)
+                        if normalized_path
+                        else f"table_{chunk_id}.html"
                     )
                     metadata["file_path"] = f"tables/{tbl_name}"
 
@@ -294,7 +326,9 @@ class ChunksRedisService:
             relationship_refs = metadata.pop("_relationship_refs", [])
             if chunk.get("type") != "text":
                 continue
-            embed_connections = refs_to_embed_connections(relationship_refs, resource_target_map)
+            embed_connections = refs_to_embed_connections(
+                relationship_refs, resource_target_map
+            )
             metadata["connect_to"] = merge_connections(
                 embed_connections,
                 metadata.get("connect_to", []),
@@ -309,19 +343,19 @@ class ChunksRedisService:
             chunks = self._dataframe_to_chunks(df)
             return await self.save_chunks(job_id, chunks)
         except Exception as e:
-            logger.error(f"Failed to save DataFrame as chunks: job_id={job_id}, error={e}")
+            logger.error(
+                f"Failed to save DataFrame as chunks: job_id={job_id}, error={e}"
+            )
             return False
 
     async def save_chunks(self, job_id: str, chunks: List[Dict[str, Any]]) -> bool:
         """Save chunk data to Redis."""
         try:
             chunks_key = f"job_chunks:{job_id}"
-            await self.redis.set(
-                chunks_key,
-                chunks,
-                ttl=3600  # 1 hour TTL.
+            await self.redis.set(chunks_key, chunks, ttl=3600)  # 1 hour TTL.
+            logger.debug(
+                f"Chunk data saved successfully: job_id={job_id}, count={len(chunks)}"
             )
-            logger.debug(f"Chunk data saved successfully: job_id={job_id}, count={len(chunks)}")
             return True
         except Exception as e:
             logger.error(f"Failed to save chunk data: job_id={job_id}, error={e}")

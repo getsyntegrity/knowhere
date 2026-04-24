@@ -1,6 +1,7 @@
 """
 Celery application configuration — Redis-backed broker and result backend.
 """
+
 import os
 import socket
 
@@ -19,12 +20,12 @@ def get_unique_node_name() -> str:
 
 # Create Celery application instance (Redis broker + Redis result backend)
 celery_app = Celery(
-    'Knowhere API',
+    "Knowhere API",
     broker=app_config.get_celery_broker_url(),
     backend=app_config.get_celery_result_backend(),
     include=[
-        'shared.core.tasks.celery_tasks',
-    ]
+        "shared.core.tasks.celery_tasks",
+    ],
 )
 
 # Task queues — plain Redis transport queues.
@@ -32,29 +33,26 @@ celery_app = Celery(
 # (task_queue_max_priority + task_default_priority).
 celery_app.conf.task_queues = (
     # Knowledge-base queues (routed by priority in task invocation)
-    Queue('kb_high', routing_key='kb.high'),
-    Queue('kb_medium', routing_key='kb.medium'),
-    Queue('kb_low', routing_key='kb.low'),
-
+    Queue("kb_high", routing_key="kb.high"),
+    Queue("kb_medium", routing_key="kb.medium"),
+    Queue("kb_low", routing_key="kb.low"),
     # AI query queue
-    Queue('ai_high_priority', routing_key='ai.high'),
-
+    Queue("ai_high_priority", routing_key="ai.high"),
     # Default queue for sweeper and other generic tasks
-    Queue('default', routing_key='default'),
+    Queue("default", routing_key="default"),
 )
 
 celery_app.conf.update(
     # Serialization
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
     enable_utc=True,
-
     # Task execution
     task_track_started=True,
-    task_time_limit=3600,           # 1 hour hard limit
-    task_soft_time_limit=3300,      # 55 minutes soft limit
+    task_time_limit=3600,  # 1 hour hard limit
+    task_soft_time_limit=3300,  # 55 minutes soft limit
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     worker_disable_rate_limits=True,
@@ -64,56 +62,47 @@ celery_app.conf.update(
     worker_cancel_long_running_tasks_on_connection_loss=True,
     task_ignore_result=True,
     result_expires=3600,
-
     # Worker logging
     worker_hijack_root_logger=False,
     worker_log_color=False,
-
     # Redis broker connection
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_pool_limit=app_config.BROKER_POOL_LIMIT,
-
     # Redis transport — visibility_timeout must exceed task_time_limit
     broker_transport_options={
-        'visibility_timeout': 43200,    # 12 hours
-        'retry_on_timeout': True,
+        "visibility_timeout": 43200,  # 12 hours
+        "retry_on_timeout": True,
         # Keep all Kombu Redis broker keys in one Redis Cluster hash slot.
-        'global_keyprefix': '{celery}',
+        "global_keyprefix": "{celery}",
     },
-
     # Priority support for Redis transport
     task_queue_max_priority=10,
     task_default_priority=5,
-
     # RedBeat — scheduler backed by the Celery Redis instance
     redbeat_redis_url=app_config.get_celery_redis_url(),
-    beat_scheduler='redbeat.RedBeatScheduler',
-    redbeat_key_prefix='{redbeat}',     # Hash tag for Redis Cluster CROSSSLOT compatibility
+    beat_scheduler="redbeat.RedBeatScheduler",
+    redbeat_key_prefix="{redbeat}",  # Hash tag for Redis Cluster CROSSSLOT compatibility
     redbeat_lock_timeout=120,
     beat_max_loop_interval=30,
-
     # Task routing
     task_routes={
         # Knowledge base tasks (default medium priority)
-        'app.core.tasks.kb_tasks.*': {'queue': 'kb_medium'},
-
+        "app.core.tasks.kb_tasks.*": {"queue": "kb_medium"},
         # Webhook orphan recovery
-        'app.core.tasks.webhook_tasks.recover_orphaned_webhooks': {'queue': 'default'},
-
+        "app.core.tasks.webhook_tasks.recover_orphaned_webhooks": {"queue": "default"},
         # Sweeper task
-        'app.core.tasks.stale_job_sweeper.expire_stale_jobs': {'queue': 'default'},
+        "app.core.tasks.stale_job_sweeper.expire_stale_jobs": {"queue": "default"},
     },
-
     # Periodic tasks (Celery Beat)
     beat_schedule={
-        'recover-orphaned-webhooks': {
-            'task': 'app.core.tasks.webhook_tasks.recover_orphaned_webhooks',
-            'schedule': 1800.0,     # Every 30 minutes
+        "recover-orphaned-webhooks": {
+            "task": "app.core.tasks.webhook_tasks.recover_orphaned_webhooks",
+            "schedule": 1800.0,  # Every 30 minutes
         },
-        'expire-stale-jobs': {
-            'task': 'app.core.tasks.stale_job_sweeper.expire_stale_jobs',
-            'schedule': 1800.0,     # Every 30 minutes
+        "expire-stale-jobs": {
+            "task": "app.core.tasks.stale_job_sweeper.expire_stale_jobs",
+            "schedule": 1800.0,  # Every 30 minutes
         },
     },
 )

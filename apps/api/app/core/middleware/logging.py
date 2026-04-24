@@ -2,6 +2,7 @@
 Request logging middleware with structured logging support.
 Pure ASGI implementation to avoid BaseHTTPMiddleware body buffering.
 """
+
 import uuid
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -48,9 +49,7 @@ class LoggingMiddleware:
                     for k, v in message.get("headers", [])
                     if k.lower() != b"x-request-id"
                 ]
-                raw_headers.append(
-                    (b"x-request-id", request_id.encode("latin-1"))
-                )
+                raw_headers.append((b"x-request-id", request_id.encode("latin-1")))
                 message["headers"] = raw_headers
             await send(message)
 

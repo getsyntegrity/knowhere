@@ -1,11 +1,12 @@
 """Shared device-check helpers used by multiple services."""
+
 from typing import Any, Dict
 
 import requests
 from loguru import logger
 
 
-def check_internet(url: str = 'http://www.baidu.com') -> bool:
+def check_internet(url: str = "http://www.baidu.com") -> bool:
     """
     Check internet connectivity.
 
@@ -17,6 +18,7 @@ def check_internet(url: str = 'http://www.baidu.com') -> bool:
     """
     try:
         from shared.core.constants import APIConstants
+
         response = requests.get(url, timeout=APIConstants.REQUEST_TIMEOUT)
         response.raise_for_status()
         return True
@@ -41,6 +43,7 @@ def check_device_capabilities() -> Dict[str, Any]:
     # Import torch lazily to avoid forcing it into API service startup.
     try:
         import torch
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
         # Default to CPU when torch is unavailable, such as in the API service.
@@ -52,19 +55,19 @@ def check_device_capabilities() -> Dict[str, Any]:
             f"Error while checking device capabilities: {e}; defaulting to the CPU device"
         )
         device = "cpu"
-    
+
     device_info = {
-        'device': device,
-        'has_internet': check_internet(),
-        'can_use_local_llm': False,
-        'can_use_local_summary': False
+        "device": device,
+        "has_internet": check_internet(),
+        "can_use_local_llm": False,
+        "can_use_local_summary": False,
     }
-    
-    if device_info['device'] == "cuda":
-        device_info['can_use_local_llm'] = True
-        device_info['can_use_local_summary'] = True
-    elif device_info['device'] == "cpu":
-        device_info['can_use_local_llm'] = False
-        device_info['can_use_local_summary'] = False
-    
+
+    if device_info["device"] == "cuda":
+        device_info["can_use_local_llm"] = True
+        device_info["can_use_local_summary"] = True
+    elif device_info["device"] == "cpu":
+        device_info["can_use_local_llm"] = False
+        device_info["can_use_local_summary"] = False
+
     return device_info

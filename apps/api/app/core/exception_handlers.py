@@ -47,8 +47,8 @@ Exception Sources:
     - Exception: Unexpected errors (bugs, syntax errors, external failures)
 """
 
-import uuid
 import traceback
+import uuid
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Request
@@ -59,8 +59,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from shared.core.exceptions import (
     KnowhereException,
-    ValidationException,
     UnknownException,
+    ValidationException,
 )
 from shared.core.exceptions.domain_exceptions import RateLimitException
 from shared.core.logging import LogEvent
@@ -145,28 +145,26 @@ async def knowhere_exception_handler(
     )
 
 
-async def http_exception_handler(
-    request: Request, exc: HTTPException
-) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """
     Convert FastAPI/Starlette HTTPException to KnowhereException.
-    
+
     When does HTTPException occur?
         - 401: Auth middleware rejects request (missing/invalid token)
         - 403: Permission check fails
         - 404: No route matches the path
         - 405: HTTP method not allowed for this route
         - 422: Handled separately by validation_exception_handler
-    
+
     Security: HTTPException.detail may contain sensitive info from middleware.
     We use a generic user_message and log the original detail internally.
     """
     # Convert HTTP status to ErrorCode using the canonical mapping
     code = ErrorCodeMapper.get_error_code_from_http_status(exc.status_code)
-    
+
     # Check for specific FastAPI Users error codes in detail
     detail_str = str(exc.detail) if exc.detail else ""
-    
+
     # Map FastAPI Users error codes to user-friendly messages
     fastapi_users_messages = {
         "REGISTER_USER_ALREADY_EXISTS": "This email is already registered. Please log in or use a different email.",
@@ -176,14 +174,14 @@ async def http_exception_handler(
         "VERIFY_USER_BAD_TOKEN": "Email verification link is invalid or expired.",
         "VERIFY_USER_ALREADY_VERIFIED": "Your email is already verified.",
     }
-    
+
     # Try to match FastAPI Users error code
     user_message = None
     for error_code, message in fastapi_users_messages.items():
         if error_code in detail_str:
             user_message = message
             break
-    
+
     # Generic safe messages for each status (fallback)
     if user_message is None:
         safe_messages = {
@@ -200,14 +198,14 @@ async def http_exception_handler(
             504: "Gateway timeout",
         }
         user_message = safe_messages.get(exc.status_code, "An error occurred")
-    
+
     # Create KnowhereException with internal_message for logs, user_message for response
     knowhere_exc = KnowhereException(
         code=code,
         internal_message=f"HTTPException detail: {exc.detail}",  # For logs
         user_message=user_message,  # For client
     )
-    
+
     # Delegate to central handler
     return await knowhere_exception_handler(request, knowhere_exc)
 
@@ -217,12 +215,12 @@ async def validation_exception_handler(
 ) -> JSONResponse:
     """
     Convert Pydantic validation errors to ValidationException.
-    
+
     When does RequestValidationError occur?
         - Request body doesn't match Pydantic model
         - Query/path parameters fail validation
         - Type coercion fails (e.g., string where int expected)
-    
+
     The violations array IS safe to expose as it describes client input issues.
     This is a 4xx error, so user_message is passed directly to client.
     """
@@ -230,39 +228,39 @@ async def validation_exception_handler(
     violations: List[dict] = []
     for error in exc.errors():
         field = ".".join(str(loc) for loc in error.get("loc", []))
-        violations.append({
-            "field": field,
-            "description": error.get("msg", "Validation failed"),
-        })
+        violations.append(
+            {
+                "field": field,
+                "description": error.get("msg", "Validation failed"),
+            }
+        )
 
     # Create ValidationException with user_message that client will see
     validation_exc = ValidationException(
         user_message="Request validation failed",
         violations=violations,
     )
-    
+
     # Delegate to central handler
     return await knowhere_exception_handler(request, validation_exc)
 
 
-async def general_exception_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     Catch-all for unexpected exceptions.
-    
+
     When does this occur?
         - Syntax errors, bugs in code
         - Unhandled third-party library exceptions
         - Database/Redis connection failures not wrapped by our code
-    
+
     Security: NEVER expose exception details to client.
     The `original_exception` is stored for internal logging only.
     UnknownException auto-generates a safe user_message.
     """
     # Wrap in UnknownException - this logs internally, returns generic message
     unknown_exc = UnknownException(original_exception=exc)
-    
+
     # Delegate to central handler
     return await knowhere_exception_handler(request, unknown_exc)
 
@@ -270,7 +268,7 @@ async def general_exception_handler(
 def setup_exception_handlers(app: FastAPI) -> None:
     """
     Register all exception handlers with the FastAPI app.
-    
+
     Order of registration doesn't matter - FastAPI matches by exception type.
     More specific types (KnowhereException subclasses) are matched before base.
     """
@@ -287,4 +285,6 @@ def setup_exception_handlers(app: FastAPI) -> None:
     # Catch-all for unexpected exceptions (MUST be last conceptually)
     app.add_exception_handler(Exception, general_exception_handler)
 
-    logger.info("Global exception handlers registered (4xx/5xx message pattern enabled)")
+    logger.info(
+        "Global exception handlers registered (4xx/5xx message pattern enabled)"
+    )

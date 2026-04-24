@@ -1,4 +1,5 @@
 """Knowledge-base DTOs."""
+
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -96,14 +97,20 @@ class Ask(BaseModel):
 
 class SearchAsk(BaseModel):
     question: str = Field(..., description="User question")
-    topk: int = Field(default=3, description="Default number of knowledge fragments to return")
-    filter_nodes: List[str] = Field(..., description="Knowledge-base paths to exclude or keep")
+    topk: int = Field(
+        default=3, description="Default number of knowledge fragments to return"
+    )
+    filter_nodes: List[str] = Field(
+        ..., description="Knowledge-base paths to exclude or keep"
+    )
     filter_mode: str = Field(..., description="Knowledge-base filtering mode")
     filter_type: int = Field(default=1, description="Knowledge-base filter data type")
     show_image: bool = Field(..., description="Show images")
     rerank: bool = Field(..., description="Enable reranking")
     ask: bool = Field(..., description="Ask directly against the recalled results")
-    ask_multimodal: bool = Field(..., description="Enable multimodal question answering")
+    ask_multimodal: bool = Field(
+        ..., description="Enable multimodal question answering"
+    )
     ask_agent: bool = Field(
         ...,
         description="Enable deep-research self-checking, query enhancement, advanced table analysis, and self-training features",
@@ -111,8 +118,12 @@ class SearchAsk(BaseModel):
 
 
 class BuildTree(BaseModel):
-    smart_summary: bool = Field(default=True, description="Enable smart recursive summaries")
-    root_node: str = Field(..., description="Document data node to organize into a tree")
+    smart_summary: bool = Field(
+        default=True, description="Enable smart recursive summaries"
+    )
+    root_node: str = Field(
+        ..., description="Document data node to organize into a tree"
+    )
 
 
 class BuildForest(BaseModel):
@@ -120,8 +131,12 @@ class BuildForest(BaseModel):
         default=2000,
         description="Truncate the source content when a node has no summary and exceeds this threshold",
     )
-    k: int = Field(default=5, description="Number of most-similar nodes to cover per pass")
-    threshold: float = Field(default=0.8, description="Minimum similarity threshold for node association")
+    k: int = Field(
+        default=5, description="Number of most-similar nodes to cover per pass"
+    )
+    threshold: float = Field(
+        default=0.8, description="Minimum similarity threshold for node association"
+    )
     source_node: str = Field(
         ...,
         description="Source node to associate with the rest of the knowledge base",

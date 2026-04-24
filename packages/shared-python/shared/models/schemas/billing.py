@@ -1,4 +1,5 @@
 """Billing schemas."""
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -9,14 +10,18 @@ class SubscribeRequest(BaseModel):
     """Request payload for creating or updating a subscription."""
 
     plan_id: str = Field(..., description="Subscription plan ID")
-    payment_method_id: Optional[str] = Field(default=None, description="Payment method ID")
+    payment_method_id: Optional[str] = Field(
+        default=None, description="Payment method ID"
+    )
 
 
 class BuyCreditsRequest(BaseModel):
     """Request payload for purchasing credits directly."""
 
     credits_amount: int = Field(..., gt=0, description="Credits amount to purchase")
-    payment_method_id: Optional[str] = Field(default=None, description="Payment method ID")
+    payment_method_id: Optional[str] = Field(
+        default=None, description="Payment method ID"
+    )
 
 
 class BuyCreditsPackageRequest(BaseModel):
@@ -51,7 +56,7 @@ class TransactionHistoryResponse(BaseModel):
     transaction_type: str
     description: Optional[str]
     created_at: datetime
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 

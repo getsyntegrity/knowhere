@@ -12,8 +12,8 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
-from shared.utils.chunk_refs import CHUNK_REF_RE
 
+from shared.utils.chunk_refs import CHUNK_REF_RE
 
 # ─── Relation Type Registry (extensible, not hard-coded) ──────────────────────
 
@@ -124,6 +124,7 @@ def _extract_file_key(path: str) -> str:
 
 # ─── Keyword Inverted Index ──────────────────────────────────────────────────
 
+
 def _build_keyword_index(
     chunks: List[Dict[str, Any]],
 ) -> Dict[str, List[Tuple[str, str]]]:
@@ -186,7 +187,9 @@ def _get_keywords(chunk: Dict[str, Any]) -> List[str]:
         return [kws.strip()]
 
     # ─── Fallback: tokens (jieba word chain) ──────────────────────────────
-    tokens = _parse_tokens_field(metadata.get("tokens") if isinstance(metadata, dict) else None)
+    tokens = _parse_tokens_field(
+        metadata.get("tokens") if isinstance(metadata, dict) else None
+    )
     if not tokens:
         tokens = _parse_tokens_field(chunk.get("tokens"))
     return tokens
@@ -222,8 +225,9 @@ def _parse_tokens_field(raw) -> List[str]:
         # List-repr format: "['w1;w2;w3']" or "['w1->w2->w3']"
         if raw.startswith("[") and raw.endswith("]"):
             inner = raw[1:-1].strip()
-            if (inner.startswith("'") and inner.endswith("'")) or \
-               (inner.startswith('"') and inner.endswith('"')):
+            if (inner.startswith("'") and inner.endswith("'")) or (
+                inner.startswith('"') and inner.endswith('"')
+            ):
                 inner = inner[1:-1]
             raw = inner
         # Determine separator: semicolon (new) or arrow (legacy)
@@ -250,6 +254,7 @@ def _parse_tokens_field(raw) -> List[str]:
 
 
 # ─── Scoring ─────────────────────────────────────────────────────────────────
+
 
 def _compute_keyword_score(
     shared_kws: set,
@@ -284,6 +289,7 @@ def _compute_keyword_score(
 
 # ─── Main Entry Point ────────────────────────────────────────────────────────
 
+
 def build_connections(
     chunks: List[Dict[str, Any]],
     config: Optional[Dict[str, Any]] = None,
@@ -315,7 +321,9 @@ def build_connections(
     kw_index = _build_keyword_index(chunks)
 
     # Pre-compute per-chunk data
-    chunk_data: Dict[str, Tuple[str, set]] = {}  # chunk_id → (file_key, normalized_keywords)
+    chunk_data: Dict[str, Tuple[str, set]] = (
+        {}
+    )  # chunk_id → (file_key, normalized_keywords)
     chunk_content: Dict[str, str] = {}  # chunk_id → content (for dedup)
     for chunk in chunks:
         cid = str(chunk.get("chunk_id") or chunk.get("know_id", ""))
@@ -370,9 +378,7 @@ def build_connections(
                     src_text = chunk_content.get(cid, "")
                     tgt_text = chunk_content.get(target_id, "")
                     if src_text and tgt_text:
-                        char_ratio = SequenceMatcher(
-                            None, src_text, tgt_text
-                        ).ratio()
+                        char_ratio = SequenceMatcher(None, src_text, tgt_text).ratio()
                         if char_ratio >= max_overlap:
                             continue
                 scored.append((target_id, score, shared_kws))
@@ -380,12 +386,14 @@ def build_connections(
         # Sort by score descending, keep top-N
         scored.sort(key=lambda x: x[1], reverse=True)
         for target_id, score, shared_kws in scored[:max_conns]:
-            connections[cid].append({
-                "target": target_id,
-                "relation": "related",
-                "score": round(score, 4),
-                "keywords": sorted(shared_kws),
-            })
+            connections[cid].append(
+                {
+                    "target": target_id,
+                    "relation": "related",
+                    "score": round(score, 4),
+                    "keywords": sorted(shared_kws),
+                }
+            )
 
     total_edges = sum(len(v) for v in connections.values())
     logger.info(
@@ -398,6 +406,7 @@ def build_connections(
 
 
 # ─── Serialization ────────────────────────────────────────────────────────────
+
 
 def serialize_connections(connections: List[Dict[str, Any]]) -> str:
     """
@@ -435,6 +444,7 @@ def deserialize_connections(raw: Any) -> List[Dict[str, Any]]:
 
     try:
         import pandas as pd
+
         if pd.isna(raw):
             return []
     except (ImportError, TypeError, ValueError):
@@ -454,12 +464,15 @@ def deserialize_connections(raw: Any) -> List[Dict[str, Any]]:
             pass
 
     if raw_str:
-        return [{"target": raw_str, "relation": "related", "score": 1.0, "keywords": []}]
+        return [
+            {"target": raw_str, "relation": "related", "score": 1.0, "keywords": []}
+        ]
 
     return []
 
 
 # ─── LLM Relation Classification (stub) ──────────────────────────────────────
+
 
 def classify_relation(
     summary_a: str,
@@ -505,6 +518,10 @@ def classify_relation(
     """
     return {
         "relation": "related",
-        "reason": f"Keyword overlap: {', '.join(shared_keywords)}" if shared_keywords else "Keyword overlap",
+        "reason": (
+            f"Keyword overlap: {', '.join(shared_keywords)}"
+            if shared_keywords
+            else "Keyword overlap"
+        ),
         "confidence": 1.0,
     }

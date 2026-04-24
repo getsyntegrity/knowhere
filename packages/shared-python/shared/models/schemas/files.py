@@ -13,7 +13,7 @@ class FileDirectoryDto(BaseModel):
     user_id: str
     create_time: Optional[datetime] = None
     update_time: Optional[datetime] = None
-    children: List['FileDirectoryDto'] = []
+    children: List["FileDirectoryDto"] = []
 
     model_config = ConfigDict(from_attributes=True)
 

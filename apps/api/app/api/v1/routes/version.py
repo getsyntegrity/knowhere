@@ -1,9 +1,12 @@
 """
 Version information API endpoints.
 """
+
 import os
 from datetime import datetime
+
 from fastapi import APIRouter
+
 from shared.core.config import app_config
 
 router = APIRouter()
@@ -27,13 +30,13 @@ async def get_version():
     commit = os.getenv("GIT_COMMIT", "")
     build_time = os.getenv("BUILD_TIME", "")
     environment = os.getenv("ENVIRONMENT", "development")
-    
+
     return {
         "version": version,
         "commit": commit,
         "build_time": build_time,
         "environment": environment,
-        "service": "knowhere-api"
+        "service": "knowhere-api",
     }
 
 

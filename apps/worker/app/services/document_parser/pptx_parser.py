@@ -2,40 +2,42 @@ import io
 import os
 import re
 import time
-import requests
-import jwt
 
+import jwt
+import requests
+from app.services.common.kb_utils import find_images
+from app.services.document_parser.legacy_converter import (
+    _convert_with_libreoffice,
+)
+from app.services.document_parser.md_parser import parse_md
+from app.services.document_parser.mineru_pdf_service import (
+    get_existing_mineru_source_s3_key,
+)
+from app.services.document_parser.parser_log_utils import truncate_log_value
+from app.services.document_parser.pdf_parser import parse_pdfs
+from app.services.document_parser.pptx_pdf_rendering import (
+    render_pdf_to_image_pdf as _render_pdf_to_image_pdf,
+)
+from app.services.storage.sync_storage_service import download_s3_object_to_temp
 from loguru import logger
+from markitdown import MarkItDown
+from pptx2md import ConversionConfig, convert
+
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import (
     FileSystemException,
 )
 from shared.core.logging import LogEvent
-from app.services.common.kb_utils import find_images
-from app.services.document_parser.mineru_pdf_service import (
-    get_existing_mineru_source_s3_key,
-)
-from app.services.document_parser.parser_log_utils import truncate_log_value
-from app.services.document_parser.legacy_converter import (
-    _convert_with_libreoffice,
-)
-from app.services.document_parser.pptx_pdf_rendering import (
-    render_pdf_to_image_pdf as _render_pdf_to_image_pdf,
-)
-from app.services.storage.sync_storage_service import download_s3_object_to_temp
-from app.services.document_parser.md_parser import parse_md
-from app.services.document_parser.pdf_parser import parse_pdfs
 from shared.utils.CommonHelperSync import load_file_bytes
 from shared.utils.file_utils import path_handle
-from markitdown import MarkItDown
-from pptx2md import ConversionConfig, convert
-
 
 # ==================== LibreOffice conversion ====================
+
 
 def pptx_to_pdf_libreoffice(pptx_path, outdir="."):
     """use LibreOffice to convert PPTX to PDF (local engine, formula rendering may be problematic)"""
     from shared.core.constants import ProcessingConstants
+
     filter_opts = (
         f"Quality={ProcessingConstants.IMG_QUALITY};"
         "ReduceImageResolution=false;"
@@ -53,9 +55,11 @@ def pptx_to_pdf_libreoffice(pptx_path, outdir="."):
 
 # ==================== iLoveAPI conversion ====================
 
+
 def _get_iloveapi_token_lease():
     """acquire iLoveAPI token lease from the quotas pool and generate a JWT token"""
     from shared.utils.iloveapi_quota_manager import get_iloveapi_quota_manager
+
     quota_manager = get_iloveapi_quota_manager()
 
     lease = quota_manager.acquire_request("pptx_to_pdf")
@@ -110,6 +114,7 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
     the Redis-backed reservation actually succeeded.
     """
     from shared.utils.iloveapi_quota_manager import get_iloveapi_quota_manager
+
     quota_manager = get_iloveapi_quota_manager()
 
     # Gate on in-flight concurrency before consuming any token quota
@@ -149,7 +154,9 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                 filename=filename,
                 file_size_kb=round(len(pptx_bytes) / 1024, 1),
             ).info(f"[iLoveAPI] Starting officepdf task for: {filename}")
-            res = requests.get(f"{base_url}/start/officepdf", headers=headers, timeout=timeout)
+            res = requests.get(
+                f"{base_url}/start/officepdf", headers=headers, timeout=timeout
+            )
             if res.status_code == 429:
                 retry_after = int(res.headers.get("Retry-After", 60))
                 quota_manager.mark_rate_limited(lease.token_id, retry_after)
@@ -198,7 +205,9 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                 json={
                     "task": upstream_task_id,
                     "tool": "officepdf",
-                    "files": [{"server_filename": server_filename, "filename": filename}],
+                    "files": [
+                        {"server_filename": server_filename, "filename": filename}
+                    ],
                 },
                 timeout=timeout,
             )
@@ -218,7 +227,9 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
             # Step 4: Download PDF to memory
             current_step = "download"
             download_res = requests.get(
-                f"{server_url}/download/{upstream_task_id}", headers=headers, timeout=timeout
+                f"{server_url}/download/{upstream_task_id}",
+                headers=headers,
+                timeout=timeout,
             )
             if download_res.status_code == 429:
                 retry_after = int(download_res.headers.get("Retry-After", 60))
@@ -290,6 +301,7 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
 
 class _ILoveApiConcurrencyExceeded(Exception):
     """Internal signal: in-flight concurrency limit reached, caller should fallback."""
+
     pass
 
 
@@ -339,8 +351,17 @@ def _parse_cached_rendered_pdf(
 
 # ==================== main parsing entrance ====================
 
-def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
-                     strategy="to_pdf_api", relative_root=None, baseurl="", job_id=None):
+
+def parse_pptx(
+    pptx_path,
+    filename,
+    output_dir,
+    base_llm_paras,
+    strategy="to_pdf_api",
+    relative_root=None,
+    baseurl="",
+    job_id=None,
+):
     """
     PPTX parsing entrance, aligned with parse_pdfs / parse_docx pattern.
 
@@ -370,6 +391,7 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
 
     if strategy == "to_pdf_api":
         from shared.core.exceptions.domain_exceptions import UnavailableException
+
         try:
             return _parse_pptx_via_api(
                 pptx_data,
@@ -387,7 +409,9 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
                     reason="config_missing",
                     filename=filename,
                     fallback_strategy="to_pdf",
-                ).warning(f"[parse_pptx] iLoveAPI config missing: {e}. Falling back to 'to_pdf' (LibreOffice).")
+                ).warning(
+                    f"[parse_pptx] iLoveAPI config missing: {e}. Falling back to 'to_pdf' (LibreOffice)."
+                )
                 strategy = "to_pdf"
             else:
                 raise
@@ -398,7 +422,9 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
                 reason="concurrency_exceeded",
                 filename=filename,
                 fallback_strategy="to_pdf",
-            ).warning(f"[parse_pptx] iLoveAPI concurrency limit reached: {e}. Falling back to 'to_pdf' (LibreOffice).")
+            ).warning(
+                f"[parse_pptx] iLoveAPI concurrency limit reached: {e}. Falling back to 'to_pdf' (LibreOffice)."
+            )
             strategy = "to_pdf"
         except UnavailableException as e:
             logger.bind(
@@ -408,7 +434,9 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
                 filename=filename,
                 fallback_strategy="to_pdf",
                 retry_after=e.retry_after,
-            ).warning(f"[parse_pptx] iLoveAPI token pool exhausted: {e.internal_message}. Falling back to 'to_pdf' (LibreOffice).")
+            ).warning(
+                f"[parse_pptx] iLoveAPI token pool exhausted: {e.internal_message}. Falling back to 'to_pdf' (LibreOffice)."
+            )
             strategy = "to_pdf"
         except requests.exceptions.RequestException as e:
             error_type = type(e).__name__
@@ -419,7 +447,9 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
                 filename=filename,
                 fallback_strategy="to_pdf",
                 error_type=error_type,
-            ).warning(f"[parse_pptx] iLoveAPI request failed ({error_type}): {e}. Falling back to 'to_pdf' (LibreOffice).")
+            ).warning(
+                f"[parse_pptx] iLoveAPI request failed ({error_type}): {e}. Falling back to 'to_pdf' (LibreOffice)."
+            )
             strategy = "to_pdf"
 
     if strategy == "to_pdf":
@@ -433,15 +463,22 @@ def parse_pptx(pptx_path, filename, output_dir, base_llm_paras,
         )
 
     elif strategy == "to_md":
-        return _parse_pptx_to_md(pptx_data, filename, output_dir,
-                                       base_llm_paras, relative_root)
+        return _parse_pptx_to_md(
+            pptx_data, filename, output_dir, base_llm_paras, relative_root
+        )
 
     else:
         raise ValueError(f"Unknown pptx strategy: {strategy}")
 
 
-def _parse_pptx_via_api(pptx_data, filename, output_dir,
-                               base_llm_paras, relative_root, rendered_pdf_s3_key=None):
+def _parse_pptx_via_api(
+    pptx_data,
+    filename,
+    output_dir,
+    base_llm_paras,
+    relative_root,
+    rendered_pdf_s3_key=None,
+):
     """
     PPTX bytes → iLoveAPI PDF bytes → image-only PDF bytes → MinerU.
 
@@ -476,8 +513,14 @@ def _parse_pptx_via_api(pptx_data, filename, output_dir,
             os.remove(tmp_path)
 
 
-def _parse_pptx_via_libreoffice(pptx_data, filename, output_dir,
-                                       base_llm_paras, relative_root, rendered_pdf_s3_key=None):
+def _parse_pptx_via_libreoffice(
+    pptx_data,
+    filename,
+    output_dir,
+    base_llm_paras,
+    relative_root,
+    rendered_pdf_s3_key=None,
+):
     """
     LibreOffice requires file paths (subprocess), so temp dir is unavoidable here.
     PPTX → temp file → LibreOffice → PDF → image-only PDF bytes → MinerU.
@@ -543,16 +586,14 @@ def _parse_pptx_to_md(pptx_data, filename, output_dir, base_llm_paras, relative_
 
         convert(
             ConversionConfig(
-                pptx_path=local_pptx,
-                output_path=temp_md_path,
-                image_dir=img_dir
+                pptx_path=local_pptx, output_path=temp_md_path, image_dir=img_dir
             )
         )
 
         md = MarkItDown(enable_plugins=False)
         result = md.convert(local_pptx)
 
-        pattern = r'^!\[.*?\]\(.*?\.(?:png|jpe?g)\)$'
+        pattern = r"^!\[.*?\]\(.*?\.(?:png|jpe?g)\)$"
         md_imgs = find_images(output_dir)
         lines = result.text_content.splitlines()
 
@@ -570,9 +611,11 @@ def _parse_pptx_to_md(pptx_data, filename, output_dir, base_llm_paras, relative_
             image_index += 1
 
         parsed_df = parse_md(
-            output_dir, source_type="pptx",
-            md_lines=ppt_md_lines, base_llm_paras=base_llm_paras,
-            relative_root=relative_root
+            output_dir,
+            source_type="pptx",
+            md_lines=ppt_md_lines,
+            base_llm_paras=base_llm_paras,
+            relative_root=relative_root,
         )
         return parsed_df
     finally:

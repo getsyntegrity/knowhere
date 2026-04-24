@@ -1,4 +1,5 @@
 """OSS storage adapter implementation for Alibaba Cloud Object Storage."""
+
 from typing import Any, BinaryIO, Dict, Iterator, Optional
 
 from loguru import logger
@@ -13,6 +14,7 @@ def _import_oss2():
     try:
         import oss2
         from oss2.exceptions import NoSuchKey, NotFound, OssError
+
         return oss2, OssError, NoSuchKey, NotFound
     except ImportError as e:
         raise ImportError(
@@ -22,22 +24,22 @@ def _import_oss2():
 
 class OSSStorageAdapter(StorageAdapter):
     """OSS storage adapter for Alibaba Cloud Object Storage."""
-    
+
     def __init__(self, bucket, default_bucket_name: str):
         """
         Initialize the OSS adapter.
-        
+
         Args:
             bucket: OSS Bucket instance.
             default_bucket_name: Default bucket name.
         """
         self.bucket = bucket
         self.default_bucket_name = default_bucket_name
-    
+
     def _get_bucket_name(self, bucket: Optional[str] = None) -> str:
         """
         Get the effective bucket name.
-        
+
         Note: the OSS adapter uses a single Bucket object and does not support
         cross-bucket operations. If a different bucket is requested, it logs a
         warning and continues with the default bucket.
@@ -47,8 +49,10 @@ class OSSStorageAdapter(StorageAdapter):
                 f"OSS adapter does not support cross-bucket operations; using the default bucket {self.default_bucket_name} instead of {bucket}"
             )
         return self.default_bucket_name
-    
-    def upload_file(self, local_path: str, key: str, bucket: Optional[str] = None) -> Dict[str, Any]:
+
+    def upload_file(
+        self, local_path: str, key: str, bucket: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Upload a local file to OSS."""
         _, OssError, _, _ = _import_oss2()
         bucket_name = self._get_bucket_name(bucket)
@@ -59,44 +63,53 @@ class OSSStorageAdapter(StorageAdapter):
                 "bucket": bucket_name,
                 "key": key,
                 "status": "success",
-                "etag": result.etag
+                "etag": result.etag,
             }
         except OssError as e:
             logger.error(f"OSS upload failed: {e}")
             raise StorageServiceException(
                 internal_message=f"OSS upload failed: {str(e)}",
                 operation="upload_file",
-                original_exception=e
+                original_exception=e,
             )
-    
-    def upload_fileobj(self, file_obj: BinaryIO, key: str, bucket: Optional[str] = None,
-                      content_type: Optional[str] = None) -> Dict[str, Any]:
+
+    def upload_fileobj(
+        self,
+        file_obj: BinaryIO,
+        key: str,
+        bucket: Optional[str] = None,
+        content_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Upload a file object to OSS."""
         _, OssError, _, _ = _import_oss2()
         bucket_name = self._get_bucket_name(bucket)
         try:
             headers = {}
             if content_type:
-                headers['Content-Type'] = content_type
-            
+                headers["Content-Type"] = content_type
+
             data = file_obj.read()
-            result = self.bucket.put_object(key, data, headers=headers if headers else None)
+            result = self.bucket.put_object(
+                key, data, headers=headers if headers else None
+            )
             logger.debug(f"OSS object upload succeeded: {key} -> {bucket_name}")
             return {
                 "bucket": bucket_name,
                 "key": key,
                 "status": "success",
-                "etag": result.etag
+                "etag": result.etag,
             }
         except OssError as e:
             logger.error(f"OSS upload file object failed: {e}")
             raise StorageServiceException(
                 internal_message=f"OSS upload file object failed: {str(e)}",
                 operation="upload_fileobj",
-                original_exception=e
+                original_exception=e,
             )
-    
-    def download_file(self, key: str, local_path: str, bucket: Optional[str] = None) -> str:
+
+    def download_file(
+        self, key: str, local_path: str, bucket: Optional[str] = None
+    ) -> str:
         """Download an OSS object to a local file."""
         _, OssError, _, _ = _import_oss2()
         bucket_name = self._get_bucket_name(bucket)
@@ -109,9 +122,9 @@ class OSSStorageAdapter(StorageAdapter):
             raise StorageServiceException(
                 internal_message=f"OSS download failed: {str(e)}",
                 operation="download_file",
-                original_exception=e
+                original_exception=e,
             )
-    
+
     def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
         """Download an OSS object into memory."""
         _, OssError, _, _ = _import_oss2()
@@ -124,9 +137,9 @@ class OSSStorageAdapter(StorageAdapter):
             raise StorageServiceException(
                 internal_message=f"OSS download file object failed: {str(e)}",
                 operation="download_fileobj",
-                original_exception=e
+                original_exception=e,
             )
-    
+
     def delete_object(self, key: str, bucket: Optional[str] = None) -> bool:
         """Delete an OSS object."""
         _, OssError, _, _ = _import_oss2()
@@ -138,8 +151,10 @@ class OSSStorageAdapter(StorageAdapter):
         except OssError as e:
             logger.error(f"OSS delete failed: {e}")
             return False
-    
-    def list_objects(self, prefix: str = "", bucket: Optional[str] = None) -> Iterator[str]:
+
+    def list_objects(
+        self, prefix: str = "", bucket: Optional[str] = None
+    ) -> Iterator[str]:
         """List OSS objects."""
         oss2, OssError, _, _ = _import_oss2()
         bucket_name = self._get_bucket_name(bucket)
@@ -149,19 +164,24 @@ class OSSStorageAdapter(StorageAdapter):
         except OssError as e:
             logger.error(f"OSS list objects failed: {e}")
             return
-    
-    def generate_presigned_url(self, key: str, expiration: int = 3600,
-                              bucket: Optional[str] = None, method: str = "GET",
-                              headers: Optional[Dict[str, str]] = None) -> str:
+
+    def generate_presigned_url(
+        self,
+        key: str,
+        expiration: int = 3600,
+        bucket: Optional[str] = None,
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+    ) -> str:
         """Generate an OSS presigned URL."""
         _, OssError, _, _ = _import_oss2()
         bucket_name = self._get_bucket_name(bucket)
         try:
             if method.upper() == "PUT":
-                url = self.bucket.sign_url('PUT', key, expiration, headers=headers)
+                url = self.bucket.sign_url("PUT", key, expiration, headers=headers)
             else:
-                url = self.bucket.sign_url('GET', key, expiration, headers=headers)
-            
+                url = self.bucket.sign_url("GET", key, expiration, headers=headers)
+
             logger.debug(f"OSS presigned URL generated successfully: {key}")
             return url
         except OssError as e:
@@ -169,9 +189,9 @@ class OSSStorageAdapter(StorageAdapter):
             raise StorageServiceException(
                 internal_message=f"OSS generate presigned URL failed: {str(e)}",
                 operation="generate_presigned_url",
-                original_exception=e
+                original_exception=e,
             )
-    
+
     def exists(self, key: str, bucket: Optional[str] = None) -> bool:
         """Check whether an OSS object exists."""
         _, OssError, _, _ = _import_oss2()
@@ -181,7 +201,7 @@ class OSSStorageAdapter(StorageAdapter):
         except OssError as e:
             logger.error(f"OSS object existence check failed: {e}")
             return False
-    
+
     def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:
         """Get an OSS object size."""
         _, OssError, NoSuchKey, NotFound = _import_oss2()
@@ -196,5 +216,5 @@ class OSSStorageAdapter(StorageAdapter):
             raise StorageServiceException(
                 internal_message=f"OSS get object size failed: {str(e)}",
                 operation="get_object_size",
-                original_exception=e
+                original_exception=e,
             )

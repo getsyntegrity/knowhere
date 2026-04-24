@@ -27,7 +27,9 @@ def recover_orphaned_webhooks() -> dict:
     them via QStash.
     """
     from datetime import datetime, timedelta, timezone
+
     from sqlalchemy import select as sa_select
+
     from shared.core.database_sync import get_sync_db_context
     from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
     from shared.services.webhook.qstash_publisher import get_qstash_webhook_publisher
@@ -48,11 +50,15 @@ def recover_orphaned_webhooks() -> dict:
 
         try:
             with get_sync_db_context() as db:
-                stmt = sa_select(WebhookEvent).where(
-                    WebhookEvent.status == WebhookEventStatus.PENDING,
-                    WebhookEvent.attempts == 0,
-                    WebhookEvent.created_at < cutoff_time,
-                ).limit(100)
+                stmt = (
+                    sa_select(WebhookEvent)
+                    .where(
+                        WebhookEvent.status == WebhookEventStatus.PENDING,
+                        WebhookEvent.attempts == 0,
+                        WebhookEvent.created_at < cutoff_time,
+                    )
+                    .limit(100)
+                )
 
                 result = db.execute(stmt)
                 orphaned_events = result.scalars().all()

@@ -10,7 +10,10 @@ import aiohttp
 from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
+from shared.core.exceptions.domain_exceptions import (
+    KnowhereException,
+    StorageServiceException,
+)
 
 
 class FileUploadService:
@@ -52,7 +55,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Direct file upload failed: {str(e)}",
                 operation="direct_upload",
-                original_exception=e
+                original_exception=e,
             )
 
     async def handle_url_upload(self, file_url: str, job_id: str) -> str:
@@ -95,7 +98,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"URL file handling failed: {str(e)}",
                 operation="url_upload",
-                original_exception=e
+                original_exception=e,
             )
 
     async def generate_upload_url(
@@ -123,7 +126,7 @@ class FileUploadService:
                 expiration=settings.JOB_WAITING_EXPIRE_SECONDS,
                 bucket=self.uploads_bucket,
                 method="PUT",
-                headers={"Content-Type": content_type}
+                headers={"Content-Type": content_type},
             )
 
             logger.info(f"Generated presigned upload URL: {upload_url}")
@@ -142,7 +145,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Failed to generate upload URL: {str(e)}",
                 operation="generate_upload_url",
-                original_exception=e
+                original_exception=e,
             )
 
     async def generate_download_url(
@@ -175,7 +178,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Failed to generate download URL: {str(e)}",
                 operation="generate_download_url",
-                original_exception=e
+                original_exception=e,
             )
 
     async def get_file_info(
@@ -197,7 +200,7 @@ class FileUploadService:
             # Check existence and load the object size.
             if not self.adapter.exists(s3_key, bucket_name):
                 return None
-            
+
             size = self.adapter.get_object_size(s3_key, bucket_name)
             return {
                 "size": size,
@@ -208,13 +211,13 @@ class FileUploadService:
 
         except Exception as e:
             # Treat not-found responses as a missing object.
-            if '404' in str(e) or 'not found' in str(e).lower():
+            if "404" in str(e) or "not found" in str(e).lower():
                 return None
             logger.error(f"Failed to get file info: {e}")
             raise StorageServiceException(
                 internal_message=f"Failed to get file info: {str(e)}",
                 operation="get_file_info",
-                original_exception=e
+                original_exception=e,
             )
 
     async def upload_result_file(
@@ -235,9 +238,7 @@ class FileUploadService:
             s3_key = f"results/{job_id}{file_extension}"
             await self._upload_to_s3(local_file_path, s3_key, self.results_bucket)
 
-            logger.info(
-                f"Result file upload succeeded: {local_file_path} -> {s3_key}"
-            )
+            logger.info(f"Result file upload succeeded: {local_file_path} -> {s3_key}")
             return s3_key
 
         except KnowhereException:
@@ -247,7 +248,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Result file upload failed: {str(e)}",
                 operation="upload_result_file",
-                original_exception=e
+                original_exception=e,
             )
 
     async def upload_json_result(
@@ -261,16 +262,15 @@ class FileUploadService:
         try:
             s3_key = f"results/{job_id}.json"
             from io import BytesIO
+
             body = json.dumps(result_data, ensure_ascii=False).encode("utf-8")
             self.adapter.upload_fileobj(
                 BytesIO(body),
                 s3_key,
                 bucket=self.results_bucket,
-                content_type=content_type
+                content_type=content_type,
             )
-            logger.info(
-                f"Result JSON upload succeeded: job_id={job_id}, key={s3_key}"
-            )
+            logger.info(f"Result JSON upload succeeded: job_id={job_id}, key={s3_key}")
             return s3_key
         except KnowhereException:
             raise
@@ -279,7 +279,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Failed to upload result JSON: {str(e)}",
                 operation="upload_json_result",
-                original_exception=e
+                original_exception=e,
             )
 
     async def upload_zip_result(
@@ -292,14 +292,14 @@ class FileUploadService:
             s3_key = f"results/{job_id}.zip"
             await self._upload_to_s3(zip_file_path, s3_key, self.results_bucket)
             logger.info(f"Result ZIP upload succeeded: job_id={job_id}, key={s3_key}")
-            
+
             # Clean up the temporary ZIP after upload.
             try:
                 if os.path.exists(zip_file_path):
                     os.remove(zip_file_path)
             except Exception as e:
                 logger.warning(f"Failed to clean up temporary ZIP file: {e}")
-            
+
             return s3_key
         except KnowhereException:
             raise
@@ -308,7 +308,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Failed to upload result ZIP: {str(e)}",
                 operation="upload_zip_result",
-                original_exception=e
+                original_exception=e,
             )
 
     def _ensure_bucket_exists(self, bucket_name: str) -> bool:
@@ -347,6 +347,7 @@ class FileUploadService:
         Returns:
             bool: Whether the bucket check succeeded.
         """
+
         def _check_and_create():
             try:
                 # In adapter mode, probe accessibility by listing objects.
@@ -372,7 +373,7 @@ class FileUploadService:
         if not await self._ensure_bucket_exists_async(bucket):
             raise StorageServiceException(
                 internal_message=f"Could not ensure bucket {bucket} exists",
-                operation="ensure_bucket"
+                operation="ensure_bucket",
             )
 
         def _upload():
@@ -420,7 +421,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Failed to download file from S3: {str(e)}",
                 operation="download_from_s3",
-                original_exception=e
+                original_exception=e,
             )
 
     async def _download_file_from_url(self, file_url: str) -> str:
@@ -434,18 +435,20 @@ class FileUploadService:
 
         try:
             # Configure aiohttp for efficient large-file downloads.
-            timeout = aiohttp.ClientTimeout(total=300, connect=30)  # 5-minute total timeout, 30-second connect timeout.
+            timeout = aiohttp.ClientTimeout(
+                total=300, connect=30
+            )  # 5-minute total timeout, 30-second connect timeout.
             connector = aiohttp.TCPConnector(
                 limit=100,  # Total connection pool size.
                 limit_per_host=30,  # Connection limit per host.
                 ttl_dns_cache=300,  # Cache DNS for 5 minutes.
                 use_dns_cache=True,
             )
-            
+
             async with aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
-                headers={'User-Agent': 'Knowhere-FileDownloader/1.0'}
+                headers={"User-Agent": "Knowhere-FileDownloader/1.0"},
             ) as session:
                 async with session.get(file_url) as response:
                     if response.status != 200:
@@ -453,12 +456,14 @@ class FileUploadService:
                             internal_message=(
                                 f"Download failed with status code: {response.status}"
                             ),
-                            operation="download_from_url"
+                            operation="download_from_url",
                         )
 
                     # Use a larger chunk size to improve download throughput.
                     with open(temp_file_path, "wb") as f:
-                        async for chunk in response.content.iter_chunked(65536):  # 64 KB chunks.
+                        async for chunk in response.content.iter_chunked(
+                            65536
+                        ):  # 64 KB chunks.
                             f.write(chunk)
 
             return temp_file_path
@@ -474,7 +479,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Failed to download file: {str(e)}",
                 operation="download_from_url",
-                original_exception=e
+                original_exception=e,
             )
 
     async def verify_s3_file_exists(
@@ -497,7 +502,7 @@ class FileUploadService:
             exists = self.adapter.exists(s3_key, bucket_name)
             if not exists:
                 return {"exists": False}
-            
+
             size = self.adapter.get_object_size(s3_key, bucket_name)
             return {
                 "exists": True,
@@ -509,13 +514,13 @@ class FileUploadService:
 
         except Exception as e:
             # Treat not-found responses as a missing object.
-            if '404' in str(e) or 'not found' in str(e).lower():
+            if "404" in str(e) or "not found" in str(e).lower():
                 return {"exists": False}
             logger.error(f"Failed to verify file existence: {e}")
             raise StorageServiceException(
                 internal_message=f"Failed to verify file existence: {str(e)}",
                 operation="verify_s3_file_exists",
-                original_exception=e
+                original_exception=e,
             )
 
     def get_content_type(self, file_extension: str) -> str:
@@ -590,7 +595,7 @@ class FileUploadService:
             raise StorageServiceException(
                 internal_message=f"Failed to get file URL: {str(e)}",
                 operation="get_file_url",
-                original_exception=e
+                original_exception=e,
             )
 
     def generate_s3_key(

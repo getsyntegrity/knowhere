@@ -3,6 +3,7 @@ Webhook Delivery History Model
 
 Records every webhook delivery attempt for auditing and debugging.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -21,57 +22,82 @@ if TYPE_CHECKING:
 
 class WebhookLog(Base):
     """Webhook Log Model - Records webhook delivery history."""
+
     __tablename__ = "webhook_logs"
-    
+
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+
     # Associations
-    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False)
-    event_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("webhook_events.id", ondelete="CASCADE"), nullable=True)  # Optional for backward compatibility
-    
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False
+    )
+    event_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("webhook_events.id", ondelete="CASCADE"), nullable=True
+    )  # Optional for backward compatibility
+
     # Webhook information
     webhook_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # Attempt number (1-6)
-    
+    attempt_number: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )  # Attempt number (1-6)
+
     # Request information
-    request_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # JSON storage
-    signature: Mapped[str] = mapped_column(String(128), nullable=False)  # HMAC signature
-    idempotency_key: Mapped[str] = mapped_column(String(36), nullable=False)  # UUID idempotency key
-    
+    request_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )  # JSON storage
+    signature: Mapped[str] = mapped_column(
+        String(128), nullable=False
+    )  # HMAC signature
+    idempotency_key: Mapped[str] = mapped_column(
+        String(36), nullable=False
+    )  # UUID idempotency key
+
     # Response information
     response_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # Request duration in milliseconds
+    duration_ms: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # Request duration in milliseconds
 
     # Delivery provider tracking
-    delivery_provider: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, server_default="self")
+    delivery_provider: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True, server_default="self"
+    )
     qstash_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
     # Relationships
     job: Mapped["Job"] = relationship("Job", back_populates="webhook_logs")
-    event: Mapped[Optional["WebhookEvent"]] = relationship("WebhookEvent", back_populates="deliveries", foreign_keys=[event_id])
-    
+    event: Mapped[Optional["WebhookEvent"]] = relationship(
+        "WebhookEvent", back_populates="deliveries", foreign_keys=[event_id]
+    )
+
     # Indexes
     __table_args__ = (
-        Index('idx_webhook_logs_job_id', 'job_id'),
-        Index('idx_webhook_logs_event_id', 'event_id'),
-        Index('idx_webhook_logs_created_at', 'created_at'),
-        Index('idx_webhook_logs_attempt', 'job_id', 'attempt_number'),
+        Index("idx_webhook_logs_job_id", "job_id"),
+        Index("idx_webhook_logs_event_id", "event_id"),
+        Index("idx_webhook_logs_created_at", "created_at"),
+        Index("idx_webhook_logs_attempt", "job_id", "attempt_number"),
     )
-    
+
     def __repr__(self):
         return f"<WebhookLog(job_id={self.job_id}, attempt={self.attempt_number}, status={self.response_status_code})>"
-    
+
     def is_success(self) -> bool:
         """Check if the request was successful."""
-        return self.response_status_code is not None and 200 <= self.response_status_code < 300
-    
+        return (
+            self.response_status_code is not None
+            and 200 <= self.response_status_code < 300
+        )
+
     def is_failed(self) -> bool:
         """Check if the request failed."""
         return self.response_status_code is None or self.response_status_code >= 400
-

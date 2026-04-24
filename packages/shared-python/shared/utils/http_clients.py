@@ -3,6 +3,7 @@ Singleton HTTP clients with connection pooling.
 Reduces socket churn under high concurrency by reusing
 TCP+TLS connections across requests.
 """
+
 import threading
 from typing import Optional
 

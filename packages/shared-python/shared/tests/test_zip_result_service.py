@@ -30,7 +30,9 @@ def test_generate_zip_package_raises_for_image_chunk_without_packaged_image(
     add_dir.mkdir()
     images_dir: Path = add_dir / "images"
     images_dir.mkdir()
-    (images_dir / "wrong-first.jpg").write_text("not the declared image", encoding="utf-8")
+    (images_dir / "wrong-first.jpg").write_text(
+        "not the declared image", encoding="utf-8"
+    )
 
     zip_service = ZipResultService()
 

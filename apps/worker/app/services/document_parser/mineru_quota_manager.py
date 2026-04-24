@@ -3,6 +3,7 @@ Quota-aware MinerU token selection for sync worker flows.
 
 Inherits from BaseQuotaManager for the shared Redis-backed quota logic.
 """
+
 from __future__ import annotations
 
 from typing import List, Optional
@@ -10,9 +11,11 @@ from typing import List, Optional
 from loguru import logger
 
 from shared.core.config import settings
-from shared.services.redis.redis_sync_service import SyncRedisService, SyncRedisServiceFactory
+from shared.services.redis.redis_sync_service import (
+    SyncRedisService,
+    SyncRedisServiceFactory,
+)
 from shared.utils.quota_manager import BaseQuotaManager, TokenConfig, TokenLease
-
 
 # Backward-compatible aliases so existing imports keep working
 MinerUTokenConfig = TokenConfig
@@ -27,7 +30,9 @@ class MinerUQuotaManager(BaseQuotaManager):
     user_message = "Document processing is busy right now. Please retry shortly."
 
     @classmethod
-    def from_settings(cls, redis_service: Optional[SyncRedisService] = None) -> "MinerUQuotaManager":
+    def from_settings(
+        cls, redis_service: Optional[SyncRedisService] = None
+    ) -> "MinerUQuotaManager":
         tokens = cls._parse_tokens_from_settings()
         instance = cls(redis_service or SyncRedisServiceFactory.get_service(), tokens)
         instance.default_cooldown_seconds = settings.MINERU_TOKEN_COOLDOWN_SECONDS

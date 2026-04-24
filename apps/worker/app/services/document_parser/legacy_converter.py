@@ -4,9 +4,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from shared.core.exceptions.domain_exceptions import LibreOfficeServiceException
-
 from app.services.document_parser.parser_log_utils import truncate_log_value
+
+from shared.core.exceptions.domain_exceptions import LibreOfficeServiceException
 
 
 def resolve_libreoffice_binary() -> str:
@@ -18,12 +18,14 @@ def resolve_libreoffice_binary() -> str:
         if resolved:
             candidate_paths.append(resolved)
 
-    candidate_paths.extend([
-        "/usr/bin/libreoffice",
-        "/usr/bin/soffice",
-        "/opt/homebrew/bin/soffice",
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-    ])
+    candidate_paths.extend(
+        [
+            "/usr/bin/libreoffice",
+            "/usr/bin/soffice",
+            "/opt/homebrew/bin/soffice",
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        ]
+    )
 
     seen: set[str] = set()
     for candidate in candidate_paths:

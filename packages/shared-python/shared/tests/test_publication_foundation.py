@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import ast
-from io import StringIO
-from pathlib import Path
 import json
 import re
-import tomllib
 import tokenize
-
+import tomllib
+from io import StringIO
+from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 CHINESE_TEXT_PATTERN: re.Pattern[str] = re.compile(r"[\u4e00-\u9fff]")
@@ -169,6 +168,7 @@ def test_repo_surface_is_python_first() -> None:
 
     for required_path in (
         "scripts/check-public.sh",
+        "scripts/lint-public.sh",
         "scripts/test-public.sh",
         "scripts/test-public-shared.sh",
         "scripts/test-public-api.sh",
@@ -254,12 +254,18 @@ def test_public_env_examples_and_selected_dev_assets_are_english_first() -> None
         assert "Required for local startup" in env_text
         assert "Required for specific features" in env_text
         assert "Optional or development-only" in env_text
-        assert "DATABASE_URL=postgresql+asyncpg://root:root123@localhost:5432/Knowhere" in env_text
+        assert (
+            "DATABASE_URL=postgresql+asyncpg://root:root123@localhost:5432/Knowhere"
+            in env_text
+        )
         assert "S3_ENDPOINT_URL=http://localhost:4566" in env_text
         assert "S3_ACCESS_KEY_ID=test" in env_text
         assert "S3_SECRET_ACCESS_KEY=test" in env_text
         assert "QSTASH_CALLBACK_BASE_URL=https://api.example.com/api/v1" in env_text
-        assert "DEFAULT_FOLDERS=Supplementary_Files,Temporary_Files,templates,images,fragments" in env_text
+        assert (
+            "DEFAULT_FOLDERS=Supplementary_Files,Temporary_Files,templates,images,fragments"
+            in env_text
+        )
 
     assert "知识库" not in api_env_text
     assert "复制此文件" not in api_env_text
@@ -431,7 +437,9 @@ def test_selected_repository_files_only_keep_english_comments_and_docstrings() -
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
-def test_selected_large_repository_and_service_files_only_keep_english_comments_and_docstrings() -> None:
+def test_selected_large_repository_and_service_files_only_keep_english_comments_and_docstrings() -> (
+    None
+):
     for relative_path in (
         "apps/api/app/repositories/job_repository.py",
         "apps/api/app/repositories/knowledge_base_repository.py",
@@ -471,7 +479,9 @@ def test_selected_utility_files_only_keep_english_comments_and_docstrings() -> N
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
-def test_selected_redis_support_files_only_keep_english_comments_and_docstrings() -> None:
+def test_selected_redis_support_files_only_keep_english_comments_and_docstrings() -> (
+    None
+):
     for relative_path in (
         "packages/shared-python/shared/services/redis/chunks_redis_service.py",
         "packages/shared-python/shared/services/redis/job_info_redis_service.py",
@@ -493,7 +503,9 @@ def test_selected_redis_core_files_only_keep_english_comments_and_docstrings() -
         assert not find_chinese_comments_and_docstrings(relative_path), relative_path
 
 
-def test_selected_storage_support_files_only_keep_english_comments_and_docstrings() -> None:
+def test_selected_storage_support_files_only_keep_english_comments_and_docstrings() -> (
+    None
+):
     for relative_path in (
         "packages/shared-python/shared/services/storage/adapters/oss_adapter.py",
         "packages/shared-python/shared/services/storage/adapters/s3_adapter.py",
@@ -509,7 +521,9 @@ def test_storage_upload_service_only_keeps_english_comments_and_docstrings() -> 
     )
 
 
-def test_selected_worker_parser_files_only_keep_english_comments_and_docstrings() -> None:
+def test_selected_worker_parser_files_only_keep_english_comments_and_docstrings() -> (
+    None
+):
     for relative_path in (
         "apps/worker/app/services/common/kb_utils.py",
         "apps/worker/app/services/document_parser/html_parser.py",
@@ -553,6 +567,7 @@ def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
 
 def test_public_scripts_pin_python_3_11_for_uv_commands() -> None:
     for relative_path in (
+        "scripts/lint-public.sh",
         "scripts/typecheck-public.sh",
         "scripts/test-public-shared.sh",
         "scripts/test-public-api.sh",
@@ -592,6 +607,24 @@ def test_public_check_script_runs_public_safety_scan() -> None:
 
     assert (REPO_ROOT / "scripts/scan-public-safety.sh").exists()
     assert "scripts/scan-public-safety.sh" in check_public_text
+    assert "scripts/lint-public.sh" in check_public_text
+
+
+def test_public_lint_script_targets_retained_python_surface() -> None:
+    lint_script_text: str = read_text("scripts/lint-public.sh")
+
+    for relative_path in (
+        "apps/api/app",
+        "apps/worker/app",
+        "packages/shared-python/shared",
+        "packages/shared-python/shared/tests",
+    ):
+        assert relative_path in lint_script_text, relative_path
+
+    assert "black" in lint_script_text
+    assert "--check" in lint_script_text
+    assert "isort" in lint_script_text
+    assert "--check-only" in lint_script_text
 
 
 def test_public_safety_scan_blocks_private_cloud_identifiers() -> None:
@@ -614,7 +647,9 @@ def test_public_workflows_do_not_persist_checkout_credentials() -> None:
         checkout_step_count: int = workflow_text.count("uses: actions/checkout@v4")
 
         assert checkout_step_count > 0, relative_path
-        assert workflow_text.count("persist-credentials: false") == checkout_step_count, relative_path
+        assert (
+            workflow_text.count("persist-credentials: false") == checkout_step_count
+        ), relative_path
 
 
 def test_public_ci_workflow_uses_explicit_read_only_token_permissions() -> None:
@@ -625,15 +660,21 @@ def test_public_ci_workflow_uses_explicit_read_only_token_permissions() -> None:
 
 
 def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
-    retained_test_text: str = read_text("apps/api/__tests__/unit/test_qstash_callbacks.py")
-    auth_dependencies_test_text: str = read_text("apps/api/__tests__/unit/test_auth_dependencies.py")
+    retained_test_text: str = read_text(
+        "apps/api/__tests__/unit/test_qstash_callbacks.py"
+    )
+    auth_dependencies_test_text: str = read_text(
+        "apps/api/__tests__/unit/test_auth_dependencies.py"
+    )
     api_key_service_test_text: str = read_text(
         "apps/api/__tests__/unit/test_api_key_service.py"
     )
     system_level_dependencies_test_text: str = read_text(
         "apps/api/__tests__/unit/rate_limit/test_system_level_dependencies.py"
     )
-    mcp_query_test_text: str = read_text("apps/api/__tests__/unit/test_mcp_query_tool.py")
+    mcp_query_test_text: str = read_text(
+        "apps/api/__tests__/unit/test_mcp_query_tool.py"
+    )
     openai_timeout_test_text: str = read_text(
         "packages/shared-python/shared/tests/test_openai_timeout_defaults.py"
     )
@@ -651,7 +692,10 @@ def test_selected_retained_test_surfaces_avoid_private_callback_hosts() -> None:
     assert "workers.dev" not in retained_test_text
     assert "wangbinqi" not in retained_test_text
     assert "job_af999f445be6" not in retained_test_text
-    assert "msg_SsSaiS4nUd1vhMifwgiRxyLsvKwQpyiTbotjmvhgmnKYCsdHnYL9b4DQ28WN8euniUHdZYYufg1FMF4sRjuNRPTHhRBbvTA" not in retained_test_text
+    assert (
+        "msg_SsSaiS4nUd1vhMifwgiRxyLsvKwQpyiTbotjmvhgmnKYCsdHnYL9b4DQ28WN8euniUHdZYYufg1FMF4sRjuNRPTHhRBbvTA"
+        not in retained_test_text
+    )
     assert "sk_guest_jobs" not in auth_dependencies_test_text
     assert "sk_guest_billing_credits" not in auth_dependencies_test_text
     assert "sk_guest_billing" not in auth_dependencies_test_text
@@ -695,7 +739,9 @@ def test_selected_retained_fixtures_avoid_personal_contact_strings() -> None:
 
 
 def test_selected_runtime_text_surfaces_remove_internal_planning_refs() -> None:
-    prompt_service_text: str = read_text("packages/shared-python/shared/services/ai/prompt_service.py")
+    prompt_service_text: str = read_text(
+        "packages/shared-python/shared/services/ai/prompt_service.py"
+    )
     kb_utils_text: str = read_text("apps/worker/app/services/common/kb_utils.py")
 
     assert "hierarchy_llm_compact_input_0c446abf.plan.md" not in prompt_service_text
@@ -776,11 +822,15 @@ def main() -> None:
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
     test_public_typecheck_script_targets_selected_api_entrypoints()
     test_public_check_script_runs_public_safety_scan()
+    test_public_lint_script_targets_retained_python_surface()
     test_public_safety_scan_blocks_private_cloud_identifiers()
     test_public_workflows_do_not_persist_checkout_credentials()
     test_public_ci_workflow_uses_explicit_read_only_token_permissions()
     test_selected_retained_test_surfaces_avoid_private_callback_hosts()
     test_selected_retained_fixtures_avoid_personal_contact_strings()
+    test_selected_runtime_text_surfaces_remove_internal_planning_refs()
+    test_public_self_hosting_docs_cover_published_ghcr_images()
+    test_public_repo_omits_unvetted_smoke_test_suites()
     test_worker_tests_do_not_keep_stale_runtime_artifacts()
 
 

@@ -55,15 +55,23 @@ def test_finalize_job_success_uses_direct_chunks_without_redis_lookup(
             {"job_result_id": job_result_id, "chunks": chunks}
         ),
     )
-    monkeypatch.setattr(service._state_machine, "mark_completed", lambda *args, **kwargs: True)
-    monkeypatch.setattr(service, "_maybe_create_webhook_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(service, "_post_commit_enqueue_webhook", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        service._state_machine, "mark_completed", lambda *args, **kwargs: True
+    )
+    monkeypatch.setattr(
+        service, "_maybe_create_webhook_event", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        service, "_post_commit_enqueue_webhook", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         lifecycle_module.SyncRedisServiceFactory,
         "get_service",
         staticmethod(
             lambda: (_ for _ in ()).throw(
-                AssertionError("Redis should not be used when chunks are passed directly")
+                AssertionError(
+                    "Redis should not be used when chunks are passed directly"
+                )
             )
         ),
     )
@@ -85,6 +93,7 @@ def test_finalize_job_success_uses_direct_chunks_without_redis_lookup(
     assert captured == {"job_result_id": "result_123", "chunks": chunks}
     db.commit.assert_called_once()
 
+
 def test_try_refund_credits_skips_jobs_that_never_charged(monkeypatch) -> None:
     db = MagicMock()
     job = SimpleNamespace(
@@ -93,9 +102,7 @@ def test_try_refund_credits_skips_jobs_that_never_charged(monkeypatch) -> None:
         credits_charged=100,
         billing_status="billing_failed",
     )
-    db.execute.return_value = MagicMock(
-        scalar_one_or_none=MagicMock(return_value=job)
-    )
+    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=job))
     refund_calls: list[dict[str, object]] = []
 
     class _FakeCreditsService:
@@ -110,4 +117,3 @@ def test_try_refund_credits_skips_jobs_that_never_charged(monkeypatch) -> None:
 
     assert refund_calls == []
     assert job.billing_status == "billing_failed"
-

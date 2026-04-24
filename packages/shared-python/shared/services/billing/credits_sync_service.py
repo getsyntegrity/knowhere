@@ -1,6 +1,7 @@
 """
 Sync credits service for worker-side billing operations.
 """
+
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -41,7 +42,9 @@ class SyncCreditsService:
 
         try:
             with session.begin_nested():
-                balance_entry = UserBalance(user_id=user_id, credits_balance=initial_amount)
+                balance_entry = UserBalance(
+                    user_id=user_id, credits_balance=initial_amount
+                )
                 session.add(balance_entry)
 
                 transaction = CreditsTransaction(
@@ -67,7 +70,9 @@ class SyncCreditsService:
         except IntegrityError:
             existing_balance = self.repository.get_user_balance(session, user_id)
             if existing_balance:
-                logger.info(f"User already initialized by concurrent session: user_id={user_id}")
+                logger.info(
+                    f"User already initialized by concurrent session: user_id={user_id}"
+                )
                 return
             raise
 
@@ -118,10 +123,12 @@ class SyncCreditsService:
         recent_credits = self.repository.get_recent_payment_credits(
             session, user_id, valid_days
         )
-        non_expiring_credits = self.repository.get_positive_credit_total_by_transaction_types(
-            session,
-            user_id,
-            NON_EXPIRING_CREDIT_TRANSACTION_TYPES,
+        non_expiring_credits = (
+            self.repository.get_positive_credit_total_by_transaction_types(
+                session,
+                user_id,
+                NON_EXPIRING_CREDIT_TRANSACTION_TYPES,
+            )
         )
         expirable_balance = max(current_balance - non_expiring_credits, 0)
 

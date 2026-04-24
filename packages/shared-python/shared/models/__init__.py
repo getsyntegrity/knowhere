@@ -1,4 +1,5 @@
 """Model registry used to avoid circular imports."""
+
 from shared.models.database.api_key import APIKey
 from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.job import Job

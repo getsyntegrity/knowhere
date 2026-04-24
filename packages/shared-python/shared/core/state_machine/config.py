@@ -1,4 +1,5 @@
 """State-machine configuration."""
+
 from dataclasses import dataclass
 from typing import Dict
 
@@ -27,11 +28,11 @@ class StateMachineConfig:
     def __post_init__(self) -> None:
         if self.state_timeouts is None:
             self.state_timeouts = {
-                "pending": 300,      # 5 minutes
-                "uploading": 600,    # 10 minutes
+                "pending": 300,  # 5 minutes
+                "uploading": 600,  # 10 minutes
                 "processing": 1800,  # 30 minutes
-                "completed": 0,      # No timeout
-                "failed": 0,         # No timeout
+                "completed": 0,  # No timeout
+                "failed": 0,  # No timeout
             }
 
 

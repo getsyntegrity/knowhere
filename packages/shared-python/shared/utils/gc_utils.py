@@ -1,9 +1,11 @@
 """Garbage-collection utilities shared across services."""
+
 import gc
 
 # torch is optional and only needed when CUDA cache cleanup is available.
 try:
     import torch
+
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False

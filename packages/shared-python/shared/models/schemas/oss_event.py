@@ -1,4 +1,5 @@
 """OSS event schemas."""
+
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -25,7 +26,9 @@ class OSSBucket(BaseModel):
 class OSSEventRecord(BaseModel):
     """One OSS event record."""
 
-    eventName: str = Field(..., description="Event name, for example ObjectCreated:PutObject")
+    eventName: str = Field(
+        ..., description="Event name, for example ObjectCreated:PutObject"
+    )
     eventSource: str = Field(default="acs:oss", description="Event source")
     eventTime: str = Field(..., description="Event time")
     region: str = Field(..., description="OSS region")
@@ -39,8 +42,8 @@ class OSSEventRecord(BaseModel):
         super().__init__(**data)
         # Parse the nested oss payload into convenience fields.
         if self.oss:
-            self.bucket_name = self.oss.get('bucket', {}).get('name')
-            self.object_key = self.oss.get('object', {}).get('key')
+            self.bucket_name = self.oss.get("bucket", {}).get("name")
+            self.object_key = self.oss.get("object", {}).get("key")
 
 
 class OSSEvent(BaseModel):
@@ -52,8 +55,11 @@ class OSSEvent(BaseModel):
         """Return only upload-related event records."""
         upload_events = []
         for record in self.events:
-            if record.eventName in ['ObjectCreated:PutObject', 'ObjectCreated:PostObject', 
-                                   'ObjectCreated:CompleteMultipartUpload']:
+            if record.eventName in [
+                "ObjectCreated:PutObject",
+                "ObjectCreated:PostObject",
+                "ObjectCreated:CompleteMultipartUpload",
+            ]:
                 upload_events.append(record)
         return upload_events
 
@@ -71,21 +77,23 @@ class OSSEvent(BaseModel):
                 eventSource="oss:event",
                 awsRegion=oss_record.region,
                 eventTime=oss_record.eventTime,
-                eventName=oss_record.eventName.replace('ObjectCreated:', 's3:ObjectCreated:').replace('ObjectRemoved:', 's3:ObjectRemoved:'),
+                eventName=oss_record.eventName.replace(
+                    "ObjectCreated:", "s3:ObjectCreated:"
+                ).replace("ObjectRemoved:", "s3:ObjectRemoved:"),
                 s3={
-                    'bucket': {
-                        'name': oss_record.bucket_name,
-                        'arn': f"oss://{oss_record.bucket_name}"
+                    "bucket": {
+                        "name": oss_record.bucket_name,
+                        "arn": f"oss://{oss_record.bucket_name}",
                     },
-                    'object': {
-                        'key': oss_record.object_key,
-                        'size': oss_record.oss.get('object', {}).get('size'),
-                        'eTag': oss_record.oss.get('object', {}).get('etag')
-                    }
+                    "object": {
+                        "key": oss_record.object_key,
+                        "size": oss_record.oss.get("object", {}).get("size"),
+                        "eTag": oss_record.oss.get("object", {}).get("etag"),
+                    },
                 },
                 bucket_name=oss_record.bucket_name,
-                object_key=oss_record.object_key
+                object_key=oss_record.object_key,
             )
             s3_records.append(s3_record)
-        
+
         return S3Event(Records=s3_records)

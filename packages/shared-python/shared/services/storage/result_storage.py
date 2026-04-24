@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-
 _EXCLUDED_FILE_NAMES = {".DS_Store", "Thumbs.db"}
 _EXCLUDED_DIR_NAMES = {"tmp", "temp", "__pycache__"}
 _CLIENT_ARTIFACT_DIRS = {"images", "tables"}
@@ -19,22 +18,27 @@ class UploadedResultBundle:
 
 
 class ResultStorage(Protocol):
-    def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> UploadedResultBundle:
-        ...
+    def upload(
+        self, *, job_id: str, result_dir: str, zip_file_path: str
+    ) -> UploadedResultBundle: ...
 
-    def generate_artifact_url(self, *, job_id: str, artifact_ref: str, expires_in: int = 3600) -> str | None:
-        ...
+    def generate_artifact_url(
+        self, *, job_id: str, artifact_ref: str, expires_in: int = 3600
+    ) -> str | None: ...
 
-    def normalize_artifact_ref(self, artifact_ref: str | None) -> str | None:
-        ...
+    def normalize_artifact_ref(self, artifact_ref: str | None) -> str | None: ...
 
 
 class ResultS3:
-    def __init__(self, *, results_bucket: str | None = None, storage_adapter=None) -> None:
+    def __init__(
+        self, *, results_bucket: str | None = None, storage_adapter=None
+    ) -> None:
         if results_bucket is None:
             from shared.core.config import settings
 
-            results_bucket = getattr(settings, "S3_RESULTS_BUCKET", settings.S3_BUCKET_NAME)
+            results_bucket = getattr(
+                settings, "S3_RESULTS_BUCKET", settings.S3_BUCKET_NAME
+            )
         self.results_bucket = results_bucket
         self._storage_adapter = storage_adapter
 
@@ -67,7 +71,9 @@ class ResultS3:
             return None
         return normalized
 
-    def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> UploadedResultBundle:
+    def upload(
+        self, *, job_id: str, result_dir: str, zip_file_path: str
+    ) -> UploadedResultBundle:
         result_path = Path(result_dir)
         if not result_path.is_dir():
             raise ValueError(f"Result directory does not exist: {result_dir}")
@@ -83,7 +89,9 @@ class ResultS3:
         for file_path in self._iter_raw_files(result_path):
             relative_path = file_path.relative_to(result_path).as_posix()
             raw_key = self.build_raw_key(job_id=job_id, relative_path=relative_path)
-            self.storage_adapter.upload_file(str(file_path), raw_key, self.results_bucket)
+            self.storage_adapter.upload_file(
+                str(file_path), raw_key, self.results_bucket
+            )
             raw_files[relative_path] = raw_key
 
         return UploadedResultBundle(
@@ -100,7 +108,9 @@ class ResultS3:
             method="GET",
         )
 
-    def generate_artifact_url(self, *, job_id: str, artifact_ref: str, expires_in: int = 3600) -> str | None:
+    def generate_artifact_url(
+        self, *, job_id: str, artifact_ref: str, expires_in: int = 3600
+    ) -> str | None:
         normalized_ref = self.normalize_artifact_ref(artifact_ref)
         if not normalized_ref:
             return None
@@ -125,7 +135,9 @@ class ResultS3:
         if not relative_path:
             return None
         normalized = str(relative_path).strip().replace("\\", "/").lstrip("/")
-        parts = [part for part in normalized.split("/") if part and part not in {".", ".."}]
+        parts = [
+            part for part in normalized.split("/") if part and part not in {".", ".."}
+        ]
         if not parts:
             return None
         if any(self._is_excluded_dir(part) for part in parts[:-1]):

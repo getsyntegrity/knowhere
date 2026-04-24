@@ -1,4 +1,5 @@
 """State-machine statuses and transition rules."""
+
 import os
 from datetime import datetime, timezone
 from enum import Enum
@@ -7,6 +8,7 @@ from typing import Dict, Set
 
 class JobStatus(str, Enum):
     """PRD job status enum."""
+
     PENDING = "pending"
     WAITING_FILE = "waiting-file"
     RUNNING = "running"
@@ -15,12 +17,8 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-
 # Terminal states.
 TERMINAL_STATES: Set[str] = {JobStatus.DONE.value, JobStatus.FAILED.value}
-
-
-
 
 
 def is_terminal_state(state: str) -> bool:

@@ -16,9 +16,8 @@ import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, List, Literal, Optional
 
-from loguru import logger
-
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
+from loguru import logger
 
 
 @dataclass
@@ -174,7 +173,9 @@ def _count_detected_tables(page: Any) -> int:
 
 def _is_stroked_drawing(drawing: dict[str, Any]) -> bool:
     stroke_width = drawing.get("width")
-    return drawing.get("color") is not None or (stroke_width is not None and stroke_width > 0)
+    return drawing.get("color") is not None or (
+        stroke_width is not None and stroke_width > 0
+    )
 
 
 def _estimate_fast_benefit(profile: DocProfile) -> float:
@@ -197,9 +198,7 @@ def _estimate_fast_benefit(profile: DocProfile) -> float:
         - (profile.table_signal_strength * 0.8)
     )
     return _clamp(
-        (0.35 * page_factor)
-        + (0.40 * density_factor)
-        + (0.25 * stability_factor)
+        (0.35 * page_factor) + (0.40 * density_factor) + (0.25 * stability_factor)
     )
 
 
@@ -254,7 +253,9 @@ def _classify_route(profile: DocProfile) -> tuple[str, str, float, float, list[s
     if profile.complex_page_ratio >= HARD_COMPLEX_PAGE_RATIO:
         hard_gate_reasons.append(f"complex_pages={profile.complex_page_ratio:.0%}")
     if profile.page_count > HARD_STANDARD_PAGE_COUNT:
-        hard_gate_reasons.append(f"page_count={profile.page_count}>{HARD_STANDARD_PAGE_COUNT}")
+        hard_gate_reasons.append(
+            f"page_count={profile.page_count}>{HARD_STANDARD_PAGE_COUNT}"
+        )
 
     benefit = _estimate_fast_benefit(profile)
     risk = _estimate_risk_score(profile)
@@ -525,17 +526,13 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
                         fill_only_rect_items += 1
 
         detected_table_count = _count_detected_tables(page)
-        drawing_table_signal = (
-            line_like_items >= TABLE_DRAWING_LINE_THRESHOLD
-            and (
-                (horizontal_line_items >= 2 and vertical_line_items >= 2)
-                or
-                rect_items >= TABLE_DRAWING_RECT_THRESHOLD
-                or (
-                    line_like_items >= TABLE_DRAWING_STRONG_THRESHOLD
-                    and horizontal_line_items >= 3
-                    and vertical_line_items >= 3
-                )
+        drawing_table_signal = line_like_items >= TABLE_DRAWING_LINE_THRESHOLD and (
+            (horizontal_line_items >= 2 and vertical_line_items >= 2)
+            or rect_items >= TABLE_DRAWING_RECT_THRESHOLD
+            or (
+                line_like_items >= TABLE_DRAWING_STRONG_THRESHOLD
+                and horizontal_line_items >= 3
+                and vertical_line_items >= 3
             )
         )
         # NOTE:
@@ -561,7 +558,9 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         text_blocks = [
             block
             for block in blocks
-            if block[6] == 0 and (block[2] - block[0]) > 20 and (block[3] - block[1]) > 10
+            if block[6] == 0
+            and (block[2] - block[0]) > 20
+            and (block[3] - block[1]) > 10
         ]
 
         is_multi_col_page = False
@@ -573,7 +572,9 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
                 for j in range(i + 1, len(text_blocks)):
                     block_i = text_blocks[i]
                     block_j = text_blocks[j]
-                    y_overlap = min(block_i[3], block_j[3]) - max(block_i[1], block_j[1])
+                    y_overlap = min(block_i[3], block_j[3]) - max(
+                        block_i[1], block_j[1]
+                    )
                     if y_overlap <= 0:
                         continue
                     x_gap = max(block_j[0] - block_i[2], block_i[0] - block_j[2])
@@ -607,7 +608,9 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         if page_has_large_image:
             large_image_pages += 1
 
-        max_image_coverage_on_page = max(max_image_coverage_on_page, page_max_rect_ratio)
+        max_image_coverage_on_page = max(
+            max_image_coverage_on_page, page_max_rect_ratio
+        )
 
         is_complex_page = (
             table_hit
@@ -655,7 +658,9 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
 
     n_sampled = len(sample_indices)
     profile.avg_text_density = total_text_len / n_sampled if n_sampled > 0 else 0.0
-    profile.avg_image_coverage = total_image_coverage / n_sampled if n_sampled > 0 else 0.0
+    profile.avg_image_coverage = (
+        total_image_coverage / n_sampled if n_sampled > 0 else 0.0
+    )
     profile.has_embedded_fonts = has_any_fonts
     profile.has_tables = has_any_tables
     profile.is_multi_column = multi_col_pages > (n_sampled * 0.3)
@@ -667,7 +672,9 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     profile.significant_image_count = significant_image_count
     profile.max_image_coverage_on_page = max_image_coverage_on_page
     profile.pages_with_significant_images = pages_with_significant_images
-    profile.large_image_page_ratio = large_image_pages / n_sampled if n_sampled > 0 else 0.0
+    profile.large_image_page_ratio = (
+        large_image_pages / n_sampled if n_sampled > 0 else 0.0
+    )
 
     profile.table_signal_pages = table_signal_pages
     profile.table_signal_strength = (
@@ -701,13 +708,17 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
     # Any document meeting all 4 conditions is sent for VLM visual confirmation.
     # We do NOT heuristically commit here — VLM decides in parse_service.
     is_atlas_candidate = (
-        profile.avg_text_density < ATLAS_TEXT_THRESHOLD              # text-sparse (< 200 chars/page)
-        and profile.avg_image_coverage > ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN  # image-heavy (> 30%)
-        and landscape_ratio >= ATLAS_MIN_LANDSCAPE_RATIO             # mostly landscape (>= 50%)
-        and profile.page_count >= ATLAS_MIN_PAGES                    # multi-page (>= 2)
+        profile.avg_text_density
+        < ATLAS_TEXT_THRESHOLD  # text-sparse (< 200 chars/page)
+        and profile.avg_image_coverage
+        > ATLAS_CANDIDATE_IMAGE_COVERAGE_MIN  # image-heavy (> 30%)
+        and landscape_ratio >= ATLAS_MIN_LANDSCAPE_RATIO  # mostly landscape (>= 50%)
+        and profile.page_count >= ATLAS_MIN_PAGES  # multi-page (>= 2)
     )
     if is_atlas_candidate:
-        profile.doc_category = "generic"  # provisional — VLM will promote to "atlas" if confirmed
+        profile.doc_category = (
+            "generic"  # provisional — VLM will promote to "atlas" if confirmed
+        )
         profile.atlas_candidate = True
         reasons.append(
             f"atlas_candidate: text={profile.avg_text_density:.0f}<{ATLAS_TEXT_THRESHOLD}, "
@@ -724,7 +735,9 @@ def _profile_pdf_worker(queue, file_path: str) -> None:
         ref_page = doc_page_sizes[0] if doc_page_sizes else None
         if ref_page:
             page_ratio = ref_page[0] / ref_page[1] if ref_page[1] > 0 else 0.0
-            is_slide_ratio = any(abs(page_ratio - ratio) < tolerance for ratio in slide_ratios)
+            is_slide_ratio = any(
+                abs(page_ratio - ratio) < tolerance for ratio in slide_ratios
+            )
             if is_slide_ratio:
                 profile.doc_category = "ppt_converted"
                 reasons.append(

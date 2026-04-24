@@ -1,6 +1,7 @@
 """
 Top-level API route registry.
 """
+
 from app.api.v1.api_v1 import api_router as v1_router
 from fastapi import APIRouter
 

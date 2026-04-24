@@ -5,6 +5,7 @@ This module owns the retrieval-specific publication work that happens during
 job finalization. The job lifecycle service should orchestrate transaction
 boundaries and call this service, not define retrieval state construction.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -49,7 +50,9 @@ class RetrievalPublicationService:
         if not document_id:
             return None
 
-        document = db.execute(select(Document).where(Document.document_id == document_id)).scalar_one_or_none()
+        document = db.execute(
+            select(Document).where(Document.document_id == document_id)
+        ).scalar_one_or_none()
         if not document:
             return None
 
@@ -92,7 +95,8 @@ class RetrievalPublicationService:
         document = None
         if document_id:
             document = db.execute(
-                select(Document).where(
+                select(Document)
+                .where(
                     Document.document_id == document_id,
                     Document.user_id == str(job.user_id),
                 )
@@ -181,34 +185,42 @@ class RetrievalPublicationService:
             section_title_str = section.section_title if section else None
             path_text = f"{source_file_name or ''} {section_path_str}".strip()
 
-            db.add(DocumentChunk(
-                id=f"dchk_{uuid4().hex[:12]}",
-                chunk_id=chunk_id,
-                user_id=str(job.user_id),
-                namespace=namespace,
-                document_id=document_id,
-                job_result_id=job_result_id,
-                section_id=section.section_id,
-                chunk_type=chunk.get("type") or chunk.get("chunk_type") or "text",
-                content=chunk.get("content") or chunk.get("text"),
-                content_lexical_text=build_content_lexical_text(chunk),
-                path_lexical_text=build_path_lexical_text(source_path),
-                content_search_text=build_content_search_text(chunk, section_summary=section_summary),
-                path_search_text=build_path_search_text(
-                    source_file_name=source_file_name,
-                    section_path=section_path_str,
-                    section_title=section_title_str,
-                    section_summary=section_summary,
-                ),
-                term_search_text=build_term_search_text(chunk, path_text=path_text),
-                source_chunk_path=source_path,
-                file_path=metadata.get("file_path") or chunk.get("file_path"),
-                chunk_metadata=metadata,
-                sort_order=chunk.get("order", index),
-            ))
+            db.add(
+                DocumentChunk(
+                    id=f"dchk_{uuid4().hex[:12]}",
+                    chunk_id=chunk_id,
+                    user_id=str(job.user_id),
+                    namespace=namespace,
+                    document_id=document_id,
+                    job_result_id=job_result_id,
+                    section_id=section.section_id,
+                    chunk_type=chunk.get("type") or chunk.get("chunk_type") or "text",
+                    content=chunk.get("content") or chunk.get("text"),
+                    content_lexical_text=build_content_lexical_text(chunk),
+                    path_lexical_text=build_path_lexical_text(source_path),
+                    content_search_text=build_content_search_text(
+                        chunk, section_summary=section_summary
+                    ),
+                    path_search_text=build_path_search_text(
+                        source_file_name=source_file_name,
+                        section_path=section_path_str,
+                        section_title=section_title_str,
+                        section_summary=section_summary,
+                    ),
+                    term_search_text=build_term_search_text(chunk, path_text=path_text),
+                    source_chunk_path=source_path,
+                    file_path=metadata.get("file_path") or chunk.get("file_path"),
+                    chunk_metadata=metadata,
+                    sort_order=chunk.get("order", index),
+                )
+            )
 
         db.flush()
-        return {"user_id": str(job.user_id), "namespace": namespace, "document_id": document_id}
+        return {
+            "user_id": str(job.user_id),
+            "namespace": namespace,
+            "document_id": document_id,
+        }
 
     def publish_document_graph(
         self,
@@ -240,7 +252,9 @@ class RetrievalPublicationService:
             ).scalar_one_or_none()
             document_id = document.document_id if document else None
         if not document_id:
-            raise RuntimeError(f"Document not found for graph publication: job_id={job.job_id}")
+            raise RuntimeError(
+                f"Document not found for graph publication: job_id={job.job_id}"
+            )
 
         DocumentGraphService().publish_document_graph(
             db,

@@ -1,6 +1,7 @@
 """
 Lexical text builders for canonical retrieval publication.
 """
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -26,7 +27,9 @@ def build_content_lexical_text(chunk: dict[str, Any]) -> Optional[str]:
     metadata = chunk.get("metadata") or {}
     tokens = metadata.get("tokens") if isinstance(metadata, dict) else None
     if isinstance(tokens, list):
-        token_text = " ".join(str(token).strip() for token in tokens if str(token).strip())
+        token_text = " ".join(
+            str(token).strip() for token in tokens if str(token).strip()
+        )
     else:
         token_text = ""
     lexical_parts = [part for part in [content, token_text] if part]

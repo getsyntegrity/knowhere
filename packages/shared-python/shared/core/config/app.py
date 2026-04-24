@@ -1,6 +1,7 @@
 """
 Application configuration — assembles all config components.
 """
+
 from pydantic_settings import SettingsConfigDict
 
 from .ai import AIConfig
@@ -15,7 +16,18 @@ from .redis import RedisConfig, RedisConfigManager, RedisPoolManager
 from .storage import StorageConfig
 
 
-class AppConfig(BaseConfig, DatabaseConfig, RedisConfig, CeleryConfig, QStashConfig, StorageConfig, AIConfig, MineruConfig, BillingConfig, JobConfig):
+class AppConfig(
+    BaseConfig,
+    DatabaseConfig,
+    RedisConfig,
+    CeleryConfig,
+    QStashConfig,
+    StorageConfig,
+    AIConfig,
+    MineruConfig,
+    BillingConfig,
+    JobConfig,
+):
     """Application configuration — all config components merged."""
 
     def validate_all(self) -> bool:

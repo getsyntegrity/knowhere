@@ -1,4 +1,5 @@
 """Storage configuration."""
+
 import os
 import threading
 
@@ -28,30 +29,46 @@ class StorageConfig(BaseModel):
     S3_BUCKET_NAME: str = Field(..., description="Bucket name")
     S3_ACCESS_KEY_ID: str = Field(..., description="Access key ID")
     S3_SECRET_ACCESS_KEY: str = Field(..., description="Secret access key")
-    S3_ENDPOINT_URL: str = Field(default="", description="Endpoint URL for S3-compatible services such as MinIO")
+    S3_ENDPOINT_URL: str = Field(
+        default="", description="Endpoint URL for S3-compatible services such as MinIO"
+    )
     S3_PRIVATE_DOMAIN: str = Field(default="", description="Private asset domain")
     S3_TEMP_PATH: str = Field(..., description="Temporary path")
 
     # Advanced S3 client configuration.
-    S3_REGION: str = Field(default="", description="S3 region; can stay empty for MinIO")
-    S3_USE_SSL: bool = Field(default=True, description="Use SSL/TLS for storage connections")
-    S3_ADDRESSING_STYLE: str = Field(default="auto", description="S3 addressing style: auto, path, or virtual")
+    S3_REGION: str = Field(
+        default="", description="S3 region; can stay empty for MinIO"
+    )
+    S3_USE_SSL: bool = Field(
+        default=True, description="Use SSL/TLS for storage connections"
+    )
+    S3_ADDRESSING_STYLE: str = Field(
+        default="auto", description="S3 addressing style: auto, path, or virtual"
+    )
 
     # OSS-only configuration.
-    OSS_ENDPOINT: str = Field(default="", description="OSS endpoint, for example oss-cn-hangzhou.aliyuncs.com")
+    OSS_ENDPOINT: str = Field(
+        default="", description="OSS endpoint, for example oss-cn-hangzhou.aliyuncs.com"
+    )
 
     # File-handling limits.
-    MAX_FILE_SIZE: int = Field(default=104857600, description="Maximum file size in bytes")
-    MAX_IMAGE_SIZE: int = Field(default=10485760, description="Maximum image size in bytes")
+    MAX_FILE_SIZE: int = Field(
+        default=104857600, description="Maximum file size in bytes"
+    )
+    MAX_IMAGE_SIZE: int = Field(
+        default=10485760, description="Maximum image size in bytes"
+    )
     SUPPORTED_EXTENSIONS: str = Field(
         default=".doc,.docx,.pdf,.txt,.xls,.xlsx,.pptx,.jpg,.jpeg,.png,.md",
-        description="Supported file extensions"
+        description="Supported file extensions",
     )
 
     # Shared user-data directory for API and worker processes.
-    USERS_DATA_PATH: str = Field(..., description="Absolute path to the shared user-data directory")
+    USERS_DATA_PATH: str = Field(
+        ..., description="Absolute path to the shared user-data directory"
+    )
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def _validate_users_data_path(self):
         """Validate the USERS_DATA_PATH setting."""
         if not self.USERS_DATA_PATH:
@@ -71,28 +88,36 @@ class StorageConfig(BaseModel):
                 raise SystemSettingInvalidException(
                     internal_message=f"USERS_DATA_PATH directory is not writable: {self.USERS_DATA_PATH}"
                 )
-        
+
         return self
-    
+
     # S3 event-notification configuration.
-    S3_WEBHOOK_AUTH_TOKEN: str = Field(default="", description="MinIO webhook authentication token")
-    SNS_SIGNATURE_VERIFICATION: bool = Field(default=True, description="Verify SNS signatures")
+    S3_WEBHOOK_AUTH_TOKEN: str = Field(
+        default="", description="MinIO webhook authentication token"
+    )
+    SNS_SIGNATURE_VERIFICATION: bool = Field(
+        default=True, description="Verify SNS signatures"
+    )
 
     # OSS event-notification configuration.
-    OSS_EVENT_CALLBACK_KEY: str = Field(default="", description="OSS callback signing key")
-    OSS_EVENT_VERIFY_SIGNATURE: bool = Field(default=True, description="Verify OSS event signatures")
+    OSS_EVENT_CALLBACK_KEY: str = Field(
+        default="", description="OSS callback signing key"
+    )
+    OSS_EVENT_VERIFY_SIGNATURE: bool = Field(
+        default=True, description="Verify OSS event signatures"
+    )
 
-    def get_s3_client(self) -> 'boto3.client':
+    def get_s3_client(self) -> "boto3.client":
         """Return an S3 client for S3-compatible backends."""
         # Build the client config.
         config_kwargs = {}
 
         # Configure addressing style.
-        if self.S3_ADDRESSING_STYLE in ['path', 'virtual']:
-            config_kwargs['s3'] = {'addressing_style': self.S3_ADDRESSING_STYLE}
+        if self.S3_ADDRESSING_STYLE in ["path", "virtual"]:
+            config_kwargs["s3"] = {"addressing_style": self.S3_ADDRESSING_STYLE}
 
         # Configure retries.
-        config_kwargs['retries'] = {'max_attempts': 5, 'mode': 'standard'}
+        config_kwargs["retries"] = {"max_attempts": 5, "mode": "standard"}
 
         config = Config(**config_kwargs) if config_kwargs else None
 
@@ -131,12 +156,12 @@ class StorageConfig(BaseModel):
                 internal_message="oss2 module is not installed. When S3_TYPE=oss, please install: pip install oss2>=2.18.0",
                 original_exception=e,
             ) from e
-        
+
         if not self.OSS_ENDPOINT:
             raise SystemSettingMissingException(
                 internal_message="OSS_ENDPOINT is required when S3_TYPE=oss"
             )
-        
+
         auth = oss2.Auth(self.S3_ACCESS_KEY_ID, self.S3_SECRET_ACCESS_KEY)
         bucket = oss2.Bucket(auth, self.OSS_ENDPOINT, self.S3_BUCKET_NAME)
         return bucket
@@ -148,22 +173,24 @@ class StorageConfig(BaseModel):
         This factory chooses the adapter from the S3_TYPE environment variable
         or the explicit config value.
         """
-        storage_type = os.getenv('S3_TYPE', self.S3_TYPE).lower()
+        storage_type = os.getenv("S3_TYPE", self.S3_TYPE).lower()
 
-        if storage_type == 'oss':
+        if storage_type == "oss":
             # OSS storage adapter (imported lazily).
             from shared.services.storage.adapters.oss_adapter import OSSStorageAdapter
+
             bucket = self.get_oss_bucket()
             return OSSStorageAdapter(bucket, self.S3_BUCKET_NAME)
         else:
             # S3 storage adapter for AWS S3 and MinIO (imported lazily).
             from shared.services.storage.adapters import S3StorageAdapter
+
             s3_client = self.get_s3_client()
             return S3StorageAdapter(s3_client, self.S3_BUCKET_NAME)
 
     def get_supported_extensions(self) -> list:
         """Return the supported file extensions as a list."""
-        return [ext.strip() for ext in self.SUPPORTED_EXTENSIONS.split(',')]
+        return [ext.strip() for ext in self.SUPPORTED_EXTENSIONS.split(",")]
 
 
 _cached_adapter = None
@@ -180,5 +207,6 @@ def get_cached_storage_adapter():
         with _cached_adapter_lock:
             if _cached_adapter is None:
                 from shared.core.config import app_config
+
                 _cached_adapter = app_config.get_storage_adapter()
     return _cached_adapter

@@ -52,12 +52,26 @@ def test_finalize_job_success_publishes_graph_state(monkeypatch) -> None:
     monkeypatch.setattr(
         service._retrieval_publication,
         "publish_document_state",
-        lambda *_args, **_kwargs: {"user_id": "user_123", "namespace": "default", "document_id": "doc_123"},
+        lambda *_args, **_kwargs: {
+            "user_id": "user_123",
+            "namespace": "default",
+            "document_id": "doc_123",
+        },
     )
-    monkeypatch.setattr(service._retrieval_publication, "publish_document_graph", lambda _db, **kwargs: captured.update(kwargs))
-    monkeypatch.setattr(service._state_machine, "mark_completed", lambda *args, **kwargs: True)
-    monkeypatch.setattr(service, "_maybe_create_webhook_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(service, "_post_commit_enqueue_webhook", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        service._retrieval_publication,
+        "publish_document_graph",
+        lambda _db, **kwargs: captured.update(kwargs),
+    )
+    monkeypatch.setattr(
+        service._state_machine, "mark_completed", lambda *args, **kwargs: True
+    )
+    monkeypatch.setattr(
+        service, "_maybe_create_webhook_event", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        service, "_post_commit_enqueue_webhook", lambda *_args, **_kwargs: None
+    )
 
     chunks = [
         {
@@ -115,15 +129,15 @@ def test_publish_document_graph_skips_similar_edges_without_peer_document_node()
     from shared.services.retrieval.graph_service import DocumentGraphService
 
     section = SimpleNamespace(
-        section_id='sec_1',
+        section_id="sec_1",
         parent_section_id=None,
-        section_path='Policies / Billing',
-        section_title='Billing',
+        section_path="Policies / Billing",
+        section_title="Billing",
         section_level=1,
         sort_order=0,
     )
-    document = SimpleNamespace(document_id='doc_1', source_file_name='refund-policy.md')
-    other_document = SimpleNamespace(document_id='doc_2')
+    document = SimpleNamespace(document_id="doc_1", source_file_name="refund-policy.md")
+    other_document = SimpleNamespace(document_id="doc_2")
 
     class _Db:
         def __init__(self):
@@ -140,7 +154,7 @@ def test_publish_document_graph_skips_similar_edges_without_peer_document_node()
                 return _FakeResult([other_document])
             if self._call == 4:
                 return _FakeResult([])
-            raise AssertionError(f'unexpected execute call {self._call}')
+            raise AssertionError(f"unexpected execute call {self._call}")
 
         def add(self, value):
             self.added.append(value)
@@ -154,13 +168,15 @@ def test_publish_document_graph_skips_similar_edges_without_peer_document_node()
 
     service.publish_document_graph(
         db,
-        user_id='user_123',
-        namespace='default',
-        document_id='doc_1',
-        job_result_id='result_123',
+        user_id="user_123",
+        namespace="default",
+        document_id="doc_1",
+        job_result_id="result_123",
     )
 
-    similar_edges = [edge for edge in db.added if getattr(edge, 'edge_kind', None) == 'similar']
+    similar_edges = [
+        edge for edge in db.added if getattr(edge, "edge_kind", None) == "similar"
+    ]
     assert similar_edges == []
 
 
@@ -170,14 +186,14 @@ def test_publish_document_graph_flushes_only_nodes_before_querying_peers():
     from shared.services.retrieval.graph_service import DocumentGraphService
 
     section = SimpleNamespace(
-        section_id='sec_1',
+        section_id="sec_1",
         parent_section_id=None,
-        section_path='Policies / Billing',
-        section_title='Billing',
+        section_path="Policies / Billing",
+        section_title="Billing",
         section_level=1,
         sort_order=0,
     )
-    document = SimpleNamespace(document_id='doc_1', source_file_name='refund-policy.md')
+    document = SimpleNamespace(document_id="doc_1", source_file_name="refund-policy.md")
 
     class _Db:
         def __init__(self):
@@ -194,7 +210,7 @@ def test_publish_document_graph_flushes_only_nodes_before_querying_peers():
             if self._call == 3:
                 assert self.flush_calls and self.flush_calls[0] == 2
                 return _FakeResult([])
-            raise AssertionError(f'unexpected execute call {self._call}')
+            raise AssertionError(f"unexpected execute call {self._call}")
 
         def add(self, value):
             self.added.append(value)
@@ -208,10 +224,10 @@ def test_publish_document_graph_flushes_only_nodes_before_querying_peers():
 
     service.publish_document_graph(
         db,
-        user_id='user_123',
-        namespace='default',
-        document_id='doc_1',
-        job_result_id='result_123',
+        user_id="user_123",
+        namespace="default",
+        document_id="doc_1",
+        job_result_id="result_123",
     )
 
     assert db.flush_calls
@@ -234,118 +250,156 @@ def test_publish_document_graph_removes_old_namespace_rows_for_same_document():
 
     db = _Db()
     service = DocumentGraphService()
-    service.remove_document_graph(db, scope=None, document_id='doc_1')
+    service.remove_document_graph(db, scope=None, document_id="doc_1")
 
     assert len(db.delete_calls) == 2
-    assert all('owner_document_id' in call for call in db.delete_calls)
-    assert all('namespace' not in call for call in db.delete_calls)
+    assert all("owner_document_id" in call for call in db.delete_calls)
+    assert all("namespace" not in call for call in db.delete_calls)
 
 
-def test_finalize_job_success_invalidates_previous_and_new_namespace(monkeypatch) -> None:
+def test_finalize_job_success_invalidates_previous_and_new_namespace(
+    monkeypatch,
+) -> None:
     db = MagicMock()
     service = lifecycle_module.SyncJobLifecycleService()
 
     monkeypatch.setattr(
         lifecycle_module,
-        'get_sync_db_context',
+        "get_sync_db_context",
         lambda: _SyncDbContext(db),
     )
     monkeypatch.setattr(
         service,
-        '_upsert_job_result',
-        lambda *_args, **_kwargs: SimpleNamespace(id='result_123'),
+        "_upsert_job_result",
+        lambda *_args, **_kwargs: SimpleNamespace(id="result_123"),
     )
-    monkeypatch.setattr(service, '_replace_chunks', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service, "_replace_chunks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         service._retrieval_publication,
-        'publish_document_state',
-        lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'archive', 'document_id': 'doc_123'},
+        "publish_document_state",
+        lambda *_args, **_kwargs: {
+            "user_id": "user_123",
+            "namespace": "archive",
+            "document_id": "doc_123",
+        },
     )
-    monkeypatch.setattr(service._retrieval_publication, 'publish_document_graph', lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(service, '_maybe_create_webhook_event', lambda *args, **kwargs: None)
-    monkeypatch.setattr(service, '_post_commit_enqueue_webhook', lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(service._state_machine, 'mark_completed', lambda *args, **kwargs: True)
-    monkeypatch.setattr(service._retrieval_publication, 'get_existing_document_scope', lambda *_args, **_kwargs: {'document_id': 'doc_123', 'namespace': 'default'})
+    monkeypatch.setattr(
+        service._retrieval_publication,
+        "publish_document_graph",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        service, "_maybe_create_webhook_event", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        service, "_post_commit_enqueue_webhook", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        service._state_machine, "mark_completed", lambda *args, **kwargs: True
+    )
+    monkeypatch.setattr(
+        service._retrieval_publication,
+        "get_existing_document_scope",
+        lambda *_args, **_kwargs: {"document_id": "doc_123", "namespace": "default"},
+    )
 
     incremented_keys: list[str] = []
 
     class _FakeRedisService:
         def incr(self, key: str) -> int:
-            incremented_keys.append(f'knowhere-api:{key}')
+            incremented_keys.append(f"knowhere-api:{key}")
             return len(incremented_keys)
 
     monkeypatch.setattr(
         lifecycle_module,
-        'SyncRedisServiceFactory',
-        type('F', (), {'get_service': staticmethod(lambda: _FakeRedisService())}),
+        "SyncRedisServiceFactory",
+        type("F", (), {"get_service": staticmethod(lambda: _FakeRedisService())}),
     )
 
-    job = SimpleNamespace(job_id='job_123', user_id='user_123', job_metadata={'namespace': 'archive', 'document_id': 'doc_123'})
+    job = SimpleNamespace(
+        job_id="job_123",
+        user_id="user_123",
+        job_metadata={"namespace": "archive", "document_id": "doc_123"},
+    )
     db.execute.return_value.scalar_one_or_none.return_value = job
 
     result = service.finalize_job_success(
-        job_id='job_123',
+        job_id="job_123",
         chunks=[],
-        result_s3_key='results/job_123.zip',
-        checksum='checksum',
+        result_s3_key="results/job_123.zip",
+        checksum="checksum",
         zip_size=3,
         stored_count=0,
         kb_records=[],
-        delivery_mode='url',
+        delivery_mode="url",
     )
 
-    assert result == {'status': 'success', 'job_id': 'job_123', 'stored_count': 0}
-    invalidated_namespaces = {k.split(':')[-1] for k in incremented_keys}
-    assert invalidated_namespaces == {'default', 'archive'}
-    assert all(key.startswith('knowhere-api:retrieval:version:') for key in incremented_keys)
+    assert result == {"status": "success", "job_id": "job_123", "stored_count": 0}
+    invalidated_namespaces = {k.split(":")[-1] for k in incremented_keys}
+    assert invalidated_namespaces == {"default", "archive"}
+    assert all(
+        key.startswith("knowhere-api:retrieval:version:") for key in incremented_keys
+    )
 
 
-def test_finalize_job_success_rolls_back_when_graph_publication_fails(monkeypatch) -> None:
+def test_finalize_job_success_rolls_back_when_graph_publication_fails(
+    monkeypatch,
+) -> None:
     db = MagicMock()
     service = lifecycle_module.SyncJobLifecycleService()
 
     monkeypatch.setattr(
         lifecycle_module,
-        'get_sync_db_context',
+        "get_sync_db_context",
         lambda: _SyncDbContext(db),
     )
     monkeypatch.setattr(
         service,
-        '_upsert_job_result',
-        lambda *_args, **_kwargs: SimpleNamespace(id='result_123'),
+        "_upsert_job_result",
+        lambda *_args, **_kwargs: SimpleNamespace(id="result_123"),
     )
-    monkeypatch.setattr(service, '_replace_chunks', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service, "_replace_chunks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         service._retrieval_publication,
-        'publish_document_state',
-        lambda *_args, **_kwargs: {'user_id': 'user_123', 'namespace': 'default', 'document_id': 'doc_123'},
+        "publish_document_state",
+        lambda *_args, **_kwargs: {
+            "user_id": "user_123",
+            "namespace": "default",
+            "document_id": "doc_123",
+        },
     )
     monkeypatch.setattr(
         service._retrieval_publication,
-        'publish_document_graph',
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError('graph publication failed')),
+        "publish_document_graph",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("graph publication failed")
+        ),
     )
     monkeypatch.setattr(
         service._state_machine,
-        'mark_completed',
-        lambda *_args, **_kwargs: pytest.fail('mark_completed should not run after graph publication failure'),
+        "mark_completed",
+        lambda *_args, **_kwargs: pytest.fail(
+            "mark_completed should not run after graph publication failure"
+        ),
     )
     monkeypatch.setattr(
         service,
-        '_post_commit_enqueue_webhook',
-        lambda *_args, **_kwargs: pytest.fail('post-commit hooks should not run after graph publication failure'),
+        "_post_commit_enqueue_webhook",
+        lambda *_args, **_kwargs: pytest.fail(
+            "post-commit hooks should not run after graph publication failure"
+        ),
     )
 
-    with pytest.raises(RuntimeError, match='graph publication failed'):
+    with pytest.raises(RuntimeError, match="graph publication failed"):
         service.finalize_job_success(
-            job_id='job_123',
+            job_id="job_123",
             chunks=[],
-            result_s3_key='results/job_123.zip',
-            checksum='checksum',
+            result_s3_key="results/job_123.zip",
+            checksum="checksum",
             zip_size=3,
             stored_count=0,
             kb_records=[],
-            delivery_mode='url',
+            delivery_mode="url",
         )
 
     db.rollback.assert_called_once()

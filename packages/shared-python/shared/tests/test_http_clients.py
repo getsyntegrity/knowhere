@@ -2,10 +2,10 @@ import pytest
 
 from shared.utils import http_clients as mod
 from shared.utils.http_clients import (
-    get_sync_client,
+    close_async_client,
     close_sync_client,
     get_async_client,
-    close_async_client,
+    get_sync_client,
 )
 
 
@@ -21,6 +21,7 @@ def _reset_clients():
         mod._sync_client = None
     if mod._async_client is not None:
         import asyncio
+
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -37,6 +38,7 @@ def _reset_clients():
 
 def test_get_sync_client_returns_httpx_client():
     import httpx
+
     client = get_sync_client()
     assert isinstance(client, httpx.Client)
 
@@ -85,6 +87,7 @@ def test_close_sync_client_noop_when_none():
 
 def test_get_async_client_returns_httpx_async_client():
     import httpx
+
     client = get_async_client()
     assert isinstance(client, httpx.AsyncClient)
 

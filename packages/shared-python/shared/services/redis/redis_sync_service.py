@@ -3,12 +3,13 @@ Sync Redis services for Celery worker (gevent pool).
 Under gevent, sync socket operations yield cooperatively via monkey patching.
 API service continues using async RedisService.
 """
+
 import json
 from typing import Any, Dict, List, Optional, Sequence, cast
 
+from loguru import logger
 from redis import Redis as SyncRedisClient
 from redis.connection import BlockingConnectionPool
-from loguru import logger
 
 from shared.core.config.redis import RedisConfigManager
 from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
@@ -16,11 +17,13 @@ from shared.utils.redis_key_builder import RedisKeyType, redis_key_builder
 
 class SyncRedisService:
     """Sync Redis service for gevent worker."""
+
     _KEY_PREFIX: str = "knowhere-api"
 
     def __init__(self, config_manager: Optional[RedisConfigManager] = None):
         if config_manager is None:
             from shared.core.config import settings
+
             config_manager = RedisConfigManager(settings)
         self.config_manager = config_manager
         self._client: Optional[SyncRedisClient] = None
@@ -59,12 +62,15 @@ class SyncRedisService:
         prefix = self._KEY_PREFIX
         return f"{prefix}:{key}" if not key.startswith(prefix) else key
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = None, ex: Optional[int] = None) -> bool:
+    def set(
+        self, key: str, value: Any, ttl: Optional[int] = None, ex: Optional[int] = None
+    ) -> bool:
         try:
             client = self._get_client()
             full_key = self._build_key(key)
             if isinstance(value, (dict, list)):
                 from shared.utils.json_utils import make_json_safe
+
                 safe_value = make_json_safe(value)
                 value = json.dumps(safe_value, ensure_ascii=False)
             expire_time = ex or ttl or self.config_manager.config.REDIS_DEFAULT_TTL
@@ -134,14 +140,22 @@ class SyncRedisService:
             logger.error(f"Redis INCR failed: key={key}, error={e}")
             raise
 
-    def eval(self, script: str, keys: Sequence[str], args: Optional[Sequence[Any]] = None) -> Any:
+    def eval(
+        self, script: str, keys: Sequence[str], args: Optional[Sequence[Any]] = None
+    ) -> Any:
         """Execute a Lua script with namespaced Redis keys."""
         client = self._get_client()
         full_keys = [self._build_key(key) for key in keys]
         raw_args = list(args or [])
         return client.eval(script, len(full_keys), *(full_keys + raw_args))
 
-    def hset(self, key: str, field: Optional[str] = None, value: Any = None, mapping: Optional[Dict[str, Any]] = None) -> int:
+    def hset(
+        self,
+        key: str,
+        field: Optional[str] = None,
+        value: Any = None,
+        mapping: Optional[Dict[str, Any]] = None,
+    ) -> int:
         try:
             client = self._get_client()
             full_key = self._build_key(key)
@@ -250,13 +264,17 @@ class SyncRedisService:
 
 class SyncRedisServiceFactory:
     """Factory for sync Redis service instances."""
+
     _instance: Optional[SyncRedisService] = None
 
     @classmethod
-    def get_service(cls, config_manager: Optional[RedisConfigManager] = None) -> SyncRedisService:
+    def get_service(
+        cls, config_manager: Optional[RedisConfigManager] = None
+    ) -> SyncRedisService:
         if cls._instance is None:
             if config_manager is None:
                 from shared.core.config import settings
+
                 config_manager = RedisConfigManager(settings)
             cls._instance = SyncRedisService(config_manager)
         return cls._instance
@@ -270,6 +288,7 @@ class SyncRedisServiceFactory:
 
 class SyncJobInfoRedisService:
     """Sync Job info Redis service."""
+
     JOB_INFO_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
 
     def __init__(self, redis_service: SyncRedisService):
@@ -315,6 +334,7 @@ class SyncJobInfoRedisService:
 
 class SyncJobMetadataService:
     """Sync Job metadata Redis service."""
+
     METADATA_TTL = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
 
     def __init__(self, redis_service: SyncRedisService):
@@ -367,6 +387,7 @@ class SyncChunksRedisService:
     def dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
         """Delegate to the existing async version's logic."""
         from shared.services.redis.chunks_redis_service import ChunksRedisService
+
         # Reuse the static conversion logic
         dummy = ChunksRedisService.__new__(ChunksRedisService)
         return dummy._dataframe_to_chunks(df)
@@ -416,11 +437,16 @@ class SyncTaskRedisService:
         try:
             task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
             status_key = self.redis._build_key(redis_key_builder.task_status(task_id))
-            progress_key = self.redis._build_key(redis_key_builder.task_progress(task_id))
+            progress_key = self.redis._build_key(
+                redis_key_builder.task_progress(task_id)
+            )
 
             pipe = self.redis.pipeline()
             pipe.set(status_key, status, ex=task_ttl)
-            pipe.hset(progress_key, mapping={"status": status, "timestamp": self._get_current_timestamp()})
+            pipe.hset(
+                progress_key,
+                mapping={"status": status, "timestamp": self._get_current_timestamp()},
+            )
             pipe.expire(progress_key, task_ttl)
             pipe.execute()
             return True
@@ -435,8 +461,12 @@ class SyncTaskRedisService:
             task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
             result_key = self.redis._build_key(redis_key_builder.task_result(task_id))
             status_key = self.redis._build_key(redis_key_builder.task_status(task_id))
-            progress_key = self.redis._build_key(redis_key_builder.task_progress(task_id))
-            processing_key = self.redis._build_key(redis_key_builder.set_processing_tasks())
+            progress_key = self.redis._build_key(
+                redis_key_builder.task_progress(task_id)
+            )
+            processing_key = self.redis._build_key(
+                redis_key_builder.set_processing_tasks()
+            )
 
             result_json = json.dumps(make_json_safe(result), ensure_ascii=False)
             ts = self._get_current_timestamp()
@@ -458,8 +488,12 @@ class SyncTaskRedisService:
             task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
             list_ttl = redis_key_builder.get_key_ttl(RedisKeyType.LIST)
             status_key = self.redis._build_key(redis_key_builder.task_status(task_id))
-            progress_key = self.redis._build_key(redis_key_builder.task_progress(task_id))
-            processing_key = self.redis._build_key(redis_key_builder.set_processing_tasks())
+            progress_key = self.redis._build_key(
+                redis_key_builder.task_progress(task_id)
+            )
+            processing_key = self.redis._build_key(
+                redis_key_builder.set_processing_tasks()
+            )
             error_logs_key = self.redis._build_key(redis_key_builder.list_error_logs())
 
             status_value = f"failed: {error_message}"

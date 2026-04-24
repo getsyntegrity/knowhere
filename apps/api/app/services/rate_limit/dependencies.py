@@ -18,13 +18,7 @@ import math
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from fastapi import Depends, Request
-from loguru import logger
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.dependencies import get_current_user_id
-from shared.core.config import redis_pool_manager
 from app.services.rate_limit.config import (
     CONCURRENCY_RETRY_AFTER_SECONDS,
     RateLimitConfig,
@@ -33,6 +27,12 @@ from app.services.rate_limit.data_structures import CurrentUser, TierLimits
 from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.limiter import RateLimiter
 from app.services.rate_limit.system_limit import find_system_rule
+from fastapi import Depends, Request
+from loguru import logger
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.core.config import redis_pool_manager
 from shared.core.database import get_db, get_db_context
 from shared.core.exceptions.domain_exceptions import (
     RateLimitException,
@@ -97,7 +97,7 @@ def _get_route_path(request: Request) -> str:
     scope_path: str = request.scope.get("path", request.url.path)
     root_path: str = request.scope.get("root_path", "")
     if root_path and scope_path.startswith(root_path):
-        return scope_path[len(root_path):]
+        return scope_path[len(root_path) :]
     return scope_path
 
 
@@ -173,15 +173,11 @@ async def with_current_user(
             token = _extract_bearer_token(request.headers.get("authorization"))
             is_api_key_auth = bool(token and token.startswith("sk_"))
             api_key_hash = (
-                hashlib.sha256(token.encode()).hexdigest()
-                if is_api_key_auth
-                else None
+                hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
             )
             if is_api_key_auth and api_key_hash:
                 try:
-                    ttl_seconds = await _resolve_apikey_cache_ttl_seconds(
-                        api_key_hash
-                    )
+                    ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
                     await identity_cache.set_apikey_identity(
                         redis_service,
                         api_key_hash,
@@ -199,9 +195,7 @@ async def with_current_user(
         token = _extract_bearer_token(request.headers.get("authorization"))
         is_api_key_auth = bool(token and token.startswith("sk_"))
         api_key_hash = (
-            hashlib.sha256(token.encode()).hexdigest()
-            if is_api_key_auth
-            else None
+            hashlib.sha256(token.encode()).hexdigest() if is_api_key_auth else None
         )
         cache_key: str = (
             identity_cache._apikey_key(api_key_hash)
@@ -226,7 +220,9 @@ async def with_current_user(
                         ttl_seconds=ttl_seconds,
                     )
                 else:
-                    await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
+                    await identity_cache.set_jwt_identity(
+                        redis_service, user_id, user_tier
+                    )
         except Exception:
             logger.warning(
                 "rate_limit: Redis error during identity resolution, "
@@ -250,9 +246,7 @@ async def with_current_user(
         # -- Layer 0: matched system limit --
         try:
             route_path = _get_route_path(request)
-            rule = find_system_rule(
-                request.method, route_path, config.system_rules
-            )
+            rule = find_system_rule(request.method, route_path, config.system_rules)
             limiter = RateLimiter(config)
             await limiter.check_system_limit(
                 identifier=user_id,
@@ -303,9 +297,7 @@ async def require_billing_limits(
     billing enforcement must not be silently skipped.
     """
     config = RateLimitConfig.get_instance()
-    tier_limits: TierLimits | None = config.tier_map.get(
-        current_user.user_tier
-    )
+    tier_limits: TierLimits | None = config.tier_map.get(current_user.user_tier)
     if tier_limits is None:
         logger.error(
             "rate_limit: no tier config for tier='{}', user_id={}",
@@ -313,9 +305,7 @@ async def require_billing_limits(
             current_user.user_id,
         )
         raise UnavailableException(
-            internal_message=(
-                f"Missing tier config for tier={current_user.user_tier}"
-            ),
+            internal_message=(f"Missing tier config for tier={current_user.user_tier}"),
             retry_after=_RETRY_AFTER_SECONDS,
         )
 
@@ -326,16 +316,12 @@ async def require_billing_limits(
     # -- Layer 1: billing RPM --
     limiter = RateLimiter(config)
     try:
-        await limiter.check_billing_rpm(
-            current_user.user_id, tier_limits.rpm_limit
-        )
+        await limiter.check_billing_rpm(current_user.user_id, tier_limits.rpm_limit)
     except RateLimitException:
         raise
     except Exception as exc:
         raise UnavailableException(
-            internal_message=(
-                f"Redis error in billing RPM check: {exc}"
-            ),
+            internal_message=(f"Redis error in billing RPM check: {exc}"),
             retry_after=_RETRY_AFTER_SECONDS,
         )
 
@@ -370,9 +356,7 @@ async def require_route_system_limit(request: Request) -> None:
         raise
     except Exception as exc:
         raise UnavailableException(
-            internal_message=(
-                f"Redis error in route system limit: {exc}"
-            ),
+            internal_message=(f"Redis error in route system limit: {exc}"),
             retry_after=_RETRY_AFTER_SECONDS,
             limit=rule.limit,
             period=rule.period,
@@ -397,9 +381,7 @@ async def enforce_job_creation_capacity(
             current_user.user_id,
         )
         raise UnavailableException(
-            internal_message=(
-                f"Missing tier config for tier={current_user.user_tier}"
-            ),
+            internal_message=(f"Missing tier config for tier={current_user.user_tier}"),
             retry_after=_RETRY_AFTER_SECONDS,
         )
 
@@ -409,9 +391,7 @@ async def enforce_job_creation_capacity(
     if tier_limits.max_concurrent_jobs != -1:
         try:
             await _acquire_user_concurrency_lock(db, current_user.user_id)
-            active_jobs = await _count_non_terminal_jobs(
-                db, current_user.user_id
-            )
+            active_jobs = await _count_non_terminal_jobs(db, current_user.user_id)
             if active_jobs >= tier_limits.max_concurrent_jobs:
                 retry_after_seconds = _compute_concurrency_retry_after_seconds(
                     base_retry_after_seconds=CONCURRENCY_RETRY_AFTER_SECONDS,
@@ -447,9 +427,7 @@ async def enforce_job_creation_capacity(
             raise
         except Exception as exc:
             raise UnavailableException(
-                internal_message=(
-                    f"DB error in concurrency check: {exc}"
-                ),
+                internal_message=(f"DB error in concurrency check: {exc}"),
                 retry_after=_RETRY_AFTER_SECONDS,
             )
 
@@ -463,9 +441,7 @@ async def enforce_job_creation_capacity(
             raise
         except Exception as exc:
             raise UnavailableException(
-                internal_message=(
-                    f"Redis error in daily quota check: {exc}"
-                ),
+                internal_message=(f"Redis error in daily quota check: {exc}"),
                 retry_after=_RETRY_AFTER_SECONDS,
             )
 
@@ -490,7 +466,9 @@ async def _acquire_user_concurrency_lock(
         .with_for_update()
     )
     if result.scalar_one_or_none() is None:
-        raise RateLimitException(internal_message = f"UserBalance row not found for user_id={user_id}")
+        raise RateLimitException(
+            internal_message=f"UserBalance row not found for user_id={user_id}"
+        )
 
 
 def _compute_concurrency_retry_after_seconds(

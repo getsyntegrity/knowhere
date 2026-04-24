@@ -5,20 +5,19 @@ from fnmatch import fnmatch
 from typing import Any
 
 import jwt
-from jwt import PyJWKClient
-
 from app.services.auth.api_key_service import APIKeyService
 from app.services.rate_limit.identity_cache import identity_cache
 from fastapi import Depends, Header, Request
+from jwt import PyJWKClient
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from shared.core.config import redis_pool_manager, settings
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
     PermissionDeniedException,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # Standard JWKS endpoint path (fixed, following OpenID Connect convention)
 JWKS_ENDPOINT_PATH = "/api/auth/jwks"
@@ -64,7 +63,7 @@ def _get_jwks_client() -> PyJWKClient:
                     jwks_url,
                     cache_jwk_set=True,
                     lifespan=JWKS_CACHE_TTL_SECONDS,
-                    timeout=30
+                    timeout=30,
                 )
                 logger.info(f"Initialized JWKS client with endpoint: {jwks_url}")
 
@@ -74,7 +73,7 @@ def _get_jwks_client() -> PyJWKClient:
 def _get_verification_key(token: str) -> Any:
     """
     Get the verification key for the JWT from the JWKS endpoint.
-    
+
     Uses PyJWKClient's built-in cache with 1 hour TTL.
     """
     try:
@@ -83,7 +82,9 @@ def _get_verification_key(token: str) -> Any:
         return signing_key.key
     except jwt.PyJWKClientError as e:
         logger.error(f"Failed to fetch JWKS: {e}")
-        raise AuthException(internal_message=f"Failed to fetch verification key from JWKS endpoint: {e}")
+        raise AuthException(
+            internal_message=f"Failed to fetch verification key from JWKS endpoint: {e}"
+        )
     except jwt.PyJWKSetError as e:
         logger.error(f"Invalid JWKS format: {e}")
         raise AuthException(internal_message=f"Invalid JWKS format: {e}")
@@ -92,7 +93,7 @@ def _get_verification_key(token: str) -> Any:
 def decode_jwt_token(token: str) -> str:
     """
     Decode and validate JWT token using JWKS.
-    
+
     Expected JWT claims:
     - id/sub: User ID
     - exp: Expiration
@@ -106,17 +107,17 @@ def decode_jwt_token(token: str) -> str:
             key,
             algorithms=["HS256", "RS256", "EdDSA"],
             leeway=timedelta(seconds=30),
-            options={"verify_aud": False}
+            options={"verify_aud": False},
         )
-        
+
         # Extract user_id from 'id' claim
         user_id = payload.get("id")
-        
+
         if not user_id:
             raise AuthException(user_message="Token missing 'id' claim")
-        
+
         return user_id
-        
+
     except jwt.ExpiredSignatureError:
         raise AuthException(user_message="Token has expired")
     except jwt.InvalidTokenError as e:
@@ -129,7 +130,7 @@ def _get_route_path(request: Request) -> str:
     scope_path = request.scope.get("path", request.url.path)
     root_path = request.scope.get("root_path", "")
     if root_path and scope_path.startswith(root_path):
-        return scope_path[len(root_path):]
+        return scope_path[len(root_path) :]
     return scope_path
 
 
@@ -164,7 +165,9 @@ def _enforce_guest_api_key_scope(route_path: str, user_tier: str) -> None:
 
 async def get_current_user_id(
     request: Request,
-    authorization: str | None = Header(default=None, description="Bearer <token> OR internal signature auth"),
+    authorization: str | None = Header(
+        default=None, description="Bearer <token> OR internal signature auth"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> str:
     """Authenticate the caller and return user_id."""

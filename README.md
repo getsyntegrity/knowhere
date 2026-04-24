@@ -42,6 +42,7 @@ knowhere-api/
 │   └── local-dev/
 ├── scripts/
 │   ├── check-public.sh
+│   ├── lint-public.sh
 │   ├── test-public.sh
 │   └── typecheck-public.sh
 └── .github/workflows/
@@ -133,6 +134,12 @@ Deterministic local developer account:
 - Redis: `localhost:6379`
 
 ## Quality Checks
+
+Run the public lint baseline:
+
+```bash
+./scripts/lint-public.sh
+```
 
 Run the public type-check baseline:
 

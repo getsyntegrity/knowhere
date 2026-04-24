@@ -4,6 +4,7 @@ Independent retrieval channels for checkerboard search.
 Each channel queries the full scoped corpus independently and returns
 ranked rows. Channels are fused via RRF in the orchestrator.
 """
+
 from __future__ import annotations
 
 import re
@@ -95,24 +96,24 @@ def _build_extra_filters(
     params: dict[str, Any] = {}
 
     if allowed_chunk_types is not None:
-        placeholders = ', '.join(f':_act_{i}' for i in range(len(allowed_chunk_types)))
-        clauses.append(f'AND LOWER(dc.chunk_type) IN ({placeholders})')
+        placeholders = ", ".join(f":_act_{i}" for i in range(len(allowed_chunk_types)))
+        clauses.append(f"AND LOWER(dc.chunk_type) IN ({placeholders})")
         for i, ct in enumerate(sorted(allowed_chunk_types)):
-            params[f'_act_{i}'] = ct
+            params[f"_act_{i}"] = ct
 
     if signal_paths:
         ilike_parts = []
         for i, kw in enumerate(signal_paths):
-            key = f'_sig_{i}'
+            key = f"_sig_{i}"
             ilike_parts.append(f"LOWER(COALESCE(ds.section_path, '')) LIKE :{key}")
-            params[key] = f'%{kw.lower()}%'
-        combined = ' OR '.join(ilike_parts)
-        if filter_mode == 'keep':
-            clauses.append(f'AND ({combined})')
+            params[key] = f"%{kw.lower()}%"
+        combined = " OR ".join(ilike_parts)
+        if filter_mode == "keep":
+            clauses.append(f"AND ({combined})")
         else:
-            clauses.append(f'AND NOT ({combined})')
+            clauses.append(f"AND NOT ({combined})")
 
-    return '\n        '.join(clauses), params
+    return "\n        ".join(clauses), params
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
@@ -126,7 +127,8 @@ def _filter_excluded_sections(
     if not exclude_sections:
         return rows
     return [
-        row for row in rows
+        row
+        for row in rows
         if not is_excluded_section(
             document_id=row.get("document_id"),
             section_path=row.get("section_path"),
@@ -146,7 +148,7 @@ async def path_channel(
     exclude_sections: list[dict[str, str]],
     allowed_chunk_types: set[str] | None = None,
     signal_paths: list[str] | None = None,
-    filter_mode: str = 'delete',
+    filter_mode: str = "delete",
 ) -> list[dict[str, Any]]:
     """Path channel: semantic vector similarity on path embeddings.
 
@@ -178,7 +180,7 @@ async def content_channel(
     exclude_sections: list[dict[str, str]],
     allowed_chunk_types: set[str] | None = None,
     signal_paths: list[str] | None = None,
-    filter_mode: str = 'delete',
+    filter_mode: str = "delete",
 ) -> list[dict[str, Any]]:
     """Content channel: FTS recall on content_search_tsv, then BM25 re-rank in Python.
 
@@ -210,7 +212,11 @@ async def content_channel(
     params["tokenized_query"] = tokenized_query
     params["recall_k"] = recall_k
 
-    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + """
+    sql = (
+        _SCOPED_CORPUS_CTE.format(
+            exclude_clause=exclude_clause, extra_filters=extra_sql
+        )
+        + """
     SELECT
         sc.*,
         ts_rank(sc.content_search_tsv, plainto_tsquery('simple', :tokenized_query)) AS rank_score
@@ -219,6 +225,7 @@ async def content_channel(
     ORDER BY rank_score DESC
     LIMIT :recall_k
     """
+    )
 
     result = await db.execute(text(sql), params)
     rows = [_row_to_dict(r) for r in result.all()]
@@ -231,7 +238,9 @@ async def content_channel(
     return rows
 
 
-def _bm25_rerank(rows: list[dict[str, Any]], tokenized_query: str) -> list[dict[str, Any]]:
+def _bm25_rerank(
+    rows: list[dict[str, Any]], tokenized_query: str
+) -> list[dict[str, Any]]:
     """Re-rank FTS recall set using BM25Okapi over pre-tokenized content_search_text."""
     try:
         from rank_bm25 import BM25Okapi
@@ -241,10 +250,7 @@ def _bm25_rerank(rows: list[dict[str, Any]], tokenized_query: str) -> list[dict[
             row["score"] = row.get("rank_score", 0.0)
         return rows
 
-    corpus = [
-        (row.get("content_search_text") or "").split()
-        for row in rows
-    ]
+    corpus = [(row.get("content_search_text") or "").split() for row in rows]
     query_tokens = tokenized_query.split()
 
     if not corpus or not query_tokens:
@@ -273,7 +279,7 @@ async def term_channel(
     exclude_sections: list[dict[str, str]],
     allowed_chunk_types: set[str] | None = None,
     signal_paths: list[str] | None = None,
-    filter_mode: str = 'delete',
+    filter_mode: str = "delete",
 ) -> list[dict[str, Any]]:
     """Term/grep channel: substring matching on term_search_text.
 
@@ -319,13 +325,18 @@ async def term_channel(
     recall_k = top_k  # Already effective_recall_k from app_service (aligned with KB)
     params["recall_k"] = recall_k
 
-    sql = _SCOPED_CORPUS_CTE.format(exclude_clause=exclude_clause, extra_filters=extra_sql) + f"""
+    sql = (
+        _SCOPED_CORPUS_CTE.format(
+            exclude_clause=exclude_clause, extra_filters=extra_sql
+        )
+        + f"""
     SELECT sc.*
     FROM scoped_chunks sc
     WHERE sc.term_search_text IS NOT NULL
         AND ({where_clause})
     LIMIT :recall_k
     """
+    )
 
     result = await db.execute(text(sql), params)
     rows = [_row_to_dict(r) for r in result.all()]

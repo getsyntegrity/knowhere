@@ -2,6 +2,7 @@
 
 This module keeps the priority logic migrated from TaskPriorityService.
 """
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict
@@ -15,6 +16,7 @@ from shared.core.celery_app import get_celery_app
 
 class TaskType(Enum):
     """Task-type enum."""
+
     AI_QUERY = "ai_query"
     USER_AUTH = "user_auth"
     URGENT_DOCUMENT = "urgent_document"
@@ -26,23 +28,29 @@ class TaskType(Enum):
     LOG_PROCESSING = "log_processing"
     KB_MANAGEMENT = "kb_management"
 
+
 class UserLevel(Enum):
     """User-level enum."""
+
     VIP = "vip"
     PREMIUM = "premium"
     STANDARD = "standard"
     BASIC = "basic"
 
+
 class DocumentImportance(Enum):
     """Document-importance enum."""
+
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
 
+
 @dataclass
 class TaskContext:
     """Task execution context."""
+
     task_type: TaskType
     user_id: str
     user_level: UserLevel = UserLevel.STANDARD
@@ -56,7 +64,7 @@ class TaskContext:
 
 class CeleryTaskRouter:
     """Celery task router."""
-    
+
     def __init__(self):
         self.celery_app = get_celery_app()
         # Note: get_queue_for_job no longer needs subscription_repo.
@@ -74,7 +82,7 @@ class CeleryTaskRouter:
             TaskType.LOG_PROCESSING: 1,
             TaskType.KB_MANAGEMENT: 6,
         }
-        
+
         # User-level weights.
         self.user_level_weights = {
             UserLevel.VIP: 1.2,
@@ -82,7 +90,7 @@ class CeleryTaskRouter:
             UserLevel.STANDARD: 1.0,
             UserLevel.BASIC: 0.9,
         }
-        
+
         # Document-importance weights.
         self.document_importance_weights = {
             DocumentImportance.CRITICAL: 1.3,
@@ -90,13 +98,13 @@ class CeleryTaskRouter:
             DocumentImportance.MEDIUM: 1.0,
             DocumentImportance.LOW: 0.8,
         }
-        
+
         # Urgent-task weight.
         self.urgent_weight = 1.5
-        
+
         # Retry penalty weight.
         self.retry_penalty = 0.1
-    
+
     def calculate_priority(self, context: TaskContext) -> int:
         """
         Calculate task priority using the migrated TaskPriorityService logic.
@@ -115,7 +123,9 @@ class CeleryTaskRouter:
             user_weight = self.user_level_weights.get(context.user_level, 1.0)
 
             # Apply the document-importance weight.
-            doc_weight = self.document_importance_weights.get(context.document_importance, 1.0)
+            doc_weight = self.document_importance_weights.get(
+                context.document_importance, 1.0
+            )
 
             # Apply the urgent-task weight.
             urgent_weight = self.urgent_weight if context.is_urgent else 1.0
@@ -125,25 +135,29 @@ class CeleryTaskRouter:
             retry_penalty = max(0.1, retry_penalty)  # Minimum weight is 0.1.
 
             # Compute the final priority.
-            final_priority = base_priority * user_weight * doc_weight * urgent_weight * retry_penalty
+            final_priority = (
+                base_priority * user_weight * doc_weight * urgent_weight * retry_penalty
+            )
 
             # Clamp the result to the 1-10 range.
             final_priority = max(1, min(10, int(final_priority)))
-            
+
             logger.debug(
                 f"Task priority calculation: base={base_priority}, "
                 f"user_weight={user_weight}, doc_weight={doc_weight}, "
                 f"urgent_weight={urgent_weight}, retry_penalty={retry_penalty}, "
                 f"final={final_priority}"
             )
-            
+
             return final_priority
-            
+
         except Exception as e:
             logger.error(f"Failed to compute task priority: {e}")
             return 5  # Default medium priority.
-    
-    def create_task_context(self, task_type: str, user_id: str, **kwargs) -> TaskContext:
+
+    def create_task_context(
+        self, task_type: str, user_id: str, **kwargs
+    ) -> TaskContext:
         """
         Create task context from the migrated TaskPriorityService inputs.
 
@@ -160,21 +174,23 @@ class CeleryTaskRouter:
             task_type_enum = TaskType(task_type)
 
             # Parse the user level.
-            user_level = UserLevel(kwargs.get('user_level', 'standard'))
+            user_level = UserLevel(kwargs.get("user_level", "standard"))
 
             # Parse the document importance.
-            document_importance = DocumentImportance(kwargs.get('document_importance', 'medium'))
-            
+            document_importance = DocumentImportance(
+                kwargs.get("document_importance", "medium")
+            )
+
             return TaskContext(
                 task_type=task_type_enum,
                 user_id=user_id,
                 user_level=user_level,
                 document_importance=document_importance,
-                is_urgent=kwargs.get('is_urgent', False),
-                resource_requirements=kwargs.get('resource_requirements', 'medium'),
-                estimated_duration=kwargs.get('estimated_duration', 300),
-                retry_count=kwargs.get('retry_count', 0),
-                metadata=kwargs.get('metadata', {})
+                is_urgent=kwargs.get("is_urgent", False),
+                resource_requirements=kwargs.get("resource_requirements", "medium"),
+                estimated_duration=kwargs.get("estimated_duration", 300),
+                retry_count=kwargs.get("retry_count", 0),
+                metadata=kwargs.get("metadata", {}),
             )
         except Exception as e:
             logger.error(f"Failed to create task context: {e}")
@@ -182,9 +198,9 @@ class CeleryTaskRouter:
             return TaskContext(
                 task_type=TaskType.DOCUMENT_PROCESSING,
                 user_id=user_id,
-                metadata=kwargs.get('metadata', {})
+                metadata=kwargs.get("metadata", {}),
             )
-    
+
     def get_queue_for_job(self, job_type: str, user_id: str) -> str:
         """
         Resolve the queue name for a job based on job type and subscription.
@@ -223,7 +239,7 @@ class CeleryTaskRouter:
             else:
                 # Default to the medium-priority queue.
                 return f"{job_type}_medium"
-                
+
         except Exception as e:
             logger.error(f"Failed to get queue for user {user_id}: {e}")
             # Default to a medium-priority queue on failure.
@@ -233,7 +249,7 @@ class CeleryTaskRouter:
                 return "ai_high_priority"
             else:
                 return "default"
-    
+
     def route_task(self, name, args, kwargs, options, task=None, **kwds):
         """
         Route a Celery task dynamically.
@@ -243,8 +259,8 @@ class CeleryTaskRouter:
         """
         try:
             # Extract job_type and user_id from kwargs.
-            job_type = kwargs.get('job_type')
-            user_id = kwargs.get('user_id')
+            job_type = kwargs.get("job_type")
+            user_id = kwargs.get("user_id")
 
             # Fall back to positional args for upload_url_file_task-style calls.
             if not user_id and len(args) >= 3:
@@ -255,11 +271,11 @@ class CeleryTaskRouter:
                 context = self.create_task_context(
                     task_type=job_type,
                     user_id=user_id,
-                    user_level=kwargs.get('user_level', 'standard'),
-                    document_importance=kwargs.get('document_importance', 'medium'),
-                    is_urgent=kwargs.get('is_urgent', False),
-                    retry_count=kwargs.get('retry_count', 0),
-                    metadata=kwargs.get('metadata', {})
+                    user_level=kwargs.get("user_level", "standard"),
+                    document_importance=kwargs.get("document_importance", "medium"),
+                    is_urgent=kwargs.get("is_urgent", False),
+                    retry_count=kwargs.get("retry_count", 0),
+                    metadata=kwargs.get("metadata", {}),
                 )
 
                 # Resolve the queue name.
@@ -267,20 +283,17 @@ class CeleryTaskRouter:
 
                 # Compute the final priority.
                 priority = self.calculate_priority(context)
-                
+
                 logger.info(
                     f"Routed task {name} to queue {queue_name} "
                     f"(user: {user_id}, type: {job_type}, priority: {priority})"
                 )
-                
-                return {
-                    'queue': queue_name,
-                    'priority': priority
-                }
+
+                return {"queue": queue_name, "priority": priority}
             else:
                 # Use the default Celery routing behavior.
                 return None
-                
+
         except Exception as e:
             logger.error(f"Task routing failed: {e}")
             return None
@@ -293,13 +306,16 @@ task_router = CeleryTaskRouter()
 celery_app = get_celery_app()
 
 # Save static routes configured in celery_app.py
-static_routes = celery_app.conf.task_routes.copy() if isinstance(celery_app.conf.task_routes, dict) else {}
+static_routes = (
+    celery_app.conf.task_routes.copy()
+    if isinstance(celery_app.conf.task_routes, dict)
+    else {}
+)
 
 # Celery supports router list: try function router first, fallback to static dict
 # 1. task_router.route_task: Dynamic routing (based on user subscription, for kb_tasks)
 # 2. static_routes: Static routing (webhook and other fixed routes, from celery_app.py)
 celery_app.conf.task_routes = [
     task_router.route_task,  # Dynamic routing priority
-    static_routes,           # Fallback to static configuration
+    static_routes,  # Fallback to static configuration
 ]
-

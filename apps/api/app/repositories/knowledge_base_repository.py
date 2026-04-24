@@ -1,13 +1,18 @@
 from typing import List, Optional
 
-from shared.core.database import get_db_context
-from shared.models.database.knowledge_base import (ContentBase, FileDirectory,
-                                                KBPydantic, PathBase,
-                                                PathPydantic)
-from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryUpdateDto)
 from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.core.database import get_db_context
+from shared.models.database.knowledge_base import (
+    ContentBase,
+    FileDirectory,
+    KBPydantic,
+    PathBase,
+    PathPydantic,
+)
+from shared.models.schemas.files import FileDirectoryCreateDto, FileDirectoryUpdateDto
 
 
 async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bool:
@@ -20,22 +25,24 @@ async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bo
     """
     if not kbs:
         return True
-    
+
     # Object mapping
     object_mappings = []
     for kb in kbs:
         data_dict = kb.model_dump()
         processed_dict = {
-            key: (value if value is not None else '')
+            key: (value if value is not None else "")
             for key, value in data_dict.items()
         }
         object_mappings.append(processed_dict)
-        
+
     try:
         if db:
             # Use provided session, do not commit
             await db.run_sync(
-                lambda session: session.bulk_insert_mappings(ContentBase, object_mappings)
+                lambda session: session.bulk_insert_mappings(
+                    ContentBase, object_mappings
+                )
             )
             # Flush to ensure constraints are checked, but don't commit
             await db.flush()
@@ -50,18 +57,19 @@ async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bo
                 await session.commit()
                 logger.info(f"Bulk inserted {len(object_mappings)} records (Committed)")
                 return True
-                
+
     except Exception as e:
         logger.error(f"Error bulk inserting records: {e}")
-        if not db: # Only catch/rollback if we own the session
-             # Context manager handles rollback for critical errors, but safe to log
-             pass
+        if not db:  # Only catch/rollback if we own the session
+            # Context manager handles rollback for critical errors, but safe to log
+            pass
         # Propagate error if external session (let caller handle rollback)
         if db:
             raise e
         return False
 
-async def create_update_path(paths:list[PathPydantic]) -> bool:
+
+async def create_update_path(paths: list[PathPydantic]) -> bool:
     """
     Create or update knowledge-base paths.
 
@@ -75,7 +83,7 @@ async def create_update_path(paths:list[PathPydantic]) -> bool:
         data_dict = path.model_dump()
 
         processed_dict = {
-            key: (value if value is not None else '')
+            key: (value if value is not None else "")
             for key, value in data_dict.items()
         }
         path_mappings.append(processed_dict)
@@ -92,13 +100,15 @@ async def create_update_path(paths:list[PathPydantic]) -> bool:
             logger.error(f"Error while bulk inserting records: {e}")
             return False
 
-async def get_kb_by_id(kb_id:str) -> KBPydantic|None:
+
+async def get_kb_by_id(kb_id: str) -> KBPydantic | None:
     """
     Get a knowledge base by ID.
 
     :param kb_id:
     :return:
     """
+
 
 async def get_directories(db: AsyncSession, user_id: str) -> List[dict]:
     """
@@ -109,6 +119,7 @@ async def get_directories(db: AsyncSession, user_id: str) -> List[dict]:
     :return: Directory-tree structure list.
     """
     return await build_directory_tree(db, user_id)
+
 
 async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[dict]:
     """
@@ -123,7 +134,7 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
         directory = await get_directory_by_id(db, directory_id)
         if not directory:
             return []
-        
+
         # Match related content by the directory title in the ContentBase path.
         # Prefix format: {kb_dir};{document_name};{section}
         split_char = ";"
@@ -134,7 +145,7 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
             .order_by(ContentBase.id)
         )
         contents = result.scalars().all()
-        
+
         # Convert ORM rows to dictionaries.
         content_list = []
         for content in contents:
@@ -148,14 +159,15 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
                 "summary": content.summary,
                 "know_id": content.know_id,
                 "tokens": content.tokens,
-                "embedding": content.embedding
+                "embedding": content.embedding,
             }
             content_list.append(content_dict)
-        
+
         return content_list
     except Exception as e:
         logger.error(f"Failed to get directory contents: {e}")
         return []
+
 
 async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
     """
@@ -166,9 +178,11 @@ async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
     :return: Whether deletion succeeded.
     """
     try:
-        result = await db.execute(select(ContentBase).filter(ContentBase.id == content_id))
+        result = await db.execute(
+            select(ContentBase).filter(ContentBase.id == content_id)
+        )
         content = result.scalars().first()
-        
+
         if content:
             await db.delete(content)
             await db.commit()
@@ -180,7 +194,8 @@ async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
         logger.error(f"Failed to delete knowledge base content: {e}")
         return False
 
-async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:
+
+async def create_directory(db: AsyncSession, kbf: FileDirectoryCreateDto) -> bool:
     """
     Create a user directory.
 
@@ -189,9 +204,7 @@ async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:
     :return:
     """
     db_directory = FileDirectory(
-        title=kbf.title,
-        parent_id=kbf.parent_id,
-        user_id=kbf.user_id
+        title=kbf.title, parent_id=kbf.parent_id, user_id=kbf.user_id
     )
     db.add(db_directory)
     await db.commit()
@@ -200,25 +213,38 @@ async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:
         return True
     return False
 
-async def get_directory_by_id(db: AsyncSession, directory_id: str) -> Optional[FileDirectory]:
+
+async def get_directory_by_id(
+    db: AsyncSession, directory_id: str
+) -> Optional[FileDirectory]:
     """
     Get a directory by ID.
     """
-    result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
+    result = await db.execute(
+        select(FileDirectory).filter(FileDirectory.id == directory_id)
+    )
     return result.scalars().first()
 
-async def get_root_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDirectory]:
+
+async def get_root_directories_by_user(
+    db: AsyncSession, user_id: str
+) -> List[FileDirectory]:
     """
     Get all root directories for a user.
     """
     result = await db.execute(
         select(FileDirectory)
-        .filter(and_(FileDirectory.user_id == user_id, FileDirectory.parent_id.is_(None)))
+        .filter(
+            and_(FileDirectory.user_id == user_id, FileDirectory.parent_id.is_(None))
+        )
         .order_by(FileDirectory.create_time)
     )
     return result.scalars().all()
 
-async def get_directories_by_parent(db: AsyncSession, parent_id: str) -> List[FileDirectory]:
+
+async def get_directories_by_parent(
+    db: AsyncSession, parent_id: str
+) -> List[FileDirectory]:
     """
     Get all child directories by parent ID.
     """
@@ -229,7 +255,10 @@ async def get_directories_by_parent(db: AsyncSession, parent_id: str) -> List[Fi
     )
     return result.scalars().all()
 
-async def get_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDirectory]:
+
+async def get_directories_by_user(
+    db: AsyncSession, user_id: str
+) -> List[FileDirectory]:
     """
     Get all directories for a user.
     """
@@ -240,13 +269,17 @@ async def get_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDi
     )
     return result.scalars().all()
 
-async def update_directory(db: AsyncSession, directory_id: str,
-                           directory_data: FileDirectoryUpdateDto) -> bool:
+
+async def update_directory(
+    db: AsyncSession, directory_id: str, directory_data: FileDirectoryUpdateDto
+) -> bool:
     """
     Update a directory.
     """
     try:
-        result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
+        result = await db.execute(
+            select(FileDirectory).filter(FileDirectory.id == directory_id)
+        )
         db_directory = result.scalars().first()
         if db_directory:
             if directory_data.title is not None:
@@ -262,11 +295,14 @@ async def update_directory(db: AsyncSession, directory_id: str,
         await db.rollback()
         return False
 
+
 async def delete_directory(db: AsyncSession, directory_id: str) -> bool:
     """
     Delete a directory.
     """
-    result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
+    result = await db.execute(
+        select(FileDirectory).filter(FileDirectory.id == directory_id)
+    )
     db_directory = result.scalars().first()
 
     if db_directory:
@@ -274,6 +310,7 @@ async def delete_directory(db: AsyncSession, directory_id: str) -> bool:
         await db.commit()
         return True
     return False
+
 
 async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
     """
@@ -293,9 +330,9 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
                 children_dict[directory.parent_id] = []
             children_dict[directory.parent_id].append(directory)
         else:
-            if 'root' not in children_dict:
-                children_dict['root'] = []
-            children_dict['root'].append(directory)
+            if "root" not in children_dict:
+                children_dict["root"] = []
+            children_dict["root"].append(directory)
 
     def build_tree(directory):
         """
@@ -308,7 +345,7 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
             "user_id": directory.user_id,
             "create_time": directory.create_time,
             "update_time": directory.update_time,
-            "children": []
+            "children": [],
         }
 
         # Attach child directories.
@@ -320,8 +357,8 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
 
     # Build the root directory tree.
     tree = []
-    if 'root' in children_dict:
-        for root_directory in children_dict['root']:
+    if "root" in children_dict:
+        for root_directory in children_dict["root"]:
             tree.append(build_tree(root_directory))
 
     return tree

@@ -7,6 +7,7 @@ Design goals:
 - Keep selection fair with a quota-aware round-robin cursor
 - Cool down tokens temporarily when the provider responds with 429
 """
+
 from __future__ import annotations
 
 import json
@@ -121,7 +122,9 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
     default_cooldown_seconds: int = 60
     user_message: str = "Service is busy right now. Please retry shortly."
 
-    def __init__(self, redis_service: SyncRedisService, token_configs: Iterable[TokenConfig]) -> None:
+    def __init__(
+        self, redis_service: SyncRedisService, token_configs: Iterable[TokenConfig]
+    ) -> None:
         self.redis = redis_service
         self.tokens: List[TokenConfig] = list(token_configs)
         if not self.tokens:
@@ -143,7 +146,9 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
         retry_period = "minute"
 
         for token in candidate_tokens:
-            reserved, retry_after, quota_period = self._reserve_token_capacity(token, now_ts)
+            reserved, retry_after, quota_period = self._reserve_token_capacity(
+                token, now_ts
+            )
             if reserved:
                 logger.debug(
                     f"Reserved {self.SERVICE_PREFIX} token {token.token_id} "
@@ -180,7 +185,9 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
             user_message=self.user_message,
         )
 
-    def mark_rate_limited(self, token_id: str, retry_after: Optional[int] = None) -> None:
+    def mark_rate_limited(
+        self, token_id: str, retry_after: Optional[int] = None
+    ) -> None:
         """Temporarily cool a token when the provider signals rate limiting."""
         retry_after_seconds = max(1, retry_after or self.default_cooldown_seconds)
         cooldown_until = int(time.time()) + retry_after_seconds
@@ -214,7 +221,9 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
                 api_key = str(entry.get("api_key") or entry.get("key") or "").strip()
                 if not api_key:
                     raise ValueError("Token entry missing api_key")
-                token_id = str(entry.get("token_id") or entry.get("id") or f"token-{index + 1}")
+                token_id = str(
+                    entry.get("token_id") or entry.get("id") or f"token-{index + 1}"
+                )
                 rpm_limit = int(entry.get("rpm_limit") or default_rpm_limit)
                 daily_limit = int(entry.get("daily_limit") or default_daily_limit)
                 return TokenConfig(
@@ -269,8 +278,14 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
 
     def _ordered_tokens(self, preferred_token_id: Optional[str]) -> List[TokenConfig]:
         if preferred_token_id:
-            preferred = [token for token in self.tokens if token.token_id == preferred_token_id]
-            remaining = [token for token in self._ordered_tokens(None) if token.token_id != preferred_token_id]
+            preferred = [
+                token for token in self.tokens if token.token_id == preferred_token_id
+            ]
+            remaining = [
+                token
+                for token in self._ordered_tokens(None)
+                if token.token_id != preferred_token_id
+            ]
             return preferred + remaining
 
         raw_cursor = self.redis.get(self.CURSOR_KEY, 0)
@@ -284,7 +299,9 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
         self.redis.set(self.CURSOR_KEY, next_cursor, ttl=self.DAY_WINDOW_SECONDS)
         return ordered
 
-    def _reserve_token_capacity(self, token: TokenConfig, now_ts: int) -> tuple[bool, int, str]:
+    def _reserve_token_capacity(
+        self, token: TokenConfig, now_ts: int
+    ) -> tuple[bool, int, str]:
         minute_key = self._minute_key(token.token_id, now_ts)
         day_key = self._day_key(token.token_id, now_ts)
         cooldown_key = self._cooldown_key(token.token_id)
@@ -305,7 +322,11 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
             return True, 0, "minute"
 
         if isinstance(result, list) and len(result) >= 3:
-            period = str(result[1]) if result[1] in {"minute", "day", "cooldown"} else "minute"
+            period = (
+                str(result[1])
+                if result[1] in {"minute", "day", "cooldown"}
+                else "minute"
+            )
             if period == "cooldown":
                 period = "minute"
             return False, int(result[2]), period
@@ -314,11 +335,19 @@ return {1, minute_count, day_count, minute_ttl_value, day_ttl_value}
 
     @staticmethod
     def _seconds_until_next_minute(now_ts: int) -> int:
-        return max(1, BaseQuotaManager.MINUTE_WINDOW_SECONDS - (now_ts % BaseQuotaManager.MINUTE_WINDOW_SECONDS))
+        return max(
+            1,
+            BaseQuotaManager.MINUTE_WINDOW_SECONDS
+            - (now_ts % BaseQuotaManager.MINUTE_WINDOW_SECONDS),
+        )
 
     @staticmethod
     def _seconds_until_next_day(now_ts: int) -> int:
-        return max(1, BaseQuotaManager.DAY_WINDOW_SECONDS - (now_ts % BaseQuotaManager.DAY_WINDOW_SECONDS))
+        return max(
+            1,
+            BaseQuotaManager.DAY_WINDOW_SECONDS
+            - (now_ts % BaseQuotaManager.DAY_WINDOW_SECONDS),
+        )
 
     def _minute_key(self, token_id: str, now_ts: int) -> str:
         minute_bucket = now_ts // self.MINUTE_WINDOW_SECONDS

@@ -19,10 +19,10 @@ os.environ.setdefault("TMP_PATH", "/tmp")
 os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
-from shared.core.celery_app import celery_app
-from shared.core.response import build_standard_error_response
 import shared.services.job_lifecycle_sync as lifecycle_module
 import shared.services.webhook.qstash_publisher as qstash_module
+from shared.core.celery_app import celery_app
+from shared.core.response import build_standard_error_response
 from shared.models.database.webhook import WebhookEventStatus
 
 
@@ -63,7 +63,9 @@ def test_worker_failure_webhook_preserves_standard_error_payload(
         "get_sync_db_context",
         lambda: _SyncDbContext(db),
     )
-    monkeypatch.setattr(service._state_machine, "mark_failed", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        service._state_machine, "mark_failed", lambda *args, **kwargs: True
+    )
     monkeypatch.setattr(service, "_try_refund_credits", lambda *args, **kwargs: None)
     enqueued_events: list[object] = []
     monkeypatch.setattr(service, "_post_commit_enqueue_webhook", enqueued_events.append)
@@ -124,7 +126,9 @@ def test_qstash_publish_rejects_missing_callback_urls_without_marking_event_deli
         "_enrich_payload",
         lambda _db, _event: {"event": "job.completed", "job_id": "job_123"},
     )
-    monkeypatch.setattr(publisher, "_resolve_secret", lambda *_args, **_kwargs: "whsec_test")
+    monkeypatch.setattr(
+        publisher, "_resolve_secret", lambda *_args, **_kwargs: "whsec_test"
+    )
     monkeypatch.setattr(
         qstash_module.app_config,
         "QSTASH_CALLBACK_BASE_URL",

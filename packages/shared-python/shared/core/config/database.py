@@ -1,4 +1,5 @@
 """Database configuration."""
+
 from typing import Optional
 
 from loguru import logger
@@ -13,37 +14,50 @@ class DatabaseConfig(BaseModel):
     DATABASE_URL: str = Field(..., description="Database connection URL")
 
     # SSL configuration.
-    DB_SSL_MODE: str = Field(default="prefer", description="Database SSL mode (disable, allow, prefer, require, verify-ca, verify-full)")
+    DB_SSL_MODE: str = Field(
+        default="prefer",
+        description="Database SSL mode (disable, allow, prefer, require, verify-ca, verify-full)",
+    )
     DB_SSL_CERT: Optional[str] = Field(default=None, description="SSL certificate path")
     DB_SSL_KEY: Optional[str] = Field(default=None, description="SSL private-key path")
-    DB_SSL_ROOT_CERT: Optional[str] = Field(default=None, description="SSL root-certificate path")
+    DB_SSL_ROOT_CERT: Optional[str] = Field(
+        default=None, description="SSL root-certificate path"
+    )
 
     # Async database pool configuration for the API.
     DB_POOL_SIZE: int = Field(default=20, description="Connection-pool size")
     DB_MAX_OVERFLOW: int = Field(default=30, description="Maximum overflow connections")
-    DB_POOL_RECYCLE: int = Field(default=1800, description="Connection recycle interval in seconds")
-    DB_POOL_TIMEOUT: int = Field(default=30, description="Connection checkout timeout in seconds")
+    DB_POOL_RECYCLE: int = Field(
+        default=1800, description="Connection recycle interval in seconds"
+    )
+    DB_POOL_TIMEOUT: int = Field(
+        default=30, description="Connection checkout timeout in seconds"
+    )
 
     # Worker sync database pool config (psycopg2, for gevent worker)
     DB_SYNC_POOL_SIZE: int = Field(default=5, description="Worker sync pool size")
-    DB_SYNC_MAX_OVERFLOW: int = Field(default=5, description="Worker sync pool max overflow")
+    DB_SYNC_MAX_OVERFLOW: int = Field(
+        default=5, description="Worker sync pool max overflow"
+    )
 
     # Worker concurrency (gevent greenlets)
-    WORKER_CONCURRENCY: int = Field(default=50, description="Celery gevent worker concurrency")
+    WORKER_CONCURRENCY: int = Field(
+        default=50, description="Celery gevent worker concurrency"
+    )
 
     def get_ssl_connect_args(self) -> dict:
         """Return SSL connect args for psycopg2."""
         ssl_args = {"sslmode": self.DB_SSL_MODE}
-        
+
         if self.DB_SSL_CERT:
             ssl_args["sslcert"] = self.DB_SSL_CERT
         if self.DB_SSL_KEY:
             ssl_args["sslkey"] = self.DB_SSL_KEY
         if self.DB_SSL_ROOT_CERT:
             ssl_args["sslrootcert"] = self.DB_SSL_ROOT_CERT
-            
+
         return ssl_args
-    
+
     def get_async_ssl_connect_args(self) -> dict:
         """Return SSL connect args for asyncpg."""
         ssl_args = {}

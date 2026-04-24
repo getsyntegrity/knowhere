@@ -1,6 +1,7 @@
 """
 User Balance data model
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 class UserBalance(Base):
     """User balance model — tracks credits balance and tier membership"""
+
     __tablename__ = "user_balances"
 
     user_id: Mapped[str] = mapped_column(
@@ -24,8 +26,12 @@ class UserBalance(Base):
     )
     credits_balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     user_tier: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
-    stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )

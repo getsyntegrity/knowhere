@@ -11,14 +11,16 @@ os.environ.setdefault("S3_ACCESS_KEY_ID", "test-access-key")
 os.environ.setdefault("S3_SECRET_ACCESS_KEY", "test-secret-key")
 os.environ.setdefault("S3_TEMP_PATH", "/tmp")
 os.environ.setdefault("USERS_DATA_PATH", "/tmp")
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb")
+os.environ.setdefault(
+    "DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb"
+)
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("TMP_PATH", "/tmp")
 os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
-import shared.utils.OpenAICompatibleClientSync as openai_client_sync_module
 import shared.utils.ali_quota_manager as ali_quota_manager_module
+import shared.utils.OpenAICompatibleClientSync as openai_client_sync_module
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import LLMServiceException
 from shared.services.ai.prompt_service import build_prompt
@@ -48,7 +50,9 @@ def test_openai_compatible_client_allows_timeout_override():
 
 def test_openai_compatible_client_skips_direct_client_for_qwen_pool(monkeypatch):
     def fail_openai(**kwargs: Any) -> None:
-        raise AssertionError("Qwen pool mode should not build a direct OpenAI client during __init__")
+        raise AssertionError(
+            "Qwen pool mode should not build a direct OpenAI client during __init__"
+        )
 
     monkeypatch.setattr(openai_client_sync_module, "OpenAI", fail_openai)
     monkeypatch.setattr(settings, "ALI_API_KEYS", "", raising=False)
@@ -65,7 +69,9 @@ def test_openai_compatible_client_skips_direct_client_for_qwen_pool(monkeypatch)
     assert sync_client._base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
-def test_openai_compatible_client_builds_direct_qwen_client_for_explicit_key(monkeypatch):
+def test_openai_compatible_client_builds_direct_qwen_client_for_explicit_key(
+    monkeypatch,
+):
     captured_api_key: str = ""
     captured_base_url: str = ""
     explicit_api_key = "ali-explicit-placeholder-key"
@@ -84,7 +90,9 @@ def test_openai_compatible_client_builds_direct_qwen_client_for_explicit_key(mon
             captured_api_key = api_key
             captured_base_url = base_url
             self.base_url = base_url
-            self.chat = SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: None))
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=lambda **kwargs: None)
+            )
 
     monkeypatch.setattr(openai_client_sync_module, "OpenAI", FakeOpenAI)
     monkeypatch.setattr(openai_client_sync_module, "get_sync_client", lambda: object())
@@ -118,7 +126,9 @@ def test_ali_pool_errors_include_masked_api_key_in_internal_message(monkeypatch)
                 daily_limit=10000,
             )
 
-        def mark_rate_limited(self, token_id: str, retry_after: int | None = None) -> None:
+        def mark_rate_limited(
+            self, token_id: str, retry_after: int | None = None
+        ) -> None:
             raise AssertionError("Non-rate-limit errors should not trigger cooldown")
 
     class FakeCompletions:
@@ -180,7 +190,12 @@ def test_openai_compatible_client_mock_short_circuits_direct_provider(monkeypatc
     sync_client = OpenAICompatibleClientSync(default_model="deepseek-chat")
 
     response = sync_client.chat_completion(
-        messages=[{"role": "user", "content": "Generate a concise title. Return ONLY the title."}],
+        messages=[
+            {
+                "role": "user",
+                "content": "Generate a concise title. Return ONLY the title.",
+            }
+        ],
     )
 
     assert sync_client._client is None
@@ -200,7 +215,9 @@ def test_openai_compatible_client_mock_short_circuits_ali_pool(monkeypatch):
     ) -> str:
         raise AssertionError("Mock mode should not call the Ali token pool")
 
-    monkeypatch.setattr(OpenAICompatibleClientSync, "_make_ali_pool_call", fail_pool_call)
+    monkeypatch.setattr(
+        OpenAICompatibleClientSync, "_make_ali_pool_call", fail_pool_call
+    )
 
     sync_client = OpenAICompatibleClientSync(default_model="qwen-vl-plus")
     prompt, _, _, _ = build_prompt(

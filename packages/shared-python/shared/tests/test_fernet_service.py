@@ -1,16 +1,17 @@
 """
 Unit tests for FernetService.
 """
+
 from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
 
-from shared.services.encryption.fernet_service import FernetService, get_fernet_service
 from shared.core.exceptions.domain_exceptions import (
+    SystemSettingInvalidException,
     SystemSettingMissingException,
-    SystemSettingInvalidException
 )
+from shared.services.encryption.fernet_service import FernetService, get_fernet_service
 
 
 # Helper to generate a valid key
@@ -22,22 +23,27 @@ class TestFernetService:
 
     def test_init_raises_if_no_key(self):
         """Test initialization fails without master key."""
-        with pytest.raises(SystemSettingMissingException, match="WEBHOOK_MASTER_KEY is required"):
+        with pytest.raises(
+            SystemSettingMissingException, match="WEBHOOK_MASTER_KEY is required"
+        ):
             FernetService(master_key="")
 
     def test_init_raises_if_invalid_key(self):
         """Test initialization fails with invalid key."""
-        with pytest.raises(SystemSettingInvalidException, match="WEBHOOK_MASTER_KEY must be a valid Fernet key"):
+        with pytest.raises(
+            SystemSettingInvalidException,
+            match="WEBHOOK_MASTER_KEY must be a valid Fernet key",
+        ):
             FernetService(master_key="invalid-key-format")
 
     def test_encrypt_decrypt_cycle(self):
         """Test full encryption/decryption cycle."""
         key = generate_key()
         service = FernetService(master_key=key)
-        
+
         original_text = "secret_message_123"
         encrypted = service.encrypt(original_text)
-        
+
         assert encrypted != original_text
         assert service.decrypt(encrypted) == original_text
 
@@ -45,19 +51,22 @@ class TestFernetService:
         """Test secret generation."""
         key = generate_key()
         service = FernetService(master_key=key)
-        
+
         secret = service.generate_webhook_secret()
         assert len(secret) == 70  # whsec_ + 64 hex chars
-        
+
     def test_factory_function_loads_env(self):
         """Test get_fernet_service loads from env."""
         key = generate_key()
-        with patch("shared.services.encryption.fernet_service.settings.WEBHOOK_MASTER_KEY", key):
+        with patch(
+            "shared.services.encryption.fernet_service.settings.WEBHOOK_MASTER_KEY", key
+        ):
             # Reset singleton if exists
             import shared.services.encryption.fernet_service as module
+
             old_instance = module._fernet_service
             module._fernet_service = None
-            
+
             try:
                 service = get_fernet_service()
                 assert isinstance(service, FernetService)
@@ -75,6 +84,6 @@ class TestFernetService:
         # Service just wraps fernet.decrypt. So it should raise.
         key = generate_key()
         service = FernetService(master_key=key)
-        
+
         result = service.decrypt("invalid_token")
         assert result is None

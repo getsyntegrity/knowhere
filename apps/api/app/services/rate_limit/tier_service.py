@@ -2,17 +2,18 @@
 Tier service.
 Determines and refreshes a user's tier based on lifetime payment history.
 """
+
 from typing import Optional
 
+from app.services.rate_limit.config import RateLimitConfig
+from app.services.rate_limit.data_structures import TierLimits
 from loguru import logger
-from sqlalchemy import select, func, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.tier_limit import TierLimit
 from shared.models.database.user_balance import UserBalance
-from app.services.rate_limit.config import RateLimitConfig
-from app.services.rate_limit.data_structures import TierLimits
 
 _DEFAULT_TIER: str = "free"
 

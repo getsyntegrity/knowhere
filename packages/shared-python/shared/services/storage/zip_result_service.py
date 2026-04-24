@@ -2,22 +2,27 @@
 ZIP Result Package Generation Service
 Generates ZIP packages according to Knowhere-API-ZIP-Spec.md specification
 """
+
 import hashlib
 import json
 import os
 import tempfile
 import zipfile
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 from PIL import Image
+
 from shared.utils.chunk_refs import extract_chunk_refs
 
 if TYPE_CHECKING:
     import pandas as pd
 
-from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
+from shared.core.exceptions.domain_exceptions import (
+    KnowhereException,
+    StorageServiceException,
+)
 
 
 class ZipResultService:
@@ -68,25 +73,31 @@ class ZipResultService:
             tables_dir = os.path.join(add_dir, "tables")
             image_files_info = self._collect_image_files(chunks, images_dir)
             table_files_info = self._collect_table_files(chunks, tables_dir)
-            
+
             # Create image and table file mappings (chunk_id -> file_info)
             image_files_map = {img["id"]: img for img in image_files_info}
             table_files_map = {tb["id"]: tb for tb in table_files_info}
-            
+
             # Convert chunks data format (using file info)
-            formatted_chunks = self._format_chunks(chunks, image_files_map, table_files_map)
+            formatted_chunks = self._format_chunks(
+                chunks, image_files_map, table_files_map
+            )
             statistics = self._calculate_statistics(formatted_chunks)
 
             # Create ZIP package
             with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 # 1. Generate chunks.json (full version)
-                chunks_json = json.dumps({"chunks": formatted_chunks}, ensure_ascii=False, indent=2)
+                chunks_json = json.dumps(
+                    {"chunks": formatted_chunks}, ensure_ascii=False, indent=2
+                )
                 zip_file.writestr("chunks.json", chunks_json.encode("utf-8"))
 
                 # 1b. Generate chunks_slim.json for retrieval-time chunk routing.
                 slim_chunks = []
                 for fc in formatted_chunks:
-                    summary = " ".join(str((fc.get("metadata") or {}).get("summary", "") or "").split())
+                    summary = " ".join(
+                        str((fc.get("metadata") or {}).get("summary", "") or "").split()
+                    )
                     content = " ".join(str(fc.get("content", "") or "").split())
                     slim = {
                         "type": fc.get("type", "text"),
@@ -94,7 +105,9 @@ class ZipResultService:
                         "content": summary or content[:300],
                     }
                     slim_chunks.append(slim)
-                slim_json = json.dumps({"chunks": slim_chunks}, ensure_ascii=False, indent=2)
+                slim_json = json.dumps(
+                    {"chunks": slim_chunks}, ensure_ascii=False, indent=2
+                )
                 zip_file.writestr("chunks_slim.json", slim_json.encode("utf-8"))
 
                 # 2. Try to add full.md (if exists)
@@ -137,18 +150,26 @@ class ZipResultService:
                 # 5. Generate hierarchy.json (if parsed_df is provided). kb.csv and hierarchy_view.html are omitted from the ZIP.
                 if parsed_df is not None and len(parsed_df) > 0:
                     # 5a. Generate hierarchy.json from parsed_df path column
-                    if 'path' in parsed_df.columns:
-                        path_list = parsed_df['path'].dropna().tolist()
+                    if "path" in parsed_df.columns:
+                        path_list = parsed_df["path"].dropna().tolist()
                         hierarchy_dict = self._restore_graph_by_paths(path_list)
-                        hierarchy_json = json.dumps(hierarchy_dict, ensure_ascii=False, indent=4)
-                        zip_file.writestr("hierarchy.json", hierarchy_json.encode("utf-8"))
+                        hierarchy_json = json.dumps(
+                            hierarchy_dict, ensure_ascii=False, indent=4
+                        )
+                        zip_file.writestr(
+                            "hierarchy.json", hierarchy_json.encode("utf-8")
+                        )
                         logger.info(f"Added hierarchy.json")
 
                         # 5b. Generate hierarchy_slim.json — clean structure tree, no _* metadata keys
                         try:
                             tree_dict = self._build_tree_json(hierarchy_dict)
-                            tree_json = json.dumps(tree_dict, ensure_ascii=False, indent=2)
-                            zip_file.writestr("hierarchy_slim.json", tree_json.encode("utf-8"))
+                            tree_json = json.dumps(
+                                tree_dict, ensure_ascii=False, indent=2
+                            )
+                            zip_file.writestr(
+                                "hierarchy_slim.json", tree_json.encode("utf-8")
+                            )
                             logger.info("Added hierarchy_slim.json")
                         except Exception as e:
                             logger.warning(f"generate hierarchy_slim.json fail {e}")
@@ -184,7 +205,7 @@ class ZipResultService:
             raise StorageServiceException(
                 internal_message=f"Failed to generate ZIP package: {str(e)}",
                 operation="generate_zip_package",
-                original_exception=e
+                original_exception=e,
             )
 
     def _calculate_statistics(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -214,10 +235,10 @@ class ZipResultService:
         }
 
     def _format_chunks(
-        self, 
-        chunks: List[Dict[str, Any]], 
+        self,
+        chunks: List[Dict[str, Any]],
         image_files_map: Dict[str, Dict[str, Any]],
-        table_files_map: Dict[str, Dict[str, Any]]
+        table_files_map: Dict[str, Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Convert chunks data to ZIP specification format"""
 
@@ -226,7 +247,9 @@ class ZipResultService:
             rels = []
             if type_val and isinstance(type_val, str):
                 if "\n" in type_val:
-                    lines = [line.strip() for line in type_val.split("\n") if line.strip()]
+                    lines = [
+                        line.strip() for line in type_val.split("\n") if line.strip()
+                    ]
                     rels.extend([line for line in lines[1:] if line.upper() != "PTXT"])
             return rels if rels else []
 
@@ -234,10 +257,14 @@ class ZipResultService:
             """Build ref/path -> chunk_id aliases for image and table chunks."""
             target_map: Dict[str, str] = {}
             for chunk in chunks:
-                chunk_id = str(chunk.get("chunk_id") or chunk.get("know_id") or "").strip()
+                chunk_id = str(
+                    chunk.get("chunk_id") or chunk.get("know_id") or ""
+                ).strip()
                 if not chunk_id:
                     continue
-                chunk_type_str = str(chunk.get("type", "")).strip().split("\n", 1)[0].lower()
+                chunk_type_str = (
+                    str(chunk.get("type", "")).strip().split("\n", 1)[0].lower()
+                )
                 if chunk_type_str not in {"image", "table"}:
                     continue
                 metadata = chunk.get("metadata", {})
@@ -245,7 +272,11 @@ class ZipResultService:
                 if isinstance(metadata, dict):
                     file_path = str(metadata.get("file_path") or "").strip()
                 if not file_path:
-                    file_info = image_files_map.get(chunk_id) if chunk_type_str == "image" else table_files_map.get(chunk_id)
+                    file_info = (
+                        image_files_map.get(chunk_id)
+                        if chunk_type_str == "image"
+                        else table_files_map.get(chunk_id)
+                    )
                     if file_info:
                         file_path = str(file_info.get("file_path") or "").strip()
                 path_alias = str(chunk.get("path") or "").strip()
@@ -258,7 +289,9 @@ class ZipResultService:
                         target_map[alias] = chunk_id
             return target_map
 
-        def normalize_connect_to(connects, target_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        def normalize_connect_to(
+            connects, target_map: Dict[str, str]
+        ) -> List[Dict[str, Any]]:
             """Normalize connect_to to chunk_id-based entries."""
             if not connects:
                 return []
@@ -292,16 +325,20 @@ class ZipResultService:
                 if not item_str:
                     continue
                 normalized_target = target_map.get(item_str, item_str)
-                normalized.append({
-                    "target": normalized_target,
-                    "relation": "related",
-                    "score": 1.0,
-                    "keywords": [],
-                })
+                normalized.append(
+                    {
+                        "target": normalized_target,
+                        "relation": "related",
+                        "score": 1.0,
+                        "keywords": [],
+                    }
+                )
 
             return normalized
 
-        def refs_to_embed_connections(refs: List[str], target_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        def refs_to_embed_connections(
+            refs: List[str], target_map: Dict[str, str]
+        ) -> List[Dict[str, Any]]:
             """Convert resource refs to connect_to embeds entries."""
             normalized = []
             for ref in refs:
@@ -313,14 +350,18 @@ class ZipResultService:
                     target_id = target_map.get(ref_str[1:-1].strip())
                 if not target_id:
                     continue
-                normalized.append({
-                    "target": target_id,
-                    "relation": "embeds",
-                    "ref": ref_str,
-                })
+                normalized.append(
+                    {
+                        "target": target_id,
+                        "relation": "embeds",
+                        "ref": ref_str,
+                    }
+                )
             return normalized
 
-        def merge_connections(*connection_lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        def merge_connections(
+            *connection_lists: List[Dict[str, Any]]
+        ) -> List[Dict[str, Any]]:
             """Merge connect_to entries while keeping stable order."""
             merged: List[Dict[str, Any]] = []
             seen = set()
@@ -340,7 +381,7 @@ class ZipResultService:
             return merged
 
         resource_target_map = build_resource_target_map()
-        
+
         formatted = []
         for chunk in chunks:
             chunk_id = str(chunk.get("chunk_id") or chunk.get("know_id"))
@@ -373,32 +414,46 @@ class ZipResultService:
 
             # Add type-specific fields
             if chunk_type == "text":
-                metadata["tokens"] = existing_metadata.get("tokens") or chunk.get("tokens", 0)
-                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
-                
+                metadata["tokens"] = existing_metadata.get("tokens") or chunk.get(
+                    "tokens", 0
+                )
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get(
+                    "keywords", []
+                )
+
                 # Convert in-text resource refs into embeds edges.
-                relationship_refs = safe_parse_rels(chunk.get("type_raw") or chunk_type_str)
+                relationship_refs = safe_parse_rels(
+                    chunk.get("type_raw") or chunk_type_str
+                )
                 if not relationship_refs:
                     relationship_refs = extract_chunk_refs(content)
 
-                embed_connections = refs_to_embed_connections(relationship_refs, resource_target_map)
+                embed_connections = refs_to_embed_connections(
+                    relationship_refs, resource_target_map
+                )
                 related_connections = normalize_connect_to(
-                    existing_metadata.get("connect_to") or chunk.get("connect_to") or chunk.get("connectto"),
+                    existing_metadata.get("connect_to")
+                    or chunk.get("connect_to")
+                    or chunk.get("connectto"),
                     resource_target_map,
                 )
-                metadata["connect_to"] = merge_connections(embed_connections, related_connections)
-                
+                metadata["connect_to"] = merge_connections(
+                    embed_connections, related_connections
+                )
+
             elif chunk_type == "image":
                 if img_info:
                     metadata["file_path"] = img_info["file_path"]
                 # Unified schema: include keywords and tokens for all chunk types
-                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get(
+                    "keywords", []
+                )
                 metadata["tokens"] = []
-                
+
             elif chunk_type == "table":
                 # Get table info from existing_metadata or table_files_map
                 file_path = existing_metadata.get("file_path")
-                
+
                 if not file_path:
                     # Get table info from table_files_map
                     tb_info = table_files_map.get(chunk_id)
@@ -406,12 +461,18 @@ class ZipResultService:
                         file_path = tb_info["file_path"]
                     else:
                         # Extract from path or use default
-                        tbl_name = path.split("/")[-1] if "/" in path else f"table_{chunk_id}.html"
+                        tbl_name = (
+                            path.split("/")[-1]
+                            if "/" in path
+                            else f"table_{chunk_id}.html"
+                        )
                         file_path = f"tables/{tbl_name}"
-                
+
                 metadata["file_path"] = file_path
                 # Unified schema: include keywords and tokens for all chunk types
-                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get("keywords", [])
+                metadata["keywords"] = existing_metadata.get("keywords") or chunk.get(
+                    "keywords", []
+                )
                 metadata["tokens"] = []
 
             formatted_chunk = {
@@ -429,30 +490,32 @@ class ZipResultService:
         """Clean path, keep only logical path"""
         if not path:
             return "/"
-        
+
         # Remove filesystem path prefix
         # Example: .-->users-->KB_DATA_xxx-->dir-->file.pdf-->chapter-->section
         # Should extract: chapter-->section
-        
+
         # Find the last .pdf, .docx, etc. file extension
         import re
 
         # Match filename pattern (with extension)
-        file_pattern = r'[^/]+\.(pdf|docx|doc|txt|md|xlsx|xls|pptx|ppt)'
+        file_pattern = r"[^/]+\.(pdf|docx|doc|txt|md|xlsx|xls|pptx|ppt)"
         match = re.search(file_pattern, path, re.IGNORECASE)
-        
+
         if match:
             # Extract the part after filename
-            path_after_file = path[match.end():]
+            path_after_file = path[match.end() :]
             # Clean path separators
             path_after_file = path_after_file.replace("-->", "/").strip("/")
             if path_after_file:
                 return path_after_file
-        
+
         # If no file pattern found, try to clean common prefixes
         path = path.replace("-->", "/")
         # Remove leading path separators and empty segments
-        path = "/".join([p for p in path.split("/") if p and p not in ["", ".", "users"]])
+        path = "/".join(
+            [p for p in path.split("/") if p and p not in ["", ".", "users"]]
+        )
         return path if path else "/"
 
     def _collect_image_files(
@@ -496,7 +559,11 @@ class ZipResultService:
             for candidate in candidates:
                 if candidate in image_files_map:
                     _, ext = os.path.splitext(candidate)
-                    return image_files_map[candidate], candidate, ext.lstrip(".") or "jpg"
+                    return (
+                        image_files_map[candidate],
+                        candidate,
+                        ext.lstrip(".") or "jpg",
+                    )
 
                 stem, ext = os.path.splitext(candidate)
                 if stem:
@@ -520,7 +587,7 @@ class ZipResultService:
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
-            
+
             if chunk_type != "image":
                 continue
 
@@ -570,7 +637,7 @@ class ZipResultService:
                 pass
 
             file_size = os.path.getsize(source_path)
-            
+
             # Priority: use file_path from metadata, then original_name, finally chunk_id
             if metadata and isinstance(metadata, dict):
                 # metadata.file_path format: "images/xxx.jpg"
@@ -580,7 +647,9 @@ class ZipResultService:
                     zip_path = zip_file_path
                     # Extract filename as original_name
                     if not original_name:
-                        original_name = metadata.get("original_name") or os.path.basename(zip_file_path)
+                        original_name = metadata.get(
+                            "original_name"
+                        ) or os.path.basename(zip_file_path)
                 else:
                     # If metadata has no file_path, use original_name or chunk_id
                     if original_name:
@@ -594,17 +663,19 @@ class ZipResultService:
                 else:
                     zip_path = f"images/{chunk_id}.{ext}"
 
-            image_files.append({
-                "id": str(chunk_id),
-                "file_path": zip_path,
-                "original_name": original_name or f"image_{chunk_id}.{ext}",
-                "size_bytes": file_size,
-                "format": ext.lower(),
-                "width": width,
-                "height": height,
-                "source_path": source_path,
-                "zip_path": zip_path,
-            })
+            image_files.append(
+                {
+                    "id": str(chunk_id),
+                    "file_path": zip_path,
+                    "original_name": original_name or f"image_{chunk_id}.{ext}",
+                    "size_bytes": file_size,
+                    "format": ext.lower(),
+                    "width": width,
+                    "height": height,
+                    "source_path": source_path,
+                    "zip_path": zip_path,
+                }
+            )
 
         return image_files
 
@@ -634,7 +705,9 @@ class ZipResultService:
             if candidate and candidate not in candidates:
                 candidates.append(candidate)
 
-        def resolve_source_path(candidates: List[str]) -> Tuple[Optional[str], Optional[str]]:
+        def resolve_source_path(
+            candidates: List[str],
+        ) -> Tuple[Optional[str], Optional[str]]:
             for candidate in candidates:
                 if candidate in table_files_map:
                     return table_files_map[candidate], candidate
@@ -656,7 +729,7 @@ class ZipResultService:
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("know_id")
             chunk_type = chunk.get("type", "")
-            
+
             if chunk_type != "table":
                 continue
 
@@ -690,7 +763,7 @@ class ZipResultService:
                 )
 
             file_size = os.path.getsize(source_path)
-            
+
             # Priority: use file_path from metadata, then original_name, finally chunk_id
             if metadata and isinstance(metadata, dict):
                 # metadata.file_path format: "tables/xxx.html"
@@ -700,7 +773,9 @@ class ZipResultService:
                     zip_path = zip_file_path
                     # Extract filename as original_name
                     if not original_name:
-                        original_name = metadata.get("original_name") or os.path.basename(zip_file_path)
+                        original_name = metadata.get(
+                            "original_name"
+                        ) or os.path.basename(zip_file_path)
                 else:
                     # If metadata has no file_path, use original_name or chunk_id
                     if original_name:
@@ -714,15 +789,17 @@ class ZipResultService:
                 else:
                     zip_path = f"tables/{chunk_id}.html"
 
-            table_files.append({
-                "id": str(chunk_id),
-                "file_path": zip_path,
-                "original_name": original_name or f"table_{chunk_id}.html",
-                "size_bytes": file_size,
-                "format": "html",
-                "source_path": source_path,
-                "zip_path": zip_path,
-            })
+            table_files.append(
+                {
+                    "id": str(chunk_id),
+                    "file_path": zip_path,
+                    "original_name": original_name or f"table_{chunk_id}.html",
+                    "size_bytes": file_size,
+                    "format": "html",
+                    "source_path": source_path,
+                    "zip_path": zip_path,
+                }
+            )
 
         return table_files
 
@@ -770,31 +847,31 @@ class ZipResultService:
     def _restore_graph_by_paths(self, paths: List[str]) -> Dict[str, Any]:
         """
         Rebuild hierarchical structure from path list
-        
+
         Args:
             paths: Path list, e.g. ["dir/file.pdf/chapter1/section1", "dir/file.pdf/chapter2"]
-        
+
         Returns:
             Nested dict structure, e.g. {"dir": {"file.pdf": {"chapter1": {"section1": {}}, "chapter2": {}}}}
         """
         root_dict: Dict[str, Any] = {}
-        
+
         # Support multiple separators
         for path in paths:
             if not path:
                 continue
-            
+
             # Only normalize '-->' legacy separator; do NOT replace '\' since
             # heading text may contain LaTeX backslashes (e.g. \mathrm, \mathbf)
             normalized_path = path.replace("-->", "/")
             nodes = [n.strip() for n in normalized_path.split("/") if n.strip()]
-            
+
             current_dict = root_dict
             for node in nodes:
                 if node not in current_dict:
                     current_dict[node] = {}
                 current_dict = current_dict[node]
-        
+
         return root_dict
 
     def _build_tree_json(self, node: Any) -> Any:

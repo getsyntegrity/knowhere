@@ -30,9 +30,6 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from loguru import logger
-from shared.utils.chunk_refs import CHUNK_REF_PATTERN
-
 from app.services.connect_builder.builder import (
     DEFAULT_CONFIG,
     _build_keyword_index,
@@ -41,9 +38,12 @@ from app.services.connect_builder.builder import (
     _get_keywords,
     _normalize_keyword,
 )
+from loguru import logger
 
+from shared.utils.chunk_refs import CHUNK_REF_PATTERN
 
 # ─── Tree Construction ───────────────────────────────────────────────────────
+
 
 def _build_tree_from_paths(paths: List[str]) -> Dict[str, Any]:
     """
@@ -90,6 +90,7 @@ def _merge_tree(base: Dict[str, Any], addition: Dict[str, Any]) -> Dict[str, Any
 
 
 # ─── Node Extraction ─────────────────────────────────────────────────────────
+
 
 def _chunks_to_nodes(
     chunks: List[Dict[str, Any]],
@@ -138,6 +139,7 @@ def _chunks_to_nodes(
 
 # ─── Edge Extraction ─────────────────────────────────────────────────────────
 
+
 def _connections_to_edges(
     connections: Dict[str, List[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
@@ -163,13 +165,15 @@ def _connections_to_edges(
                 continue
             seen_pairs.add(pair_key)
 
-            edges.append({
-                "source": source_id,
-                "target": target_id,
-                "relation": conn.get("relation", "related"),
-                "score": conn.get("score", 0.0),
-                "shared_keywords": conn.get("keywords", []),
-            })
+            edges.append(
+                {
+                    "source": source_id,
+                    "target": target_id,
+                    "relation": conn.get("relation", "related"),
+                    "score": conn.get("score", 0.0),
+                    "shared_keywords": conn.get("keywords", []),
+                }
+            )
 
     return edges
 
@@ -228,12 +232,14 @@ def _merge_related_connections_into_chunks(
             if key in seen:
                 continue
             seen.add(key)
-            merged.append({
-                "target": conn.get("target", ""),
-                "relation": "related",
-                "score": conn.get("score", 0.0),
-                "keywords": conn.get("keywords", []),
-            })
+            merged.append(
+                {
+                    "target": conn.get("target", ""),
+                    "relation": "related",
+                    "score": conn.get("score", 0.0),
+                    "keywords": conn.get("keywords", []),
+                }
+            )
 
         metadata["connect_to"] = merged
 
@@ -255,6 +261,7 @@ def _save_chunks_by_source_file(kb_dir: str, chunks: List[Dict[str, Any]]) -> No
 
 
 # ─── Incremental Matching ────────────────────────────────────────────────────
+
 
 def _incremental_connections(
     new_chunks: List[Dict[str, Any]],
@@ -351,7 +358,9 @@ def _incremental_connections(
                 if max_content_overlap < 1.0:
                     existing_content = existing_data[existing_id][2]
                     if new_content and existing_content:
-                        ratio = SequenceMatcher(None, new_content, existing_content).ratio()
+                        ratio = SequenceMatcher(
+                            None, new_content, existing_content
+                        ).ratio()
                         if ratio >= max_content_overlap:
                             continue
                 scored.append((existing_id, score, shared_kws))
@@ -366,12 +375,14 @@ def _incremental_connections(
             }
             connections[new_id].append(conn)
             # Bidirectional: also add reverse edge
-            connections[existing_id].append({
-                "target": new_id,
-                "relation": "related",
-                "score": round(score, 4),
-                "keywords": sorted(shared_kws),
-            })
+            connections[existing_id].append(
+                {
+                    "target": new_id,
+                    "relation": "related",
+                    "score": round(score, 4),
+                    "keywords": sorted(shared_kws),
+                }
+            )
 
     total = sum(len(v) for v in connections.values())
     logger.info(
@@ -385,9 +396,9 @@ def _incremental_connections(
 # ─── File-Level Aggregation (v2.0) ───────────────────────────────────────────
 
 # Token filtering — same logic as text_utils._is_meaningful_token
-_CN_EN_NUM_RE = re.compile(r'[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?')
+_CN_EN_NUM_RE = re.compile(r"[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?")
 _CHUNK_MARKER_RE = re.compile(
-    rf'{CHUNK_REF_PATTERN}|image-\d+|table-\d+',
+    rf"{CHUNK_REF_PATTERN}|image-\d+|table-\d+",
     re.IGNORECASE,
 )
 
@@ -398,25 +409,26 @@ def _is_meaningful_token(token: str) -> bool:
         return False
     if len(token) == 1:
         return False
-    if re.fullmatch(r'\d+(?:\.\d+)?', token):
+    if re.fullmatch(r"\d+(?:\.\d+)?", token):
         return False
     return True
 
 
 def _extract_tokens_from_content(content: str) -> List[str]:
     """Extract meaningful tokens from content using jieba (regex fallback)."""
-    content = _CHUNK_MARKER_RE.sub('', content)
+    content = _CHUNK_MARKER_RE.sub("", content)
     # Strip HTML tags and entities (table chunks contain raw HTML)
-    content = re.sub(r'<[^>]+>', ' ', content)
-    content = re.sub(r'&\w+;', ' ', content)
+    content = re.sub(r"<[^>]+>", " ", content)
+    content = re.sub(r"&\w+;", " ", content)
     try:
         import jieba
+
         if hasattr(jieba, "lcut"):
             raw = jieba.lcut(content)
         else:
             raw = list(jieba.cut(content))
     except ImportError:
-        raw = re.split(r'[\s,;，；。！？、\-/]+', content)
+        raw = re.split(r"[\s,;，；。！？、\-/]+", content)
     return [t for t in raw if _is_meaningful_token(t)]
 
 
@@ -475,7 +487,11 @@ def _compute_tfidf_top_keywords(
             if total_files == 1:
                 score = tf  # Single-file KB: pure frequency
             else:
-                idf = math.log(total_files / doc_freq[kw]) if doc_freq[kw] < total_files else 0.1
+                idf = (
+                    math.log(total_files / doc_freq[kw])
+                    if doc_freq[kw] < total_files
+                    else 0.1
+                )
                 score = tf * idf
             scored.append((score, tf, kw))
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
@@ -506,7 +522,11 @@ def _compute_file_importance(
         if ca and (earliest_created is None or ca < earliest_created):
             earliest_created = ca
     usage_heat = total_relevance / len(chunk_ids)
-    freshness = relevance_score(1, earliest_created, half_life_days) if earliest_created else 1.0
+    freshness = (
+        relevance_score(1, earliest_created, half_life_days)
+        if earliest_created
+        else 1.0
+    )
     return round(alpha * usage_heat + beta * freshness, 4)
 
 
@@ -541,23 +561,27 @@ def _aggregate_file_level_edges(
         tgt_name = tgt_path.rsplit("/", 1)[-1] if "/" in tgt_path else tgt_path
         # Ensure source_chunk is from the first file in sorted pair
         if chunk_to_file.get(src_id) == pk[0]:
-            pair_data[pk]["connections"].append({
-                "source_chunk": src_name,
-                "source_id": src_id,
-                "target_chunk": tgt_name,
-                "target_id": tgt_id,
-                "relation": edge.get("relation", "related"),
-                "score": edge.get("score", 0),
-            })
+            pair_data[pk]["connections"].append(
+                {
+                    "source_chunk": src_name,
+                    "source_id": src_id,
+                    "target_chunk": tgt_name,
+                    "target_id": tgt_id,
+                    "relation": edge.get("relation", "related"),
+                    "score": edge.get("score", 0),
+                }
+            )
         else:
-            pair_data[pk]["connections"].append({
-                "source_chunk": tgt_name,
-                "source_id": tgt_id,
-                "target_chunk": src_name,
-                "target_id": src_id,
-                "relation": edge.get("relation", "related"),
-                "score": edge.get("score", 0),
-            })
+            pair_data[pk]["connections"].append(
+                {
+                    "source_chunk": tgt_name,
+                    "source_id": tgt_id,
+                    "target_chunk": src_name,
+                    "target_id": src_id,
+                    "relation": edge.get("relation", "related"),
+                    "score": edge.get("score", 0),
+                }
+            )
 
     file_edges = []
     for (f1, f2), data in pair_data.items():
@@ -565,17 +589,21 @@ def _aggregate_file_level_edges(
         # Sort by score desc, take top N
         conns.sort(key=lambda x: x["score"], reverse=True)
         scores = [c["score"] for c in conns]
-        file_edges.append({
-            "source": f1, "target": f2,
-            "connection_count": len(conns),
-            "avg_score": round(sum(scores) / len(scores), 4) if scores else 0,
-            "top_connections": conns[:max_top_connections],
-        })
+        file_edges.append(
+            {
+                "source": f1,
+                "target": f2,
+                "connection_count": len(conns),
+                "avg_score": round(sum(scores) / len(scores), 4) if scores else 0,
+                "top_connections": conns[:max_top_connections],
+            }
+        )
     file_edges.sort(key=lambda x: x["connection_count"], reverse=True)
     return file_edges
 
 
 # ─── Main API ────────────────────────────────────────────────────────────────
+
 
 def _get_source_file(chunk: Dict[str, Any]) -> str:
     """
@@ -688,11 +716,15 @@ def update_knowledge_graph(
 
     if new_connections is None:
         new_connections = _incremental_connections(
-            new_chunks=new_chunks, existing_chunks=existing_chunks, config=connect_config,
+            new_chunks=new_chunks,
+            existing_chunks=existing_chunks,
+            config=connect_config,
         )
     new_chunk_edges = _connections_to_edges(new_connections)
     existing_file_edges = existing_graph.get("edges", [])
-    new_file_edges = _aggregate_file_level_edges(new_chunk_edges, chunk_to_file, chunk_paths)
+    new_file_edges = _aggregate_file_level_edges(
+        new_chunk_edges, chunk_to_file, chunk_paths
+    )
 
     # Merge file edges
     merged_map: Dict[Tuple[str, str], Dict] = {}
@@ -716,12 +748,15 @@ def update_knowledge_graph(
             scores = [c.get("score", 0) for c in deduped]
             avg = sum(scores) / len(scores) if scores else 0
             merged_map[pk] = {
-                "source": pk[0], "target": pk[1],
+                "source": pk[0],
+                "target": pk[1],
                 "connection_count": tc,
                 "avg_score": round(avg, 4),
                 "top_connections": deduped[:10],
             }
-    all_file_edges = sorted(merged_map.values(), key=lambda x: x["connection_count"], reverse=True)
+    all_file_edges = sorted(
+        merged_map.values(), key=lambda x: x["connection_count"], reverse=True
+    )
 
     existing_files = existing_graph.get("files", {})
     files_dict = {}
@@ -734,14 +769,17 @@ def update_knowledge_graph(
             cid = str(c.get("chunk_id") or c.get("know_id", ""))
             if cid:
                 cids.append(cid)
-        created_at = existing_files.get(fk, {}).get("created_at", datetime.now(timezone.utc).isoformat())
+        created_at = existing_files.get(fk, {}).get(
+            "created_at", datetime.now(timezone.utc).isoformat()
+        )
         if fk not in existing_files:
             new_file_count += 1
         files_dict[fk] = {
             "chunks_count": len(chunks),
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
-            "top_summary": existing_files.get(fk, {}).get("top_summary") or (file_summaries or {}).get(fk, ""),
+            "top_summary": existing_files.get(fk, {}).get("top_summary")
+            or (file_summaries or {}).get(fk, ""),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": created_at,
         }
@@ -771,9 +809,7 @@ def update_knowledge_graph(
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-KNOWHERE_HOME = os.path.expanduser(
-    os.environ.get("KNOWHERE_HOME", "~/.knowhere")
-)
+KNOWHERE_HOME = os.path.expanduser(os.environ.get("KNOWHERE_HOME", "~/.knowhere"))
 
 
 def _get_kb_dir(kb_id: str) -> str:
@@ -867,6 +903,7 @@ def relevance_score(
 
 # ─── File I/O ─────────────────────────────────────────────────────────────────
 
+
 def save_knowledge_graph(graph: Dict[str, Any], output_path: str) -> str:
     """Save knowledge graph to a JSON file."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -926,18 +963,25 @@ def extract_chunks_from_graph(graph: Dict[str, Any]) -> List[Dict[str, Any]]:
     node_index = graph.get("node_index", {})
     if node_index:
         for chunk_id, file_key in node_index.items():
-            chunks.append({
-                "chunk_id": chunk_id, "path": file_key,
-                "content": "", "metadata": {"keywords": []},
-            })
+            chunks.append(
+                {
+                    "chunk_id": chunk_id,
+                    "path": file_key,
+                    "content": "",
+                    "metadata": {"keywords": []},
+                }
+            )
         return chunks
     # Legacy: handle old nodes array
     for node in graph.get("nodes", []):
-        chunks.append({
-            "chunk_id": node["id"], "path": node.get("path", ""),
-            "content": node.get("content_preview", ""),
-            "metadata": {"keywords": node.get("keywords", [])},
-        })
+        chunks.append(
+            {
+                "chunk_id": node["id"],
+                "path": node.get("path", ""),
+                "content": node.get("content_preview", ""),
+                "metadata": {"keywords": node.get("keywords", [])},
+            }
+        )
     return chunks
 
 
@@ -959,8 +1003,7 @@ def _dedup_chunks_by_content(
         List of new chunks that have no chunk_id duplicate in existing_chunks.
     """
     existing_ids = {
-        str(c.get("chunk_id") or c.get("know_id", ""))
-        for c in existing_chunks
+        str(c.get("chunk_id") or c.get("know_id", "")) for c in existing_chunks
     }
     existing_ids.discard("")
 
@@ -1002,6 +1045,7 @@ def _load_all_chunks_from_kb(kb_dir: str) -> List[Dict[str, Any]]:
 
 # ─── MCP Auto-Registration ───────────────────────────────────────────────────
 
+
 def _get_mcp_server_path() -> str:
     """Get the absolute path to the MCP server script.
 
@@ -1010,10 +1054,16 @@ def _get_mcp_server_path() -> str:
     """
     # Navigate from graph_builder.py → project root → knowhere-mcp/server.py
     # graph_builder.py is at: apps/worker/app/services/connect_builder/
-    project_root = os.path.normpath(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "..", "..", "..",
-    ))
+    project_root = os.path.normpath(
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+        )
+    )
     return os.path.join(project_root, "knowhere-mcp", "server.py")
 
 
@@ -1050,7 +1100,9 @@ def _auto_register_mcp() -> None:
 
             servers = existing.get("mcpServers", {})
             # Update even if "knowhere" exists (to point to new server)
-            if "knowhere" not in servers or "mcp/knowhere_mcp_server" in str(servers.get("knowhere", {}).get("args", [])):
+            if "knowhere" not in servers or "mcp/knowhere_mcp_server" in str(
+                servers.get("knowhere", {}).get("args", [])
+            ):
                 servers["knowhere"] = knowhere_mcp_entry
                 existing["mcpServers"] = servers
                 with open(cursor_mcp, "w") as f:
@@ -1069,7 +1121,9 @@ def _auto_register_mcp() -> None:
                     existing = json.load(f)
 
             servers = existing.get("mcpServers", {})
-            if "knowhere" not in servers or "mcp/knowhere_mcp_server" in str(servers.get("knowhere", {}).get("args", [])):
+            if "knowhere" not in servers or "mcp/knowhere_mcp_server" in str(
+                servers.get("knowhere", {}).get("args", [])
+            ):
                 servers["knowhere"] = knowhere_mcp_entry
                 existing["mcpServers"] = servers
                 with open(claude_config, "w") as f:
@@ -1085,6 +1139,7 @@ def _auto_register_mcp() -> None:
 
 
 # ─── One-Stop API ─────────────────────────────────────────────────────────────
+
 
 def build_and_deploy(
     chunks: List[Dict[str, Any]],
@@ -1130,6 +1185,7 @@ def build_and_deploy(
         The knowledge graph dict.
     """
     import shutil
+
     from app.services.connect_builder.builder import build_connections
 
     kg_path = _get_kg_path(kb_id)
@@ -1143,7 +1199,11 @@ def build_and_deploy(
 
     # Load existing state BEFORE deploy (to avoid counting new file's chunks twice)
     # Determine source_file early so we can exclude it from existing_chunks
-    source_file = os.path.basename(parsed_output_dir) if parsed_output_dir and os.path.isdir(parsed_output_dir) else None
+    source_file = (
+        os.path.basename(parsed_output_dir)
+        if parsed_output_dir and os.path.isdir(parsed_output_dir)
+        else None
+    )
     existing_graph = load_knowledge_graph(kg_path)
     if existing_graph is not None:
         all_on_disk = _load_all_chunks_from_kb(kb_dir)
@@ -1154,10 +1214,11 @@ def build_and_deploy(
             # be on disk if parsed_output_dir is inside kb_dir (debug_parse).
             # Without this filter, _dedup_chunks_by_content would treat them
             # as "existing" and skip the incremental update entirely.
-            existing_chunks = [
-                c for c in all_on_disk
-                if c.get("_source_file") != source_file
-            ] if source_file else all_on_disk
+            existing_chunks = (
+                [c for c in all_on_disk if c.get("_source_file") != source_file]
+                if source_file
+                else all_on_disk
+            )
     else:
         existing_chunks = []
 
@@ -1169,13 +1230,16 @@ def build_and_deploy(
         parsed_abs = os.path.normpath(os.path.abspath(parsed_output_dir))
         target_abs = os.path.normpath(os.path.abspath(deploy_target))
         if parsed_abs == target_abs:
-            logger.info(f"📂 Parsed output already at target: {deploy_target} (skip copy)")
+            logger.info(
+                f"📂 Parsed output already at target: {deploy_target} (skip copy)"
+            )
         else:
             if os.path.exists(deploy_target):
                 shutil.rmtree(deploy_target)
             shutil.copytree(parsed_output_dir, deploy_target)
             # Delete ZIP files from deployed directory (no longer needed)
             import glob
+
             for zip_file in glob.glob(os.path.join(deploy_target, "*.zip")):
                 os.remove(zip_file)
             logger.info(f"📂 Parsed output deployed: {deploy_target}")
@@ -1187,6 +1251,7 @@ def build_and_deploy(
 
     # ── Generate hierarchical summaries ──
     from app.services.connect_builder.summary_builder import enrich_hierarchy_summaries
+
     try:
         file_summaries = enrich_hierarchy_summaries(
             kb_dir=kb_dir,
@@ -1215,11 +1280,11 @@ def build_and_deploy(
                 # or KB dir was empty → merge in-memory chunks with disk data.
                 # Dedup by chunk_id to prevent double-counting.
                 seen_ids = {
-                    str(c.get("chunk_id") or c.get("know_id", ""))
-                    for c in all_on_disk
+                    str(c.get("chunk_id") or c.get("know_id", "")) for c in all_on_disk
                 }
                 extra = [
-                    c for c in chunks
+                    c
+                    for c in chunks
                     if str(c.get("chunk_id") or c.get("know_id", "")) not in seen_ids
                 ]
                 all_chunks = all_on_disk + extra
@@ -1229,7 +1294,9 @@ def build_and_deploy(
             )
         else:
             all_chunks = chunks
-            logger.info("📊 rebuild Knowledge Graph (rebuild_all=False, new chunks only) ...")
+            logger.info(
+                "📊 rebuild Knowledge Graph (rebuild_all=False, new chunks only) ..."
+            )
 
         connections = build_connections(all_chunks, connect_config)
         _merge_related_connections_into_chunks(all_chunks, connections)
@@ -1264,7 +1331,9 @@ def build_and_deploy(
                 existing_chunks=existing_chunks,
                 config=connect_config,
             )
-            _merge_related_connections_into_chunks(existing_chunks + deduped_new, related_connections)
+            _merge_related_connections_into_chunks(
+                existing_chunks + deduped_new, related_connections
+            )
             _save_chunks_by_source_file(kb_dir, existing_chunks + deduped_new)
             stats_chunks = existing_chunks + deduped_new
             graph = update_knowledge_graph(
@@ -1316,4 +1385,3 @@ def build_and_deploy(
             logger.debug(f"MCP auto-registration skipped: {e}")
 
     return graph
-

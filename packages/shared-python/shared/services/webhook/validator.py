@@ -3,6 +3,7 @@ Webhook Validation Utilities
 
 SSRF protection via DNS resolution + is_global check + IP pinning.
 """
+
 import asyncio
 import ipaddress
 import socket
@@ -11,7 +12,6 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from shared.core.config import app_config
-
 
 # ── Core SSRF checks ─────────────────────
 
@@ -60,6 +60,7 @@ def validate_url(hostname: str) -> str:
 @dataclass
 class WebhookValidationResult:
     """Result of webhook URL validation, including pinned IP for anti-DNS-rebinding."""
+
     is_valid: bool
     error_message: Optional[str] = None
     validated_ip: Optional[str] = None
@@ -78,19 +79,27 @@ async def validate_webhook_url_async(url: str) -> WebhookValidationResult:
         is_dev: bool = app_config.ENVIRONMENT.lower() in ("dev", "development", "local")
         allowed_schemes: list[str] = ["https"] if not is_dev else ["https", "http"]
         if parsed.scheme not in allowed_schemes:
-            return WebhookValidationResult(is_valid=False, error_message=f"Invalid scheme: {parsed.scheme}. Must be HTTPS.")
+            return WebhookValidationResult(
+                is_valid=False,
+                error_message=f"Invalid scheme: {parsed.scheme}. Must be HTTPS.",
+            )
         hostname: Optional[str] = parsed.hostname
         if not hostname:
-            return WebhookValidationResult(is_valid=False, error_message="URL must have a hostname")
+            return WebhookValidationResult(
+                is_valid=False, error_message="URL must have a hostname"
+            )
         validated_ip: str = await async_validate_url(hostname)
         return WebhookValidationResult(
-            is_valid=True, validated_ip=validated_ip, hostname=hostname,
+            is_valid=True,
+            validated_ip=validated_ip,
+            hostname=hostname,
         )
     except ValueError as exc:
         return WebhookValidationResult(is_valid=False, error_message=str(exc))
     except Exception as exc:
         return WebhookValidationResult(
-            is_valid=False, error_message=f"URL validation failed: {exc}",
+            is_valid=False,
+            error_message=f"URL validation failed: {exc}",
         )
 
 
@@ -108,7 +117,9 @@ def validate_webhook_url(url: str) -> WebhookValidationResult:
 
         hostname: Optional[str] = parsed.hostname
         if not hostname:
-            return WebhookValidationResult(is_valid=False, error_message="URL must have a hostname")
+            return WebhookValidationResult(
+                is_valid=False, error_message="URL must have a hostname"
+            )
 
         validated_ip: str = validate_url(hostname)
         return WebhookValidationResult(
@@ -120,5 +131,6 @@ def validate_webhook_url(url: str) -> WebhookValidationResult:
         return WebhookValidationResult(is_valid=False, error_message=str(exc))
     except Exception as exc:
         return WebhookValidationResult(
-            is_valid=False, error_message=f"URL validation failed: {exc}",
+            is_valid=False,
+            error_message=f"URL validation failed: {exc}",
         )

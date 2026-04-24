@@ -2,14 +2,15 @@
 Base Celery task class for KB worker tasks.
 Provides centralized exception handling with direct DB writes for failure finalization.
 """
+
 from typing import Optional
 
 from celery import Task
 from loguru import logger
 
-from shared.core.logging import LogEvent
 from shared.core.exceptions.domain_exceptions import UnknownException
 from shared.core.exceptions.knowhere_exception import KnowhereException
+from shared.core.logging import LogEvent
 
 
 class KBBaseTask(Task):
@@ -27,7 +28,11 @@ class KBBaseTask(Task):
         job_id = self._extract_job_id(args, kwargs)
 
         # Normalize to KnowhereException
-        knowhere_exc = exc if isinstance(exc, KnowhereException) else UnknownException(original_exception=exc)
+        knowhere_exc = (
+            exc
+            if isinstance(exc, KnowhereException)
+            else UnknownException(original_exception=exc)
+        )
 
         # Use exc.logging() for canonical exception logging
         knowhere_exc.logging(job_id=job_id)
@@ -39,7 +44,9 @@ class KBBaseTask(Task):
         # Finalize failure directly to the database.
         if job_id:
             try:
-                from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
+                from shared.services.job_lifecycle_sync import (
+                    get_sync_job_lifecycle_service,
+                )
 
                 lifecycle_service = get_sync_job_lifecycle_service()
                 lifecycle_service.finalize_job_failure(
@@ -49,9 +56,13 @@ class KBBaseTask(Task):
                     error_details=error_info.get("details"),
                     should_refund=True,
                 )
-                logger.info(f"Job failure finalized: job_id={job_id}, error_code={error_info['code']}")
+                logger.info(
+                    f"Job failure finalized: job_id={job_id}, error_code={error_info['code']}"
+                )
             except Exception as e:
-                logger.error(f"Failed to finalize job failure: job_id={job_id}, error={e}")
+                logger.error(
+                    f"Failed to finalize job failure: job_id={job_id}, error={e}"
+                )
 
     def _extract_job_id(self, args, kwargs) -> Optional[str]:
         """Extract job_id from args or kwargs."""

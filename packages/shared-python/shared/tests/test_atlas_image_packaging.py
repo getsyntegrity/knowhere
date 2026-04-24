@@ -1,8 +1,8 @@
 import json
 import zipfile
 
-import pytest
 import pandas as pd
+import pytest
 from PIL import Image
 
 from shared.core.exceptions.domain_exceptions import StorageServiceException
@@ -62,7 +62,9 @@ def test_dataframe_to_chunks_preserves_actual_extension_for_vector_images():
     )
 
 
-def test_collect_image_files_uses_metadata_file_path_for_atlas_images(tmp_path, monkeypatch):
+def test_collect_image_files_uses_metadata_file_path_for_atlas_images(
+    tmp_path, monkeypatch
+):
     images_dir = tmp_path / "images"
     images_dir.mkdir()
 
@@ -143,7 +145,9 @@ def test_generate_zip_package_preserves_actual_extension_for_vector_images(tmp_p
     assert chunk_payload[0]["metadata"]["file_path"] == f"images/{vector_filename}"
 
 
-def test_collect_image_files_raises_when_declared_image_is_missing(tmp_path, monkeypatch):
+def test_collect_image_files_raises_when_declared_image_is_missing(
+    tmp_path, monkeypatch
+):
     images_dir = tmp_path / "images"
     images_dir.mkdir()
 
@@ -169,7 +173,9 @@ def test_collect_image_files_raises_when_declared_image_is_missing(tmp_path, mon
         )
 
 
-def test_collect_table_files_raises_when_declared_table_is_missing(tmp_path, monkeypatch):
+def test_collect_table_files_raises_when_declared_table_is_missing(
+    tmp_path, monkeypatch
+):
     tables_dir = tmp_path / "tables"
     tables_dir.mkdir()
 

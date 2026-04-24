@@ -47,7 +47,6 @@ from typing import Any, Dict, List, Optional, TypedDict
 from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.response.ErrorCode import ErrorCode, SubCode
 
-
 # ============================================================================
 # Type Definitions for Details Schemas
 # ============================================================================
@@ -199,7 +198,8 @@ class NotFoundException(KnowhereException):
         user_msg = f"{resource} not found"
         super().__init__(
             code=ErrorCode.NOT_FOUND,
-            internal_message=internal_message or f"{resource} with id={resource_id} not found",
+            internal_message=internal_message
+            or f"{resource} with id={resource_id} not found",
             user_message=user_msg,
             details={"resource": resource, "id": resource_id},
         )
@@ -281,7 +281,11 @@ class RateLimitException(KnowhereException):
         internal_message: Optional[str] = None,
     ):
         # Format user_message with retry_after if placeholder exists
-        formatted_user_message = user_message.format(retry_after=retry_after) if "{retry_after}" in user_message else user_message
+        formatted_user_message = (
+            user_message.format(retry_after=retry_after)
+            if "{retry_after}" in user_message
+            else user_message
+        )
 
         details: Dict[str, Any] = {
             "reason": SubCode.RATE_LIMIT_EXCEEDED.value,
@@ -292,7 +296,8 @@ class RateLimitException(KnowhereException):
 
         super().__init__(
             code=ErrorCode.RESOURCE_EXHAUSTED,
-            internal_message=internal_message or f"Rate limit exceeded: {limit} requests per {period}, retry_after={retry_after}s",
+            internal_message=internal_message
+            or f"Rate limit exceeded: {limit} requests per {period}, retry_after={retry_after}s",
             user_message=formatted_user_message,
             details=details,
         )
@@ -320,7 +325,8 @@ class QuotaExceededException(KnowhereException):
     ):
         super().__init__(
             code=ErrorCode.RESOURCE_EXHAUSTED,
-            internal_message=internal_message or f"Quota {quota_name} exceeded, limit={limit}",
+            internal_message=internal_message
+            or f"Quota {quota_name} exceeded, limit={limit}",
             user_message=user_message,
             details={
                 "reason": SubCode.QUOTA_EXCEEDED.value,
@@ -461,7 +467,7 @@ class FileSystemException(KnowhereException):
     File system operation failed (read, write, create directory). HTTP 500.
 
     5xx Error: Auto-defaults to safe user_message.
-    
+
     SECURITY: `path` is stored internally but NOT exposed in details.
 
     Details schema:
@@ -865,9 +871,10 @@ class DependencyMissingException(KnowhereException):
 class StripeServiceException(KnowhereException):
     """
     Stripe payment service operations failed.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,
@@ -886,9 +893,10 @@ class StripeServiceException(KnowhereException):
 class ConcurrencyControlException(KnowhereException):
     """
     Concurrency control (locks, state machine) operations failed.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,
@@ -907,9 +915,10 @@ class ConcurrencyControlException(KnowhereException):
 class APIKeyOperationException(KnowhereException):
     """
     API Key management operations failed.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,
@@ -928,9 +937,10 @@ class APIKeyOperationException(KnowhereException):
 class KnowledgeBaseOperationException(KnowhereException):
     """
     Knowledge Base directory/file operations failed.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,
@@ -949,9 +959,10 @@ class KnowledgeBaseOperationException(KnowhereException):
 class JobOperationException(KnowhereException):
     """
     Job management operations failed.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,
@@ -970,9 +981,10 @@ class JobOperationException(KnowhereException):
 class EmailServiceException(KnowhereException):
     """
     Email service operations failed.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,
@@ -991,9 +1003,10 @@ class EmailServiceException(KnowhereException):
 class WebhookServiceException(KnowhereException):
     """
     Webhook service operations failed.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,
@@ -1035,9 +1048,10 @@ class QStashServiceException(KnowhereException):
 class UndefinedSubscriptionPlanException(KnowhereException):
     """
     Subscription plan is undefined.
-    
+
     5xx Error: Auto-defaults to safe user_message.
     """
+
     def __init__(
         self,
         internal_message: str,

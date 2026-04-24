@@ -1,4 +1,5 @@
 """Job state-transition audit log model."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,38 +13,57 @@ from shared.core.database import Base
 
 class JobStateAuditLog(Base):
     """Job state-transition audit log."""
+
     __tablename__ = "job_state_audit_logs"
-    
+
     # Primary key.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    
+
     # Job association.
-    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False)
-    
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False
+    )
+
     # Transition details.
-    from_state: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Source state.
-    to_state: Mapped[str] = mapped_column(String(50), nullable=False)  # Destination state.
-    transition_reason: Mapped[str] = mapped_column(String(100), nullable=False)  # Transition reason.
-    
+    from_state: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True
+    )  # Source state.
+    to_state: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # Destination state.
+    transition_reason: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )  # Transition reason.
+
     # Operator details.
-    operator_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)  # Operator ID.
-    operator_type: Mapped[str] = mapped_column(String(20), nullable=False, default="system")  # Operator type: system, user, retry.
-    
+    operator_id: Mapped[Optional[str]] = mapped_column(
+        String(36), nullable=True
+    )  # Operator ID.
+    operator_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="system"
+    )  # Operator type: system, user, retry.
+
     # Transition metadata.
-    transition_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # Extra data captured during the transition.
-    
+    transition_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )  # Extra data captured during the transition.
+
     # Timestamp.
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
     # Relationships.
-    job: Mapped["Job"] = relationship("Job", back_populates="state_audit_logs", lazy="select")
-    
+    job: Mapped["Job"] = relationship(
+        "Job", back_populates="state_audit_logs", lazy="select"
+    )
+
     # Indexes.
     __table_args__ = (
-        Index('idx_audit_log_job_id', 'job_id'),
-        Index('idx_audit_log_created_at', 'created_at'),
-        Index('idx_audit_log_job_created', 'job_id', 'created_at'),
+        Index("idx_audit_log_job_id", "job_id"),
+        Index("idx_audit_log_created_at", "created_at"),
+        Index("idx_audit_log_job_created", "job_id", "created_at"),
     )
-    
+
     def __repr__(self):
         return f"<JobStateAuditLog(job_id={self.job_id}, {self.from_state}->{self.to_state})>"

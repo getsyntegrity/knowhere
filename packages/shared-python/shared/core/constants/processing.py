@@ -3,7 +3,7 @@
 
 class ProcessingConstants:
     """Processing-related constants."""
-    
+
     # File processing.
     MAX_THRESHOLD = 2000
     MIN_THRESHOLD = 500
@@ -23,13 +23,13 @@ class ProcessingConstants:
     MAX_TOKENS_QA_MULTIPLIER = 1.5
     MAX_TOKENS_QA_OUTPUT_MULTIPLIER = 1.2
     MAX_TOKENS_QA_OUTPUT_LIMIT = 20
-    
+
     # Image processing.
     IMG_MIN_SIZE = 10 * 1024  # 10KB
     IMG_MAX_SIZE = 5 * 1024 * 1024  # 5MB
     IMG_QUALITY = 100
     IMG_CHUNK_SIZE = 1024 * 1024  # 1MB
-    
+
     # PostgreSQL connection-pool configuration.
     # Base pool size, tuned to CPU core count.
     DB_POOL_SIZE = 20
@@ -47,7 +47,7 @@ class ProcessingConstants:
     DB_POOL_RESET_ON_RETURN = "commit"
     # Maximum connection lifetime in seconds.
     DB_MAX_CONNECTION_LIFETIME = 3600
-    
+
     # PostgreSQL performance tuning.
     # Query cache size.
     DB_QUERY_CACHE_SIZE = 1000
@@ -63,7 +63,7 @@ class ProcessingConstants:
     DB_VALIDATION_QUERY = "SELECT 1"
     # Connection validation timeout.
     DB_VALIDATION_TIMEOUT = 5
-    
+
     # Training parameters.
     TRAIN_BATCH_SIZE = 16
     MEMORY_K = 2

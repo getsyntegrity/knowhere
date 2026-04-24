@@ -1,4 +1,5 @@
 """Storage adapter exports."""
+
 from .s3_adapter import S3StorageAdapter
 
 # Import OSSStorageAdapter lazily so environments without oss2 still import safely.
@@ -11,5 +12,6 @@ def get_oss_adapter():
     from .oss_adapter import OSSStorageAdapter
 
     return OSSStorageAdapter
+
 
 __all__.append("get_oss_adapter")

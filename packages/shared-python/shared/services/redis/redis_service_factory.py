@@ -1,4 +1,5 @@
 """Factory for RedisService instances."""
+
 import asyncio
 import threading
 import weakref
@@ -12,29 +13,34 @@ class RedisServiceFactory:
     """Factory for Redis service instances."""
 
     # Per-event-loop cache to avoid sharing asyncio-bound Redis state across loops.
-    _services_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[RedisService, RedisConfigManager]]" = weakref.WeakKeyDictionary()
+    _services_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[RedisService, RedisConfigManager]]" = (weakref.WeakKeyDictionary())
     # Fallback cache for sync contexts without a running loop.
     _thread_local = threading.local()
     _default_config_manager: Optional[RedisConfigManager] = None
     _factory_lock = threading.Lock()
 
     @classmethod
-    def _resolve_config_manager(cls, config_manager: Optional[RedisConfigManager]) -> RedisConfigManager:
+    def _resolve_config_manager(
+        cls, config_manager: Optional[RedisConfigManager]
+    ) -> RedisConfigManager:
         if config_manager is not None:
             return config_manager
         if cls._default_config_manager is None:
             from shared.core.config import settings
+
             cls._default_config_manager = RedisConfigManager(settings)
         return cls._default_config_manager
-    
+
     @classmethod
-    def get_service(cls, config_manager: Optional[RedisConfigManager] = None) -> RedisService:
+    def get_service(
+        cls, config_manager: Optional[RedisConfigManager] = None
+    ) -> RedisService:
         """
         Get a Redis service instance.
-        
+
         Args:
             config_manager: Redis config manager, or None to use defaults.
-        
+
         Returns:
             RedisService instance.
         """
@@ -62,15 +68,17 @@ class RedisServiceFactory:
             service = RedisService(resolved_config)
             cls._thread_local.service_tuple = (service, resolved_config)
             return service
-    
+
     @classmethod
-    def create_service(cls, config_manager: Optional[RedisConfigManager] = None) -> RedisService:
+    def create_service(
+        cls, config_manager: Optional[RedisConfigManager] = None
+    ) -> RedisService:
         """
         Create a new Redis service instance.
-        
+
         Args:
             config_manager: Redis config manager, or None to use defaults.
-        
+
         Returns:
             New RedisService instance.
         """
@@ -91,7 +99,7 @@ class RedisServiceFactory:
 
         if cached:
             await cached[0].close()
-    
+
     @classmethod
     def reset(cls):
         """Reset the factory state."""

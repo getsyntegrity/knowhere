@@ -1,4 +1,5 @@
 """Frontend-facing knowledge-base schema models."""
+
 from typing import List
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,7 @@ class FileTreeBean(BaseModel):
     model_config = {
         "arbitrary_types_allowed": True,
     }
+
 
 class AddKBPathModels(BaseModel):
     path: str = Field(..., description="Knowledge-base path")

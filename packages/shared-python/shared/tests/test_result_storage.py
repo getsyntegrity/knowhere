@@ -4,7 +4,9 @@ import pytest
 
 
 def test_result_storage_does_not_depend_on_app_package():
-    source_path = Path(__file__).parents[1] / "services" / "storage" / "result_storage.py"
+    source_path = (
+        Path(__file__).parents[1] / "services" / "storage" / "result_storage.py"
+    )
     source = source_path.read_text(encoding="utf-8")
 
     assert "app.services" not in source
@@ -19,7 +21,9 @@ def test_result_s3_upload_publishes_zip_and_raw_result_tree(monkeypatch, tmp_pat
     (result_dir / "images").mkdir()
     (result_dir / "images" / "page-1.png").write_bytes(b"png")
     (result_dir / "tables").mkdir()
-    (result_dir / "tables" / "table-1.html").write_text("<table></table>", encoding="utf-8")
+    (result_dir / "tables" / "table-1.html").write_text(
+        "<table></table>", encoding="utf-8"
+    )
     (result_dir / ".DS_Store").write_bytes(b"ignored")
     (result_dir / "tmp").mkdir()
     (result_dir / "tmp" / "scratch.txt").write_text("ignored", encoding="utf-8")
@@ -50,8 +54,16 @@ def test_result_s3_upload_publishes_zip_and_raw_result_tree(monkeypatch, tmp_pat
         "tables/table-1.html": "results/job_123/tables/table-1.html",
     }
     assert ("canonical.zip", "results/job_123.zip", "results-bucket") in adapter.uploads
-    assert ("page-1.png", "results/job_123/images/page-1.png", "results-bucket") in adapter.uploads
-    assert ("table-1.html", "results/job_123/tables/table-1.html", "results-bucket") in adapter.uploads
+    assert (
+        "page-1.png",
+        "results/job_123/images/page-1.png",
+        "results-bucket",
+    ) in adapter.uploads
+    assert (
+        "table-1.html",
+        "results/job_123/tables/table-1.html",
+        "results-bucket",
+    ) in adapter.uploads
     assert all(".DS_Store" not in upload[1] for upload in adapter.uploads)
     assert all("/tmp/" not in upload[1] for upload in adapter.uploads)
     assert not zip_path.exists()
@@ -64,7 +76,9 @@ def test_result_s3_generate_artifact_url_delegates_key_construction():
         def __init__(self) -> None:
             self.generated = {}
 
-        def generate_presigned_url(self, storage_key, expiration=3600, bucket=None, method="GET"):
+        def generate_presigned_url(
+            self, storage_key, expiration=3600, bucket=None, method="GET"
+        ):
             self.generated.update(
                 {
                     "storage_key": storage_key,
@@ -77,7 +91,9 @@ def test_result_s3_generate_artifact_url_delegates_key_construction():
 
     adapter = FakeStorageAdapter()
 
-    url = ResultS3(results_bucket="results-bucket", storage_adapter=adapter).generate_artifact_url(
+    url = ResultS3(
+        results_bucket="results-bucket", storage_adapter=adapter
+    ).generate_artifact_url(
         job_id="job_123",
         artifact_ref="images/page-1.png",
         expires_in=600,
@@ -98,6 +114,8 @@ def test_result_s3_normalizes_only_client_artifact_refs():
     storage = ResultS3(results_bucket="results-bucket")
 
     assert storage.normalize_artifact_ref("/images/page-1.png") == "images/page-1.png"
-    assert storage.normalize_artifact_ref("tables/table-1.html") == "tables/table-1.html"
+    assert (
+        storage.normalize_artifact_ref("tables/table-1.html") == "tables/table-1.html"
+    )
     assert storage.normalize_artifact_ref("full.md") is None
     assert storage.normalize_artifact_ref("../images/page-1.png") == "images/page-1.png"

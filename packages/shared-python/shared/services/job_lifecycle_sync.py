@@ -6,6 +6,7 @@ used an API-side broker consumer. The worker now writes directly to the
 database in a single atomic transaction,
 using the same transactional outbox pattern for webhook events.
 """
+
 from __future__ import annotations
 
 import time
@@ -76,11 +77,15 @@ class SyncJobLifecycleService:
             try:
                 if kb_records:
                     self._bulk_insert_kb_records(db, kb_records)
-                    logger.info(f"Job {job_id} KB records inserted: count={len(kb_records)}")
+                    logger.info(
+                        f"Job {job_id} KB records inserted: count={len(kb_records)}"
+                    )
 
                 inline_payload = {"checksum": checksum}
                 job_result = self._upsert_job_result(
-                    db, job_id, delivery_mode,
+                    db,
+                    job_id,
+                    delivery_mode,
                     inline_payload=inline_payload,
                     result_s3_key=result_s3_key,
                     result_size=zip_size,
@@ -88,15 +93,19 @@ class SyncJobLifecycleService:
 
                 normalized_chunks = chunks or []
                 self._replace_chunks(db, job_result.id, normalized_chunks)
-                previous_document_scope = self._retrieval_publication.get_existing_document_scope(
-                    db,
-                    job_id=job_id,
+                previous_document_scope = (
+                    self._retrieval_publication.get_existing_document_scope(
+                        db,
+                        job_id=job_id,
+                    )
                 )
-                published_document_state = self._retrieval_publication.publish_document_state(
-                    db,
-                    job_id=job_id,
-                    job_result_id=job_result.id,
-                    chunks=normalized_chunks,
+                published_document_state = (
+                    self._retrieval_publication.publish_document_state(
+                        db,
+                        job_id=job_id,
+                        job_result_id=job_result.id,
+                        chunks=normalized_chunks,
+                    )
                 )
                 if published_document_state is not None:
                     self._retrieval_publication.publish_document_graph(
@@ -112,7 +121,8 @@ class SyncJobLifecycleService:
                 )
 
                 transition_ok = self._state_machine.mark_completed(
-                    db, job_id,
+                    db,
+                    job_id,
                     result_metadata={
                         "storage_completed": True,
                         "stored_count": stored_count,
@@ -122,10 +132,16 @@ class SyncJobLifecycleService:
                 if not transition_ok:
                     logger.error(f"Job {job_id} mark_completed transition failed")
                     db.rollback()
-                    return {"status": "failed", "job_id": job_id, "reason": "state_transition_failed"}
+                    return {
+                        "status": "failed",
+                        "job_id": job_id,
+                        "reason": "state_transition_failed",
+                    }
 
                 webhook_event = self._maybe_create_webhook_event(
-                    db, job_id, event_type="job.completed",
+                    db,
+                    job_id,
+                    event_type="job.completed",
                 )
 
                 db.commit()
@@ -167,7 +183,9 @@ class SyncJobLifecycleService:
         with get_sync_db_context() as db:
             try:
                 transition_ok = self._state_machine.mark_failed(
-                    db, job_id, error_message,
+                    db,
+                    job_id,
+                    error_message,
                     error_code=error_code,
                     error_details=error_details,
                 )
@@ -181,7 +199,9 @@ class SyncJobLifecycleService:
 
                 normalized_error_details = normalize_error_details(error_details)
                 webhook_event = self._maybe_create_webhook_event(
-                    db, job_id, event_type="job.failed",
+                    db,
+                    job_id,
+                    event_type="job.failed",
                     extra_payload={
                         "error": build_standard_error_response(
                             code=error_code,
@@ -222,11 +242,14 @@ class SyncJobLifecycleService:
             )
 
             pipe = redis_service.pipeline()
-            pipe.hset(progress_key, mapping={
-                "progress": str(progress),
-                "message": message,
-                "timestamp": str(int(time.time())),
-            })
+            pipe.hset(
+                progress_key,
+                mapping={
+                    "progress": str(progress),
+                    "message": message,
+                    "timestamp": str(int(time.time())),
+                },
+            )
             pipe.expire(progress_key, task_ttl)
             pipe.execute()
             return True
@@ -247,9 +270,7 @@ class SyncJobLifecycleService:
         result_size: Optional[int] = None,
     ) -> JobResult:
         """Create or update JobResult row."""
-        result = db.execute(
-            select(JobResult).where(JobResult.job_id == job_id)
-        )
+        result = db.execute(select(JobResult).where(JobResult.job_id == job_id))
         existing = result.scalar_one_or_none()
 
         if existing:
@@ -289,15 +310,17 @@ class SyncJobLifecycleService:
         chunk_models = []
         for index, chunk in enumerate(chunks):
             chunk_identifier = chunk.get("chunk_id") or str(uuid4())
-            chunk_models.append(JobChunk(
-                job_result_id=job_result_id,
-                chunk_id=chunk_identifier,
-                chunk_type=chunk.get("type", "paragraph"),
-                text=chunk.get("text"),
-                path=chunk.get("metadata", {}).get("path"),
-                chunk_metadata=chunk.get("metadata"),
-                sort_order=chunk.get("order", index),
-            ))
+            chunk_models.append(
+                JobChunk(
+                    job_result_id=job_result_id,
+                    chunk_id=chunk_identifier,
+                    chunk_type=chunk.get("type", "paragraph"),
+                    text=chunk.get("text"),
+                    path=chunk.get("metadata", {}).get("path"),
+                    chunk_metadata=chunk.get("metadata"),
+                    sort_order=chunk.get("order", index),
+                )
+            )
         db.add_all(chunk_models)
         db.flush()
 
@@ -325,7 +348,9 @@ class SyncJobLifecycleService:
 
         return {"user_id": str(job.user_id), "namespaces": namespaces, "job_id": job_id}
 
-    def _post_commit_invalidate_retrieval_cache(self, cache_invalidation: Optional[Dict[str, Any]]) -> None:
+    def _post_commit_invalidate_retrieval_cache(
+        self, cache_invalidation: Optional[Dict[str, Any]]
+    ) -> None:
         if not cache_invalidation:
             return
         try:
@@ -372,9 +397,7 @@ class SyncJobLifecycleService:
         extra_payload: Optional[Dict[str, Any]] = None,
     ) -> Optional[WebhookEvent]:
         """Create a WebhookEvent if the job has webhooks enabled."""
-        result = db.execute(
-            select(Job).where(Job.job_id == job_id)
-        )
+        result = db.execute(select(Job).where(Job.job_id == job_id))
         job = result.scalar_one_or_none()
 
         if not job:
@@ -434,14 +457,17 @@ class SyncJobLifecycleService:
             logger.error(f"Credit refund failed for job {job_id}: {exc}")
 
     def _post_commit_enqueue_webhook(
-        self, webhook_event: Optional[WebhookEvent],
+        self,
+        webhook_event: Optional[WebhookEvent],
     ) -> None:
         """Publish a persisted webhook via QStash after commit (best-effort)."""
         if not webhook_event:
             return
 
         try:
-            from shared.services.webhook.qstash_publisher import get_qstash_webhook_publisher
+            from shared.services.webhook.qstash_publisher import (
+                get_qstash_webhook_publisher,
+            )
 
             publisher = get_qstash_webhook_publisher()
             message_id = publisher.publish_event(webhook_event.id)

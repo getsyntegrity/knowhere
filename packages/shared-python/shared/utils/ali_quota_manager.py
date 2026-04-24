@@ -4,12 +4,16 @@ AliQuotaManager — Redis-backed token pool for Aliyun DashScope API keys.
 Distributes requests across multiple ALI_API_KEYS using the shared
 BaseQuotaManager, with per-token RPM / daily quotas and 429 cooldown.
 """
+
 from __future__ import annotations
 
 from typing import List, Optional
 
 from shared.core.config import settings
-from shared.services.redis.redis_sync_service import SyncRedisService, SyncRedisServiceFactory
+from shared.services.redis.redis_sync_service import (
+    SyncRedisService,
+    SyncRedisServiceFactory,
+)
 from shared.utils.quota_manager import BaseQuotaManager, TokenConfig
 
 
@@ -21,7 +25,9 @@ class AliQuotaManager(BaseQuotaManager):
     user_message = "AI service is busy right now. Please retry shortly."
 
     @classmethod
-    def from_settings(cls, redis_service: Optional[SyncRedisService] = None) -> "AliQuotaManager":
+    def from_settings(
+        cls, redis_service: Optional[SyncRedisService] = None
+    ) -> "AliQuotaManager":
         """Create an AliQuotaManager from application settings."""
         tokens = cls.parse_tokens_from_settings()
         instance = cls(redis_service or SyncRedisServiceFactory.get_service(), tokens)

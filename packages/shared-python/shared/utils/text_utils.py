@@ -1,7 +1,9 @@
 """Text utilities shared across services."""
+
 import re
 import warnings
 from typing import List, Optional
+
 from shared.utils.chunk_refs import CHUNK_REF_PATTERN
 
 warnings.filterwarnings(
@@ -17,10 +19,10 @@ import jieba
 def remove_duplicates_orderkept(input_list: List) -> List:
     """
     Remove duplicates while preserving order.
-    
+
     Args:
         input_list: Input list.
-    
+
     Returns:
         Deduplicated list.
     """
@@ -34,7 +36,8 @@ def remove_duplicates_orderkept(input_list: List) -> List:
 
 
 # Single regex for Chinese chars, English words, and number groups
-_CN_EN_NUM_RE = re.compile(r'[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?')
+_CN_EN_NUM_RE = re.compile(r"[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?")
+
 
 def count_cn_en(text: str) -> int:
     """Count Chinese chars, English words, and numbers in one regex pass."""
@@ -57,22 +60,27 @@ def _is_meaningful_token(token: str) -> bool:
 # Lazy-loaded default stopwords (module-level cache)
 _DEFAULT_STOPWORDS: Optional[frozenset] = None
 
+
 def _get_default_stopwords() -> frozenset:
     """Load default stopwords on first call, then return cached frozenset."""
     global _DEFAULT_STOPWORDS
     if _DEFAULT_STOPWORDS is None:
         from shared.core.constants.stopwords import DEFAULT_STOPWORDS
+
         _DEFAULT_STOPWORDS = DEFAULT_STOPWORDS
     return _DEFAULT_STOPWORDS
 
 
 # Pre-clean: strip chunk reference markers before tokenization
 _CHUNK_MARKER_RE = re.compile(
-    rf'{CHUNK_REF_PATTERN}|image-\d+|table-\d+',
+    rf"{CHUNK_REF_PATTERN}|image-\d+|table-\d+",
     re.IGNORECASE,
 )
 
-def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = None, link_char: str = ';') -> List[str]:
+
+def tokenize2stw_remove(
+    contents: List[str], stopwords: Optional[List[str]] = None, link_char: str = ";"
+) -> List[str]:
     """
     Uses jieba for tokenization which handles both Chinese and English text natively:
     - Chinese: jieba word segmentation
@@ -95,13 +103,13 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
     res_contents = []
     for content in contents:
         # Pre-clean: remove IMAGE_/TABLE_ markers and reference labels
-        content = _CHUNK_MARKER_RE.sub('', content)
+        content = _CHUNK_MARKER_RE.sub("", content)
         if hasattr(jieba, "lcut"):
             raw_tokens = jieba.lcut(content)
         elif hasattr(jieba, "cut"):
             raw_tokens = list(jieba.cut(content))
         else:
-            raw_tokens = re.split(r'[\s,;，；。！？、\-/]+', content)
+            raw_tokens = re.split(r"[\s,;，；。！？、\-/]+", content)
         # Filter: keep only tokens with meaningful characters (Chinese/English/numbers)
         tokens = [t for t in raw_tokens if _is_meaningful_token(t)]
         # Remove stopwords

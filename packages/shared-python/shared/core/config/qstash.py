@@ -1,6 +1,7 @@
 """
 QStash configuration for outbound webhook delivery via Upstash QStash.
 """
+
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -24,7 +25,9 @@ class QStashConfig(BaseModel):
     )
 
     # QStash retry configuration (approximate exponential backoff)
-    QSTASH_MAX_RETRIES: int = Field(default=5, description="QStash max delivery retries")
+    QSTASH_MAX_RETRIES: int = Field(
+        default=5, description="QStash max delivery retries"
+    )
 
     @property
     def qstash_callback_url(self) -> Optional[str]:

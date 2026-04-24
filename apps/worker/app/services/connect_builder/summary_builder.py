@@ -18,8 +18,8 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
-from shared.utils.chunk_refs import CHUNK_REF_PATTERN, REFERENCE_LABEL_PATTERN
 
+from shared.utils.chunk_refs import CHUNK_REF_PATTERN, REFERENCE_LABEL_PATTERN
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,10 @@ def _llm_summarize(snippets_text: str, node_name: str) -> str:
     Returns plain text summary (≤100 chars), or "" on failure.
     """
     try:
-        from shared.services.ai.prompt_service import build_prompt, _detect_text_language
+        from shared.services.ai.prompt_service import (
+            _detect_text_language,
+            build_prompt,
+        )
         from shared.utils.OpenAICompatibleClientSync import get_openai_client
 
         # Deterministic language lock — see prompt_service._language_directive
@@ -131,8 +134,7 @@ def _build_chunk_lookup(
             content = chunk.get("content", "")
             lines = content.split("\n")
             clean_lines = [
-                l for l in lines
-                if not marker_re.search(l) and not ref_re.match(l)
+                l for l in lines if not marker_re.search(l) and not ref_re.match(l)
             ]
             clean_text = "\n".join(clean_lines).strip()
 
@@ -142,7 +144,7 @@ def _build_chunk_lookup(
             else:
                 snippet_parts = []
                 snippet_parts.append(node_key)
-                
+
                 if isinstance(meta, dict):
                     kw = (meta.get("keywords") or "").strip()
                     if kw:
@@ -197,7 +199,7 @@ def _recursive_summarize(
         node_name = path_prefix.split("/")[-1] if path_prefix else ""
         snippet = chunk_lookup.get(node_name, "")
         if snippet:
-            # Note: Leaf snippets rely on _build_chunk_lookup to provide the proper 
+            # Note: Leaf snippets rely on _build_chunk_lookup to provide the proper
             # length. If it's from metadata.summary, it is used directly without truncation.
             tree[SUMMARY_KEY] = snippet
         else:
@@ -212,7 +214,9 @@ def _recursive_summarize(
         if not isinstance(subtree, dict):
             continue
         child_path = f"{path_prefix}/{key}" if path_prefix else key
-        child_summary = _recursive_summarize(subtree, chunk_lookup, child_path, use_llm=use_llm)
+        child_summary = _recursive_summarize(
+            subtree, chunk_lookup, child_path, use_llm=use_llm
+        )
         if child_summary:
             child_summaries.append((key, child_summary))
 
@@ -290,8 +294,7 @@ def enrich_hierarchy_summaries(
         targets = [
             entry
             for entry in os.listdir(kb_dir)
-            if os.path.isdir(os.path.join(kb_dir, entry))
-            and not entry.startswith(".")
+            if os.path.isdir(os.path.join(kb_dir, entry)) and not entry.startswith(".")
         ]
 
     for file_name in targets:

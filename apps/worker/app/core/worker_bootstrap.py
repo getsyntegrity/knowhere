@@ -1,4 +1,5 @@
 """Bootstrap the full Celery worker runtime only in the main worker process."""
+
 import os
 import socket
 import subprocess
@@ -30,6 +31,7 @@ def init_worker(**kwargs) -> None:
         from celery.concurrency.gevent import TaskPool as GeventTaskPool
 
         if not hasattr(GeventTaskPool, "_original_terminate_job"):
+
             def _graceful_terminate_job(self, pid, signal=None):
                 logger.warning(
                     f"gevent pool cannot kill greenlet (pid={pid}), "

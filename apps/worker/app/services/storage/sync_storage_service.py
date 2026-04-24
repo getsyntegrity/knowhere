@@ -3,6 +3,7 @@ Sync storage operations for worker tasks.
 Provides S3 file operations and HTTP file downloads using sync adapters
 that yield cooperatively under gevent.
 """
+
 import os
 import tempfile
 import uuid as _uuid
@@ -40,7 +41,9 @@ def verify_s3_file_exists(s3_key: str, bucket: Optional[str] = None) -> Dict[str
         )
 
 
-def generate_download_url(s3_key: str, bucket: Optional[str] = None, expires_in: int = 3600) -> Dict[str, Any]:
+def generate_download_url(
+    s3_key: str, bucket: Optional[str] = None, expires_in: int = 3600
+) -> Dict[str, Any]:
     """Generate presigned download URL using sync adapter."""
     adapter = get_storage_adapter()
     bucket_name = bucket or settings.S3_BUCKET_NAME

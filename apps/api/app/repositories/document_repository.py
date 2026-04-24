@@ -1,6 +1,7 @@
 """
 Document data access for retrieval document lifecycle flows.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

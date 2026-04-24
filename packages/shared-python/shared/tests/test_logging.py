@@ -3,7 +3,10 @@ from io import StringIO
 from fastapi import HTTPException
 from loguru import logger
 
-from shared.core.exceptions.domain_exceptions import RateLimitException, UnknownException
+from shared.core.exceptions.domain_exceptions import (
+    RateLimitException,
+    UnknownException,
+)
 from shared.core.logging import (
     _DEFAULT_CONSOLE_FORMAT,
     _DEVELOPMENT_CONSOLE_FORMAT,

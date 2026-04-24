@@ -13,6 +13,7 @@ The caller (app_service) handles path→row hydration and union with discovery r
 
 Falls back gracefully when LLM is unavailable or fails.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,14 +23,20 @@ import time
 from typing import Any, Sequence
 
 from loguru import logger
-from sqlalchemy import func, select, or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.models.database.document import Document, DocumentChunk, DocumentSection, GraphNode, GraphEdge
+from shared.models.database.document import (
+    Document,
+    DocumentChunk,
+    DocumentSection,
+    GraphEdge,
+    GraphNode,
+    RetrievalHitStat,
+)
 from shared.models.database.job_result import JobResult
 from shared.services.retrieval.hit_stats_service import compute_importance_score
 from shared.services.retrieval.llm_adapter import LLMFn
-from shared.models.database.document import RetrievalHitStat
 
 _CONTENT_PREVIEW_LEN = 120
 _MAX_OVERVIEW_FILES = 50
@@ -79,7 +86,7 @@ def _parse_json_array(text: str) -> list[str]:
             return [str(x) for x in result]
     except (json.JSONDecodeError, ValueError):
         pass
-    match = re.search(r'\[.*?\]', text, re.DOTALL)
+    match = re.search(r"\[.*?\]", text, re.DOTALL)
     if match:
         try:
             result = json.loads(match.group())
@@ -93,30 +100,37 @@ def _parse_json_array(text: str) -> list[str]:
 def _keywords_need_repair(keywords: list[str] | None) -> bool:
     if not isinstance(keywords, list) or not keywords:
         return True
-    bad = sum(1 for kw in keywords if not kw or len(str(kw)) <= 1
-              or re.match(r'^\d+[.,%]*$', str(kw)))
+    bad = sum(
+        1
+        for kw in keywords
+        if not kw or len(str(kw)) <= 1 or re.match(r"^\d+[.,%]*$", str(kw))
+    )
     return bad >= len(keywords) * 0.5
 
 
-def _compute_tfidf_keywords(chunk_metadata_list: list[dict[str, Any]], top_k: int = 10) -> list[str]:
+def _compute_tfidf_keywords(
+    chunk_metadata_list: list[dict[str, Any]], top_k: int = 10
+) -> list[str]:
     df_count: dict[str, int] = {}
     tf_count: dict[str, int] = {}
     total = len(chunk_metadata_list) or 1
     for meta in chunk_metadata_list:
         if not isinstance(meta, dict):
             continue
-        terms = list(meta.get('tokens', [])) + list(meta.get('keywords', []))
+        terms = list(meta.get("tokens", [])) + list(meta.get("keywords", []))
         seen: set[str] = set()
         for t in terms:
-            if not t or len(str(t)) <= 1 or re.match(r'^\d+[.,%]*$', str(t)):
+            if not t or len(str(t)) <= 1 or re.match(r"^\d+[.,%]*$", str(t)):
                 continue
             lower = str(t).lower()
             tf_count[lower] = tf_count.get(lower, 0) + 1
             if lower not in seen:
                 df_count[lower] = df_count.get(lower, 0) + 1
                 seen.add(lower)
-    scored = [(term, freq * (math.log(total / (df_count.get(term, 1))) + 1))
-              for term, freq in tf_count.items()]
+    scored = [
+        (term, freq * (math.log(total / (df_count.get(term, 1))) + 1))
+        for term, freq in tf_count.items()
+    ]
     scored.sort(key=lambda x: x[1], reverse=True)
     return [s[0] for s in scored[:top_k]]
 
@@ -136,7 +150,7 @@ async def _build_knowledge_map_overview(
         select(Document)
         .where(Document.user_id == user_id)
         .where(Document.namespace == namespace)
-        .where(Document.status == 'active')
+        .where(Document.status == "active")
         .where(Document.current_job_result_id.is_not(None))
         .order_by(Document.updated_at.desc())
         .limit(_MAX_OVERVIEW_FILES)
@@ -145,28 +159,33 @@ async def _build_knowledge_map_overview(
     documents = list(doc_result.scalars())
 
     if not documents:
-        return '(empty)', {}
+        return "(empty)", {}
 
     doc_ids = [d.document_id for d in documents]
     doc_id_to_name: dict[str, str] = {
-        d.document_id: (d.source_file_name or d.document_id)
-        for d in documents
+        d.document_id: (d.source_file_name or d.document_id) for d in documents
     }
 
     chunk_stats_stmt = (
         select(
             DocumentChunk.document_id,
-            func.count(DocumentChunk.id).label('chunk_count'),
-            func.count(func.nullif(DocumentChunk.chunk_type, 'text')).label('media_count'),
+            func.count(DocumentChunk.id).label("chunk_count"),
+            func.count(func.nullif(DocumentChunk.chunk_type, "text")).label(
+                "media_count"
+            ),
         )
-        .join(Document, (Document.document_id == DocumentChunk.document_id) & (Document.current_job_result_id == DocumentChunk.job_result_id))
+        .join(
+            Document,
+            (Document.document_id == DocumentChunk.document_id)
+            & (Document.current_job_result_id == DocumentChunk.job_result_id),
+        )
         .where(DocumentChunk.document_id.in_(doc_ids))
         .group_by(DocumentChunk.document_id)
     )
     chunk_stats_result = await db.execute(chunk_stats_stmt)
     chunk_stats: dict[str, dict[str, int]] = {}
     for row in chunk_stats_result.all():
-        chunk_stats[row[0]] = {'total': row[1], 'media': row[2]}
+        chunk_stats[row[0]] = {"total": row[1], "media": row[2]}
 
     hit_stmt = (
         select(
@@ -177,7 +196,7 @@ async def _build_knowledge_map_overview(
         )
         .where(RetrievalHitStat.user_id == user_id)
         .where(RetrievalHitStat.namespace == namespace)
-        .where(RetrievalHitStat.hit_kind == 'document')
+        .where(RetrievalHitStat.hit_kind == "document")
         .where(RetrievalHitStat.document_id.in_(doc_ids))
     )
     hit_result = await db.execute(hit_stmt)
@@ -188,19 +207,29 @@ async def _build_knowledge_map_overview(
     section_summaries_stmt = (
         select(
             DocumentSection.document_id,
-            func.string_agg(DocumentSection.section_title, ' / ').label('titles'),
+            func.string_agg(DocumentSection.section_title, " / ").label("titles"),
         )
-        .join(Document, (Document.document_id == DocumentSection.document_id) & (Document.current_job_result_id == DocumentSection.job_result_id))
+        .join(
+            Document,
+            (Document.document_id == DocumentSection.document_id)
+            & (Document.current_job_result_id == DocumentSection.job_result_id),
+        )
         .where(DocumentSection.document_id.in_(doc_ids))
         .where(DocumentSection.section_level <= 2)
         .group_by(DocumentSection.document_id)
     )
     section_result = await db.execute(section_summaries_stmt)
-    section_titles: dict[str, str] = {row[0]: row[1] or '' for row in section_result.all()}
+    section_titles: dict[str, str] = {
+        row[0]: row[1] or "" for row in section_result.all()
+    }
 
     chunk_meta_stmt = (
         select(DocumentChunk.document_id, DocumentChunk.chunk_metadata)
-        .join(Document, (Document.document_id == DocumentChunk.document_id) & (Document.current_job_result_id == DocumentChunk.job_result_id))
+        .join(
+            Document,
+            (Document.document_id == DocumentChunk.document_id)
+            & (Document.current_job_result_id == DocumentChunk.job_result_id),
+        )
         .where(DocumentChunk.document_id.in_(doc_ids))
     )
     chunk_meta_result = await db.execute(chunk_meta_stmt)
@@ -212,35 +241,35 @@ async def _build_knowledge_map_overview(
     for did, metas in doc_chunk_metas.items():
         existing_kws = []
         for m in metas:
-            existing_kws.extend(m.get('keywords', []))
+            existing_kws.extend(m.get("keywords", []))
         if _keywords_need_repair(existing_kws):
             kws = _compute_tfidf_keywords(metas)
         else:
             kws = [str(k) for k in existing_kws if k and len(str(k)) > 1][:10]
         if kws:
-            doc_keywords[did] = ', '.join(kws[:8])
+            doc_keywords[did] = ", ".join(kws[:8])
 
     lines: list[str] = []
     for doc in documents:
         did = doc.document_id
         name = doc_id_to_name[did]
-        stats = chunk_stats.get(did, {'total': 0, 'media': 0})
+        stats = chunk_stats.get(did, {"total": 0, "media": 0})
         importance = doc_importance.get(did, 0.0)
-        titles = section_titles.get(did, '')
+        titles = section_titles.get(did, "")
 
         line = f'- [{did}] {name}  chunks={stats["total"]}'
-        if stats['media'] > 0:
+        if stats["media"] > 0:
             line += f' media={stats["media"]}'
         if importance > 0:
-            line += f' importance={importance}'
-        kw_str = doc_keywords.get(did, '')
+            line += f" importance={importance}"
+        kw_str = doc_keywords.get(did, "")
         if kw_str:
             line += f'  keywords="{kw_str}"'
         if titles:
             line += f'  sections="{titles[:200]}"'
         lines.append(line)
 
-    return '\n'.join(lines), doc_id_to_name
+    return "\n".join(lines), doc_id_to_name
 
 
 async def _build_chunks_slim(
@@ -265,7 +294,9 @@ async def _build_chunks_slim(
             DocumentChunk.chunk_metadata,
             DocumentSection.section_path,
         )
-        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+        .outerjoin(
+            DocumentSection, DocumentSection.section_id == DocumentChunk.section_id
+        )
         .where(DocumentChunk.document_id == document_id)
         .where(DocumentChunk.job_result_id == job_result_id)
         .order_by(DocumentChunk.sort_order)
@@ -273,24 +304,31 @@ async def _build_chunks_slim(
     )
     result = await db.execute(stmt)
     chunks: list[dict[str, str]] = []
-    for chunk_id, chunk_type, content, source_chunk_path, chunk_metadata, section_path in result.all():
+    for (
+        chunk_id,
+        chunk_type,
+        content,
+        source_chunk_path,
+        chunk_metadata,
+        section_path,
+    ) in result.all():
         # Path: prefer section_path, fallback to source_chunk_path
-        path = section_path or source_chunk_path or ''
+        path = section_path or source_chunk_path or ""
         if not path:
             continue
 
         # Preview: prefer metadata.summary (aligned with KB _build_slim_chunk)
         meta = chunk_metadata or {}
-        summary = re.sub(r'\s+', ' ', str(meta.get('summary') or '')).strip()
-        raw_content = re.sub(r'\s+', ' ', str(content or '')).strip()
+        summary = re.sub(r"\s+", " ", str(meta.get("summary") or "")).strip()
+        raw_content = re.sub(r"\s+", " ", str(content or "")).strip()
         preview = summary or raw_content[:_CONTENT_PREVIEW_LEN]
 
         entry: dict[str, str] = {
-            'path': path,
-            'type': chunk_type or 'text',
+            "path": path,
+            "type": chunk_type or "text",
         }
         if preview:
-            entry['preview'] = preview[:_CONTENT_PREVIEW_LEN]
+            entry["preview"] = preview[:_CONTENT_PREVIEW_LEN]
         chunks.append(entry)
     return chunks
 
@@ -301,18 +339,18 @@ def _format_chunks_for_llm(chunks: list[dict[str, str]], max_chars: int = 4000) 
     Shows path (not chunk_id), aligned with KB's _format_chunks_slim().
     """
     if not chunks:
-        return '(no chunks available)'
+        return "(no chunks available)"
 
     def _render(include_preview: bool) -> str:
         lines: list[str] = []
         for c in chunks:
             line = f'- [{c["type"]}] path="{c["path"]}"'
-            if include_preview and c.get('preview'):
+            if include_preview and c.get("preview"):
                 line += f' | {c["preview"]}'
-            if len('\n'.join(lines + [line])) > max_chars:
+            if len("\n".join(lines + [line])) > max_chars:
                 break
             lines.append(line)
-        return '\n'.join(lines) if lines else '(no chunks available)'
+        return "\n".join(lines) if lines else "(no chunks available)"
 
     if len(chunks) > 50:
         return _render(include_preview=False)
@@ -323,6 +361,7 @@ def _format_chunks_for_llm(chunks: list[dict[str, str]], max_chars: int = 4000) 
 # ------------------------------------------------------------------
 # GREP document discovery (aligned with KB do_discover_files)
 # ------------------------------------------------------------------
+
 
 async def _grep_discover_document_ids(
     db: AsyncSession,
@@ -339,31 +378,34 @@ async def _grep_discover_document_ids(
     contains query terms, its parent document is included in the KG scope.
     """
     # Tokenize query into searchable units (Chinese groups + English words)
-    units = re.findall(r'[\u4e00-\u9fff]{2,4}|[a-zA-Z0-9]{2,}', query.lower())
+    units = re.findall(r"[\u4e00-\u9fff]{2,4}|[a-zA-Z0-9]{2,}", query.lower())
     if not units:
         return []
 
     # Build OR conditions for ILIKE matching
     conditions = []
     params: dict[str, str] = {
-        'user_id': user_id,
-        'namespace': namespace,
+        "user_id": user_id,
+        "namespace": namespace,
     }
     for i, unit in enumerate(units[:8]):  # cap at 8 terms to avoid huge queries
-        param_name = f'unit_{i}'
-        params[param_name] = f'%{unit}%'
-        conditions.append(DocumentChunk.term_search_text.ilike(f'%{unit}%'))
+        param_name = f"unit_{i}"
+        params[param_name] = f"%{unit}%"
+        conditions.append(DocumentChunk.term_search_text.ilike(f"%{unit}%"))
 
     if not conditions:
         return []
 
     stmt = (
         select(Document.document_id)
-        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id)
-              & (DocumentChunk.job_result_id == Document.current_job_result_id))
+        .join(
+            DocumentChunk,
+            (DocumentChunk.document_id == Document.document_id)
+            & (DocumentChunk.job_result_id == Document.current_job_result_id),
+        )
         .where(Document.user_id == user_id)
         .where(Document.namespace == namespace)
-        .where(Document.status == 'active')
+        .where(Document.status == "active")
         .where(DocumentChunk.term_search_text.is_not(None))
         .where(or_(*conditions))
         .distinct()
@@ -379,6 +421,7 @@ async def _grep_discover_document_ids(
 # ------------------------------------------------------------------
 # Edge expansion (aligned with KB KGIndex.neighbors)
 # ------------------------------------------------------------------
+
 
 async def _expand_by_edges(
     db: AsyncSession,
@@ -401,7 +444,11 @@ async def _expand_by_edges(
     for _ in range(hops):
         # Find graph nodes owned by current documents
         node_stmt = (
-            select(GraphNode.node_id, GraphNode.owner_document_id, GraphNode.ref_document_id)
+            select(
+                GraphNode.node_id,
+                GraphNode.owner_document_id,
+                GraphNode.ref_document_id,
+            )
             .where(GraphNode.user_id == user_id)
             .where(GraphNode.namespace == namespace)
             .where(GraphNode.owner_document_id.in_(list(current)))
@@ -423,10 +470,12 @@ async def _expand_by_edges(
             select(GraphEdge.source_node_id, GraphEdge.target_node_id)
             .where(GraphEdge.user_id == user_id)
             .where(GraphEdge.namespace == namespace)
-            .where(or_(
-                GraphEdge.source_node_id.in_(list(node_ids)),
-                GraphEdge.target_node_id.in_(list(node_ids)),
-            ))
+            .where(
+                or_(
+                    GraphEdge.source_node_id.in_(list(node_ids)),
+                    GraphEdge.target_node_id.in_(list(node_ids)),
+                )
+            )
         )
         edge_result = await db.execute(edge_stmt)
 
@@ -441,9 +490,8 @@ async def _expand_by_edges(
             break
 
         # Resolve neighbor nodes to document_ids
-        neighbor_doc_stmt = (
-            select(GraphNode.owner_document_id)
-            .where(GraphNode.node_id.in_(list(neighbor_node_ids)))
+        neighbor_doc_stmt = select(GraphNode.owner_document_id).where(
+            GraphNode.node_id.in_(list(neighbor_node_ids))
         )
         neighbor_doc_result = await db.execute(neighbor_doc_stmt)
         for (doc_id,) in neighbor_doc_result.all():
@@ -460,6 +508,7 @@ async def _expand_by_edges(
 # ------------------------------------------------------------------
 # Main entry point
 # ------------------------------------------------------------------
+
 
 async def agent_navigate(
     db: AsyncSession,
@@ -487,49 +536,56 @@ async def agent_navigate(
     t0 = time.monotonic()
 
     overview_text, doc_id_to_name = await _build_knowledge_map_overview(
-        db, user_id=user_id, namespace=namespace,
+        db,
+        user_id=user_id,
+        namespace=namespace,
     )
-    if overview_text == '(empty)':
-        logger.info('retrieval: agent_navigate: no active documents, skipping')
+    if overview_text == "(empty)":
+        logger.info("retrieval: agent_navigate: no active documents, skipping")
         return []
 
-    logger.info(
-        f'retrieval: agent_navigate: kg_overview={len(doc_id_to_name)} files'
-    )
+    logger.info(f"retrieval: agent_navigate: kg_overview={len(doc_id_to_name)} files")
 
     # ── Step 1: LLM selects files ──
     file_prompt = _FILE_SELECT_PROMPT.format(
-        overview=overview_text, query=query, max_files=max_files,
+        overview=overview_text,
+        query=query,
+        max_files=max_files,
     )
     t1 = time.monotonic()
     try:
         file_response = await llm_fn(file_prompt)
         selected_ids = _parse_json_array(file_response)
     except Exception as exc:
-        logger.error(f'retrieval: agent_navigate: LLM file selection failed: {exc}')
+        logger.error(f"retrieval: agent_navigate: LLM file selection failed: {exc}")
         return []
 
     elapsed_file = round((time.monotonic() - t1) * 1000)
 
     exclude_set = set(exclude_document_ids)
-    valid_ids = [did for did in selected_ids if did in doc_id_to_name and did not in exclude_set]
+    valid_ids = [
+        did for did in selected_ids if did in doc_id_to_name and did not in exclude_set
+    ]
 
     if not valid_ids:
         logger.warning(
-            f'retrieval: agent_navigate: LLM returned no valid files '
-            f'(raw={selected_ids}) in {elapsed_file}ms'
+            f"retrieval: agent_navigate: LLM returned no valid files "
+            f"(raw={selected_ids}) in {elapsed_file}ms"
         )
         return []
 
     logger.info(
-        f'retrieval: agent_navigate: llm_file_select → '
-        f'{[doc_id_to_name.get(d, d) for d in valid_ids]} in {elapsed_file}ms'
+        f"retrieval: agent_navigate: llm_file_select → "
+        f"{[doc_id_to_name.get(d, d) for d in valid_ids]} in {elapsed_file}ms"
     )
 
     # ── GREP discovery: include parent documents of term-hit chunks ──
     try:
         grep_doc_ids = await _grep_discover_document_ids(
-            db, user_id=user_id, namespace=namespace, query=query,
+            db,
+            user_id=user_id,
+            namespace=namespace,
+            query=query,
             exclude_document_ids=exclude_document_ids,
         )
         if grep_doc_ids:
@@ -539,31 +595,37 @@ async def agent_navigate(
                     valid_ids.append(did)
             if len(valid_ids) > pre_count:
                 logger.info(
-                    f'retrieval: agent_navigate: grep_discover added '
-                    f'{len(valid_ids) - pre_count} more documents'
+                    f"retrieval: agent_navigate: grep_discover added "
+                    f"{len(valid_ids) - pre_count} more documents"
                 )
     except Exception as exc:
-        logger.warning(f'retrieval: agent_navigate: grep_discover failed (ignored): {exc}')
+        logger.warning(
+            f"retrieval: agent_navigate: grep_discover failed (ignored): {exc}"
+        )
 
     # ── Edge expansion: include neighbor documents ──
     try:
         expanded_ids = await _expand_by_edges(
-            db, document_ids=valid_ids, user_id=user_id, namespace=namespace,
+            db,
+            document_ids=valid_ids,
+            user_id=user_id,
+            namespace=namespace,
         )
         if len(expanded_ids) > len(valid_ids):
             logger.info(
-                f'retrieval: agent_navigate: edge_expand '
-                f'{len(valid_ids)}->{len(expanded_ids)} documents'
+                f"retrieval: agent_navigate: edge_expand "
+                f"{len(valid_ids)}->{len(expanded_ids)} documents"
             )
             valid_ids = expanded_ids
     except Exception as exc:
-        logger.warning(f'retrieval: agent_navigate: edge_expand failed (ignored): {exc}')
+        logger.warning(
+            f"retrieval: agent_navigate: edge_expand failed (ignored): {exc}"
+        )
 
     # ── Step 2: For each file, LLM selects chunk paths ──
     doc_job_map: dict[str, str] = {}
-    doc_stmt = (
-        select(Document.document_id, Document.current_job_result_id)
-        .where(Document.document_id.in_(valid_ids))
+    doc_stmt = select(Document.document_id, Document.current_job_result_id).where(
+        Document.document_id.in_(valid_ids)
     )
     doc_result = await db.execute(doc_stmt)
     for did, jrid in doc_result.all():
@@ -578,10 +640,12 @@ async def agent_navigate(
             continue
 
         chunks_slim = await _build_chunks_slim(
-            db, document_id=doc_id, job_result_id=job_result_id,
+            db,
+            document_id=doc_id,
+            job_result_id=job_result_id,
         )
         if not chunks_slim:
-            logger.debug(f'retrieval: agent_navigate: no chunks for doc={doc_id}')
+            logger.debug(f"retrieval: agent_navigate: no chunks for doc={doc_id}")
             continue
 
         chunks_text = _format_chunks_for_llm(chunks_slim)
@@ -593,27 +657,28 @@ async def agent_navigate(
             max_chunks=max_chunks_per_file,
         )
 
-        valid_paths = {c['path'] for c in chunks_slim if c.get('path')}
+        valid_paths = {c["path"] for c in chunks_slim if c.get("path")}
 
         t2 = time.monotonic()
         try:
             chunk_response = await llm_fn(chunk_prompt)
             selected_paths = [
-                path for path in _parse_json_array(chunk_response)
+                path
+                for path in _parse_json_array(chunk_response)
                 if path in valid_paths
             ]
         except Exception as exc:
             logger.error(
-                f'retrieval: agent_navigate: LLM chunk path selection failed '
-                f'for doc={doc_id}: {exc}'
+                f"retrieval: agent_navigate: LLM chunk path selection failed "
+                f"for doc={doc_id}: {exc}"
             )
             continue
 
         elapsed_chunk = round((time.monotonic() - t2) * 1000)
         logger.info(
-            f'retrieval: agent_navigate: llm_chunk_select '
-            f'doc={doc_id_to_name.get(doc_id, doc_id)} → '
-            f'{len(selected_paths)} paths in {elapsed_chunk}ms'
+            f"retrieval: agent_navigate: llm_chunk_select "
+            f"doc={doc_id_to_name.get(doc_id, doc_id)} → "
+            f"{len(selected_paths)} paths in {elapsed_chunk}ms"
         )
 
         for path in selected_paths:
@@ -622,7 +687,7 @@ async def agent_navigate(
 
     elapsed_total = round((time.monotonic() - t0) * 1000)
     logger.info(
-        f'retrieval: agent_navigate: total={len(all_selected_paths)} chunk paths '
-        f'from {len(valid_ids)} files in {elapsed_total}ms'
+        f"retrieval: agent_navigate: total={len(all_selected_paths)} chunk paths "
+        f"from {len(valid_ids)} files in {elapsed_total}ms"
     )
     return all_selected_paths

@@ -3,15 +3,16 @@ Consolidated Webhook Service
 
 Single responsibility: create WebhookEvents and publish them for async delivery.
 """
+
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.core.exceptions.webhook_exceptions import WebhookConfigException
 from shared.core.response import build_standard_error_response
+from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 
 
 class WebhookService:
@@ -20,21 +21,18 @@ class WebhookService:
 
     Creates WebhookEvent records and publishes them via QStash for async delivery.
     """
-    
+
     async def create_job_completion_event(
-        self,
-        db: AsyncSession,
-        job_id: str,
-        webhook_url: str
+        self, db: AsyncSession, job_id: str, webhook_url: str
     ) -> WebhookEvent:
         """
         Create webhook event for job completion.
-        
+
         Args:
             db: Database session (in active transaction)
             job_id: Job ID
             webhook_url: Webhook URL
-            
+
         Returns:
             Created WebhookEvent
         """
@@ -43,21 +41,20 @@ class WebhookService:
             "event": "job.completed",
             "job_id": job_id,
             "status": "completed",
-            "completed_at": datetime.now(timezone.utc).isoformat()
+            "completed_at": datetime.now(timezone.utc).isoformat(),
             # NOTE: result_url and result added by dispatcher at delivery
         }
-        
+
         # Create event
         event = await self._create_event(
-            db=db,
-            job_id=job_id,
-            target_url=webhook_url,
-            payload=payload
+            db=db, job_id=job_id, target_url=webhook_url, payload=payload
         )
-        
-        logger.info(f"Job completion webhook event created: event_id={event.id}, job_id={job_id}")
+
+        logger.info(
+            f"Job completion webhook event created: event_id={event.id}, job_id={job_id}"
+        )
         return event
-    
+
     async def create_job_failure_event(
         self,
         db: AsyncSession,
@@ -70,7 +67,7 @@ class WebhookService:
     ) -> WebhookEvent:
         """
         Create webhook event for job failure.
-        
+
         Args:
             db: Database session (in active transaction)
             job_id: Job ID
@@ -79,7 +76,7 @@ class WebhookService:
             error_code: Error code
             error_details: Structured error details (optional)
             webhook_url: Webhook URL
-            
+
         Returns:
             Created WebhookEvent
         """
@@ -93,21 +90,20 @@ class WebhookService:
                 code=error_code,
                 message=error_message,
                 request_id=job_id,
-                details=error_details
-            )
+                details=error_details,
+            ),
         }
-        
+
         # Create event
         event = await self._create_event(
-            db=db,
-            job_id=job_id,
-            target_url=webhook_url,
-            payload=payload
+            db=db, job_id=job_id, target_url=webhook_url, payload=payload
         )
-        
-        logger.info(f"Job failure webhook event created: event_id={event.id}, job_id={job_id}")
+
+        logger.info(
+            f"Job failure webhook event created: event_id={event.id}, job_id={job_id}"
+        )
         return event
-    
+
     async def publish_to_queue(self, event_id: str) -> bool:
         """Publish a webhook event for async delivery via QStash after commit."""
         return await self._publish_via_qstash(event_id)
@@ -115,25 +111,27 @@ class WebhookService:
     async def _publish_via_qstash(self, event_id: str) -> bool:
         """Publish via QStash for managed delivery and retry."""
         try:
-            from shared.services.webhook.qstash_publisher import get_qstash_webhook_publisher
+            from shared.services.webhook.qstash_publisher import (
+                get_qstash_webhook_publisher,
+            )
 
             publisher = get_qstash_webhook_publisher()
             message_id = publisher.publish_event(event_id)
             if message_id:
-                logger.info(f"Webhook published via QStash: event_id={event_id}, message_id={message_id}")
+                logger.info(
+                    f"Webhook published via QStash: event_id={event_id}, message_id={message_id}"
+                )
                 return True
-            logger.warning(f"QStash publish returned no message_id: event_id={event_id}")
+            logger.warning(
+                f"QStash publish returned no message_id: event_id={event_id}"
+            )
             return False
         except Exception as exc:
             logger.error(f"QStash publish failed: event_id={event_id}, error={exc}")
             return False
 
     async def _create_event(
-        self,
-        db: AsyncSession,
-        job_id: str,
-        target_url: str,
-        payload: Dict[str, Any]
+        self, db: AsyncSession, job_id: str, target_url: str, payload: Dict[str, Any]
     ) -> WebhookEvent:
         """
         Create a WebhookEvent record.
@@ -142,15 +140,15 @@ class WebhookService:
         if not target_url:
             raise WebhookConfigException(
                 internal_message="Missing webhook target_url",
-                user_message="Webhook URL is required."
+                user_message="Webhook URL is required.",
             )
-            
+
         if not target_url.startswith(("http://", "https://")):
             raise WebhookConfigException(
                 internal_message=f"Invalid webhook scheme: {target_url}",
-                user_message="Webhook URL must start with http:// or https://."
+                user_message="Webhook URL must start with http:// or https://.",
             )
-            
+
         # Create event
         event = WebhookEvent(
             job_id=job_id,
@@ -159,10 +157,10 @@ class WebhookService:
             status=WebhookEventStatus.PENDING,
             attempts=0,
         )
-        
+
         db.add(event)
         await db.flush()  # Get ID, but don't commit (caller controls transaction)
-        
+
         return event
 
 

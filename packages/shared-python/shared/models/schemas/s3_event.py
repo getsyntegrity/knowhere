@@ -1,4 +1,5 @@
 """S3 event schemas."""
+
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -29,8 +30,12 @@ class S3EventRecord(BaseModel):
     eventTime: str = Field(..., description="Event time")
     eventName: str = Field(..., description="Event name")
     userIdentity: Optional[Dict[str, Any]] = Field(None, description="User identity")
-    requestParameters: Optional[Dict[str, Any]] = Field(None, description="Request parameters")
-    responseElements: Optional[Dict[str, Any]] = Field(None, description="Response elements")
+    requestParameters: Optional[Dict[str, Any]] = Field(
+        None, description="Request parameters"
+    )
+    responseElements: Optional[Dict[str, Any]] = Field(
+        None, description="Response elements"
+    )
     s3: Dict[str, Any] = Field(..., description="S3 payload")
 
     # Parsed convenience fields.
@@ -41,8 +46,8 @@ class S3EventRecord(BaseModel):
         super().__init__(**data)
         # Parse the nested s3 payload into convenience fields.
         if self.s3:
-            self.bucket_name = self.s3.get('bucket', {}).get('name')
-            self.object_key = self.s3.get('object', {}).get('key')
+            self.bucket_name = self.s3.get("bucket", {}).get("name")
+            self.object_key = self.s3.get("object", {}).get("key")
 
 
 class S3Event(BaseModel):
@@ -59,13 +64,8 @@ class S3Event(BaseModel):
             # - ObjectCreated:Put / Post / CompleteMultipartUpload
             # - ObjectCreated:PutObject / PostObject (for OSS-to-S3 adaptation)
             # - prefixed names such as s3:ObjectCreated:PutObject
-            if (
-                "ObjectCreated" in name
-                and (
-                    "Put" in name
-                    or "Post" in name
-                    or "CompleteMultipartUpload" in name
-                )
+            if "ObjectCreated" in name and (
+                "Put" in name or "Post" in name or "CompleteMultipartUpload" in name
             ):
                 upload_events.append(record)
         return upload_events

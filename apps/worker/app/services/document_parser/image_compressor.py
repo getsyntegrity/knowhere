@@ -20,14 +20,15 @@ from typing import NamedTuple
 from loguru import logger
 
 # ── Configuration ─────────────────────────────────────────────────────
-OUTPUT_MAX_SIDE = 2400      # max pixels on longest side
-OUTPUT_JPEG_QUALITY = 85    # JPEG quality (85 is visually lossless)
+OUTPUT_MAX_SIDE = 2400  # max pixels on longest side
+OUTPUT_JPEG_QUALITY = 85  # JPEG quality (85 is visually lossless)
 SKIP_BELOW_BYTES = 50_000  # skip images smaller than 50KB
 SUPPORTED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 class CompressionStats(NamedTuple):
     """Summary of a compress_output_images run."""
+
     processed: int
     skipped: int
     converted_png_to_jpg: int
@@ -223,6 +224,8 @@ def apply_rename_map_to_dataframe(df, rename_map: dict):
             updated += mask.sum()
 
     if updated > 0:
-        logger.info(f"[image_compressor] Updated {updated} image path references in DataFrame")
+        logger.info(
+            f"[image_compressor] Updated {updated} image path references in DataFrame"
+        )
 
     return df
