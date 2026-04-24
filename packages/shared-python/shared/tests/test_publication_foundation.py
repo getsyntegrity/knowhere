@@ -707,6 +707,19 @@ def test_selected_runtime_text_surfaces_remove_internal_planning_refs() -> None:
     assert " 包括 " not in kb_utils_text
 
 
+def test_public_self_hosting_docs_cover_published_ghcr_images() -> None:
+    self_hosting_text: str = read_text("docs/self-hosting.md")
+    release_distribution_text: str = read_text("docs/release-distribution.md")
+
+    assert "docker pull ghcr.io/ontos-ai/knowhere-backend" in self_hosting_text
+    assert "docker pull ghcr.io/ontos-ai/knowhere-worker" in self_hosting_text
+    assert "--env-file apps/api/.env" in self_hosting_text
+    assert "--env-file apps/worker/.env" in self_hosting_text
+    assert "docker run" in self_hosting_text
+    assert "ghcr.io/ontos-ai/knowhere-backend" in release_distribution_text
+    assert "ghcr.io/ontos-ai/knowhere-worker" in release_distribution_text
+
+
 def test_worker_tests_do_not_keep_stale_runtime_artifacts() -> None:
     assert not (REPO_ROOT / "apps/worker/tests/.tmp_layout_parser").exists()
 

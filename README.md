@@ -193,6 +193,8 @@ publication-preparation branch keeps the registry path limited to GHCR.
 - `staging` builds staging-tagged images
 - pull requests run build validation without publishing
 - `workflow_dispatch` can build a selected service for `staging` or `prod`
+- `docs/self-hosting.md` documents how to pull and run
+  `ghcr.io/ontos-ai/knowhere-backend` and `ghcr.io/ontos-ai/knowhere-worker`
 
 ## Deployment Boundary
 
