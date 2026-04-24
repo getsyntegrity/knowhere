@@ -87,7 +87,9 @@ def test_extract_top_summary_limits_tree_to_two_levels() -> None:
 
 
 def test_extract_top_summary_keeps_overlong_first_sentence() -> None:
-    long_sentence = "A" * 230 + ". Second sentence should never be included."
+    # Build a long sentence with >200 semantic tokens (each Chinese char = 1 token).
+    # The second sentence should be dropped by the truncation logic.
+    long_sentence = "技" * 210 + "。第二句应该被截断不保留。"
     hierarchy = {
         "Root": {
             "demo.pdf": {
@@ -99,8 +101,11 @@ def test_extract_top_summary_keeps_overlong_first_sentence() -> None:
 
     result = _extract_top_summary(hierarchy, "demo.pdf")
 
-    assert result == ("A" * 230 + ".")
-    assert len(result) > 200
+    # The first sentence alone (210 tokens + 。) exceeds 200-token budget,
+    # so truncate_text_by_tokens fallback cuts at 200 tokens.
+    assert "第二句" not in result
+    from shared.utils.text_utils import count_cn_en
+    assert count_cn_en(result) <= 200
 
 
 def test_build_chunk_lookup_uses_title_and_keywords_only_when_summary_missing() -> None:

@@ -740,7 +740,7 @@ def update_knowledge_graph(
             "chunks_count": len(chunks),
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
-            "top_summary": existing_files.get(fk, {}).get("top_summary") or (file_summaries or {}).get(fk, ""),
+            "top_summary": (file_summaries or {}).get(fk, "") or existing_files.get(fk, {}).get("top_summary", ""),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": created_at,
         }
@@ -1222,6 +1222,17 @@ def build_and_deploy(
                     if str(c.get("chunk_id") or c.get("know_id", "")) not in seen_ids
                 ]
                 all_chunks = all_on_disk + extra
+            # Full rebuild: generate summaries for ALL files, not just source_file
+            from app.services.connect_builder.summary_builder import enrich_hierarchy_summaries as _enrich
+            try:
+                all_file_summaries = _enrich(
+                    kb_dir=kb_dir,
+                    source_file=None,  # process all files
+                    use_llm=summary_use_llm,
+                )
+                file_summaries.update(all_file_summaries)
+            except Exception as e:
+                logger.warning(f"Full rebuild enrich_hierarchy_summaries failed: {e}")
             logger.info(
                 f"📊 rebuild Knowledge Graph "
                 f"(rebuild_all=True, {len(all_chunks)} chunks from KB dir) ..."
