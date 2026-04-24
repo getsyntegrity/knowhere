@@ -10,6 +10,56 @@ from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 CHINESE_TEXT_PATTERN: re.Pattern[str] = re.compile(r"[\u4e00-\u9fff]")
+PUBLICATION_HELPER_SCRIPT_PATHS: tuple[str, ...] = (
+    "scripts/check-public.sh",
+    "scripts/lint-public.sh",
+    "scripts/scan-public-safety.sh",
+    "scripts/test-public.sh",
+    "scripts/test-public-shared.sh",
+    "scripts/test-public-api.sh",
+    "scripts/test-public-worker.sh",
+    "scripts/typecheck-public.sh",
+)
+PUBLICATION_SCAN_ROOTS: tuple[str, ...] = (
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md",
+    "pyproject.toml",
+    "docs",
+    ".github",
+    "apps",
+    "packages/shared-python",
+    "deploy",
+)
+PUBLICATION_SCAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "patch markers leaked into tracked files",
+        re.compile(
+            r"\*\*\* Add File:|\*\*\* Update File:|\*\*\* Delete File:|\*\*\* Begin Patch|\*\*\* End Patch"
+        ),
+    ),
+    (
+        "credential-like material",
+        re.compile(
+            r"github_pat_[A-Za-z0-9_]+|ghp_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}"
+        ),
+    ),
+    (
+        "hardcoded private cloud identifiers",
+        re.compile(
+            r"arn:aws:[a-z0-9-]+:|[0-9]{12}\.dkr\.ecr\.[A-Za-z0-9-]+\.amazonaws\.com"
+        ),
+    ),
+    (
+        "private placeholder domains, staging hosts, or callback-provider hosts",
+        re.compile(
+            r"dev-placeholder@knowhere\.internal|knowhere\.internal|api-staging\.knowhereto\.ai|api\.internal|workers\.dev"
+        ),
+    ),
+)
 
 
 def read_text(relative_path: str) -> str:
@@ -51,6 +101,53 @@ def find_chinese_comments_and_docstrings(relative_path: str) -> list[str]:
             snippets.append(comment_text)
 
     return snippets
+
+
+def iter_publication_scan_files() -> list[Path]:
+    files_to_scan: list[Path] = []
+
+    for relative_path in PUBLICATION_SCAN_ROOTS:
+        root_path: Path = REPO_ROOT / relative_path
+        candidate_paths: list[Path]
+
+        if root_path.is_file():
+            candidate_paths = [root_path]
+        else:
+            candidate_paths = sorted(
+                path for path in root_path.rglob("*") if path.is_file()
+            )
+
+        for candidate_path in candidate_paths:
+            relative_candidate_path: Path = candidate_path.relative_to(REPO_ROOT)
+            relative_parts: tuple[str, ...] = relative_candidate_path.parts
+
+            if candidate_path.name in {"uv.lock", "requirements.txt"}:
+                continue
+
+            if "__pycache__" in relative_parts:
+                continue
+
+            if "tests" in relative_parts or "__tests__" in relative_parts:
+                continue
+
+            files_to_scan.append(candidate_path)
+
+    return files_to_scan
+
+
+def find_publication_pattern_matches(pattern: re.Pattern[str]) -> list[str]:
+    matched_paths: list[str] = []
+
+    for file_path in iter_publication_scan_files():
+        try:
+            file_text: str = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+
+        if pattern.search(file_text):
+            matched_paths.append(file_path.relative_to(REPO_ROOT).as_posix())
+
+    return matched_paths
 
 
 def test_publication_foundation_files_exist() -> None:
@@ -166,17 +263,11 @@ def test_repo_surface_is_python_first() -> None:
     ):
         assert not (REPO_ROOT / removed_path).exists(), removed_path
 
-    for required_path in (
-        "scripts/check-public.sh",
-        "scripts/lint-public.sh",
-        "scripts/test-public.sh",
-        "scripts/test-public-shared.sh",
-        "scripts/test-public-api.sh",
-        "scripts/test-public-worker.sh",
-        "scripts/typecheck-public.sh",
-        ".github/workflows/ci.yml",
-    ):
+    for required_path in (".github/workflows/ci.yml",):
         assert (REPO_ROOT / required_path).exists(), required_path
+
+    for removed_path in PUBLICATION_HELPER_SCRIPT_PATHS:
+        assert not (REPO_ROOT / removed_path).exists(), removed_path
 
     assert "pnpm" not in readme_text
     assert "apps/web" not in readme_text
@@ -565,16 +656,32 @@ def test_workspace_pyprojects_use_uv_workspace_sources() -> None:
     assert 'path = "../../packages/shared-python"' not in worker_pyproject_text
 
 
-def test_public_scripts_pin_python_3_11_for_uv_commands() -> None:
-    for relative_path in (
-        "scripts/lint-public.sh",
-        "scripts/typecheck-public.sh",
-        "scripts/test-public-shared.sh",
-        "scripts/test-public-api.sh",
-        "scripts/test-public-worker.sh",
-    ):
-        script_text: str = read_text(relative_path)
-        assert "--python 3.11" in script_text, relative_path
+def test_readme_documents_inline_quality_commands() -> None:
+    readme_text: str = read_text("README.md")
+
+    for relative_path in PUBLICATION_HELPER_SCRIPT_PATHS:
+        assert relative_path not in readme_text, relative_path
+
+    assert "uv tool run --python 3.11 isort" in readme_text
+    assert "uv tool run --python 3.11 black" in readme_text
+    assert "uv run --python 3.11 pyright" in readme_text
+    assert "uv run --python 3.11 pytest" in readme_text
+
+
+def test_public_ci_workflow_uses_inline_quality_commands() -> None:
+    ci_workflow_text: str = read_text(".github/workflows/ci.yml")
+
+    for relative_path in PUBLICATION_HELPER_SCRIPT_PATHS:
+        assert relative_path not in ci_workflow_text, relative_path
+
+    assert (
+        "python3.11 packages/shared-python/shared/tests/test_publication_foundation.py"
+        in ci_workflow_text
+    )
+    assert "uv tool run --python 3.11 isort" in ci_workflow_text
+    assert "uv tool run --python 3.11 black" in ci_workflow_text
+    assert "uv run --python 3.11 pyright" in ci_workflow_text
+    assert "uv run --python 3.11 pytest" in ci_workflow_text
 
 
 def test_public_api_typecheck_baseline_targets_runtime_surface_only() -> None:
@@ -588,8 +695,8 @@ def test_public_api_typecheck_baseline_targets_runtime_surface_only() -> None:
     assert "venv" not in pyright_config
 
 
-def test_public_typecheck_script_targets_selected_api_entrypoints() -> None:
-    typecheck_script_text: str = read_text("scripts/typecheck-public.sh")
+def test_public_ci_typecheck_targets_selected_api_entrypoints() -> None:
+    ci_workflow_text: str = read_text(".github/workflows/ci.yml")
 
     for relative_path in (
         "app/api/v1/routes/retrieval.py",
@@ -599,43 +706,12 @@ def test_public_typecheck_script_targets_selected_api_entrypoints() -> None:
         "app/core/dependencies.py",
         "app/api/api_router.py",
     ):
-        assert relative_path in typecheck_script_text, relative_path
+        assert relative_path in ci_workflow_text, relative_path
 
 
-def test_public_check_script_runs_public_safety_scan() -> None:
-    check_public_text: str = read_text("scripts/check-public.sh")
-
-    assert (REPO_ROOT / "scripts/scan-public-safety.sh").exists()
-    assert "scripts/scan-public-safety.sh" in check_public_text
-    assert "scripts/lint-public.sh" in check_public_text
-
-
-def test_public_lint_script_targets_retained_python_surface() -> None:
-    lint_script_text: str = read_text("scripts/lint-public.sh")
-
-    for relative_path in (
-        "apps/api/app",
-        "apps/worker/app",
-        "packages/shared-python/shared",
-        "packages/shared-python/shared/tests",
-    ):
-        assert relative_path in lint_script_text, relative_path
-
-    assert "black" in lint_script_text
-    assert "--check" in lint_script_text
-    assert "isort" in lint_script_text
-    assert "--check-only" in lint_script_text
-
-
-def test_public_safety_scan_blocks_private_cloud_identifiers() -> None:
-    scan_script_text: str = read_text("scripts/scan-public-safety.sh")
-
-    assert "arn:aws:[a-z0-9-]+:" in scan_script_text
-    assert "dkr\\\\.ecr" in scan_script_text
-    assert "amazonaws\\\\.com" in scan_script_text
-    assert "api-staging\\\\.knowhereto\\\\.ai" in scan_script_text
-    assert "api\\\\.internal" in scan_script_text
-    assert "workers\\\\.dev" in scan_script_text
+def test_publication_guard_scan_blocks_private_cloud_identifiers() -> None:
+    for description, pattern in PUBLICATION_SCAN_PATTERNS:
+        assert not find_publication_pattern_matches(pattern), description
 
 
 def test_public_workflows_do_not_persist_checkout_credentials() -> None:
@@ -818,12 +894,11 @@ def main() -> None:
     test_remaining_support_files_only_keep_english_comments_and_docstrings()
     test_stripe_service_only_keeps_english_comments_and_docstrings()
     test_workspace_pyprojects_use_uv_workspace_sources()
-    test_public_scripts_pin_python_3_11_for_uv_commands()
+    test_readme_documents_inline_quality_commands()
+    test_public_ci_workflow_uses_inline_quality_commands()
     test_public_api_typecheck_baseline_targets_runtime_surface_only()
-    test_public_typecheck_script_targets_selected_api_entrypoints()
-    test_public_check_script_runs_public_safety_scan()
-    test_public_lint_script_targets_retained_python_surface()
-    test_public_safety_scan_blocks_private_cloud_identifiers()
+    test_public_ci_typecheck_targets_selected_api_entrypoints()
+    test_publication_guard_scan_blocks_private_cloud_identifiers()
     test_public_workflows_do_not_persist_checkout_credentials()
     test_public_ci_workflow_uses_explicit_read_only_token_permissions()
     test_selected_retained_test_surfaces_avoid_private_callback_hosts()

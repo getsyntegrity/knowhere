@@ -10,7 +10,6 @@ This publication-preparation branch keeps only the backend application surface:
 - shared Python models and services under `packages/shared-python`
 - local Docker-based development services under `deploy/local-dev`
 - Docker build assets under `deploy/docker`
-- repository-owned validation scripts under `scripts/`
 
 This repository does not own runtime infrastructure, operator runbooks, or
 environment-specific rollout state. Dashboard, docs-site, and SDK distribution
@@ -40,11 +39,6 @@ knowhere-api/
 ├── deploy/
 │   ├── docker/
 │   └── local-dev/
-├── scripts/
-│   ├── check-public.sh
-│   ├── lint-public.sh
-│   ├── test-public.sh
-│   └── typecheck-public.sh
 └── .github/workflows/
     ├── build-images.yml
     └── ci.yml
@@ -135,16 +129,37 @@ Deterministic local developer account:
 
 ## Quality Checks
 
-Run the public lint baseline:
+Run the retained Python lint baseline:
 
 ```bash
-./scripts/lint-public.sh
+uv tool run --python 3.11 isort \
+  --settings-path packages/shared-python/pyproject.toml \
+  --check-only \
+  apps/api/app \
+  apps/worker/app \
+  packages/shared-python/shared \
+  packages/shared-python/shared/tests
+
+uv tool run --python 3.11 black \
+  --config packages/shared-python/pyproject.toml \
+  --check \
+  apps/api/app \
+  apps/worker/app \
+  packages/shared-python/shared \
+  packages/shared-python/shared/tests
 ```
 
 Run the public type-check baseline:
 
 ```bash
-./scripts/typecheck-public.sh
+cd apps/api
+uv run --python 3.11 pyright \
+  app/api/v1/routes/retrieval.py \
+  app/api/v1/routes/qstash_callbacks.py \
+  app/api/v1/routes/documents.py \
+  app/api/v1/routes/api_key.py \
+  app/core/dependencies.py \
+  app/api/api_router.py
 ```
 
 The current public type-check baseline targets the retained entrypoints that
@@ -157,26 +172,34 @@ define the published API contract and auth wiring:
 - `app/core/dependencies.py`
 - `app/api/api_router.py`
 
-Run the full public verification entrypoint:
-
-```bash
-./scripts/check-public.sh
-```
-
 ## Tests
 
 Run the vetted regression suites used by the public CI:
 
 ```bash
-./scripts/test-public.sh
-```
+cd packages/shared-python
+uv run --python 3.11 pytest \
+  shared/tests/test_retrieval_publication_sync.py \
+  shared/tests/test_retrieval_cache_service.py \
+  shared/tests/test_retrieval_app_service.py \
+  shared/tests/test_graph_publication_sync.py \
+  shared/tests/test_retrieval_hit_stats.py \
+  -q
 
-Run a single service suite:
+cd ../../apps/api
+cp env.example .env
+uv run --python 3.11 pytest \
+  __tests__/unit/test_jobs_retrieval_contract.py \
+  __tests__/unit/test_retrieval_routes.py \
+  __tests__/unit/test_graph_routing_routes.py \
+  __tests__/unit/test_mcp_query_tool.py \
+  __tests__/unit/test_retrieval_migration_layout.py \
+  __tests__/unit/test_auth_dependencies.py \
+  -q
 
-```bash
-./scripts/test-public-shared.sh
-./scripts/test-public-api.sh
-./scripts/test-public-worker.sh
+cd ../worker
+cp env.example .env
+uv run --python 3.11 pytest tests/tasks/test_kb_tasks.py -q
 ```
 
 ## Additional Guides

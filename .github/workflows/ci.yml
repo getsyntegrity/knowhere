@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  public-safety:
+  publication-foundation:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -18,8 +18,46 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run public safety scan
-        run: ./scripts/scan-public-safety.sh
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run publication foundation guards
+        run: python3.11 packages/shared-python/shared/tests/test_publication_foundation.py
+
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run retained Python lint baseline
+        run: |
+          uv tool run --python 3.11 isort \
+            --settings-path packages/shared-python/pyproject.toml \
+            --check-only \
+            apps/api/app \
+            apps/worker/app \
+            packages/shared-python/shared \
+            packages/shared-python/shared/tests
+          uv tool run --python 3.11 black \
+            --config packages/shared-python/pyproject.toml \
+            --check \
+            apps/api/app \
+            apps/worker/app \
+            packages/shared-python/shared \
+            packages/shared-python/shared/tests
 
   api-typecheck:
     runs-on: ubuntu-latest
@@ -42,7 +80,15 @@ jobs:
         run: uv sync
 
       - name: Run public API typecheck
-        run: ./scripts/typecheck-public.sh
+        working-directory: apps/api
+        run: |
+          uv run --python 3.11 pyright \
+            app/api/v1/routes/retrieval.py \
+            app/api/v1/routes/qstash_callbacks.py \
+            app/api/v1/routes/documents.py \
+            app/api/v1/routes/api_key.py \
+            app/core/dependencies.py \
+            app/api/api_router.py
 
   shared-tests:
     runs-on: ubuntu-latest
@@ -65,7 +111,15 @@ jobs:
         run: uv sync
 
       - name: Run shared tests
-        run: ./scripts/test-public-shared.sh
+        working-directory: packages/shared-python
+        run: |
+          uv run --python 3.11 pytest \
+            shared/tests/test_retrieval_publication_sync.py \
+            shared/tests/test_retrieval_cache_service.py \
+            shared/tests/test_retrieval_app_service.py \
+            shared/tests/test_graph_publication_sync.py \
+            shared/tests/test_retrieval_hit_stats.py \
+            -q
 
   api-tests:
     runs-on: ubuntu-latest
@@ -92,7 +146,16 @@ jobs:
         run: cp env.example .env
 
       - name: Run API tests
-        run: ./scripts/test-public-api.sh
+        working-directory: apps/api
+        run: |
+          uv run --python 3.11 pytest \
+            __tests__/unit/test_jobs_retrieval_contract.py \
+            __tests__/unit/test_retrieval_routes.py \
+            __tests__/unit/test_graph_routing_routes.py \
+            __tests__/unit/test_mcp_query_tool.py \
+            __tests__/unit/test_retrieval_migration_layout.py \
+            __tests__/unit/test_auth_dependencies.py \
+            -q
 
   worker-tests:
     runs-on: ubuntu-latest
@@ -119,4 +182,5 @@ jobs:
         run: cp env.example .env
 
       - name: Run worker tests
-        run: ./scripts/test-public-worker.sh
+        working-directory: apps/worker
+        run: uv run --python 3.11 pytest tests/tasks/test_kb_tasks.py -q
