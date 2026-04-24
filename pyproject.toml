@@ -24,6 +24,35 @@ members = [
     "packages/shared-python",
 ]
 
+[tool.pyright]
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+include = [
+    "apps/api/app",
+    "apps/api/main.py",
+    "apps/worker/app",
+    "apps/worker/worker.py",
+    "packages/shared-python/shared",
+]
+exclude = [
+    "**/__tests__",
+    "**/__pycache__",
+    "**/node_modules",
+    "**/.*",
+    "**/venv",
+    "apps/worker/tests",
+    "apps/worker/logs",
+    "packages/shared-python/build",
+    "packages/shared-python/dist",
+    "packages/shared-python/shared/tests",
+]
+executionEnvironments = [
+    { root = "apps/api", extraPaths = ["packages/shared-python"] },
+    { root = "apps/worker", extraPaths = ["apps/worker", "packages/shared-python"] },
+    { root = "packages/shared-python" },
+]
+
 [tool.ruff]
 line-length = 88
 target-version = "py311"

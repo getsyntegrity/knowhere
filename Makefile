@@ -26,12 +26,12 @@ lint-fix:
 typecheck: typecheck-api typecheck-worker typecheck-shared
 
 typecheck-api:
-	$(PYRIGHT) --project apps/api/pyrightconfig.json
+	$(PYRIGHT) --project pyproject.toml apps/api/app apps/api/main.py
 
 typecheck-worker:
-	$(PYRIGHT) --project apps/worker/pyrightconfig.json
+	$(PYRIGHT) --project pyproject.toml apps/worker/app apps/worker/worker.py
 
 typecheck-shared:
-	$(PYRIGHT) --project packages/shared-python/pyrightconfig.json
+	$(PYRIGHT) --project pyproject.toml packages/shared-python/shared
 
 check: lint typecheck
