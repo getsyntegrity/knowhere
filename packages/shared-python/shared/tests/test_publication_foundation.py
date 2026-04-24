@@ -720,6 +720,20 @@ def test_public_self_hosting_docs_cover_published_ghcr_images() -> None:
     assert "ghcr.io/ontos-ai/knowhere-worker" in release_distribution_text
 
 
+def test_public_repo_omits_unvetted_smoke_test_suites() -> None:
+    for relative_path in (
+        "apps/api/__tests__/smoke/test_qstash_callbacks_api.py",
+        "apps/api/__tests__/smoke/test_webhook_creation.py",
+        "apps/api/__tests__/smoke/test_webhook_secrets_api.py",
+        "apps/worker/tests/smoke/test_webhook_dispatch.py",
+    ):
+        assert not (REPO_ROOT / relative_path).exists(), relative_path
+
+    fakes_text: str = read_text("packages/shared-python/shared/tests/fakes.py")
+    assert "For smoke tests" not in fakes_text
+    assert "smoke tests specifically" not in fakes_text
+
+
 def test_worker_tests_do_not_keep_stale_runtime_artifacts() -> None:
     assert not (REPO_ROOT / "apps/worker/tests/.tmp_layout_parser").exists()
 

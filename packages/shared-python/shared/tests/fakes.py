@@ -75,10 +75,10 @@ class FakeAsyncSession:
         # We look for the requested type in the statement if possible,
         # otherwise return everything that matches? 
         # This is the limitation of a Fake. 
-        # For smoke tests, we often just want "get by ID" or "get all".
+        # For lightweight service tests, we often just want "get by ID" or "get all".
         
         # We can inspect the statement str or compiled form, but that's complex.
-        # Strategy: For this specific smoke test, we can filter `self.storage`.
+        # Strategy: For these lightweight tests, we can filter `self.storage`.
         # But `execute` returns a Result object.
         
         # Hack for simple "select(Model).where(Model.id == val)"
@@ -92,7 +92,7 @@ class FakeAsyncSession:
         # Let's try to infer target model from statement if currently possible.
         # If not, return full storage.
         
-        # For our smoke tests:
+        # For the retained lightweight tests:
         # 1. API creates event: execute not called (only add/commit).
         # 2. Worker fetches event: `select(WebhookEvent).where(...)`.
         
@@ -109,7 +109,7 @@ class FakeAsyncSession:
         # IMPROVEMENT: Inspect statement for `_where_criteria` (SQLAlchemy internal)
         # or just return a MagicMock that we configure per test if query is specific.
         
-        # For the smoke tests specifically:
+        # For these simplified test helpers:
         # We know we are looking up by ID.
         # Let's just return a generic FakeCursor that contains all items.
         # The application logic might filter it further? No, DB does filtering.
