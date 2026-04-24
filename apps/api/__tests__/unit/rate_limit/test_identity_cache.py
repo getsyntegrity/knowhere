@@ -122,7 +122,8 @@ async def test_invalidate_apikey_removes_single_key_and_reverse_member():
     await cache.invalidate_apikey(svc, "user_d", "k1")
 
     assert await cache.get_cached_identity(svc, cache._apikey_key("k1")) is None
-    assert await cache.get_cached_identity(
-        svc, cache._apikey_key("k2")
-    ) == {"user_id": "user_d", "user_tier": "free"}
+    assert await cache.get_cached_identity(svc, cache._apikey_key("k2")) == {
+        "user_id": "user_d",
+        "user_tier": "free",
+    }
     assert await svc.smembers(cache._reverse_key("user_d")) == {"k2"}

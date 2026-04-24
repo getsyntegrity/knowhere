@@ -229,7 +229,6 @@ class WebhookDispatcher:
             # This eliminates the DNS rebinding TOCTOU window — aiohttp will connect
             # to the pinned IP while the Host header preserves the original hostname.
             pinned_ip: str = validation.validated_ip
-            original_hostname: str = validation.hostname
 
             # Detect address family from the pinned IP
             pinned_family: int = socket.AF_INET6 if ":" in pinned_ip else socket.AF_INET

@@ -190,7 +190,6 @@ def process_dup_paths_df(df):
                 len(path_parts) > len(parent_parts)
                 and path_parts[: len(parent_parts)] == parent_parts
             ):
-
                 # Find the nearest renamed parent path that appears earlier.
                 matching_parent_idx = None
                 for parent_idx in sorted(rename_info.keys(), reverse=True):

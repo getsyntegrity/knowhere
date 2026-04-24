@@ -13,7 +13,9 @@ def assert_error_response(response_json: dict, expected_code: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_revoke_api_key_returns_success(authenticated_client: AsyncClient) -> None:
+async def test_revoke_api_key_returns_success(
+    authenticated_client: AsyncClient,
+) -> None:
     with patch("app.api.v1.routes.api_key.APIKeyService") as mock_api_key_service_class:
         mock_api_key_service = mock_api_key_service_class.return_value
         mock_api_key_service.revoke_api_key = AsyncMock(return_value=True)
@@ -28,7 +30,9 @@ async def test_revoke_api_key_returns_success(authenticated_client: AsyncClient)
 
 
 @pytest.mark.asyncio
-async def test_revoke_api_key_returns_not_found(authenticated_client: AsyncClient) -> None:
+async def test_revoke_api_key_returns_not_found(
+    authenticated_client: AsyncClient,
+) -> None:
     with patch("app.api.v1.routes.api_key.APIKeyService") as mock_api_key_service_class:
         mock_api_key_service = mock_api_key_service_class.return_value
         mock_api_key_service.revoke_api_key = AsyncMock(

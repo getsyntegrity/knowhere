@@ -69,7 +69,7 @@ def build_prompt(task, texts, query, **kwargs):
     logger.debug(
         f"build_prompt called: task={task}, texts_length={len(str(texts)) if texts else 0}"
     )
-    his_record = process_llm_history(kwargs.get("paras", {}))
+    process_llm_history(kwargs.get("paras", {}))
     logger.debug("process_llm_history completed")
     temperature = 0.1
     top_p = 0.1

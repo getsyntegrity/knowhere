@@ -4,7 +4,10 @@ import pytest
 
 from app.services.rate_limit import dependencies as deps
 from app.services.rate_limit.data_structures import SystemLimitRule
-from shared.core.exceptions.domain_exceptions import RateLimitException, UnavailableException
+from shared.core.exceptions.domain_exceptions import (
+    RateLimitException,
+    UnavailableException,
+)
 
 from .helpers import make_request
 
@@ -30,9 +33,7 @@ class _PassRateLimiter:
         period: str = "minute",
         use_global_key: bool = False,
     ) -> None:
-        self.calls.append(
-            (identifier, limit, matched_pattern, period, use_global_key)
-        )
+        self.calls.append((identifier, limit, matched_pattern, period, use_global_key))
 
 
 class _CrashRateLimiter:
@@ -79,9 +80,7 @@ async def test_require_route_system_limit_uses_route_identifier_with_explicit_ru
 
     await deps.require_route_system_limit(request)
 
-    assert _PassRateLimiter.calls == [
-        ("/v1/guest", 100, "/v1/guest", "day", True)
-    ]
+    assert _PassRateLimiter.calls == [("/v1/guest", 100, "/v1/guest", "day", True)]
 
 
 @pytest.mark.asyncio
@@ -143,9 +142,7 @@ async def test_require_route_system_limit_uses_default_rule_when_no_specific_mat
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
 
     await deps.require_route_system_limit(request)
-    assert _PassRateLimiter.calls == [
-        ("/v1/guest", 1000, "*", "minute", True)
-    ]
+    assert _PassRateLimiter.calls == [("/v1/guest", 1000, "*", "minute", True)]
 
 
 @pytest.mark.asyncio

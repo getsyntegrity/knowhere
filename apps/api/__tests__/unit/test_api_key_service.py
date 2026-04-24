@@ -46,9 +46,7 @@ async def test_validate_api_key_schedules_last_used_update(monkeypatch):
         scalar_one_or_none=lambda: "free",
     )
 
-    user_id = await service.validate_api_key(
-        session, "sk_test_api_key_validation"
-    )
+    user_id = await service.validate_api_key(session, "sk_test_api_key_validation")
 
     assert user_id == "user_1"
     assert scheduled == ["api_key_id_1"]

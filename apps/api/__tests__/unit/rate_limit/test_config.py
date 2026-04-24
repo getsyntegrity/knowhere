@@ -32,11 +32,11 @@ def test_update_rules_sorts_system_rules_by_priority():
     cfg._system_rules = []
     cfg._key_prefix = "knowhere-api:"
 
-    tier_map = {
-        "free": TierLimits(rpm_limit=2, max_concurrent_jobs=2, daily_quota=20)
-    }
+    tier_map = {"free": TierLimits(rpm_limit=2, max_concurrent_jobs=2, daily_quota=20)}
     unsorted_rules = [
-        SystemLimitRule(method="*", api_pattern="*", priority=9999, limit=DEFAULT_SYSTEM_LIMIT),
+        SystemLimitRule(
+            method="*", api_pattern="*", priority=9999, limit=DEFAULT_SYSTEM_LIMIT
+        ),
         SystemLimitRule(method="POST", api_pattern="/v1/jobs", priority=100, limit=30),
     ]
 

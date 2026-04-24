@@ -507,7 +507,7 @@ class StripeService:
             }
 
             # Amount validation can be layered in here if needed later.
-            actual_amount = payment_intent.get("amount", 0)
+            payment_intent.get("amount", 0)
 
             # Grant the purchased credits to the user balance.
             await self.credits_service.add_credits(

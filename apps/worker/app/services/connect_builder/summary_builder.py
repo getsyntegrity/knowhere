@@ -134,7 +134,9 @@ def _build_chunk_lookup(
             content = chunk.get("content", "")
             lines = content.split("\n")
             clean_lines = [
-                l for l in lines if not marker_re.search(l) and not ref_re.match(l)
+                line
+                for line in lines
+                if not marker_re.search(line) and not ref_re.match(line)
             ]
             clean_text = "\n".join(clean_lines).strip()
 

@@ -68,7 +68,7 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)
-            .where(APIKey.is_active == True)
+            .where(APIKey.is_active)
             .order_by(APIKey.created_at.desc())
         )
         return result.scalars().all()
@@ -110,6 +110,6 @@ class APIKeyRepository(BaseRepository[APIKey, dict, dict]):
         result = await session.execute(
             select(APIKey)
             .where(APIKey.user_id == user_id)
-            .where(APIKey.is_active == True)
+            .where(APIKey.is_active)
         )
         return len(result.scalars().all())

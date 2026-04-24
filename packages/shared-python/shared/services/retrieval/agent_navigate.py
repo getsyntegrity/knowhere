@@ -256,9 +256,9 @@ async def _build_knowledge_map_overview(
         importance = doc_importance.get(did, 0.0)
         titles = section_titles.get(did, "")
 
-        line = f'- [{did}] {name}  chunks={stats["total"]}'
+        line = f"- [{did}] {name}  chunks={stats['total']}"
         if stats["media"] > 0:
-            line += f' media={stats["media"]}'
+            line += f" media={stats['media']}"
         if importance > 0:
             line += f" importance={importance}"
         kw_str = doc_keywords.get(did, "")
@@ -345,7 +345,7 @@ def _format_chunks_for_llm(chunks: list[dict[str, str]], max_chars: int = 4000) 
         for c in chunks:
             line = f'- [{c["type"]}] path="{c["path"]}"'
             if include_preview and c.get("preview"):
-                line += f' | {c["preview"]}'
+                line += f" | {c['preview']}"
             if len("\n".join(lines + [line])) > max_chars:
                 break
             lines.append(line)

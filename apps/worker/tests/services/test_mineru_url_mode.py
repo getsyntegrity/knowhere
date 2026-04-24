@@ -1,4 +1,5 @@
 """Tests for MinerU S3 URL-based ingestion mode."""
+
 from typing import cast
 
 import pytest
@@ -31,9 +32,7 @@ class FakeSyncRedisService:
         return bool(self.client.set(key, value, ex=expire))
 
     def eval(self, script, keys, args=None):
-        return self.client.eval(
-            script, len(keys), *(list(keys) + list(args or []))
-        )
+        return self.client.eval(script, len(keys), *(list(keys) + list(args or [])))
 
 
 class FakeResponse:
@@ -48,9 +47,7 @@ class FakeResponse:
 
 
 def _build_manager(fake_server=None):
-    redis_client = fakeredis.FakeRedis(
-        server=fake_server, decode_responses=True
-    )
+    redis_client = fakeredis.FakeRedis(server=fake_server, decode_responses=True)
     manager = MinerUQuotaManager(
         cast(SyncRedisService, FakeSyncRedisService(redis_client)),
         [
@@ -63,9 +60,7 @@ def _build_manager(fake_server=None):
 def test_submit_url_task_success(monkeypatch):
     """_submit_url_task posts presigned URL and returns batch_id + token_id."""
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     captured = {}
 
@@ -73,17 +68,16 @@ def test_submit_url_task_success(monkeypatch):
         captured["url"] = url
         captured["payload"] = json
         captured["auth"] = headers.get("Authorization")
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {"batch_id": "batch-url-1"},
-        })
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {"batch_id": "batch-url-1"},
+            },
+        )
 
-    fake_session = type(
-        "S", (), {"post": staticmethod(fake_post)}
-    )()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    fake_session = type("S", (), {"post": staticmethod(fake_post)})()
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     batch_id, token_id = mineru_pdf_service._submit_url_task(
         "https://s3.example.com/presigned?token=abc", "report.pdf"
@@ -102,17 +96,13 @@ def test_submit_url_task_success(monkeypatch):
 def test_submit_url_task_non_200_raises(monkeypatch):
     """_submit_url_task raises MinerUServiceException on non-200 response."""
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     def fake_post(url, headers=None, json=None, timeout=None):
         return FakeResponse(500, text="Internal Server Error")
 
     fake_session = type("S", (), {"post": staticmethod(fake_post)})()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     with pytest.raises(MinerUServiceException) as exc_info:
         mineru_pdf_service._submit_url_task(
@@ -124,20 +114,19 @@ def test_submit_url_task_non_200_raises(monkeypatch):
 def test_submit_url_task_rate_limit_raises(monkeypatch):
     """_submit_url_task raises UnavailableException on rate limit response."""
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     def fake_post(url, headers=None, json=None, timeout=None):
-        return FakeResponse(200, {
-            "code": -1,
-            "msg": "Rate limit exceeded",
-        })
+        return FakeResponse(
+            200,
+            {
+                "code": -1,
+                "msg": "Rate limit exceeded",
+            },
+        )
 
     fake_session = type("S", (), {"post": staticmethod(fake_post)})()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     with pytest.raises(UnavailableException) as exc_info:
         mineru_pdf_service._submit_url_task(
@@ -150,9 +139,7 @@ def test_parse_via_full_uses_url_mode_in_staging(monkeypatch, tmp_path):
     """In non-development env with s3_key, uses URL mode (no upload)."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "staging", raising=False)
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     calls = []
 
@@ -171,28 +158,27 @@ def test_parse_via_full_uses_url_mode_in_staging(monkeypatch, tmp_path):
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("submit_url", url))
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {"batch_id": "batch-url-2"},
-        })
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {"batch_id": "batch-url-2"},
+            },
+        )
 
-    fake_session = type(
-        "S", (), {"post": staticmethod(fake_post)}
-    )()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    fake_session = type("S", (), {"post": staticmethod(fake_post)})()
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
         calls.append(("poll", task_id, preferred_token_id))
 
-    monkeypatch.setattr(
-        mineru_pdf_service, "poll_mineru_task", fake_poll
-    )
+    monkeypatch.setattr(mineru_pdf_service, "poll_mineru_task", fake_poll)
 
     output_dir = str(tmp_path / "output")
     mineru_pdf_service.parse_via_full(
-        "/tmp/sample.pdf", "sample.pdf", output_dir,
+        "/tmp/sample.pdf",
+        "sample.pdf",
+        output_dir,
         s3_key="uploads/sample.pdf",
     )
 
@@ -209,9 +195,7 @@ def test_parse_via_full_uploads_local_file_and_uses_url_mode_when_source_object_
     """In non-development env, a local PDF can be uploaded to S3 before URL mode."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     calls = []
 
@@ -238,15 +222,16 @@ def test_parse_via_full_uploads_local_file_and_uses_url_mode_when_source_object_
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("submit_url", url))
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {"batch_id": "batch-url-3"},
-        })
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {"batch_id": "batch-url-3"},
+            },
+        )
 
     fake_session = type("S", (), {"post": staticmethod(fake_post)})()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
         calls.append(("poll", task_id, preferred_token_id))
@@ -276,9 +261,7 @@ def test_parse_via_full_falls_back_to_direct_upload_when_s3_verify_fails(
     """Storage verification failures should not block MinerU parsing."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     calls = []
 
@@ -296,25 +279,27 @@ def test_parse_via_full_falls_back_to_direct_upload_when_s3_verify_fails(
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("post", url))
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {
-                "batch_id": "batch-direct-verify",
-                "file_urls": ["https://oss.example/upload"],
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "batch_id": "batch-direct-verify",
+                    "file_urls": ["https://oss.example/upload"],
+                },
             },
-        })
+        )
 
     def fake_put(url, data=None, timeout=None):
         calls.append(("put", url))
         return FakeResponse(200)
 
     fake_session = type(
-        "S", (),
+        "S",
+        (),
         {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
     )()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
         calls.append(("poll", task_id))
@@ -342,9 +327,7 @@ def test_parse_via_full_falls_back_to_direct_upload_when_s3_upload_fails(
     """Storage upload failures should fail open to direct MinerU upload."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     calls = []
 
@@ -363,25 +346,27 @@ def test_parse_via_full_falls_back_to_direct_upload_when_s3_upload_fails(
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("post", url))
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {
-                "batch_id": "batch-direct-upload",
-                "file_urls": ["https://oss.example/upload"],
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "batch_id": "batch-direct-upload",
+                    "file_urls": ["https://oss.example/upload"],
+                },
             },
-        })
+        )
 
     def fake_put(url, data=None, timeout=None):
         calls.append(("put", url))
         return FakeResponse(200)
 
     fake_session = type(
-        "S", (),
+        "S",
+        (),
         {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
     )()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
         calls.append(("poll", task_id))
@@ -409,9 +394,7 @@ def test_parse_via_full_falls_back_to_direct_upload_when_presign_fails(
     """Presign failures should fail open to direct MinerU upload."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     calls = []
 
@@ -430,25 +413,27 @@ def test_parse_via_full_falls_back_to_direct_upload_when_presign_fails(
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("post", url))
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {
-                "batch_id": "batch-direct-presign",
-                "file_urls": ["https://oss.example/upload"],
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "batch_id": "batch-direct-presign",
+                    "file_urls": ["https://oss.example/upload"],
+                },
             },
-        })
+        )
 
     def fake_put(url, data=None, timeout=None):
         calls.append(("put", url))
         return FakeResponse(200)
 
     fake_session = type(
-        "S", (),
+        "S",
+        (),
         {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
     )()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
         calls.append(("poll", task_id))
@@ -476,9 +461,7 @@ def test_parse_via_full_falls_back_to_direct_upload_when_url_submit_fails(
     """MinerU URL-task submission failures should fail open to direct upload."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "production", raising=False)
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     calls = []
 
@@ -502,25 +485,27 @@ def test_parse_via_full_falls_back_to_direct_upload_when_url_submit_fails(
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("post", url))
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {
-                "batch_id": "batch-direct-submit",
-                "file_urls": ["https://oss.example/upload"],
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "batch_id": "batch-direct-submit",
+                    "file_urls": ["https://oss.example/upload"],
+                },
             },
-        })
+        )
 
     def fake_put(url, data=None, timeout=None):
         calls.append(("put", url))
         return FakeResponse(200)
 
     fake_session = type(
-        "S", (),
+        "S",
+        (),
         {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
     )()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
         calls.append(("poll", task_id))
@@ -542,52 +527,50 @@ def test_parse_via_full_falls_back_to_direct_upload_when_url_submit_fails(
     assert calls[-1] == ("poll", "batch-direct-submit")
 
 
-def test_parse_via_full_uses_direct_upload_in_development(
-    monkeypatch, tmp_path
-):
+def test_parse_via_full_uses_direct_upload_in_development(monkeypatch, tmp_path):
     """In development env, falls back to direct upload even with s3_key."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "development", raising=False)
     manager, _ = _build_manager()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_quota_manager", lambda: manager
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_quota_manager", lambda: manager)
 
     calls = []
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(("post", url))
-        return FakeResponse(200, {
-            "code": 0,
-            "data": {
-                "batch_id": "batch-direct-1",
-                "file_urls": ["https://oss.example/upload"],
+        return FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "batch_id": "batch-direct-1",
+                    "file_urls": ["https://oss.example/upload"],
+                },
             },
-        })
+        )
 
     def fake_put(url, data=None, timeout=None):
         calls.append(("put", url))
         return FakeResponse(200)
 
     fake_session = type(
-        "S", (),
+        "S",
+        (),
         {"post": staticmethod(fake_post), "put": staticmethod(fake_put)},
     )()
-    monkeypatch.setattr(
-        mineru_pdf_service, "get_mineru_session", lambda: fake_session
-    )
+    monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
 
     def fake_poll(status_url, task_id, output_dir, get_status, preferred_token_id):
         calls.append(("poll", task_id))
 
-    monkeypatch.setattr(
-        mineru_pdf_service, "poll_mineru_task", fake_poll
-    )
+    monkeypatch.setattr(mineru_pdf_service, "poll_mineru_task", fake_poll)
 
     local_pdf = tmp_path / "sample.pdf"
     local_pdf.write_bytes(b"%PDF-1.4\n")
 
     mineru_pdf_service.parse_via_full(
-        str(local_pdf), "sample.pdf", str(tmp_path / "output"),
+        str(local_pdf),
+        "sample.pdf",
+        str(tmp_path / "output"),
         s3_key="uploads/sample.pdf",
     )
 
@@ -606,7 +589,9 @@ def test_parse_pdfs_threads_s3_key_to_upload_and_parse(monkeypatch, tmp_path):
         captured["filename"] = filename
         (tmp_path / "output" / "full.md").write_text("# parsed")
 
-    def fake_parse_md(output_dir, source_type, file_path, base_llm_paras, relative_root=None):
+    def fake_parse_md(
+        output_dir, source_type, file_path, base_llm_paras, relative_root=None
+    ):
         return {"ok": True}
 
     monkeypatch.setattr(pdf_parser, "upload_and_parse", fake_upload_and_parse)
@@ -635,7 +620,9 @@ def test_parse_pdfs_s3_key_defaults_to_none(monkeypatch, tmp_path):
         captured["s3_key"] = s3_key
         (tmp_path / "output" / "full.md").write_text("# parsed")
 
-    def fake_parse_md(output_dir, source_type, file_path, base_llm_paras, relative_root=None):
+    def fake_parse_md(
+        output_dir, source_type, file_path, base_llm_paras, relative_root=None
+    ):
         return {"ok": True}
 
     monkeypatch.setattr(pdf_parser, "upload_and_parse", fake_upload_and_parse)

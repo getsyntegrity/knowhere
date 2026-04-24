@@ -86,9 +86,7 @@ async def test_with_current_user_enforces_system_limit(monkeypatch):
     monkeypatch.setattr(
         deps.redis_pool_manager, "get_redis_service", lambda: redis_service
     )
-    monkeypatch.setattr(
-        deps.identity_cache, "get_cached_identity", _cached_identity
-    )
+    monkeypatch.setattr(deps.identity_cache, "get_cached_identity", _cached_identity)
     monkeypatch.setattr(
         deps.RateLimitConfig,
         "get_instance",
@@ -97,10 +95,14 @@ async def test_with_current_user_enforces_system_limit(monkeypatch):
     monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
 
     request = make_request()
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_sys_ok"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_sys_ok")
+    )
 
     assert user == CurrentUser(user_id="u_sys_ok", user_tier="tier_1")
-    assert _PassSystemRateLimiter.calls == [("u_sys_ok", 30, "/v1/jobs", "minute", False)]
+    assert _PassSystemRateLimiter.calls == [
+        ("u_sys_ok", 30, "/v1/jobs", "minute", False)
+    ]
 
 
 @pytest.mark.asyncio
@@ -114,9 +116,7 @@ async def test_with_current_user_raises_on_system_limit_exceeded(monkeypatch):
     monkeypatch.setattr(
         deps.redis_pool_manager, "get_redis_service", lambda: redis_service
     )
-    monkeypatch.setattr(
-        deps.identity_cache, "get_cached_identity", _cached_identity
-    )
+    monkeypatch.setattr(deps.identity_cache, "get_cached_identity", _cached_identity)
     monkeypatch.setattr(
         deps.RateLimitConfig,
         "get_instance",
@@ -143,9 +143,7 @@ async def test_with_current_user_fail_open_on_system_limit_error(monkeypatch):
     monkeypatch.setattr(
         deps.redis_pool_manager, "get_redis_service", lambda: redis_service
     )
-    monkeypatch.setattr(
-        deps.identity_cache, "get_cached_identity", _cached_identity
-    )
+    monkeypatch.setattr(deps.identity_cache, "get_cached_identity", _cached_identity)
     monkeypatch.setattr(
         deps.RateLimitConfig,
         "get_instance",
@@ -154,7 +152,9 @@ async def test_with_current_user_fail_open_on_system_limit_error(monkeypatch):
     monkeypatch.setattr(deps, "RateLimiter", _RaiseSystemErrorRateLimiter)
 
     request = make_request()
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_sys_open"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_sys_open")
+    )
     assert user == CurrentUser(user_id="u_sys_open", user_tier="free")
 
 
@@ -185,7 +185,9 @@ async def test_with_current_user_identity_jwt_cache_hit_skips_db_lookup(monkeypa
     monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
 
     request = make_request()
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_cache_hit"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_cache_hit")
+    )
 
     assert user == CurrentUser(user_id="u_cache_hit", user_tier="tier_5")
     assert db_lookup_calls == 0
@@ -220,7 +222,9 @@ async def test_with_current_user_reuses_stashed_apikey_tier_without_redis_lookup
     request.state.cached_identity_hit = True
     request.state.user_id = "u_apikey"
 
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_apikey"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_apikey")
+    )
 
     assert user == CurrentUser(user_id="u_apikey", user_tier="tier_3")
     assert cache_lookup_calls == 0
@@ -281,13 +285,13 @@ async def test_with_current_user_backfills_apikey_cache_from_stashed_db_identity
     request.state.cached_identity_hit = False
     request.state.user_id = "u_apikey"
 
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_apikey"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_apikey")
+    )
 
     assert user == CurrentUser(user_id="u_apikey", user_tier="tier_3")
     assert cache_lookup_calls == 0
-    assert apikey_set_calls == [
-        (api_key_hash, "u_apikey", "tier_3", 123)
-    ]
+    assert apikey_set_calls == [(api_key_hash, "u_apikey", "tier_3", 123)]
 
 
 @pytest.mark.asyncio
@@ -321,7 +325,9 @@ async def test_with_current_user_identity_jwt_cache_miss_reads_db_and_sets_cache
     monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
 
     request = make_request()
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_jwt_miss"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_jwt_miss")
+    )
 
     assert user == CurrentUser(user_id="u_jwt_miss", user_tier="tier_2")
     assert jwt_set_calls == [("u_jwt_miss", "tier_2")]
@@ -382,13 +388,13 @@ async def test_with_current_user_identity_apikey_cache_miss_sets_apikey_cache(
     monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
 
     request = make_request(authorization=f"Bearer {api_key_token}")
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_apikey"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_apikey")
+    )
 
     assert user == CurrentUser(user_id="u_apikey", user_tier="tier_3")
     assert observed_cache_keys == [deps.identity_cache._apikey_key(api_key_hash)]
-    assert apikey_set_calls == [
-        (api_key_hash, "u_apikey", "tier_3", 123)
-    ]
+    assert apikey_set_calls == [(api_key_hash, "u_apikey", "tier_3", 123)]
 
 
 @pytest.mark.asyncio
@@ -415,7 +421,9 @@ async def test_with_current_user_identity_redis_error_falls_back_to_db(monkeypat
     monkeypatch.setattr(deps, "RateLimiter", _PassSystemRateLimiter)
 
     request = make_request()
-    user = await resolve_dep(deps.with_current_user(request=request, user_id="u_redis_err"))
+    user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_redis_err")
+    )
 
     assert user == CurrentUser(user_id="u_redis_err", user_tier="tier_1")
 

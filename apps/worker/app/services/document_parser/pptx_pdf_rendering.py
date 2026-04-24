@@ -54,7 +54,7 @@ def render_pdf_to_image_pdf(pdf_bytes: bytes, scale: int = 3) -> bytes:
             rendered = file_obj.read()
         logger.info(
             f"[parse_pptx] Image-only PDF rendered: "
-            f"{len(rendered)/1024:.1f} KB, {result['page_count']} pages"
+            f"{len(rendered) / 1024:.1f} KB, {result['page_count']} pages"
         )
         return rendered
     finally:

@@ -136,7 +136,7 @@ class RedisMonitor:
     async def get_key_count_by_type(self) -> Dict[str, int]:
         """Count keys by database name."""
         try:
-            client = await self.redis._get_client()
+            await self.redis._get_client()
             keyspace_info = await self.get_keyspace_info()
 
             key_counts = {}

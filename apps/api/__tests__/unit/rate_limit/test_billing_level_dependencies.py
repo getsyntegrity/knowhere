@@ -75,9 +75,7 @@ async def test_require_billing_limits_yields_current_user(monkeypatch):
     request = make_request()
     user = CurrentUser(user_id="u_ok", user_tier="free")
 
-    agen = deps.require_billing_limits(
-        request=request, current_user=user, _db=FAKE_DB
-    )
+    agen = deps.require_billing_limits(request=request, current_user=user, _db=FAKE_DB)
     yielded_user = await agen.__anext__()
     assert yielded_user == user
     await agen.aclose()
@@ -117,9 +115,7 @@ async def test_require_billing_limits_enforces_tier_rpm_with_real_rate_limiter(
     request = make_request()
     user = CurrentUser(user_id="u_tier_2", user_tier="tier_2")
 
-    agen = deps.require_billing_limits(
-        request=request, current_user=user, _db=FAKE_DB
-    )
+    agen = deps.require_billing_limits(request=request, current_user=user, _db=FAKE_DB)
     yielded_user = await agen.__anext__()
     assert yielded_user == user
     await agen.aclose()
@@ -284,17 +280,14 @@ async def test_enforce_job_creation_capacity_allows_when_active_jobs_below_limit
         classmethod(lambda _cls: _FakeConfig(max_concurrent_jobs=1)),
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
-    monkeypatch.setattr(
-        deps, "_acquire_user_concurrency_lock", async_none
-    )
-    monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", async_value(0)
-    )
+    monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", async_none)
+    monkeypatch.setattr(deps, "_count_non_terminal_jobs", async_value(0))
 
     request = make_request()
     user = CurrentUser(user_id="u_ok", user_tier="free")
 
     await deps.enforce_job_creation_capacity(request, FAKE_DB, user)
+
 
 @pytest.mark.asyncio
 async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkeypatch):
@@ -304,12 +297,8 @@ async def test_enforce_job_creation_capacity_raises_when_concurrency_full(monkey
         classmethod(lambda _cls: _FakeConfig(max_concurrent_jobs=1)),
     )
     monkeypatch.setattr(deps, "RateLimiter", _PassRateLimiter)
-    monkeypatch.setattr(
-        deps, "_acquire_user_concurrency_lock", async_none
-    )
-    monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", async_value(1)
-    )
+    monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", async_none)
+    monkeypatch.setattr(deps, "_count_non_terminal_jobs", async_value(1))
 
     request = make_request()
     user = CurrentUser(user_id="u_full", user_tier="free")
@@ -357,12 +346,8 @@ async def test_enforce_job_creation_capacity_raises_unavailable_when_daily_quota
         classmethod(lambda _cls: _FakeConfig(max_concurrent_jobs=2, daily_quota=20)),
     )
     monkeypatch.setattr(deps, "RateLimiter", _DailyQuotaErrorRateLimiter)
-    monkeypatch.setattr(
-        deps, "_acquire_user_concurrency_lock", async_none
-    )
-    monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", async_value(0)
-    )
+    monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", async_none)
+    monkeypatch.setattr(deps, "_count_non_terminal_jobs", async_value(0))
 
     request = make_request()
     user = CurrentUser(user_id="u_daily_err", user_tier="free")

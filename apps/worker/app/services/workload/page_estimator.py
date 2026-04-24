@@ -18,13 +18,11 @@ import tempfile
 from pathlib import Path
 
 from shared.core.logging import logger
+from shared.utils.text_utils import count_cn_en
 
 # Constants for page estimation
 WORDS_PER_PAGE = 500  # Chinese chars + English words + numbers per page
 ROWS_PER_PAGE = 50  # For Excel files
-
-
-from shared.utils.text_utils import count_cn_en
 
 
 class PageEstimator:

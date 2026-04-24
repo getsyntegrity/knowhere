@@ -1,4 +1,5 @@
 """Tests for AliQuotaManager — token pool for Aliyun DashScope API keys."""
+
 from typing import cast
 
 import pytest
@@ -74,7 +75,10 @@ def test_exhaustion_raises_unavailable():
     with pytest.raises(UnavailableException) as exc_info:
         manager.acquire_request(operation="test")
     assert exc_info.value.period == "minute"
-    assert exc_info.value.user_message == "AI service is busy right now. Please retry shortly."
+    assert (
+        exc_info.value.user_message
+        == "AI service is busy right now. Please retry shortly."
+    )
 
 
 def test_redis_keys_use_ali_prefix():

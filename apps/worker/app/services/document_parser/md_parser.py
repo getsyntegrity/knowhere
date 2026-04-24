@@ -123,7 +123,7 @@ def heading_md_relocate(md_lines, heading_preds):
         # update lines
         md_lines[lid] = line_txt.strip()
 
-    md_lines = [l for l in md_lines if l.strip() != ""]
+    md_lines = [line for line in md_lines if line.strip() != ""]
     return md_lines  # note the length=original md_lines but contents/level are updated
 
 
@@ -275,7 +275,7 @@ def parse_md(
             with open(file_path, "r", encoding="utf-8") as file:
                 md_lines = file.readlines()
 
-    md_lines = [l.strip() for l in md_lines if l.strip() != ""]
+    md_lines = [line.strip() for line in md_lines if line.strip() != ""]
 
     # Preprocess: merge multi-line HTML tables into single lines
     md_lines = merge_html_tables(md_lines)

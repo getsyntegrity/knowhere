@@ -17,7 +17,7 @@ def process_llm_history(
         histories = paras.get("histories", [])
         try:
             use_his = paras.get("use_his", False)
-        except:
+        except Exception:
             use_his = False
 
         if len(histories) >= 1 and use_his:
@@ -28,7 +28,7 @@ def process_llm_history(
                     f"Previous answer {i + 1}: {his[1]}\n"
                 )
             his_record = his_record.strip()
-    except:
+    except Exception:
         pass
     return his_record
 

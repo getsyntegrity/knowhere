@@ -387,7 +387,7 @@ def parse_pptx(
             return cached_result
 
     pptx_data = load_file_bytes(pptx_path, file_url=baseurl)
-    logger.info(f"[parse_pptx] PPTX loaded: {len(pptx_data)/1024:.1f} KB")
+    logger.info(f"[parse_pptx] PPTX loaded: {len(pptx_data) / 1024:.1f} KB")
 
     if strategy == "to_pdf_api":
         from shared.core.exceptions.domain_exceptions import UnavailableException

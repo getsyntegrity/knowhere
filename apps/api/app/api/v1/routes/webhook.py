@@ -163,9 +163,12 @@ async def trigger_webhook(
         # Use dispatcher to send synchronously
         dispatcher = get_webhook_dispatcher()
         # Pass db session and is_manual=True to handle logging internally
-        success, status_code, duration_ms, error_message = (
-            await dispatcher._send_webhook(db=db, event=event, is_manual=True)
-        )
+        (
+            success,
+            status_code,
+            duration_ms,
+            error_message,
+        ) = await dispatcher._send_webhook(db=db, event=event, is_manual=True)
 
         # 5. Return response
         return WebhookTriggerResponse(

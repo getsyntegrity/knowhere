@@ -1,4 +1,5 @@
 """Reset the Alembic revision table so migrations can be replayed cleanly."""
+
 import os
 import sys
 
@@ -26,13 +27,15 @@ def reset_alembic_version() -> None:
     try:
         with engine.connect() as connection:
             # Check whether the alembic_version table exists first.
-            result = connection.execute(text("""
+            result = connection.execute(
+                text("""
                 SELECT EXISTS (
                     SELECT FROM information_schema.tables 
                     WHERE table_schema = 'public' 
                     AND table_name = 'alembic_version'
                 );
-            """))
+            """)
+            )
             table_exists = result.scalar()
 
             if table_exists:
@@ -43,13 +46,16 @@ def reset_alembic_version() -> None:
             else:
                 print("✓ alembic_version table does not exist; nothing to reset")
 
-        print("✓ Alembic revision state reset; you can regenerate the baseline migration")
+        print(
+            "✓ Alembic revision state reset; you can regenerate the baseline migration"
+        )
 
     except Exception as e:
         print(f"✗ Reset failed: {e}")
         sys.exit(1)
     finally:
         engine.dispose()
+
 
 if __name__ == "__main__":
     reset_alembic_version()

@@ -50,7 +50,9 @@ class JobResult(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    job: Mapped["Job"] = relationship("Job", back_populates="job_result", lazy="joined")
+    job: Mapped["Job"] = relationship(  # noqa: F821
+        "Job", back_populates="job_result", lazy="joined"
+    )
     chunks: Mapped[List["JobChunk"]] = relationship(
         "JobChunk",
         back_populates="job_result",

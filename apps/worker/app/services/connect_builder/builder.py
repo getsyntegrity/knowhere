@@ -321,9 +321,9 @@ def build_connections(
     kw_index = _build_keyword_index(chunks)
 
     # Pre-compute per-chunk data
-    chunk_data: Dict[str, Tuple[str, set]] = (
-        {}
-    )  # chunk_id → (file_key, normalized_keywords)
+    chunk_data: Dict[
+        str, Tuple[str, set]
+    ] = {}  # chunk_id → (file_key, normalized_keywords)
     chunk_content: Dict[str, str] = {}  # chunk_id → content (for dedup)
     for chunk in chunks:
         cid = str(chunk.get("chunk_id") or chunk.get("know_id", ""))

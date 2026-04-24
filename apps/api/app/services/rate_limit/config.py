@@ -86,8 +86,7 @@ class RateLimitConfig:
         if cls._instance is None:
             if redis_url is None:
                 raise RedisConfigurationError(
-                    "RateLimitConfig.get_instance() requires redis_url "
-                    "on first call."
+                    "RateLimitConfig.get_instance() requires redis_url on first call."
                 )
             cls._instance = cls(redis_url, key_prefix)
         return cls._instance

@@ -5,16 +5,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator, Awaitable, Callable, TypeVar
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from shared.core.config import settings
+from shared.core.constants import ProcessingConstants
 
 logger = logging.getLogger(__name__)
-
-# Create the SQLAlchemy async engine.
-from shared.core.constants import ProcessingConstants
 
 # Get SSL connection parameters.
 ssl_connect_args = settings.get_async_ssl_connect_args()
@@ -205,17 +203,21 @@ class DatabaseHealthChecker:
                 version = version_result.fetchone()[0]
 
                 # Read the current active-connection count.
-                connections_result = await conn.execute(text("""
+                connections_result = await conn.execute(
+                    text("""
                     SELECT count(*) as active_connections 
                     FROM pg_stat_activity 
                     WHERE state = 'active'
-                """))
+                """)
+                )
                 active_connections = connections_result.fetchone()[0]
 
                 # Read the current database size.
-                size_result = await conn.execute(text("""
+                size_result = await conn.execute(
+                    text("""
                     SELECT pg_size_pretty(pg_database_size(current_database())) as db_size
-                """))
+                """)
+                )
                 db_size = size_result.fetchone()[0]
 
                 return {
@@ -308,10 +310,6 @@ def setup_pool_event_listeners():
     def on_invalidate(dbapi_connection, connection_record, exception):
         """Handle connection invalidation events."""
         logger.warning(f"Database connection invalidated: {exception}")
-
-
-# Register event listeners.
-from sqlalchemy import event
 
 setup_pool_event_listeners()
 

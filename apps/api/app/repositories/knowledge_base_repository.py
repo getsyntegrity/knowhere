@@ -320,7 +320,7 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
     all_directories = await get_directories_by_user(db, user_id)
 
     # Build a dictionary keyed by directory ID.
-    directory_dict = {directory.id: directory for directory in all_directories}
+    {directory.id: directory for directory in all_directories}
 
     # Build a dictionary that stores children for each directory.
     children_dict = {}

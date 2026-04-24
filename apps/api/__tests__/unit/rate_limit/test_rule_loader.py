@@ -58,7 +58,9 @@ async def test_fetch_tier_map_builds_expected_mapping():
 async def test_fetch_system_rules_builds_rule_list():
     db = _FakeDB(
         rows=[
-            SimpleNamespace(method="POST", api_pattern="/v1/jobs", priority=100, rpm=30),
+            SimpleNamespace(
+                method="POST", api_pattern="/v1/jobs", priority=100, rpm=30
+            ),
             SimpleNamespace(method="*", api_pattern="*", priority=9999, rpm=1000),
         ]
     )
@@ -71,9 +73,7 @@ async def test_fetch_system_rules_builds_rule_list():
 
 @pytest.mark.asyncio
 async def test_load_rules_updates_config(monkeypatch):
-    tier_map = {
-        "free": TierLimits(rpm_limit=2, max_concurrent_jobs=2, daily_quota=20)
-    }
+    tier_map = {"free": TierLimits(rpm_limit=2, max_concurrent_jobs=2, daily_quota=20)}
     rules = [SystemLimitRule(method="*", api_pattern="*", priority=9999, limit=1000)]
     update_calls: list[tuple[dict, list]] = []
 

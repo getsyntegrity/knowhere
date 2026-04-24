@@ -5,6 +5,7 @@ Uses mocks for:
 - Authentication (JWT/API Key) - via FastAPI dependency overrides
 - Database session - via mock AsyncSession
 """
+
 import os
 import sys
 from typing import AsyncGenerator
@@ -31,10 +32,11 @@ from app.services.rate_limit.data_structures import CurrentUser
 # Mock User Factory
 # =============================================================================
 
+
 def create_mock_user(
     user_id: str | None = None,
     email: str = "test@example.com",
-    username: str = "testuser"
+    username: str = "testuser",
 ):
     """Create a mock User ID for testing."""
     return user_id or str(uuid4())
@@ -43,6 +45,7 @@ def create_mock_user(
 # =============================================================================
 # Mock Database Session
 # =============================================================================
+
 
 @pytest_asyncio.fixture
 async def mock_db() -> AsyncMock:
@@ -60,6 +63,7 @@ async def mock_db() -> AsyncMock:
 # Test Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def mock_user_id() -> str:
     """Create a mock authenticated user ID."""
@@ -67,14 +71,17 @@ def mock_user_id() -> str:
 
 
 @pytest_asyncio.fixture
-async def authenticated_client(mock_user_id: str, mock_db: AsyncMock) -> AsyncGenerator[AsyncClient, None]:
+async def authenticated_client(
+    mock_user_id: str, mock_db: AsyncMock
+) -> AsyncGenerator[AsyncClient, None]:
     """
     Create an async test client with mocked authentication.
-    
+
     This overrides the FastAPI dependencies to:
     - Return a mock user ID for all auth-protected endpoints
     - Use a mock database session
     """
+
     # Override auth dependency to return mock CurrentUser
     async def mock_with_current_user():
         return CurrentUser(user_id=mock_user_id, user_tier="free")
@@ -92,11 +99,11 @@ async def authenticated_client(mock_user_id: str, mock_db: AsyncMock) -> AsyncGe
     app.dependency_overrides[with_current_user] = mock_with_current_user
     app.dependency_overrides[require_billing_limits] = mock_require_billing_limits
     app.dependency_overrides[get_db] = mock_get_db
-    
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
-    
+
     # Clear overrides after test
     app.dependency_overrides.clear()
 

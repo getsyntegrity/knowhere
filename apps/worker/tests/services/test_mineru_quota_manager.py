@@ -109,7 +109,10 @@ def test_acquire_request_reports_shortest_retry_window(monkeypatch):
     except UnavailableException as exc:
         assert exc.retry_after == 45
         assert exc.period == "minute"
-        assert exc.user_message == "Document processing is busy right now. Please retry shortly."
+        assert (
+            exc.user_message
+            == "Document processing is busy right now. Please retry shortly."
+        )
 
 
 def test_lua_reservation_enforces_rpm_limit():
@@ -140,7 +143,10 @@ def test_lua_reservation_enforces_rpm_limit():
 
     assert exc_info.value.period == "minute"
     assert 1 <= exc_info.value.retry_after <= 60
-    assert exc_info.value.user_message == "Document processing is busy right now. Please retry shortly."
+    assert (
+        exc_info.value.user_message
+        == "Document processing is busy right now. Please retry shortly."
+    )
 
 
 def test_lua_reservation_respects_daily_limit(monkeypatch):
@@ -170,7 +176,10 @@ def test_lua_reservation_respects_daily_limit(monkeypatch):
 
     assert exc_info.value.period == "day"
     assert exc_info.value.retry_after > 0
-    assert exc_info.value.user_message == "Document processing is busy right now. Please retry shortly."
+    assert (
+        exc_info.value.user_message
+        == "Document processing is busy right now. Please retry shortly."
+    )
 
 
 def test_lua_round_robin_uses_backup_token_after_cooldown():
@@ -314,7 +323,15 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
         extracted["url"] = url
         extracted["dest_dir"] = dest_dir
 
-    fake_session = type("FakeSession", (), {"post": staticmethod(fake_post), "put": staticmethod(fake_put), "get": staticmethod(fake_get)})()
+    fake_session = type(
+        "FakeSession",
+        (),
+        {
+            "post": staticmethod(fake_post),
+            "put": staticmethod(fake_put),
+            "get": staticmethod(fake_get),
+        },
+    )()
     monkeypatch.setattr(mineru_pdf_service, "get_mineru_session", lambda: fake_session)
     monkeypatch.setattr(mineru_pdf_service, "s3_download_extract_zip", fake_extract)
 
@@ -357,10 +374,14 @@ def test_upload_and_parse_reuses_preferred_token_for_polling(monkeypatch, tmp_pa
     assert int(redis_client.get(day_key)) == 2
 
 
-def test_parse_pdfs_standard_route_uses_extracted_mineru_workflow(monkeypatch, tmp_path):
+def test_parse_pdfs_standard_route_uses_extracted_mineru_workflow(
+    monkeypatch, tmp_path
+):
     captured: dict[str, Any] = {}
 
-    def fake_upload_and_parse(pdf_url: str, filename: str, output_dir: str, s3_key: str = "") -> None:
+    def fake_upload_and_parse(
+        pdf_url: str, filename: str, output_dir: str, s3_key: str = ""
+    ) -> None:
         captured["pdf_url"] = pdf_url
         captured["filename"] = filename
         captured["output_dir"] = output_dir

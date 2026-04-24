@@ -193,7 +193,7 @@ class ChunksRedisService:
             return connections
 
         def merge_connections(
-            *connection_lists: List[Dict[str, Any]]
+            *connection_lists: List[Dict[str, Any]],
         ) -> List[Dict[str, Any]]:
             """Merge connect_to entries while keeping stable order."""
             merged: List[Dict[str, Any]] = []

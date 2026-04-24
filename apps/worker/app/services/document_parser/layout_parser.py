@@ -413,7 +413,7 @@ def handle_unseen_codes(
         try:
             nums = [int(x.strip()) for x in neg_content.split(",") if x.strip()]
             return any(x >= 1 for x in nums)
-        except:
+        except Exception:
             return False
 
     def build_context_window(
@@ -639,7 +639,8 @@ def handle_unseen_codes(
 
                 window_df["code_status"] = window_df.apply(get_code_status, axis=1)
                 window_path = os.path.join(
-                    windows_dir, f"window_{i+1:02d}_rows_{mw['start']}-{mw['end']}.csv"
+                    windows_dir,
+                    f"window_{i + 1:02d}_rows_{mw['start']}-{mw['end']}.csv",
                 )
                 window_df.to_csv(window_path, index=False, encoding="utf-8-sig")
 
@@ -1045,12 +1046,12 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
     def find_docstyle(para_):
         try:
             style_name = para_.style.name
-        except:
+        except Exception:
             style_name = "normal"
         if style_name.startswith("Heading") or style_name.startswith("标题"):
             try:
                 outline_level = int(style_name.split(" ")[1])
-            except:
+            except Exception:
                 outline_level = -2  # "Not Sure" sentinel
             return outline_level
         else:

@@ -1,5 +1,7 @@
 """Job state-history model."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -38,7 +40,9 @@ class JobStateHistory(Base):
     )
 
     # Relationships.
-    job: Mapped["Job"] = relationship("Job", back_populates="state_history")
+    job: Mapped["Job"] = relationship(  # noqa: F821
+        "Job", back_populates="state_history"
+    )
 
     # Indexes.
     __table_args__ = (

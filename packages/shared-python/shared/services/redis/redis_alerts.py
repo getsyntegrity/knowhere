@@ -58,8 +58,9 @@ class RedisAlertManager:
         self.add_rule(
             AlertRule(
                 name="high_memory_usage",
-                condition=lambda data: data.get("memory", {}).get("memory_usage", 0)
-                > 90,
+                condition=lambda data: (
+                    data.get("memory", {}).get("memory_usage", 0) > 90
+                ),
                 severity="critical",
                 message="Redis memory usage exceeds 90%",
                 cooldown=300,
@@ -69,8 +70,9 @@ class RedisAlertManager:
         self.add_rule(
             AlertRule(
                 name="medium_memory_usage",
-                condition=lambda data: data.get("memory", {}).get("memory_usage", 0)
-                > 80,
+                condition=lambda data: (
+                    data.get("memory", {}).get("memory_usage", 0) > 80
+                ),
                 severity="warning",
                 message="Redis memory usage exceeds 80%",
                 cooldown=600,
@@ -81,10 +83,9 @@ class RedisAlertManager:
         self.add_rule(
             AlertRule(
                 name="high_connection_count",
-                condition=lambda data: data.get("connections", {}).get(
-                    "connected_clients", 0
-                )
-                > 1000,
+                condition=lambda data: (
+                    data.get("connections", {}).get("connected_clients", 0) > 1000
+                ),
                 severity="warning",
                 message="Redis connection count is too high",
                 cooldown=300,
@@ -95,8 +96,9 @@ class RedisAlertManager:
         self.add_rule(
             AlertRule(
                 name="high_ping_latency",
-                condition=lambda data: data.get("health", {}).get("ping_latency", 0)
-                > 100,
+                condition=lambda data: (
+                    data.get("health", {}).get("ping_latency", 0) > 100
+                ),
                 severity="warning",
                 message="Redis PING latency is too high",
                 cooldown=300,
@@ -118,10 +120,9 @@ class RedisAlertManager:
         self.add_rule(
             AlertRule(
                 name="error_logs",
-                condition=lambda data: data.get("business_metrics", {}).get(
-                    "error_logs_count", 0
-                )
-                > 10,
+                condition=lambda data: (
+                    data.get("business_metrics", {}).get("error_logs_count", 0) > 10
+                ),
                 severity="warning",
                 message="Too many error logs",
                 cooldown=300,
@@ -132,10 +133,10 @@ class RedisAlertManager:
         self.add_rule(
             AlertRule(
                 name="too_many_processing_tasks",
-                condition=lambda data: data.get("business_metrics", {}).get(
-                    "processing_tasks_count", 0
-                )
-                > 100,
+                condition=lambda data: (
+                    data.get("business_metrics", {}).get("processing_tasks_count", 0)
+                    > 100
+                ),
                 severity="warning",
                 message="Too many tasks in progress",
                 cooldown=300,

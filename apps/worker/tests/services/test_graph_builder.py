@@ -1,6 +1,7 @@
 """
 Unit tests for graph_builder module.
 """
+
 import os
 import tempfile
 
@@ -20,6 +21,7 @@ from app.services.connect_builder.graph_builder import (
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
+
 def _make_chunk(chunk_id: str, path: str, keywords: list, content: str = "") -> dict:
     """Create a chunk dict matching ChunksRedisService format."""
     return {
@@ -35,6 +37,7 @@ def _make_chunk(chunk_id: str, path: str, keywords: list, content: str = "") -> 
 
 
 # ─── Test: _build_tree_from_paths ────────────────────────────────────────────
+
 
 class TestBuildTreeFromPaths:
     def test_single_file(self):
@@ -74,6 +77,7 @@ class TestBuildTreeFromPaths:
 
 # ─── Test: _merge_tree ───────────────────────────────────────────────────────
 
+
 class TestMergeTree:
     def test_disjoint_trees(self):
         base = {"Default_Root": {"a.pdf": {"Ch1": {}}}}
@@ -97,6 +101,7 @@ class TestMergeTree:
 
 # ─── Test: _chunks_to_nodes ──────────────────────────────────────────────────
 
+
 class TestChunksToNodes:
     def test_basic_extraction(self):
         chunks = [_make_chunk("c1", "Root/a.pdf/Ch1", ["PPO", "RL"])]
@@ -117,12 +122,27 @@ class TestChunksToNodes:
 
 # ─── Test: _connections_to_edges ─────────────────────────────────────────────
 
+
 class TestConnectionsToEdges:
     def test_deduplication(self):
         """Bidirectional connections should produce one edge."""
         connections = {
-            "c1": [{"target": "c2", "relation": "related", "score": 0.8, "keywords": ["ppo"]}],
-            "c2": [{"target": "c1", "relation": "related", "score": 0.8, "keywords": ["ppo"]}],
+            "c1": [
+                {
+                    "target": "c2",
+                    "relation": "related",
+                    "score": 0.8,
+                    "keywords": ["ppo"],
+                }
+            ],
+            "c2": [
+                {
+                    "target": "c1",
+                    "relation": "related",
+                    "score": 0.8,
+                    "keywords": ["ppo"],
+                }
+            ],
         }
         edges = _connections_to_edges(connections)
         assert len(edges) == 1  # Deduplicated
@@ -133,6 +153,7 @@ class TestConnectionsToEdges:
 
 # ─── Test: build_knowledge_graph ─────────────────────────────────────────────
 
+
 class TestBuildKnowledgeGraph:
     def test_basic_graph(self):
         chunks = [
@@ -140,8 +161,22 @@ class TestBuildKnowledgeGraph:
             _make_chunk("c2", "Default_Root/b.pdf/Sec1", ["PPO", "DQN"]),
         ]
         connections = {
-            "c1": [{"target": "c2", "relation": "related", "score": 0.85, "keywords": ["ppo"]}],
-            "c2": [{"target": "c1", "relation": "related", "score": 0.85, "keywords": ["ppo"]}],
+            "c1": [
+                {
+                    "target": "c2",
+                    "relation": "related",
+                    "score": 0.85,
+                    "keywords": ["ppo"],
+                }
+            ],
+            "c2": [
+                {
+                    "target": "c1",
+                    "relation": "related",
+                    "score": 0.85,
+                    "keywords": ["ppo"],
+                }
+            ],
         }
         graph = build_knowledge_graph(chunks, connections, kb_id="test_kb")
 
@@ -179,16 +214,27 @@ class TestBuildKnowledgeGraph:
 
 # ─── Test: _incremental_connections ──────────────────────────────────────────
 
+
 class TestIncrementalConnections:
     def test_new_matches_existing(self):
         """New chunks with shared keywords should connect to existing."""
         existing = [
-            _make_chunk("e1", "Root/doc1.pdf/Sec1", ["施工方案", "基坑", "支护", "钢筋", "混凝土"]),
+            _make_chunk(
+                "e1",
+                "Root/doc1.pdf/Sec1",
+                ["施工方案", "基坑", "支护", "钢筋", "混凝土"],
+            ),
         ]
         new = [
-            _make_chunk("n1", "Root/doc2.pdf/Ch1", ["施工方案", "基坑", "安全", "交底", "支护"]),
+            _make_chunk(
+                "n1", "Root/doc2.pdf/Ch1", ["施工方案", "基坑", "安全", "交底", "支护"]
+            ),
         ]
-        config = {"min_keyword_overlap": 2, "min_score_threshold": 0.1, "max_content_overlap": 1.0}
+        config = {
+            "min_keyword_overlap": 2,
+            "min_score_threshold": 0.1,
+            "max_content_overlap": 1.0,
+        }
         conns = _incremental_connections(new, existing, config)
 
         assert len(conns) > 0
@@ -208,10 +254,13 @@ class TestIncrementalConnections:
 
     def test_empty_inputs(self):
         assert _incremental_connections([], []) == {}
-        assert _incremental_connections([], [_make_chunk("e1", "R/a.pdf/S", ["a"])]) == {}
+        assert (
+            _incremental_connections([], [_make_chunk("e1", "R/a.pdf/S", ["a"])]) == {}
+        )
 
 
 # ─── Test: update_knowledge_graph ────────────────────────────────────────────
+
 
 class TestUpdateKnowledgeGraph:
     def test_incremental_update(self):
@@ -241,7 +290,9 @@ class TestUpdateKnowledgeGraph:
             [_make_chunk("c1", "Default_Root/a.pdf/Ch1", [])], {}, kb_id="kb"
         )
         new = [_make_chunk("c2", "Default_Root/a.pdf/Ch2", [])]
-        updated = update_knowledge_graph(initial, new, [_make_chunk("c1", "Default_Root/a.pdf/Ch1", [])])
+        updated = update_knowledge_graph(
+            initial, new, [_make_chunk("c1", "Default_Root/a.pdf/Ch1", [])]
+        )
 
         # Same file, chunks should be merged
         assert updated["stats"]["total_files"] == 1
@@ -249,6 +300,7 @@ class TestUpdateKnowledgeGraph:
 
 
 # ─── Test: File I/O ──────────────────────────────────────────────────────────
+
 
 class TestFileIO:
     def test_save_and_load(self):

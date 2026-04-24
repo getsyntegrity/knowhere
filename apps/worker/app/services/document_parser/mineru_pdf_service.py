@@ -379,7 +379,7 @@ def poll_mineru_task(
                 if state == "running":
                     if "extract_progress" in status:
                         try:
-                            progress = (
+                            (
                                 status["extract_progress"]["extracted_pages"]
                                 / status["extract_progress"]["total_pages"]
                             )

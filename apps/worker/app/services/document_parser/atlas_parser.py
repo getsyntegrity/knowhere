@@ -97,7 +97,7 @@ def _make_title_from_text(page_text: str, page_num: int, max_len: int = 25) -> s
 
     Example: "P5 General entrance requirements...Scale 1:50"
     """
-    lines = [l.strip() for l in page_text.split("\n") if l.strip()]
+    lines = [line.strip() for line in page_text.split("\n") if line.strip()]
     if not lines:
         return f"P{page_num}"
 

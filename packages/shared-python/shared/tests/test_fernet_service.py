@@ -20,7 +20,6 @@ def generate_key():
 
 
 class TestFernetService:
-
     def test_init_raises_if_no_key(self):
         """Test initialization fails without master key."""
         with pytest.raises(

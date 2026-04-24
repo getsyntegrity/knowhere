@@ -1,4 +1,5 @@
 """Text utilities shared across services."""
+# ruff: noqa: E402
 
 import re
 import warnings

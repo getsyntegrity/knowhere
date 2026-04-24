@@ -126,7 +126,9 @@ def test_find_event_id_uses_case_insensitive_fallback_for_list_header_value() ->
     assert event_id == "0e835222-858d-4185-84cb-818552b1b8a5"
 
 
-def test_build_callback_log_idempotency_key_derives_uuid_from_qstash_message_id() -> None:
+def test_build_callback_log_idempotency_key_derives_uuid_from_qstash_message_id() -> (
+    None
+):
     qstash_message_id: str = "msg_test_qstash_callback"
     idempotency_key = qstash_callbacks._build_callback_log_idempotency_key(
         qstash_message_id,
@@ -152,7 +154,9 @@ def test_process_qstash_callback_stores_qstash_message_id_separately(
         attempts=0,
         updated_at=None,
     )
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=event))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=event)
+    )
 
     monkeypatch.setattr(
         qstash_callbacks,

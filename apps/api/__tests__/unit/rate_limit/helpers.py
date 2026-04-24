@@ -104,20 +104,14 @@ def build_real_config(
     fake_server = fakeredis.FakeServer()
 
     def _fake_from_url(*_args, **_kwargs):
-        return fakeredis.FakeRedis(
-            server=fake_server, decode_responses=False
-        )
+        return fakeredis.FakeRedis(server=fake_server, decode_responses=False)
 
-    monkeypatch.setattr(
-        redis_asyncio, "from_url", _fake_from_url, raising=False
-    )
+    monkeypatch.setattr(redis_asyncio, "from_url", _fake_from_url, raising=False)
     if hasattr(redis_asyncio, "Redis"):
         monkeypatch.setattr(
             redis_asyncio.Redis,
             "from_url",
-            classmethod(
-                lambda _cls, *a, **k: _fake_from_url(*a, **k)
-            ),
+            classmethod(lambda _cls, *a, **k: _fake_from_url(*a, **k)),
             raising=False,
         )
 
@@ -135,9 +129,7 @@ def build_real_config(
         fixed_window=limits_strategies.FixedWindowRateLimiter(storage),
         namespaced_namespace=lambda ns: f"knowhere-api:rate_limit:{ns}",
     )
-    redis_client = fakeredis.FakeRedis(
-        server=fake_server, decode_responses=True
-    )
+    redis_client = fakeredis.FakeRedis(server=fake_server, decode_responses=True)
     return config, redis_client
 
 
@@ -148,8 +140,10 @@ async def async_none(*_args, **_kwargs):
 
 def async_value(value):
     """Factory: returns an async callable that returns *value*."""
+
     async def _inner(*_args, **_kwargs):
         return value
+
     return _inner
 
 

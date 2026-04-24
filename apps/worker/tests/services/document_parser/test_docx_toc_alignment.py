@@ -93,7 +93,12 @@ def test_detect_doc_tocs_uses_outline_level_for_unnumbered_toc_style() -> None:
 def test_build_docx_toc_hierarchies_preserves_levels_and_groups_areas() -> None:
     toc_hierarchies = build_docx_toc_hierarchies(
         [
-            (1, "目录", "TOC-AREA", {"toc_level": None, "toc_style_name": "TOCHeading"}),
+            (
+                1,
+                "目录",
+                "TOC-AREA",
+                {"toc_level": None, "toc_style_name": "TOCHeading"},
+            ),
             (2, "第一章 总则", "TOC-AREA", {"toc_level": 1, "toc_style_name": "TOC1"}),
             (3, "1.1 适用范围", "TOC-AREA", {"toc_level": 2, "toc_style_name": "TOC2"}),
             (4, "正文开始", "PTXT", None),
@@ -112,9 +117,24 @@ def test_build_docx_toc_hierarchies_preserves_levels_and_groups_areas() -> None:
 def test_build_docx_toc_hierarchies_falls_back_to_indent_for_plain_toc_styles() -> None:
     toc_hierarchies = build_docx_toc_hierarchies(
         [
-            (1, "目录", "TOC-AREA", {"toc_level": None, "toc_style_name": "TOC", "toc_left_indent": 0}),
-            (2, "总则", "TOC-AREA", {"toc_level": None, "toc_style_name": "TOC", "toc_left_indent": 0}),
-            (3, "适用范围", "TOC-AREA", {"toc_level": None, "toc_style_name": "TOC", "toc_left_indent": 240}),
+            (
+                1,
+                "目录",
+                "TOC-AREA",
+                {"toc_level": None, "toc_style_name": "TOC", "toc_left_indent": 0},
+            ),
+            (
+                2,
+                "总则",
+                "TOC-AREA",
+                {"toc_level": None, "toc_style_name": "TOC", "toc_left_indent": 0},
+            ),
+            (
+                3,
+                "适用范围",
+                "TOC-AREA",
+                {"toc_level": None, "toc_style_name": "TOC", "toc_left_indent": 240},
+            ),
             (4, "正文开始", "PTXT", None),
         ]
     )
@@ -158,7 +178,9 @@ def test_parse_docx_passes_structured_toc_context_to_pred_titles(
     ]
     captured = {}
 
-    monkeypatch.setattr(doc_parser, "load_file_bytes", lambda *args, **kwargs: b"docx-bytes")
+    monkeypatch.setattr(
+        doc_parser, "load_file_bytes", lambda *args, **kwargs: b"docx-bytes"
+    )
     monkeypatch.setattr(doc_parser, "iter_block_items", lambda doc_data: block_tuples)
 
     def fake_pred_titles(heading_infos, **kwargs):
@@ -217,7 +239,9 @@ def test_pred_titles_uses_zone_parsing_for_docx_and_prefers_earliest_toc_boundar
     def fake_est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
         return raw_preds.copy()
 
-    def fake_est_hierarchies_llm(raw_preds, prompt_limt, toc_hierarchies=None, **kwargs):
+    def fake_est_hierarchies_llm(
+        raw_preds, prompt_limt, toc_hierarchies=None, **kwargs
+    ):
         calls.append(
             {
                 "ids": raw_preds["id"].tolist(),
@@ -229,15 +253,25 @@ def test_pred_titles_uses_zone_parsing_for_docx_and_prefers_earliest_toc_boundar
         return result
 
     monkeypatch.setattr(layout_parser, "filter_doc_headings", fake_filter_doc_headings)
-    monkeypatch.setattr(layout_parser, "est_hierarchies_naive", fake_est_hierarchies_naive)
+    monkeypatch.setattr(
+        layout_parser, "est_hierarchies_naive", fake_est_hierarchies_naive
+    )
     monkeypatch.setattr(layout_parser, "est_hierarchies_llm", fake_est_hierarchies_llm)
 
     heading_preds = layout_parser.pred_titles(
         infos=[],
         doc_type="docx",
         toc_hierarchies=[
-            {"toc_range": (2, 3), "toc_with_level": "toc-1", "toc_tree": {"第一章 总则": {}}},
-            {"toc_range": (8, 9), "toc_with_level": "toc-2", "toc_tree": {"第二章 术语": {}}},
+            {
+                "toc_range": (2, 3),
+                "toc_with_level": "toc-1",
+                "toc_tree": {"第一章 总则": {}},
+            },
+            {
+                "toc_range": (8, 9),
+                "toc_with_level": "toc-2",
+                "toc_tree": {"第二章 术语": {}},
+            },
         ],
         smart_parse=True,
         first_toc_ele_num=1,

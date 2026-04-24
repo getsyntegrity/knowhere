@@ -6,7 +6,9 @@ def test_retrieval_schema_uses_single_alembic_revision() -> None:
     retrieval_revisions = sorted(
         path.name
         for path in versions_dir.glob("*.py")
-        if "retrieval" in path.name or "graph_routing" in path.name or "hit_stats" in path.name
+        if "retrieval" in path.name
+        or "graph_routing" in path.name
+        or "hit_stats" in path.name
     )
 
     assert retrieval_revisions == [

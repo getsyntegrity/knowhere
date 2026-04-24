@@ -90,7 +90,7 @@ class RateLimiter:
                 limit=limit,
                 period=period,
                 internal_message=(
-                    f"System limit exceeded for {target}, " f"limit={limit}/{period}"
+                    f"System limit exceeded for {target}, limit={limit}/{period}"
                 ),
             )
             exc.details.update(
@@ -135,7 +135,7 @@ class RateLimiter:
                 limit=rpm,
                 period="minute",
                 internal_message=(
-                    f"Billing RPM exceeded for user={user_id}, " f"limit={rpm}/min"
+                    f"Billing RPM exceeded for user={user_id}, limit={rpm}/min"
                 ),
             )
             exc.details.update(
@@ -184,7 +184,7 @@ class RateLimiter:
                 limit=quota,
                 period="day",
                 internal_message=(
-                    f"Daily quota exceeded for user={user_id}, " f"limit={quota}/day"
+                    f"Daily quota exceeded for user={user_id}, limit={quota}/day"
                 ),
             )
             exc.details.update(

@@ -27,6 +27,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
+
 def include_object(object, name, type_, reflected, compare_to):
     """Exclude externally managed auth tables from Alembic autogenerate output."""
     externally_managed_tables: set[str] = {
@@ -40,6 +41,7 @@ def include_object(object, name, type_, reflected, compare_to):
     if type_ == "table" and name in externally_managed_tables:
         return False
     return True
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 
 # Base task class
 from app.core.tasks.base_task import KBBaseTask
+from app.core.tasks.task_utils import (
+    cleanup_task_workspace,
+    create_task_workspace,
+    download_s3_file_to_temp,
+)
 from app.services.common.job_start_service import mark_job_running
 from app.services.document_parser.stage_profiler import stage_timer
 
@@ -60,13 +65,6 @@ from shared.services.storage.zip_result_service import ZipResultService
 
 # Get Celery application
 celery_app = get_celery_app()
-
-
-from app.core.tasks.task_utils import (
-    cleanup_task_workspace,
-    create_task_workspace,
-    download_s3_file_to_temp,
-)
 
 
 @celery_app.task(

@@ -100,7 +100,6 @@ class FakeAsyncSession:
         # 2. Worker fetches event: `select(WebhookEvent).where(...)`.
 
         # Implementation: Simple scan of storage.
-        results = []
 
         # Very naive filter: if we find an ID in the statement string that matches an object
         # but statement isn't a string usually.

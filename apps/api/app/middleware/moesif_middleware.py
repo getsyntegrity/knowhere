@@ -73,10 +73,10 @@ class MoesifMiddleware(BaseHTTPMiddleware):
                         # Prefer decoded JSON when possible.
                         try:
                             body = json.loads(body.decode())
-                        except:
+                        except (json.JSONDecodeError, UnicodeDecodeError):
                             # Fall back to a decoded string when the body is not JSON.
                             body = body.decode("utf-8", errors="ignore")
-                except:
+                except Exception:
                     body = None
 
             # Read query parameters.
@@ -132,11 +132,11 @@ class MoesifMiddleware(BaseHTTPMiddleware):
             if auth_header:
                 if auth_header.startswith("Bearer "):
                     # JWT token.
-                    token = auth_header[7:]
+                    auth_header[7:]
                     # TODO: Parse the JWT and extract the user ID.
                 elif auth_header.startswith("ApiKey "):
                     # API key.
-                    api_key = auth_header[7:]
+                    auth_header[7:]
                     # TODO: Resolve the user ID from the API key in the database.
 
             # Fall back to X-User-ID when the frontend provides it.

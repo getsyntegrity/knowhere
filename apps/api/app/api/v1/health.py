@@ -2,7 +2,6 @@
 Database health API endpoints.
 """
 
-
 from fastapi import APIRouter
 
 from shared.core.database import (

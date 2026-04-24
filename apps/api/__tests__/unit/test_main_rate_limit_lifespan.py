@@ -44,7 +44,9 @@ def _patch_lifespan_dependencies(
         lambda *_a, **_kw: SimpleNamespace(returncode=0, stderr="", stdout=""),
     )
     monkeypatch.setattr(database_module, "prewarm_connection_pool", _noop_async)
-    monkeypatch.setattr(database_module, "AsyncSessionFactory", lambda: _SessionContext())
+    monkeypatch.setattr(
+        database_module, "AsyncSessionFactory", lambda: _SessionContext()
+    )
     monkeypatch.setattr(app_main.redis_pool_manager, "init_pool", _noop_async)
     monkeypatch.setattr(
         app_main.redis_pool_manager,

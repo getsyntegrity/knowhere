@@ -1,4 +1,5 @@
 """Tests for ILoveApiQuotaManager — token pool for iLoveAPI keys."""
+
 from typing import cast
 
 import pytest
@@ -53,6 +54,7 @@ def build_iloveapi_manager(*, tokens=None, max_concurrent=5):
 # Token pool tests (BaseQuotaManager behavior for iLoveAPI)
 # ------------------------------------------------------------------
 
+
 def test_acquire_request_returns_lease():
     manager, _ = build_iloveapi_manager()
     lease = manager.acquire_request(operation="pptx_to_pdf")
@@ -100,9 +102,11 @@ def test_redis_keys_use_iloveapi_prefix():
 # Token parsing from settings
 # ------------------------------------------------------------------
 
+
 def test_parse_tokens_from_settings_json_pool(monkeypatch):
     monkeypatch.setattr(
-        settings, "ILOVEAPI_KEYS",
+        settings,
+        "ILOVEAPI_KEYS",
         '[{"public_key": "pub_a", "secret_key": "sec_a"}, {"public_key": "pub_b", "secret_key": "sec_b"}]',
         raising=False,
     )
@@ -145,6 +149,7 @@ def test_parse_tokens_from_settings_no_keys_raises(monkeypatch):
 # ------------------------------------------------------------------
 # In-flight concurrency limiter
 # ------------------------------------------------------------------
+
 
 def test_acquire_inflight_respects_max_concurrent():
     manager, _ = build_iloveapi_manager(max_concurrent=2)

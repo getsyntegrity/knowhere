@@ -5,7 +5,10 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.services.guest.guest_registration_service import GuestRegistrationService
-from shared.core.exceptions.domain_exceptions import ConflictException, UnavailableException
+from shared.core.exceptions.domain_exceptions import (
+    ConflictException,
+    UnavailableException,
+)
 from shared.models.database.user import User
 from shared.models.schemas.guest import GuestRateLimitInfo
 
@@ -114,7 +117,9 @@ async def test_register_guest_reraises_non_race_integrity_errors(monkeypatch) ->
     error = IntegrityError(
         'INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)',
         {},
-        Exception('null value in column "name" of relation "user" violates not-null constraint'),
+        Exception(
+            'null value in column "name" of relation "user" violates not-null constraint'
+        ),
     )
 
     monkeypatch.setattr(
@@ -153,7 +158,9 @@ async def test_register_guest_reraises_non_race_integrity_errors(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_register_guest_conflicts_when_concurrent_create_loses_race(monkeypatch) -> None:
+async def test_register_guest_conflicts_when_concurrent_create_loses_race(
+    monkeypatch,
+) -> None:
     service = GuestRegistrationService()
     session = create_mock_session()
     existing_device = SimpleNamespace(device_id="device-123")
@@ -230,10 +237,12 @@ async def test_register_guest_fails_before_commit_when_guest_rate_limit_missing(
     monkeypatch.setattr(
         service,
         "_get_guest_rate_limit_info",
-        MagicMock(side_effect=UnavailableException(
-            internal_message="Guest tier limits are not loaded in RateLimitConfig",
-            retry_after=60,
-        )),
+        MagicMock(
+            side_effect=UnavailableException(
+                internal_message="Guest tier limits are not loaded in RateLimitConfig",
+                retry_after=60,
+            )
+        ),
     )
 
     with pytest.raises(UnavailableException) as exc_info:

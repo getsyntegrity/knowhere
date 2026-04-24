@@ -11,7 +11,10 @@ from app.api.v1.routes import jobs
 from app.repositories.job_repository import JobRepository
 from app.services import job_document_scope_service
 from app.services.rate_limit.data_structures import CurrentUser
-from shared.core.exceptions.domain_exceptions import ConflictException, NotFoundException
+from shared.core.exceptions.domain_exceptions import (
+    ConflictException,
+    NotFoundException,
+)
 from shared.models.schemas.job import JobCreate, ParsingParams
 
 
@@ -36,7 +39,11 @@ def test_find_active_job_for_document_query_compiles_for_postgres():
         document_id="doc_123",
     )
 
-    compiled = str(statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    compiled = str(
+        statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
 
     assert ".astext" not in compiled
     assert "document_id" in compiled
@@ -49,7 +56,9 @@ def test_jobs_model_defines_active_document_unique_guard():
 
     assert "uq_jobs_user_active_document" in indexes
     index_sql = str(indexes["uq_jobs_user_active_document"].expressions[1])
-    where_sql = str(indexes["uq_jobs_user_active_document"].dialect_options["postgresql"]["where"])
+    where_sql = str(
+        indexes["uq_jobs_user_active_document"].dialect_options["postgresql"]["where"]
+    )
     assert "job_metadata ->> 'document_id'" in index_sql
     assert "(job_metadata ->> 'document_id') IS NOT NULL" in where_sql
 
@@ -76,7 +85,9 @@ def _active_document_integrity_error() -> IntegrityError:
     return IntegrityError(
         "INSERT INTO jobs ...",
         {},
-        Exception("duplicate key value violates unique constraint uq_jobs_user_active_document"),
+        Exception(
+            "duplicate key value violates unique constraint uq_jobs_user_active_document"
+        ),
     )
 
 
@@ -114,7 +125,9 @@ async def test_create_file_job_translates_active_document_unique_race(monkeypatc
     )
     monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
     monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
-    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        jobs, "find_active_job_for_document", AsyncMock(return_value=None)
+    )
 
     class _JobRepo:
         async def create_job(self, **_kwargs):
@@ -124,10 +137,16 @@ async def test_create_file_job_translates_active_document_unique_race(monkeypatc
         async def get_document(self, _db, *, document_id, user_id):
             assert document_id == "doc_123"
             assert user_id == "u_test"
-            return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
+            return type(
+                "Document",
+                (),
+                {"document_id": "doc_123", "namespace": "support-center"},
+            )()
 
     monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
-    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(
+        job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo()
+    )
 
     payload = JobCreate(
         source_type="file",
@@ -159,8 +178,12 @@ async def test_create_url_job_translates_active_document_unique_race(monkeypatch
         lambda: object(),
     )
     monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
-    monkeypatch.setattr(jobs, "resolve_file_extension_async", AsyncMock(return_value=".pdf"))
-    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        jobs, "resolve_file_extension_async", AsyncMock(return_value=".pdf")
+    )
+    monkeypatch.setattr(
+        jobs, "find_active_job_for_document", AsyncMock(return_value=None)
+    )
 
     class _JobRepo:
         async def create_job(self, **_kwargs):
@@ -170,10 +193,16 @@ async def test_create_url_job_translates_active_document_unique_race(monkeypatch
         async def get_document(self, _db, *, document_id, user_id):
             assert document_id == "doc_123"
             assert user_id == "u_test"
-            return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
+            return type(
+                "Document",
+                (),
+                {"document_id": "doc_123", "namespace": "support-center"},
+            )()
 
     monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
-    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(
+        job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo()
+    )
 
     payload = JobCreate(
         source_type="url",
@@ -199,14 +228,18 @@ async def test_create_url_job_translates_active_document_unique_race(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_create_job_defaults_namespace_and_generates_document_id_for_new_documents(monkeypatch):
+async def test_create_job_defaults_namespace_and_generates_document_id_for_new_documents(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),
     )
     monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
     monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
-    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        jobs, "find_active_job_for_document", AsyncMock(return_value=None)
+    )
 
     captured: dict[str, object] = {}
 
@@ -266,14 +299,18 @@ async def test_create_job_defaults_namespace_and_generates_document_id_for_new_d
 
 
 @pytest.mark.asyncio
-async def test_create_job_update_omitting_namespace_keeps_existing_document_namespace(monkeypatch):
+async def test_create_job_update_omitting_namespace_keeps_existing_document_namespace(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),
     )
     monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
     monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
-    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        jobs, "find_active_job_for_document", AsyncMock(return_value=None)
+    )
 
     captured: dict[str, object] = {}
 
@@ -294,10 +331,16 @@ async def test_create_job_update_omitting_namespace_keeps_existing_document_name
         async def get_document(self, _db, *, document_id, user_id):
             assert document_id == "doc_123"
             assert user_id == "u_test"
-            return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
+            return type(
+                "Document",
+                (),
+                {"document_id": "doc_123", "namespace": "support-center"},
+            )()
 
     monkeypatch.setattr(jobs, "JobRepository", lambda: _JobRepo())
-    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(
+        job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo()
+    )
 
     class _UploadService:
         async def generate_upload_url(self, _job_id, _file_extension):
@@ -338,7 +381,9 @@ async def test_create_job_update_omitting_namespace_keeps_existing_document_name
 
 
 @pytest.mark.asyncio
-async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_document(monkeypatch):
+async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_document(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),
@@ -350,9 +395,15 @@ async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_do
         async def get_document(self, _db, *, document_id, user_id):
             assert document_id == "doc_123"
             assert user_id == "u_test"
-            return type("Document", (), {"document_id": "doc_123", "namespace": "support-center"})()
+            return type(
+                "Document",
+                (),
+                {"document_id": "doc_123", "namespace": "support-center"},
+            )()
 
-    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(
+        job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo()
+    )
     monkeypatch.setattr(
         jobs,
         "find_active_job_for_document",
@@ -383,7 +434,9 @@ async def test_create_job_update_rejects_concurrent_non_terminal_job_for_same_do
 
 
 @pytest.mark.asyncio
-async def test_create_job_rejects_prepublication_active_document_id_before_document_exists(monkeypatch):
+async def test_create_job_rejects_prepublication_active_document_id_before_document_exists(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),
@@ -397,7 +450,9 @@ async def test_create_job_rejects_prepublication_active_document_id_before_docum
             assert user_id == "u_test"
             return None
 
-    monkeypatch.setattr(job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo())
+    monkeypatch.setattr(
+        job_document_scope_service, "DocumentRepository", lambda: _DocumentRepo()
+    )
     monkeypatch.setattr(
         jobs,
         "find_active_job_for_document",
@@ -465,7 +520,9 @@ async def test_create_job_returns_404_when_update_target_document_is_missing(
         lambda: object(),
     )
     monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
-    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        jobs, "find_active_job_for_document", AsyncMock(return_value=None)
+    )
 
     class _DocumentRepo:
         async def get_document(self, _db, *, document_id, user_id):
@@ -503,7 +560,9 @@ async def test_create_job_returns_404_when_update_target_document_is_archived(
     )
     monkeypatch.setattr(jobs, "validate_file_type", lambda _file_name: True)
     monkeypatch.setattr(jobs, "enforce_job_creation_capacity", AsyncMock())
-    monkeypatch.setattr(jobs, "find_active_job_for_document", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        jobs, "find_active_job_for_document", AsyncMock(return_value=None)
+    )
 
     class _DocumentRepo:
         async def get_document(self, _db, *, document_id, user_id):
@@ -569,10 +628,9 @@ async def test_create_job_returns_404_when_update_target_document_is_archived(
 
 
 def test_jobs_routes_keep_document_scope_logic_out_of_router():
-    source = (
-        Path(__file__).parents[2]
-        / "app/api/v1/routes/jobs.py"
-    ).read_text(encoding="utf-8")
+    source = (Path(__file__).parents[2] / "app/api/v1/routes/jobs.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "class DocumentRepository" not in source
     assert "async def resolve_effective_document_scope" not in source
@@ -582,7 +640,9 @@ def test_jobs_routes_keep_document_scope_logic_out_of_router():
 
 @pytest.mark.asyncio
 async def test_get_job_result_omits_reserved_document_id_for_new_ingestion_until_publication(
-    authenticated_client, mock_user_id, monkeypatch,
+    authenticated_client,
+    mock_user_id,
+    monkeypatch,
 ):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
@@ -638,7 +698,9 @@ async def test_get_job_result_omits_reserved_document_id_for_new_ingestion_until
 
 @pytest.mark.asyncio
 async def test_get_job_result_returns_published_document_id_after_success(
-    authenticated_client, mock_user_id, monkeypatch,
+    authenticated_client,
+    mock_user_id,
+    monkeypatch,
 ):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
@@ -702,7 +764,9 @@ async def test_get_job_result_returns_published_document_id_after_success(
 
 @pytest.mark.asyncio
 async def test_get_job_result_hides_existing_document_id_for_update_flow_until_publication(
-    authenticated_client, mock_user_id, monkeypatch,
+    authenticated_client,
+    mock_user_id,
+    monkeypatch,
 ):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
@@ -758,7 +822,9 @@ async def test_get_job_result_hides_existing_document_id_for_update_flow_until_p
 
 
 @pytest.mark.asyncio
-async def test_get_jobs_list_route_uses_canonical_v1_path(authenticated_client, monkeypatch):
+async def test_get_jobs_list_route_uses_canonical_v1_path(
+    authenticated_client, monkeypatch
+):
     monkeypatch.setattr(
         "shared.services.redis.RedisServiceFactory.get_service",
         lambda: object(),

@@ -111,7 +111,7 @@ def handle_image(
 
     img_ext = os.path.splitext(img_file["image_name"])[-1]
     raw_img_name = process_path_texts(
-        f"image-{str(img_count+1)} {current_heading} {last_context}", last=30
+        f"image-{str(img_count + 1)} {current_heading} {last_context}", last=30
     )
     img_raw_path = os.path.join(img_dir, f"{raw_img_name}{img_ext}")
 
@@ -139,10 +139,12 @@ def handle_image(
 
     # Use LLM title alone for clean naming; fallback to heading+context
     if llm_title:
-        img_name = process_path_texts(f"image-{str(img_count+1)} {llm_title}", last=30)
+        img_name = process_path_texts(
+            f"image-{str(img_count + 1)} {llm_title}", last=30
+        )
     else:
         img_name = process_path_texts(
-            f"image-{str(img_count+1)} {current_heading} {img_title or ''}", last=30
+            f"image-{str(img_count + 1)} {current_heading} {img_title or ''}", last=30
         )
     img_path = os.path.join(img_dir, f"{img_name}{img_ext}")
     os.rename(img_raw_path, img_path)  # if summary fails, renaming is not applied
@@ -259,7 +261,7 @@ def handle_table(
 
                 # Save image to disk
                 img_name = process_path_texts(
-                    f"table-{table_count+1}-{image_index} {current_heading}", last=30
+                    f"table-{table_count + 1}-{image_index} {current_heading}", last=30
                 )
                 img_save_path = os.path.join(img_dir, f"{img_name}{img_ext}")
                 with open(img_save_path, "wb") as f:
@@ -312,7 +314,7 @@ def handle_table(
             cell_image_map[(row_idx, col_idx)] = " ".join(descriptions)
 
         logger.info(
-            f"Extracted {sum(len(v) for v in cell_images.values())} images from table-{table_count+1} cells"
+            f"Extracted {sum(len(v) for v in cell_images.values())} images from table-{table_count + 1} cells"
         )
 
     # Generate HTML with image descriptions embedded
@@ -358,7 +360,7 @@ def handle_table(
     # Use LLM title for filename when available, fallback to raw_tb_name
     effective_name = llm_title if llm_title else raw_tb_name
     tb_name = path_handle(
-        f"table-{str(table_count+1)} {effective_name}", mode="clean_single"
+        f"table-{str(table_count + 1)} {effective_name}", mode="clean_single"
     )
     tb_path = os.path.join(tb_dir, f"{tb_name}.html")
 
@@ -532,9 +534,7 @@ def iter_block_items(doc_data):
                     tbl = Table(elem, doc)
 
                 # Extract images from each cell, keyed by (row_idx, col_idx)
-                cell_images = (
-                    {}
-                )  # {(row_idx, col_idx): [{'image_name', 'data', 'size'}]}
+                cell_images = {}  # {(row_idx, col_idx): [{'image_name', 'data', 'size'}]}
                 for row_idx, tr in enumerate(elem.findall(".//w:tr", namespaces=ns)):
                     for col_idx, tc in enumerate(tr.findall(".//w:tc", namespaces=ns)):
                         blips = tc.xpath(".//a:blip", namespaces=ns)
@@ -665,9 +665,7 @@ def parse_docx(
         new_content = {"heading": text, "content": [], "level": outline_level}
         headings_stack[-1]["content"].append(new_content)
         headings_stack.append(new_content)
-        logger.debug(
-            "⚠️no headings detected, using file name or mine a heading=>", text
-        )
+        logger.debug("⚠️no headings detected, using file name or mine a heading=>", text)
 
     df_list = []
     table_count = 0
@@ -690,7 +688,7 @@ def parse_docx(
                     last_heading = headings_stack[-1]["heading"]
                     if last_heading == text:
                         continue
-                except:
+                except Exception:
                     pass
 
                 while headings_stack and headings_stack[-1]["level"] >= outline_level:

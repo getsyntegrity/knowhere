@@ -1,4 +1,5 @@
 """Tests for RedisJobLock distributed lock."""
+
 from typing import Any, Optional, Sequence
 
 import pytest
@@ -16,6 +17,7 @@ from shared.core.exceptions.domain_exceptions import UnavailableException
 # Fake SyncRedisService backed by fakeredis
 # ---------------------------------------------------------------------------
 
+
 class FakeSyncRedisService:
     """Minimal SyncRedisService stub that satisfies RedisJobLock's interface."""
 
@@ -31,7 +33,9 @@ class FakeSyncRedisService:
         prefix = self._KEY_PREFIX
         return f"{prefix}:{key}" if not key.startswith(prefix) else key
 
-    def eval(self, script: str, keys: Sequence[str], args: Optional[Sequence[Any]] = None) -> Any:
+    def eval(
+        self, script: str, keys: Sequence[str], args: Optional[Sequence[Any]] = None
+    ) -> Any:
         client = self._get_client()
         full_keys = [self._build_key(k) for k in keys]
         raw_args = list(args or [])
@@ -41,6 +45,7 @@ class FakeSyncRedisService:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def fake_server():
@@ -66,6 +71,7 @@ JOB_ID = "job_test_abc123"
 # ---------------------------------------------------------------------------
 # Acquire / Release basics
 # ---------------------------------------------------------------------------
+
 
 class TestAcquireRelease:
     def test_acquire_succeeds(self, redis_service):
@@ -96,6 +102,7 @@ class TestAcquireRelease:
 # ---------------------------------------------------------------------------
 # Mutual exclusion
 # ---------------------------------------------------------------------------
+
 
 class TestMutualExclusion:
     def test_second_acquire_fails(self, redis_service, redis_service_b):
@@ -129,6 +136,7 @@ class TestMutualExclusion:
 # Owner-only release (token safety)
 # ---------------------------------------------------------------------------
 
+
 class TestOwnerOnlyRelease:
     def test_cannot_release_someone_elses_lock(self, redis_service, redis_service_b):
         lock_a = RedisJobLock(redis_service, JOB_ID, ttl=5, renewal_interval=999)
@@ -161,6 +169,7 @@ class TestOwnerOnlyRelease:
 # ---------------------------------------------------------------------------
 # Context manager
 # ---------------------------------------------------------------------------
+
 
 class TestContextManager:
     def test_context_manager_acquires_and_releases(self, redis_service):
@@ -196,6 +205,7 @@ class TestContextManager:
 # ---------------------------------------------------------------------------
 # Renewal (Lua script correctness)
 # ---------------------------------------------------------------------------
+
 
 class TestRenewal:
     def test_renew_script_extends_ttl_for_owner(self, redis_service):

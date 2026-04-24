@@ -10,11 +10,12 @@ Each test verifies:
 
 Test Categories:
 - Validation exceptions (400 INVALID_ARGUMENT)
-- Rate limit exceptions (429 RESOURCE_EXHAUSTED)  
+- Rate limit exceptions (429 RESOURCE_EXHAUSTED)
 - Authentication exceptions (401 UNAUTHENTICATED)
 - Not found exceptions (404 NOT_FOUND)
 - Permission denied exceptions (403 PERMISSION_DENIED)
 """
+
 import pytest
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient
@@ -24,13 +25,16 @@ from httpx import AsyncClient
 # Helper Functions
 # =============================================================================
 
+
 def assert_error_response(response_json: dict, expected_code: str):
     """Assert the response follows the standard error format."""
     assert response_json.get("success") is False, "Expected success=false"
-    
+
     error = response_json.get("error")
     assert error is not None, "Expected error object in response"
-    assert error.get("code") == expected_code, f"Expected code={expected_code}, got {error.get('code')}"
+    assert error.get("code") == expected_code, (
+        f"Expected code={expected_code}, got {error.get('code')}"
+    )
     assert "message" in error, "Expected message in error"
     assert "request_id" in error, "Expected request_id in error"
 
@@ -39,11 +43,14 @@ def assert_error_response(response_json: dict, expected_code: str):
 # Validation Exception Tests (400 INVALID_ARGUMENT)
 # =============================================================================
 
+
 class TestValidationExceptions:
     """Tests for validation-related exceptions."""
 
     @pytest.mark.asyncio
-    async def test_create_job_missing_file_name(self, authenticated_client: AsyncClient):
+    async def test_create_job_missing_file_name(
+        self, authenticated_client: AsyncClient
+    ):
         """
         Test: Create job with source_type=file but no file_name
         Expected: 400 INVALID_ARGUMENT
@@ -53,20 +60,22 @@ class TestValidationExceptions:
             json={
                 "source_type": "file",
                 # file_name is missing
-            }
+            },
         )
-        
+
         assert response.status_code == 400
         data = response.json()
         assert_error_response(data, "INVALID_ARGUMENT")
-        
+
         # Check violations in details
         details = data["error"].get("details", {})
         violations = details.get("violations", [])
         assert len(violations) > 0, "Expected violations in details"
 
     @pytest.mark.asyncio
-    async def test_create_job_missing_source_url(self, authenticated_client: AsyncClient):
+    async def test_create_job_missing_source_url(
+        self, authenticated_client: AsyncClient
+    ):
         """
         Test: Create job with source_type=url but no source_url
         Expected: 400 INVALID_ARGUMENT
@@ -76,15 +85,17 @@ class TestValidationExceptions:
             json={
                 "source_type": "url",
                 # source_url is missing
-            }
+            },
         )
-        
+
         assert response.status_code == 400
         data = response.json()
         assert_error_response(data, "INVALID_ARGUMENT")
 
     @pytest.mark.asyncio
-    async def test_create_job_unsupported_file_type(self, authenticated_client: AsyncClient):
+    async def test_create_job_unsupported_file_type(
+        self, authenticated_client: AsyncClient
+    ):
         """
         Test: Create job with unsupported file type
         Expected: 400 INVALID_ARGUMENT
@@ -94,9 +105,9 @@ class TestValidationExceptions:
             json={
                 "source_type": "file",
                 "file_name": "document.xyz",  # Unsupported extension
-            }
+            },
         )
-        
+
         assert response.status_code == 400
         data = response.json()
         assert_error_response(data, "INVALID_ARGUMENT")
@@ -111,13 +122,13 @@ class TestValidationExceptions:
             "/api/v1/jobs",
             json={
                 # source_type is required but missing
-            }
+            },
         )
-        
+
         # Should be 400 or 422 (Pydantic validation)
         assert response.status_code in [400, 422]
         data = response.json()
-        
+
         # Check standard error format
         assert data.get("success") is False
 
@@ -125,6 +136,7 @@ class TestValidationExceptions:
 # =============================================================================
 # Authentication Exception Tests (401 UNAUTHENTICATED)
 # =============================================================================
+
 
 class TestAuthenticationExceptions:
     """Tests for authentication-related exceptions."""
@@ -136,7 +148,7 @@ class TestAuthenticationExceptions:
         Expected: 401 UNAUTHENTICATED
         """
         response = await client.get("/api/v1/jobs/page")
-        
+
         assert response.status_code == 401
         data = response.json()
         assert_error_response(data, "UNAUTHENTICATED")
@@ -148,10 +160,9 @@ class TestAuthenticationExceptions:
         Expected: 401 UNAUTHENTICATED
         """
         response = await client.get(
-            "/api/v1/jobs/page",
-            headers={"Authorization": "Bearer invalid_token_12345"}
+            "/api/v1/jobs/page", headers={"Authorization": "Bearer invalid_token_12345"}
         )
-        
+
         assert response.status_code == 401
         data = response.json()
         assert_error_response(data, "UNAUTHENTICATED")
@@ -163,10 +174,9 @@ class TestAuthenticationExceptions:
         Expected: 401 UNAUTHENTICATED
         """
         response = await client.get(
-            "/api/v1/jobs/page",
-            headers={"Authorization": "NotBearer token"}
+            "/api/v1/jobs/page", headers={"Authorization": "NotBearer token"}
         )
-        
+
         assert response.status_code == 401
         data = response.json()
         assert_error_response(data, "UNAUTHENTICATED")
@@ -175,6 +185,7 @@ class TestAuthenticationExceptions:
 # =============================================================================
 # Not Found Exception Tests (404 NOT_FOUND)
 # =============================================================================
+
 
 class TestNotFoundExceptions:
     """Tests for not-found-related exceptions."""
@@ -189,13 +200,13 @@ class TestNotFoundExceptions:
         with patch("app.api.v1.routes.jobs.JobRepository") as MockJobRepo:
             mock_repo = MockJobRepo.return_value
             mock_repo.get_job_by_id = AsyncMock(return_value=None)
-            
+
             response = await authenticated_client.get("/api/v1/jobs/job_nonexistent123")
-        
+
         assert response.status_code == 404
         data = response.json()
         assert_error_response(data, "NOT_FOUND")
-        
+
         # Check resource info in details
         details = data["error"].get("details", {})
         assert details.get("resource") == "Job"
@@ -207,7 +218,7 @@ class TestNotFoundExceptions:
         Expected: 404 NOT_FOUND
         """
         response = await client.get("/api/v1/nonexistent_endpoint")
-        
+
         assert response.status_code == 404
         data = response.json()
         assert_error_response(data, "NOT_FOUND")
@@ -217,6 +228,7 @@ class TestNotFoundExceptions:
 # Rate Limit Exception Tests (429 RESOURCE_EXHAUSTED)
 # =============================================================================
 
+
 class TestRateLimitExceptions:
     """Tests for rate limit exceptions."""
 
@@ -224,7 +236,7 @@ class TestRateLimitExceptions:
     async def test_rate_limit_response_format_documentation(self):
         """
         Test: Document and verify expected rate limit error response format
-        
+
         When rate limited, the API should return:
         {
             "success": false,
@@ -240,26 +252,22 @@ class TestRateLimitExceptions:
                 }
             }
         }
-        
+
         Response headers should include:
             Retry-After: 15
         """
         # Document the expected format for rate limit responses
         # This test verifies the RateLimitException class produces correct output
         from shared.core.exceptions.domain_exceptions import RateLimitException
-        
-        exc = RateLimitException(
-            retry_after=15,
-            limit=60,
-            period="minute"
-        )
-        
+
+        exc = RateLimitException(retry_after=15, limit=60, period="minute")
+
         # Verify exception properties
         assert exc.retry_after == 15
         assert exc.limit == 60
         assert exc.period == "minute"
         assert exc.http_status_code == 429
-        
+
         # Verify to_client() output format
         result = exc.to_client("test_request_id")
         assert result["success"] is False
@@ -273,6 +281,7 @@ class TestRateLimitExceptions:
 # =============================================================================
 # Error Response Format Tests
 # =============================================================================
+
 
 class TestErrorResponseFormat:
     """Tests to verify consistent error response format across all handlers."""
@@ -292,10 +301,10 @@ class TestErrorResponseFormat:
         Test: All error responses should contain a request_id
         """
         response = await client.get("/api/v1/jobs/page")  # No auth header
-        
+
         assert response.status_code == 401
         data = response.json()
-        
+
         error = data.get("error", {})
         assert "request_id" in error, "Error response must contain request_id"
         assert error["request_id"] is not None
@@ -306,10 +315,10 @@ class TestErrorResponseFormat:
         Test: Error responses should never leak internal details
         """
         response = await client.get("/api/v1/jobs/page")  # No auth header
-        
+
         assert response.status_code == 401
         data = response.json()
-        
+
         error = data.get("error", {})
         # Should not contain internal_message, stack traces, or sensitive info
         assert "internal_message" not in error
@@ -320,6 +329,7 @@ class TestErrorResponseFormat:
 # =============================================================================
 # Integration smoke test
 # =============================================================================
+
 
 class TestSmokeTest:
     """Quick smoke tests to verify API is running."""
@@ -333,7 +343,6 @@ class TestSmokeTest:
         assert data.get("status") in ["ok", "healthy", None] or "message" in data
 
 
-
 class TestFileLimitations:
     """Tests for file type limitations."""
 
@@ -345,13 +354,9 @@ class TestFileLimitations:
         """
         response = await authenticated_client.post(
             "/api/v1/jobs",
-            json={
-                "source_type": "file",
-                "file_name": "malware.exe",
-                "file_size": 1024
-            }
+            json={"source_type": "file", "file_name": "malware.exe", "file_size": 1024},
         )
-        
+
         assert response.status_code == 400
         data = response.json()
         assert "Unsupported file type" in data["error"]["message"]

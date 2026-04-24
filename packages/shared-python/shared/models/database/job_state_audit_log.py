@@ -54,7 +54,7 @@ class JobStateAuditLog(Base):
     )
 
     # Relationships.
-    job: Mapped["Job"] = relationship(
+    job: Mapped["Job"] = relationship(  # noqa: F821
         "Job", back_populates="state_audit_logs", lazy="select"
     )
 

@@ -22,14 +22,14 @@ def clean_file(path_, mode="remove", cols=None):
                 pass
             elif ".csv" in path_:
                 exist_df = pd.read_csv(path_, encoding="utf-8", keep_default_na=False)
-                if not cols == None:
+                if cols is not None:
                     empty_df = pd.DataFrame(columns=cols)
                 else:
                     empty_df = pd.DataFrame(columns=exist_df.columns)
                 empty_df.to_csv(path_, index=False)
         else:
             pass
-    except:
+    except Exception:
         pass
 
 

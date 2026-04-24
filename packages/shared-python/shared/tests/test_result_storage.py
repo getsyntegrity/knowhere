@@ -1,7 +1,6 @@
 from pathlib import Path
 
 
-
 def test_result_storage_does_not_depend_on_app_package():
     source_path = (
         Path(__file__).parents[1] / "services" / "storage" / "result_storage.py"

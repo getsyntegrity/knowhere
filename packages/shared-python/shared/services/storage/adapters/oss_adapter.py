@@ -128,7 +128,7 @@ class OSSStorageAdapter(StorageAdapter):
     def download_fileobj(self, key: str, bucket: Optional[str] = None) -> bytes:
         """Download an OSS object into memory."""
         _, OssError, _, _ = _import_oss2()
-        bucket_name = self._get_bucket_name(bucket)
+        self._get_bucket_name(bucket)
         try:
             result = self.bucket.get_object(key)
             return result.read()
@@ -157,7 +157,7 @@ class OSSStorageAdapter(StorageAdapter):
     ) -> Iterator[str]:
         """List OSS objects."""
         oss2, OssError, _, _ = _import_oss2()
-        bucket_name = self._get_bucket_name(bucket)
+        self._get_bucket_name(bucket)
         try:
             for obj in oss2.ObjectIterator(self.bucket, prefix=prefix):
                 yield obj.key
@@ -175,7 +175,7 @@ class OSSStorageAdapter(StorageAdapter):
     ) -> str:
         """Generate an OSS presigned URL."""
         _, OssError, _, _ = _import_oss2()
-        bucket_name = self._get_bucket_name(bucket)
+        self._get_bucket_name(bucket)
         try:
             if method.upper() == "PUT":
                 url = self.bucket.sign_url("PUT", key, expiration, headers=headers)
@@ -195,7 +195,7 @@ class OSSStorageAdapter(StorageAdapter):
     def exists(self, key: str, bucket: Optional[str] = None) -> bool:
         """Check whether an OSS object exists."""
         _, OssError, _, _ = _import_oss2()
-        bucket_name = self._get_bucket_name(bucket)
+        self._get_bucket_name(bucket)
         try:
             return self.bucket.object_exists(key)
         except OssError as e:
@@ -205,7 +205,7 @@ class OSSStorageAdapter(StorageAdapter):
     def get_object_size(self, key: str, bucket: Optional[str] = None) -> Optional[int]:
         """Get an OSS object size."""
         _, OssError, NoSuchKey, NotFound = _import_oss2()
-        bucket_name = self._get_bucket_name(bucket)
+        self._get_bucket_name(bucket)
         try:
             meta = self.bucket.head_object(key)
             return meta.content_length

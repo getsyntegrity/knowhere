@@ -213,7 +213,7 @@ async def download_and_upload_image(
     # Temporary directory.
     if temp_store_path is None:
         temp_store_path = r"/Volumes/U/temp/output/"
-    local_file_path = Path(f'{settings.S3_TEMP_PATH or "/tmp"}{unique_filename}')
+    local_file_path = Path(f"{settings.S3_TEMP_PATH or '/tmp'}{unique_filename}")
     # Path(f"{temp_store_path}{unique_filename}")
     try:
         # Download the image asynchronously.

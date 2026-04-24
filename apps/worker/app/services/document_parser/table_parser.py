@@ -1478,7 +1478,6 @@ def parse_xlsx(
     Returns:
         DataFrame with parsed table information
     """
-    split_char = settings.SPLIT_CHAR or "/"
     time_stamp = get_str_time()
     df_list = []
 

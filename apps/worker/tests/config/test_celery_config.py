@@ -12,7 +12,9 @@ def _load_celery_config_class() -> type[object]:
         / "config"
         / "celery.py"
     )
-    spec = importlib.util.spec_from_file_location("test_celery_config_module", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "test_celery_config_module", module_path
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

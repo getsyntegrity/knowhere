@@ -13,7 +13,7 @@ class RedisServiceFactory:
     """Factory for Redis service instances."""
 
     # Per-event-loop cache to avoid sharing asyncio-bound Redis state across loops.
-    _services_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[RedisService, RedisConfigManager]]" = (weakref.WeakKeyDictionary())
+    _services_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[RedisService, RedisConfigManager]]" = weakref.WeakKeyDictionary()
     # Fallback cache for sync contexts without a running loop.
     _thread_local = threading.local()
     _default_config_manager: Optional[RedisConfigManager] = None

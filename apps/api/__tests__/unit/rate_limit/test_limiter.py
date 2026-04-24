@@ -18,9 +18,7 @@ class _Window:
     ) -> None:
         self.hit_allowed = hit_allowed
         self.remaining = remaining
-        self.reset_time = (
-            int(time.time()) + 30 if reset_time is None else reset_time
-        )
+        self.reset_time = int(time.time()) + 30 if reset_time is None else reset_time
         self.stats_error = stats_error
         self.hit_calls: list[tuple] = []
         self.stats_calls: list[tuple] = []

@@ -69,10 +69,26 @@ def _filled_rect_drawing() -> dict:
 def _filled_line_box_drawing() -> dict:
     return {
         "items": [
-            ("l", types.SimpleNamespace(x=0.0, y=0.0), types.SimpleNamespace(x=80.0, y=0.0)),
-            ("l", types.SimpleNamespace(x=80.0, y=0.0), types.SimpleNamespace(x=80.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=80.0, y=30.0), types.SimpleNamespace(x=0.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=0.0, y=30.0), types.SimpleNamespace(x=0.0, y=0.0)),
+            (
+                "l",
+                types.SimpleNamespace(x=0.0, y=0.0),
+                types.SimpleNamespace(x=80.0, y=0.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=80.0, y=0.0),
+                types.SimpleNamespace(x=80.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=80.0, y=30.0),
+                types.SimpleNamespace(x=0.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=0.0, y=30.0),
+                types.SimpleNamespace(x=0.0, y=0.0),
+            ),
         ],
         "fill": (1.0, 1.0, 1.0),
         "color": None,
@@ -83,18 +99,66 @@ def _filled_line_box_drawing() -> dict:
 def _stroked_table_box_drawing() -> dict:
     return {
         "items": [
-            ("l", types.SimpleNamespace(x=0.0, y=0.0), types.SimpleNamespace(x=80.0, y=0.0)),
-            ("l", types.SimpleNamespace(x=80.0, y=0.0), types.SimpleNamespace(x=80.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=80.0, y=30.0), types.SimpleNamespace(x=0.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=0.0, y=30.0), types.SimpleNamespace(x=0.0, y=0.0)),
-            ("l", types.SimpleNamespace(x=20.0, y=0.0), types.SimpleNamespace(x=20.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=40.0, y=0.0), types.SimpleNamespace(x=40.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=60.0, y=0.0), types.SimpleNamespace(x=60.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=0.0, y=10.0), types.SimpleNamespace(x=80.0, y=10.0)),
-            ("l", types.SimpleNamespace(x=0.0, y=20.0), types.SimpleNamespace(x=80.0, y=20.0)),
-            ("l", types.SimpleNamespace(x=0.0, y=15.0), types.SimpleNamespace(x=80.0, y=15.0)),
-            ("l", types.SimpleNamespace(x=30.0, y=0.0), types.SimpleNamespace(x=30.0, y=30.0)),
-            ("l", types.SimpleNamespace(x=50.0, y=0.0), types.SimpleNamespace(x=50.0, y=30.0)),
+            (
+                "l",
+                types.SimpleNamespace(x=0.0, y=0.0),
+                types.SimpleNamespace(x=80.0, y=0.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=80.0, y=0.0),
+                types.SimpleNamespace(x=80.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=80.0, y=30.0),
+                types.SimpleNamespace(x=0.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=0.0, y=30.0),
+                types.SimpleNamespace(x=0.0, y=0.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=20.0, y=0.0),
+                types.SimpleNamespace(x=20.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=40.0, y=0.0),
+                types.SimpleNamespace(x=40.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=60.0, y=0.0),
+                types.SimpleNamespace(x=60.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=0.0, y=10.0),
+                types.SimpleNamespace(x=80.0, y=10.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=0.0, y=20.0),
+                types.SimpleNamespace(x=80.0, y=20.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=0.0, y=15.0),
+                types.SimpleNamespace(x=80.0, y=15.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=30.0, y=0.0),
+                types.SimpleNamespace(x=30.0, y=30.0),
+            ),
+            (
+                "l",
+                types.SimpleNamespace(x=50.0, y=0.0),
+                types.SimpleNamespace(x=50.0, y=30.0),
+            ),
         ],
         "fill": None,
         "color": (0.0, 0.0, 0.0),
@@ -225,7 +289,9 @@ def test_profile_pdf_worker_marks_gray_zone_for_borderline_image_mix(monkeypatch
 def test_profile_pdf_worker_ignores_fill_only_rectangles_for_text_pdf(monkeypatch):
     dense_text = "A" * 900
     filled_rect_drawings = [_filled_rect_drawing() for _ in range(20)]
-    pages = [FakePage(text=dense_text, drawings=filled_rect_drawings) for _ in range(12)]
+    pages = [
+        FakePage(text=dense_text, drawings=filled_rect_drawings) for _ in range(12)
+    ]
 
     profile = _run_profile_worker(monkeypatch, pages)
 

@@ -68,9 +68,13 @@ class _FakeMetadataService:
 def test_parse_skips_when_job_is_already_terminal(monkeypatch, tmp_path):
     redis_service = MagicMock()
     lifecycle_service = _FakeLifecycleService()
-    redis_lock_cls = MagicMock(side_effect=AssertionError("lock should not be acquired"))
+    redis_lock_cls = MagicMock(
+        side_effect=AssertionError("lock should not be acquired")
+    )
 
-    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service
+    )
     monkeypatch.setattr(
         kb_tasks.SyncRedisServiceFactory,
         "get_service",
@@ -128,21 +132,39 @@ def test_upload_url_file_uploads_downloaded_file_to_s3(monkeypatch, tmp_path):
     downloaded_path.write_bytes(b"pdf")
     uploads = []
 
-    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service
+    )
     monkeypatch.setattr(
         kb_tasks.SyncRedisServiceFactory,
         "get_service",
         staticmethod(lambda: redis_service),
     )
-    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
-    monkeypatch.setattr(kb_tasks, "download_file_from_url", lambda _url: str(downloaded_path))
-    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 123})
-    monkeypatch.setattr(kb_tasks, "upload_to_s3", lambda local_path, storage_key, bucket: uploads.append((local_path, storage_key, bucket)))
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService
+    )
+    monkeypatch.setattr(
+        kb_tasks, "download_file_from_url", lambda _url: str(downloaded_path)
+    )
+    monkeypatch.setattr(
+        kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 123}
+    )
+    monkeypatch.setattr(
+        kb_tasks,
+        "upload_to_s3",
+        lambda local_path, storage_key, bucket: uploads.append(
+            (local_path, storage_key, bucket)
+        ),
+    )
 
-    result = kb_tasks._upload_url_file("job_123", "https://example.com/test.pdf", "user_123")
+    result = kb_tasks._upload_url_file(
+        "job_123", "https://example.com/test.pdf", "user_123"
+    )
 
     assert result["status"] == "success"
-    assert uploads == [(str(downloaded_path), "uploads/test.pdf", kb_tasks.settings.S3_BUCKET_NAME)]
+    assert uploads == [
+        (str(downloaded_path), "uploads/test.pdf", kb_tasks.settings.S3_BUCKET_NAME)
+    ]
     assert not downloaded_path.exists()
 
 
@@ -151,14 +173,30 @@ class _FakeChunksRedisService:
         self.redis_service = redis_service
 
     def dataframe_to_chunks(self, dataframe: pd.DataFrame):
-        return [{"chunk_id": "chunk-1", "type": "text", "path": "doc/test", "content": "hello", "metadata": {}}]
+        return [
+            {
+                "chunk_id": "chunk-1",
+                "type": "text",
+                "path": "doc/test",
+                "content": "hello",
+                "metadata": {},
+            }
+        ]
 
     def save_chunks(self, job_id: str, chunks):
         return True
 
 
 class _FailOnSaveChunksRedisService:
-    expected_chunks = [{"chunk_id": "chunk-1", "type": "text", "path": "doc/test", "content": "hello", "metadata": {}}]
+    expected_chunks = [
+        {
+            "chunk_id": "chunk-1",
+            "type": "text",
+            "path": "doc/test",
+            "content": "hello",
+            "metadata": {},
+        }
+    ]
 
     def __init__(self, redis_service):
         self.redis_service = redis_service
@@ -167,7 +205,9 @@ class _FailOnSaveChunksRedisService:
         return list(self.expected_chunks)
 
     def save_chunks(self, job_id: str, chunks):
-        raise AssertionError("chunks should stay in memory instead of round-tripping through Redis")
+        raise AssertionError(
+            "chunks should stay in memory instead of round-tripping through Redis"
+        )
 
 
 class _FakeRedisJobLock:
@@ -256,7 +296,11 @@ def test_parse_cleans_task_workspace_after_success(monkeypatch, tmp_path):
         assert str(tmp_path) in kwargs["output_dir"]
         assert kwargs["output_dir"].endswith("/output")
 
-        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        output_dir = (
+            Path(kwargs["output_dir"])
+            / kwargs["kb_dir"]
+            / kwargs["internal_output_filename"]
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "full.md").write_text("body", encoding="utf-8")
         dataframe = pd.DataFrame(
@@ -278,32 +322,54 @@ def test_parse_cleans_task_workspace_after_success(monkeypatch, tmp_path):
         )
         return str(output_dir), dataframe
 
-    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service
+    )
     monkeypatch.setattr(
         kb_tasks.SyncRedisServiceFactory,
         "get_service",
         staticmethod(lambda: redis_service),
     )
-    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
-    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService
+    )
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service
+    )
     monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FakeChunksRedisService)
-    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(
+        kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024}
+    )
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
     monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
     monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
-    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
+    monkeypatch.setattr(
+        kb_tasks,
+        "generate_download_url",
+        lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"},
+    )
     metadata_service.metadata["source_file_name"] = source_file_name
 
-    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+    def fake_download_s3_file_to_temp(
+        file_url: str, file_ext: str, temp_dir: str
+    ) -> str:
         source_path = Path(temp_dir) / f"downloaded{file_ext}"
         source_path.write_bytes(b"pdf")
         return str(source_path)
 
-    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(
+        kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp
+    )
+    monkeypatch.setattr(
+        kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1)
+    )
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
-    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
-    monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
+    monkeypatch.setattr(
+        parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse
+    )
+    monkeypatch.setattr(
+        kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package
+    )
     monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: _FakeResultStorage())
 
     result = kb_tasks._parse("job_123", "user_123")
@@ -331,7 +397,11 @@ def test_parse_uses_s3_extension_for_internal_parse_name(monkeypatch, tmp_path):
 
     def fake_checkerboard_inject_parse(**kwargs):
         parse_call.update(kwargs)
-        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        output_dir = (
+            Path(kwargs["output_dir"])
+            / kwargs["kb_dir"]
+            / kwargs["internal_output_filename"]
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "full.md").write_text("body", encoding="utf-8")
         return str(output_dir), pd.DataFrame(
@@ -352,7 +422,9 @@ def test_parse_uses_s3_extension_for_internal_parse_name(monkeypatch, tmp_path):
             ]
         )
 
-    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+    def fake_download_s3_file_to_temp(
+        file_url: str, file_ext: str, temp_dir: str
+    ) -> str:
         source_path = Path(temp_dir) / f"downloaded{file_ext}"
         source_path.write_bytes(b"pdf")
         return str(source_path)
@@ -361,28 +433,49 @@ def test_parse_uses_s3_extension_for_internal_parse_name(monkeypatch, tmp_path):
         estimated_paths.append(path)
         return 1
 
-    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service
+    )
     monkeypatch.setattr(
         kb_tasks.SyncRedisServiceFactory,
         "get_service",
         staticmethod(lambda: redis_service),
     )
-    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
-    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService
+    )
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service
+    )
     monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FakeChunksRedisService)
-    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(
+        kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024}
+    )
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
     monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
     monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
-    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
-    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
+    monkeypatch.setattr(
+        kb_tasks,
+        "generate_download_url",
+        lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"},
+    )
+    monkeypatch.setattr(
+        kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp
+    )
     monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(fake_estimate))
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
-    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+    monkeypatch.setattr(
+        parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse
+    )
     monkeypatch.setattr(
         kb_tasks.ZipResultService,
         "generate_zip_package",
-        lambda self, **kwargs: (str(Path(kwargs["temp_dir"]) / "result.zip"), {"value": "checksum"}, {"total_chunks": 1}, 3),
+        lambda self, **kwargs: (
+            str(Path(kwargs["temp_dir"]) / "result.zip"),
+            {"value": "checksum"},
+            {"total_chunks": 1},
+            3,
+        ),
     )
     monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: _FakeResultStorage())
 
@@ -402,7 +495,11 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
     lifecycle_service = _FakeLifecycleService()
 
     def fake_checkerboard_inject_parse(**kwargs):
-        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        output_dir = (
+            Path(kwargs["output_dir"])
+            / kwargs["kb_dir"]
+            / kwargs["internal_output_filename"]
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "full.md").write_text("body", encoding="utf-8")
         return str(output_dir), pd.DataFrame(
@@ -423,43 +520,75 @@ def test_parse_passes_chunks_directly_to_finalize_job_success(monkeypatch, tmp_p
             ]
         )
 
-    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+    def fake_download_s3_file_to_temp(
+        file_url: str, file_ext: str, temp_dir: str
+    ) -> str:
         source_path = Path(temp_dir) / f"downloaded{file_ext}"
         source_path.write_bytes(b"pdf")
         return str(source_path)
 
-    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service
+    )
     monkeypatch.setattr(
         kb_tasks.SyncRedisServiceFactory,
         "get_service",
         staticmethod(lambda: redis_service),
     )
-    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
-    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
-    monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FailOnSaveChunksRedisService)
-    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService
+    )
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service
+    )
+    monkeypatch.setattr(
+        kb_tasks, "SyncChunksRedisService", _FailOnSaveChunksRedisService
+    )
+    monkeypatch.setattr(
+        kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024}
+    )
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
     monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
     monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
-    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
-    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(
+        kb_tasks,
+        "generate_download_url",
+        lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"},
+    )
+    monkeypatch.setattr(
+        kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp
+    )
+    monkeypatch.setattr(
+        kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1)
+    )
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
-    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+    monkeypatch.setattr(
+        parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse
+    )
     monkeypatch.setattr(
         kb_tasks.ZipResultService,
         "generate_zip_package",
-        lambda self, **kwargs: (str(Path(kwargs["temp_dir"]) / "result.zip"), {"value": "checksum"}, {"total_chunks": 1}, 3),
+        lambda self, **kwargs: (
+            str(Path(kwargs["temp_dir"]) / "result.zip"),
+            {"value": "checksum"},
+            {"total_chunks": 1},
+            3,
+        ),
     )
     monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: _FakeResultStorage())
 
     kb_tasks._parse("job_123", "user_123")
 
-    assert lifecycle_service.success_calls[0]["chunks"] == _FailOnSaveChunksRedisService.expected_chunks
+    assert (
+        lifecycle_service.success_calls[0]["chunks"]
+        == _FailOnSaveChunksRedisService.expected_chunks
+    )
     assert "chunks_job_id" not in lifecycle_service.success_calls[0]
 
 
-def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact_refs(monkeypatch, tmp_path):
+def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact_refs(
+    monkeypatch, tmp_path
+):
     redis_service = MagicMock()
     job = type("JobRow", (), {"billing_status": "charged"})()
     metadata_service = _FakeSuccessMetadataService(redis_service)
@@ -495,11 +624,17 @@ def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact
             ]
 
     def fake_checkerboard_inject_parse(**kwargs):
-        output_dir = Path(kwargs["output_dir"]) / kwargs["kb_dir"] / kwargs["internal_output_filename"]
+        output_dir = (
+            Path(kwargs["output_dir"])
+            / kwargs["kb_dir"]
+            / kwargs["internal_output_filename"]
+        )
         (output_dir / "images").mkdir(parents=True, exist_ok=True)
         (output_dir / "tables").mkdir(parents=True, exist_ok=True)
         (output_dir / "images" / "page-1.png").write_bytes(b"png")
-        (output_dir / "tables" / "table-1.html").write_text("<table></table>", encoding="utf-8")
+        (output_dir / "tables" / "table-1.html").write_text(
+            "<table></table>", encoding="utf-8"
+        )
         return str(output_dir), pd.DataFrame(
             [
                 {
@@ -531,7 +666,9 @@ def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact
             ]
         )
 
-    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+    def fake_download_s3_file_to_temp(
+        file_url: str, file_ext: str, temp_dir: str
+    ) -> str:
         source_path = Path(temp_dir) / f"downloaded{file_ext}"
         source_path.write_bytes(b"pdf")
         return str(source_path)
@@ -551,26 +688,48 @@ def test_parse_uses_result_storage_upload_and_keeps_chunk_file_paths_as_artifact
         zip_path.write_bytes(b"zip")
         return str(zip_path), {"value": "checksum"}, {"total_chunks": 2}, 3
 
-    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service
+    )
     monkeypatch.setattr(
         kb_tasks.SyncRedisServiceFactory,
         "get_service",
         staticmethod(lambda: redis_service),
     )
-    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
-    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService
+    )
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service
+    )
     monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", FakeMediaChunksRedisService)
-    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(
+        kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024}
+    )
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
-    monkeypatch.setattr(kb_tasks.settings, "S3_RESULTS_BUCKET", "results-bucket", raising=False)
+    monkeypatch.setattr(
+        kb_tasks.settings, "S3_RESULTS_BUCKET", "results-bucket", raising=False
+    )
     monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
     monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
-    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
-    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(
+        kb_tasks,
+        "generate_download_url",
+        lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"},
+    )
+    monkeypatch.setattr(
+        kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp
+    )
+    monkeypatch.setattr(
+        kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1)
+    )
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
-    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
-    monkeypatch.setattr(kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package)
+    monkeypatch.setattr(
+        parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse
+    )
+    monkeypatch.setattr(
+        kb_tasks.ZipResultService, "generate_zip_package", fake_generate_zip_package
+    )
 
     class FakeResultStorage:
         def upload(self, *, job_id, result_dir, zip_file_path):
@@ -614,29 +773,49 @@ def test_parse_cleans_task_workspace_after_failure(monkeypatch, tmp_path):
     def fake_checkerboard_inject_parse(**kwargs):
         raise RuntimeError("parse failed")
 
-    def fake_download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str:
+    def fake_download_s3_file_to_temp(
+        file_url: str, file_ext: str, temp_dir: str
+    ) -> str:
         source_path = Path(temp_dir) / f"downloaded{file_ext}"
         source_path.write_bytes(b"pdf")
         return str(source_path)
 
-    monkeypatch.setattr(kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service)
+    monkeypatch.setattr(
+        kb_tasks, "get_sync_job_lifecycle_service", lambda: lifecycle_service
+    )
     monkeypatch.setattr(
         kb_tasks.SyncRedisServiceFactory,
         "get_service",
         staticmethod(lambda: redis_service),
     )
-    monkeypatch.setattr(kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService)
-    monkeypatch.setattr(kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service)
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobInfoRedisService", _FakeSuccessJobInfoRedisService
+    )
+    monkeypatch.setattr(
+        kb_tasks, "SyncJobMetadataService", lambda redis: metadata_service
+    )
     monkeypatch.setattr(kb_tasks, "SyncChunksRedisService", _FakeChunksRedisService)
-    monkeypatch.setattr(kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024})
+    monkeypatch.setattr(
+        kb_tasks, "verify_s3_file_exists", lambda s3_key: {"exists": True, "size": 1024}
+    )
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
     monkeypatch.setattr(kb_tasks, "mark_job_running", lambda job_id, redis: True)
     monkeypatch.setattr(kb_tasks, "RedisJobLock", _FakeRedisJobLock)
-    monkeypatch.setattr(kb_tasks, "generate_download_url", lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"})
-    monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1))
+    monkeypatch.setattr(
+        kb_tasks,
+        "generate_download_url",
+        lambda s3_key, bucket: {"download_url": "https://example.test/file.pdf"},
+    )
+    monkeypatch.setattr(
+        kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp
+    )
+    monkeypatch.setattr(
+        kb_tasks.PageEstimator, "estimate", staticmethod(lambda path: 1)
+    )
     monkeypatch.setattr(kb_tasks, "get_sync_db_context", lambda: _FakeDbContext(job))
-    monkeypatch.setattr(parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse)
+    monkeypatch.setattr(
+        parse_service, "checkerboard_inject_parse", fake_checkerboard_inject_parse
+    )
 
     with pytest.raises(RuntimeError, match="parse failed"):
         kb_tasks._parse("job_123", "user_123")

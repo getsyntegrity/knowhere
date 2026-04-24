@@ -3,6 +3,7 @@ Pytest configuration for worker tests.
 
 Sets up the Python path to include the app and shared packages.
 """
+
 import sys
 from pathlib import Path
 

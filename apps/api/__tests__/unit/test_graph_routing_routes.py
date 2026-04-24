@@ -5,7 +5,9 @@ from shared.models.database.document import Document
 
 
 @pytest.mark.asyncio
-async def test_retrieval_query_always_uses_graph_routing(authenticated_client, monkeypatch):
+async def test_retrieval_query_always_uses_graph_routing(
+    authenticated_client, monkeypatch
+):
     from app.api.v1.routes import retrieval as retrieval_routes
 
     async def fake_run_retrieval_query(**kwargs):
@@ -32,7 +34,9 @@ async def test_retrieval_query_always_uses_graph_routing(authenticated_client, m
             ],
         }
 
-    monkeypatch.setattr(retrieval_routes, 'run_retrieval_query', fake_run_retrieval_query)
+    monkeypatch.setattr(
+        retrieval_routes, "run_retrieval_query", fake_run_retrieval_query
+    )
 
     response = await authenticated_client.post(
         "/v1/retrieval/query",
@@ -45,7 +49,9 @@ async def test_retrieval_query_always_uses_graph_routing(authenticated_client, m
 
 
 @pytest.mark.asyncio
-async def test_archive_document_route_removes_graph_state(authenticated_client, monkeypatch):
+async def test_archive_document_route_removes_graph_state(
+    authenticated_client, monkeypatch
+):
     from app.api.v1.routes import documents as document_routes
 
     calls = {}
@@ -59,9 +65,9 @@ async def test_archive_document_route_removes_graph_state(authenticated_client, 
                 "status": "archived",
             }
 
-    monkeypatch.setattr(document_routes, '_document_service', FakeDocumentService())
+    monkeypatch.setattr(document_routes, "_document_service", FakeDocumentService())
 
-    response = await authenticated_client.post('/v1/documents/doc_123:archive')
+    response = await authenticated_client.post("/v1/documents/doc_123:archive")
 
     assert response.status_code == 200
     assert calls["called"] is True
@@ -108,7 +114,10 @@ async def test_archive_canonical_document_uses_run_sync_for_graph_removal(monkey
         captured["scope"] = scope
         captured["document_id"] = document_id
 
-    monkeypatch.setattr("app.services.document_service.DocumentGraphService.remove_document_graph", fake_remove)
+    monkeypatch.setattr(
+        "app.services.document_service.DocumentGraphService.remove_document_graph",
+        fake_remove,
+    )
 
     payload = await DocumentService().archive_document(
         db,

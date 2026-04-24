@@ -93,8 +93,7 @@ class RedisJobLock:
             logger.debug(f"Lock acquired: {self._lock_key}")
             return True
         logger.info(
-            f"Lock already held for job {self._job_id}, "
-            f"another worker is processing"
+            f"Lock already held for job {self._job_id}, another worker is processing"
         )
         return False
 

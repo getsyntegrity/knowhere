@@ -68,12 +68,16 @@ def _wire_common(monkeypatch, config, redis_client, user_tier: str = "free"):
     async def _set_jwt(_redis, _uid, _tier):
         pass
 
-    monkeypatch.setattr(deps.redis_pool_manager, "get_redis_service", lambda: redis_service)
+    monkeypatch.setattr(
+        deps.redis_pool_manager, "get_redis_service", lambda: redis_service
+    )
     monkeypatch.setattr(deps.identity_cache, "get_cached_identity", _cached_identity)
     monkeypatch.setattr(deps.identity_cache, "set_jwt_identity", _set_jwt)
     monkeypatch.setattr(deps, "_resolve_user_tier_from_db", _db_tier)
     monkeypatch.setattr(deps, "_resolve_apikey_cache_ttl_seconds", _apikey_ttl)
-    monkeypatch.setattr(deps.RateLimitConfig, "get_instance", classmethod(lambda _cls: config))
+    monkeypatch.setattr(
+        deps.RateLimitConfig, "get_instance", classmethod(lambda _cls: config)
+    )
     monkeypatch.setattr(deps, "RateLimiter", _RealRateLimiter)
 
 
@@ -88,16 +92,14 @@ async def test_full_chain_allows_first_request(monkeypatch):
     config, redis_client = build_real_config(monkeypatch, _TIER_MAP)
     _wire_common(monkeypatch, config, redis_client, user_tier="free")
 
-    monkeypatch.setattr(
-        deps, "_acquire_user_concurrency_lock", async_none
-    )
-    monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", async_value(0)
-    )
+    monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", async_none)
+    monkeypatch.setattr(deps, "_count_non_terminal_jobs", async_value(0))
 
     # L0 + identity
     request = make_request()
-    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_e2e"))
+    current_user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_e2e")
+    )
     assert current_user == CurrentUser(user_id="u_e2e", user_tier="free")
 
     # L1
@@ -124,7 +126,9 @@ async def test_full_chain_l1_rejects_after_rpm_exceeded(monkeypatch):
     _wire_common(monkeypatch, config, redis_client, user_tier="free")
 
     request = make_request()
-    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_l1_rpm"))
+    current_user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_l1_rpm")
+    )
 
     # First request passes L1
     agen = deps.require_billing_limits(
@@ -156,11 +160,15 @@ async def test_full_chain_l2_rejects_when_concurrency_full(monkeypatch):
 
     monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", async_none)
     monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", async_value(2)  # == max_concurrent_jobs
+        deps,
+        "_count_non_terminal_jobs",
+        async_value(2),  # == max_concurrent_jobs
     )
 
     request = make_request()
-    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_l2"))
+    current_user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_l2")
+    )
 
     agen = deps.require_billing_limits(
         request=request,
@@ -187,12 +195,12 @@ async def test_full_chain_l3_rejects_when_daily_quota_exhausted(monkeypatch):
     _wire_common(monkeypatch, config, redis_client, user_tier="free")
 
     monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", async_none)
-    monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", async_value(0)
-    )
+    monkeypatch.setattr(deps, "_count_non_terminal_jobs", async_value(0))
 
     request = make_request()
-    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_l3"))
+    current_user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_l3")
+    )
 
     # Burn quota with 2 requests
     for i in range(2):
@@ -228,12 +236,12 @@ async def test_full_chain_paid_tier_skips_daily_quota(monkeypatch):
     _wire_common(monkeypatch, config, redis_client, user_tier="tier_1")
 
     monkeypatch.setattr(deps, "_acquire_user_concurrency_lock", async_none)
-    monkeypatch.setattr(
-        deps, "_count_non_terminal_jobs", async_value(0)
-    )
+    monkeypatch.setattr(deps, "_count_non_terminal_jobs", async_value(0))
 
     request = make_request()
-    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_paid"))
+    current_user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_paid")
+    )
     assert current_user.user_tier == "tier_1"
 
     # Run through more requests than free daily_quota (10) — L3 should never block
@@ -251,6 +259,7 @@ async def test_full_chain_paid_tier_skips_daily_quota(monkeypatch):
 @pytest.mark.asyncio
 async def test_full_chain_l0_fails_open_l1_fails_close(monkeypatch):
     """L0 Redis error → passes through; L1 Redis error → 503."""
+
     class _BrokenRedisService:
         async def _get_client(self):
             raise RuntimeError("redis down")
@@ -281,7 +290,9 @@ async def test_full_chain_l0_fails_open_l1_fails_close(monkeypatch):
 
     # L0 fail-open: should still return current_user
     request = make_request()
-    current_user = await resolve_dep(deps.with_current_user(request=request, user_id="u_failover"))
+    current_user = await resolve_dep(
+        deps.with_current_user(request=request, user_id="u_failover")
+    )
     assert current_user == CurrentUser(user_id="u_failover", user_tier="free")
 
     # L1 fail-close: Redis client acquisition fails → 503

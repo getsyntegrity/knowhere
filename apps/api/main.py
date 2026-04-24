@@ -23,6 +23,7 @@ from app.core.exception_handlers import setup_exception_handlers
 from app.mcp import create_retrieval_mcp_server
 from app.services.rate_limit.rule_loader import load_rules
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -31,13 +32,16 @@ async def lifespan(app: FastAPI):
     # Run database migrations
     import subprocess
     import sys
-    
+
     try:
         logger.info("start running database migration...")
-        result = subprocess.run([
-            sys.executable, "-m", "alembic", "upgrade", "heads"
-        ], cwd=str(Path(__file__).parent), capture_output=True, text=True)
-        
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "heads"],
+            cwd=str(Path(__file__).parent),
+            capture_output=True,
+            text=True,
+        )
+
         if result.returncode == 0:
             logger.info("database migration completed")
         else:
@@ -48,9 +52,10 @@ async def lifespan(app: FastAPI):
         raise
 
     from shared.core.database import prewarm_connection_pool
+
     await prewarm_connection_pool()
     logger.info("database connection pool warmed up.")
-    
+
     await redis_pool_manager.init_pool()
     logger.info("Redis connection pool created.")
 
@@ -79,6 +84,7 @@ async def lifespan(app: FastAPI):
 
     try:
         from shared.utils.http_clients import close_async_client
+
         await close_async_client()
     except Exception as e:
         logger.error(f"async HTTP client close failed: {e}")
@@ -87,6 +93,7 @@ async def lifespan(app: FastAPI):
     await safe_dispose_engine(engine)
     logger.info("database engine connection pool disposed.")
     logger.info("service stopped.")
+
 
 def create_app() -> FastAPI:
     # Setup structured logging BEFORE creating FastAPI app
@@ -101,15 +108,19 @@ def create_app() -> FastAPI:
         lifespan=lifespan,  # Bind lifecycle manager
         docs_url="/docs",
         openapi_version="3.1.0",
-        root_path="/api"
+        root_path="/api",
     )
 
     # Now instrument FastAPI with Logfire (if enabled)
     from shared.core.config import settings as config_settings
+
     if config_settings.LOGFIRE_TOKEN:
         try:
             import logfire
-            logfire.instrument_fastapi(app, excluded_urls="/$,/health,/api/health,/database/*")
+
+            logfire.instrument_fastapi(
+                app, excluded_urls="/$,/health,/api/health,/database/*"
+            )
         except ImportError:
             pass
 
@@ -131,12 +142,8 @@ def create_app() -> FastAPI:
     async def health_check():
         """Simple health check endpoint, supports GET and HEAD methods"""
         version = os.getenv("APP_VERSION", settings.APP_VERSION)
-        return {
-            "status": "healthy",
-            "service": "knowhere-api",
-            "version": version
-        }
-    
+        return {"status": "healthy", "service": "knowhere-api", "version": version}
+
     # Register other API routes
     app.include_router(api_router)
 
@@ -156,11 +163,12 @@ def create_app() -> FastAPI:
 
     # Setup global exception handlers
     setup_exception_handlers(app)
-    
+
     # Set up custom OpenAPI schema (flattens $ref references)
     app.openapi = lambda: custom_openapi(app)
-    
+
     return app
+
 
 # Worker settings removed as DsTasks.py was deleted
 app = create_app()

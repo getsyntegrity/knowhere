@@ -5,6 +5,7 @@ Revises: a1b2c3d4e5f6
 Create Date: 2026-04-04 13:00:00.000000
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -42,16 +43,37 @@ def upgrade() -> None:
         "guest_devices",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("device_id", sa.Text(), nullable=False),
-        sa.Column("user_id", sa.Text(), sa.ForeignKey("user.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("api_key_id", sa.String(36), sa.ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "user_id",
+            sa.Text(),
+            sa.ForeignKey("user.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column(
+            "api_key_id",
+            sa.String(36),
+            sa.ForeignKey("api_keys.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("client", sa.String(64), nullable=False),
         sa.Column("platform", sa.String(64), nullable=False),
         sa.Column("app_version", sa.String(32), nullable=True),
-        sa.Column("linked_user_id", sa.Text(), sa.ForeignKey("user.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")),
+        sa.Column(
+            "linked_user_id",
+            sa.Text(),
+            sa.ForeignKey("user.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")
+        ),
     )
-    op.create_index("ix_guest_devices_device_id", "guest_devices", ["device_id"], unique=True)
+    op.create_index(
+        "ix_guest_devices_device_id", "guest_devices", ["device_id"], unique=True
+    )
     op.create_index("ix_guest_devices_user_id", "guest_devices", ["user_id"])
 
     # 2. Insert guest tier into tier_limits
@@ -78,7 +100,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove guest registration support."""
-    op.execute("DELETE FROM system_limits WHERE method = 'POST' AND api_pattern = '/v1/guest'")
+    op.execute(
+        "DELETE FROM system_limits WHERE method = 'POST' AND api_pattern = '/v1/guest'"
+    )
     # ``period`` may have existed before this revision on some databases.
     # Since this migration does not persist whether it created the column,
     # downgrade leaves it in place rather than risking removal of a

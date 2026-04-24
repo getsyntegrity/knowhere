@@ -111,18 +111,14 @@ class ZipResultService:
                 zip_file.writestr("chunks_slim.json", slim_json.encode("utf-8"))
 
                 # 2. Try to add full.md (if exists)
-                markdown_path = None
                 full_md_path = os.path.join(add_dir, "full.md")
                 if os.path.exists(full_md_path):
-                    markdown_path = full_md_path
                     zip_file.write(full_md_path, "full.md")
 
                 # 2b. Try to add toc_hierarchies.json (if exists)
-                has_toc = False
                 toc_path = os.path.join(add_dir, "toc_hierarchies.json")
                 if os.path.exists(toc_path):
                     zip_file.write(toc_path, "toc_hierarchies.json")
-                    has_toc = True
                     logger.info("Added toc_hierarchies.json to ZIP")
 
                 # 3. Add image files
@@ -360,7 +356,7 @@ class ZipResultService:
             return normalized
 
         def merge_connections(
-            *connection_lists: List[Dict[str, Any]]
+            *connection_lists: List[Dict[str, Any]],
         ) -> List[Dict[str, Any]]:
             """Merge connect_to entries while keeping stable order."""
             merged: List[Dict[str, Any]] = []

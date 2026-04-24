@@ -35,6 +35,7 @@ src = [
 
 [tool.ruff.lint]
 select = ["E", "F"]
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]

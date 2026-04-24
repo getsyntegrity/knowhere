@@ -449,7 +449,7 @@ def detect_toc_candidates(md_lines: list, limit_: int = 100) -> tuple:
         valid_count = len(candidate_lines_with_indices)
         invalid_count = len(invalid_ids)
         logger.debug(
-            f"Candidate area #{len(candidates)+1}: line {start_idx}-{end_idx}, "
+            f"Candidate area #{len(candidates) + 1}: line {start_idx}-{end_idx}, "
             f"valid lines: {valid_count}, invalid lines: {invalid_count}, "
             f"scanned: {end_idx - start_idx + 1} lines"
         )
@@ -613,14 +613,14 @@ def detect_tocs_llm(md_lines: list, model_name: str = None, limit_: int = 100) -
                     return idx, (toc_start, toc_end, toc_lines, area_end)
                 else:
                     logger.warning(
-                        f"TOC area #{idx+1}: failed to map reindex back to original"
+                        f"TOC area #{idx + 1}: failed to map reindex back to original"
                     )
                     return idx, None
             else:
-                logger.info(f"TOC area #{idx+1} not detected")
+                logger.info(f"TOC area #{idx + 1} not detected")
                 return idx, None
         except Exception as e:
-            logger.error(f"TOC area #{idx+1} LLM judge failed: {e}")
+            logger.error(f"TOC area #{idx + 1} LLM judge failed: {e}")
             return idx, None
 
     if len(candidates) == 1:
@@ -1019,7 +1019,7 @@ def detect_tocs_in_texts(
     def _analyze_single_toc(idx, toc_start, toc_end, toc_lines, area_end):
         """Analyze hierarchy for a single TOC area. Returns (idx, result_dict)."""
         logger.info(
-            f"Analyzing TOC area #{idx+1}: TOC range [{toc_start}, {toc_end}], scan range ends at {area_end}"
+            f"Analyzing TOC area #{idx + 1}: TOC range [{toc_start}, {toc_end}], scan range ends at {area_end}"
         )
         try:
             toc_with_level, toc_tree = eval_toc_levels(
@@ -1032,7 +1032,7 @@ def detect_tocs_in_texts(
                 "toc_tree": toc_tree,
             }
         except Exception as e:
-            logger.error(f"TOC area #{idx+1} hierarchy analysis failed: {e}")
+            logger.error(f"TOC area #{idx + 1} hierarchy analysis failed: {e}")
             return idx, None
 
     if len(toc_area) == 1:

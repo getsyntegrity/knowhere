@@ -361,13 +361,14 @@ async def create_job(
                     document_id=requested_document_id,
                     active_job_id=active_job.job_id,
                 )
-        effective_document_id, effective_namespace = (
-            await resolve_effective_document_scope(
-                db,
-                user_id=current_user.user_id,
-                document_id=requested_document_id,
-                requested_namespace=cast(Optional[str], payload.namespace),
-            )
+        (
+            effective_document_id,
+            effective_namespace,
+        ) = await resolve_effective_document_scope(
+            db,
+            user_id=current_user.user_id,
+            document_id=requested_document_id,
+            requested_namespace=cast(Optional[str], payload.namespace),
         )
         if not requested_document_id:
             active_job = await find_active_job_for_document(
