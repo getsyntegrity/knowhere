@@ -34,7 +34,6 @@ from app.services.document_parser.txt_parser import (
     extract_title_keywords_summary,
     split_title_summary,
 )
-from bs4 import BeautifulSoup
 from gevent.pool import Pool as GeventPool
 from loguru import logger
 

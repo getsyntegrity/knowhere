@@ -159,7 +159,7 @@ class ZipResultService:
                         zip_file.writestr(
                             "hierarchy.json", hierarchy_json.encode("utf-8")
                         )
-                        logger.info(f"Added hierarchy.json")
+                        logger.info("Added hierarchy.json")
 
                         # 5b. Generate hierarchy_slim.json — clean structure tree, no _* metadata keys
                         try:

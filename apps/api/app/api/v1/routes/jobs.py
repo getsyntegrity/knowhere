@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, cast
 from urllib.parse import urlparse
 
@@ -25,7 +25,7 @@ from app.services.rate_limit.dependencies import (
     with_current_user,
 )
 from app.services.state_machine import JobStateMachine
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession

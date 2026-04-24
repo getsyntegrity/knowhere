@@ -11,7 +11,6 @@ This service implements the ledger pattern where:
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 

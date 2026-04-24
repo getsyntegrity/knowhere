@@ -5,14 +5,12 @@ Webhook API Routes
 - POST /trigger: Manually trigger webhook for a job
 """
 
-import time
-from datetime import datetime
 from typing import Optional
 
 from app.repositories.job_repository import JobRepository
 from app.repositories.webhook_repository import WebhookRepository
 from app.services.rate_limit.dependencies import CurrentUser, with_current_user
-from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +26,6 @@ from shared.models.schemas.webhook import (
     WebhookTriggerRequest,
     WebhookTriggerResponse,
 )
-from shared.services.storage.file_upload_service import FileUploadService
 from shared.services.webhook import get_webhook_dispatcher
 
 router = APIRouter(tags=["Webhook"])

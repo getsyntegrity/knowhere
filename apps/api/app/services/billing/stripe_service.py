@@ -9,22 +9,19 @@ from app.repositories.payment_record_repository import PaymentRecordRepository
 from app.services.billing.price_config_service import PriceConfigService
 from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.tier_service import TierService
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.core.billing import MicroDollar
 from shared.core.config import redis_pool_manager, settings
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
     KnowhereException,
-    NotFoundException,
     StripeServiceException,
     SystemSettingMissingException,
     ValidationException,
 )
 from shared.core.logging import logger
 from shared.models.database.payment_record import PaymentRecord
-from shared.models.database.user_balance import UserBalance
 from shared.repositories.credits_repository import CreditsRepository
 from shared.services.billing import CreditsService
 

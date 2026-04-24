@@ -3,7 +3,6 @@ Version information API endpoints.
 """
 
 import os
-from datetime import datetime
 
 from fastapi import APIRouter
 

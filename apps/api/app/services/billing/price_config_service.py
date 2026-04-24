@@ -2,7 +2,6 @@
 Stripe Price Configuration Service
 """
 
-from typing import Optional
 
 from app.repositories.stripe_price_config_repository import StripePriceConfigRepository
 from sqlalchemy.ext.asyncio import AsyncSession

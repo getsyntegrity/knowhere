@@ -7,7 +7,6 @@ import gevent
 import pandas as pd
 from app.services.common.kb_utils import (
     count_cn_en,
-    truncate_text,
     truncate_text_by_tokens,
 )
 from app.services.document_parser.stage_profiler import stage_timer
@@ -54,7 +53,7 @@ def save_intermediate_csv(df: pd.DataFrame, output_dir: str, filename: str):
         output_dir: output directory path
         filename: filename (without extension)
     """
-    if not os.environ.get("LOCAL_DEBUG", "").lower() in ("true", "1"):
+    if os.environ.get("LOCAL_DEBUG", "").lower() not in ("true", "1"):
         return
     if output_dir is None or df is None or df.empty:
         return
@@ -1019,7 +1018,7 @@ def filter_md_headings(md_lines, num_pos=17, num_neg=7, layout_json_path=None):
             else:
                 # Even without layout.json, output bold info in META
                 if is_full_bold:
-                    code_str += f" META [0, 0, 1]"
+                    code_str += " META [0, 0, 1]"
 
             if hash_lvl <= 0:
                 est_lvl = code_lvl
@@ -1059,7 +1058,7 @@ def filter_doc_headings(titles_material, enable_regx=True, enable_style_check=Fa
 
     def find_otsetting(para_):
         ppr = para_._element.find(qn("w:pPr"))
-        if not (ppr is None):
+        if ppr is not None:
             plvl = ppr.find(qn("w:outlineLvl"))
         else:
             return None

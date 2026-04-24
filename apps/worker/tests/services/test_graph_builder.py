@@ -1,7 +1,6 @@
 """
 Unit tests for graph_builder module.
 """
-import json
 import os
 import tempfile
 

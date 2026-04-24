@@ -167,7 +167,7 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                     retry_after=retry_after,
                     status_code=429,
                     step="start_task",
-                ).warning(f"[iLoveAPI] Rate limited on start_task")
+                ).warning("[iLoveAPI] Rate limited on start_task")
             res.raise_for_status()
             start_data = res.json()
             upstream_server = start_data["server"]
@@ -193,7 +193,7 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                     retry_after=retry_after,
                     status_code=429,
                     step="upload",
-                ).warning(f"[iLoveAPI] Rate limited on upload")
+                ).warning("[iLoveAPI] Rate limited on upload")
             upload_res.raise_for_status()
             server_filename = upload_res.json()["server_filename"]
 
@@ -221,7 +221,7 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                     retry_after=retry_after,
                     status_code=429,
                     step="process",
-                ).warning(f"[iLoveAPI] Rate limited on process")
+                ).warning("[iLoveAPI] Rate limited on process")
             process_res.raise_for_status()
 
             # Step 4: Download PDF to memory
@@ -241,7 +241,7 @@ def _pptx_bytes_to_pdf_bytes(pptx_bytes: bytes, filename: str) -> bytes:
                     retry_after=retry_after,
                     status_code=429,
                     step="download",
-                ).warning(f"[iLoveAPI] Rate limited on download")
+                ).warning("[iLoveAPI] Rate limited on download")
             download_res.raise_for_status()
 
             duration_s = round(time.monotonic() - start_time, 2)

@@ -2,7 +2,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import zipfile
 
 import pandas as pd
@@ -622,7 +621,7 @@ def parse_docx(
         with open(toc_json_path, "w", encoding="utf-8") as f:
             json.dump(toc_hierarchies, f, ensure_ascii=False, indent=2)
         logger.info(f"Saved DOCX TOC hierarchies to {toc_json_path}")
-    block_tuples = [b for b in block_tuples if not "TOC" in b[2]]  # remove toc area
+    block_tuples = [b for b in block_tuples if "TOC" not in b[2]]  # remove toc area
 
     heading_infos = []
     for block_tuple in block_tuples:
@@ -635,7 +634,7 @@ def parse_docx(
     heading_candidates = []
     outline_dic = {-1: -1}
     smart_title_parse = llm_paras["smart_title_parse"]
-    if not llm_paras["doc_type"] in "templates":
+    if llm_paras["doc_type"] not in "templates":
         model_name = (
             (
                 llm_paras.get("hierarchy_model_name")

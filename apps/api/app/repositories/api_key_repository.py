@@ -1,7 +1,7 @@
 """API key repository."""
 
 from datetime import datetime, timezone
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import delete, or_, select, update

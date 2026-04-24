@@ -15,9 +15,6 @@ from shared.services.worker_health import start_worker_heartbeat, stop_worker_he
 
 def _register_task_modules() -> None:
     """Import task modules for Celery side-effect registration."""
-    import app.core.tasks.kb_tasks
-    import app.core.tasks.stale_job_sweeper
-    import app.core.tasks.webhook_tasks
 
 
 @worker_init.connect

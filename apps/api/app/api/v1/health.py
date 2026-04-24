@@ -2,11 +2,9 @@
 Database health API endpoints.
 """
 
-import os
 
 from fastapi import APIRouter
 
-from shared.core.config import app_config
 from shared.core.database import (
     get_database_health,
     get_database_info,

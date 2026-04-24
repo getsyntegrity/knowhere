@@ -47,7 +47,6 @@ Exception Sources:
     - Exception: Unexpected errors (bugs, syntax errors, external failures)
 """
 
-import traceback
 import uuid
 from typing import List
 
@@ -64,7 +63,7 @@ from shared.core.exceptions import (
 )
 from shared.core.exceptions.domain_exceptions import RateLimitException
 from shared.core.logging import LogEvent
-from shared.core.response import ErrorCode, ErrorCodeMapper
+from shared.core.response import ErrorCodeMapper
 
 
 def _get_request_id(request: Request) -> str:

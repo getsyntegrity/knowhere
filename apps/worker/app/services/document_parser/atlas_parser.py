@@ -28,7 +28,6 @@ from app.services.document_parser.toc_parser import detect_tocs_in_texts
 from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import PDFParsingException
 from shared.utils.chunk_refs import build_chunk_ref
 from shared.utils.text_utils import tokenize2stw_remove
 

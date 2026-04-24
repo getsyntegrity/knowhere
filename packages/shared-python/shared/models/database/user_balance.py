@@ -8,12 +8,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
 
 if TYPE_CHECKING:
-    from shared.models.database.user import User
+    pass
 
 
 class UserBalance(Base):

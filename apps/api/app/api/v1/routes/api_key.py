@@ -7,7 +7,7 @@ from app.services.rate_limit.dependencies import (
     CurrentUser,
     with_current_user,
 )
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db

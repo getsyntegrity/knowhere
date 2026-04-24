@@ -18,12 +18,10 @@ from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
 from loguru import logger
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 # Use standard db context - run_async_task handles the loop reuse
-from shared.core.config import settings
 from shared.core.database import get_db_context
 from shared.core.exceptions.domain_exceptions import (
     SystemSettingInvalidException,
@@ -33,7 +31,6 @@ from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 from shared.models.database.job import Job
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.models.database.webhook_log import WebhookLog
-from shared.repositories.webhook_secret_repository import WebhookSecretRepository
 from shared.services.webhook.validator import (
     WebhookValidationResult,
     validate_webhook_url_async,
@@ -163,7 +160,6 @@ class WebhookDispatcher:
         Returns:
             Tuple of (success, status_code, duration_ms, error_message)
         """
-        import uuid
 
         # Generate attempt ID
         attempt_id = str(uuid.uuid4())

@@ -6,10 +6,8 @@ including external libraries (pypdf, python-pptx, python-docx, pandas).
 
 NO MOCKING - these are true integration tests.
 """
-import math
 from pathlib import Path
 
-import pytest
 
 from app.services.workload.page_estimator import (
     ROWS_PER_PAGE,

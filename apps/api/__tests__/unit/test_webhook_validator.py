@@ -10,7 +10,6 @@ from shared.services.webhook.validator import (
     validate_webhook_url_async,
     is_public_ip,
     async_validate_url,
-    WebhookValidationResult,
 )
 
 

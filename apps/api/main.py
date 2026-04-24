@@ -3,9 +3,6 @@ from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI
-from sqlalchemy import text
-from starlette.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Route
 
 # Import custom OpenAPI function
@@ -13,7 +10,7 @@ from custom_openapi import custom_openapi
 
 # Import from shared packages
 from shared.core.config import redis_pool_manager, settings
-from shared.core.database import engine, Base, safe_dispose_engine
+from shared.core.database import engine, safe_dispose_engine
 from shared.core.logging import setup_logging
 
 # Import from local API project
@@ -22,7 +19,6 @@ from contextlib import asynccontextmanager
 from app.api.api_router import api_router
 from app.core.middleware import setup_cors, LoggingMiddleware
 from app.core.image_cli import ImageCli
-from app.middleware.moesif_middleware import MoesifMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from app.mcp import create_retrieval_mcp_server
 from app.services.rate_limit.rule_loader import load_rules

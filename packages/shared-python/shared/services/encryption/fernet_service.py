@@ -130,7 +130,6 @@ def get_fernet_service() -> FernetService:
     if _fernet_service is None:
         with _fernet_service_lock:
             if _fernet_service is None:
-                import os
 
                 master_key = settings.WEBHOOK_MASTER_KEY
                 if not master_key:

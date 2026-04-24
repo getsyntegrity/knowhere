@@ -21,7 +21,6 @@ Usage:
   graph = update_knowledge_graph(existing_graph, new_chunks, existing_chunks)
 """
 
-import hashlib
 import json
 import math
 import os
@@ -32,7 +31,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.connect_builder.builder import (
     DEFAULT_CONFIG,
-    _build_keyword_index,
     _compute_keyword_score,
     _extract_file_key,
     _get_keywords,

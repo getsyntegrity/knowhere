@@ -84,7 +84,7 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
                 # Log rollback failures only to avoid cross-event-loop connection work.
                 logger.warning(f"Database session rollback failed: {rollback_error}")
             raise commit_error
-    except Exception as e:
+    except Exception:
         # Attempt rollback if the session exists and is still active.
         if session:
             try:
@@ -270,7 +270,7 @@ class DatabaseRetryManager:
                     logger.info(f"Retrying in {delay} seconds...")
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(f"All retry attempts failed for database operation")
+                    logger.error("All retry attempts failed for database operation")
                     raise last_exception
 
         raise last_exception

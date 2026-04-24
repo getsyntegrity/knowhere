@@ -543,7 +543,7 @@ def build_prompt(task, texts, query, **kwargs):
     elif task == "ocr-image":
         temperature = 0.1
 
-        prompt = f"""
+        prompt = """
         You will receive an image, which may be a photo, chart, or an image requiring OCR.
         Your task is to perform OCR operation, fully extract and return the image content. Note:
         - **MUST Preserve the ORIGINAL LANGUAGE** of the text in the image
@@ -571,7 +571,7 @@ def build_prompt(task, texts, query, **kwargs):
 
     elif task == "judge-image-type":
         temperature = 0.1
-        prompt = f"""
+        prompt = """
         You will receive an image. Your task is to determine whether the image is primarily text-based or image-based. Note:
         - Text-based images include posters, display boards, scanned documents, etc.
         - All images except those with rich text content are considered image-based

@@ -1,6 +1,6 @@
 """Stripe price-config repository."""
 
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import select

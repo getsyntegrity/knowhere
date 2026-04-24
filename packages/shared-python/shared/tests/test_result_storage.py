@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pytest
 
 
 def test_result_storage_does_not_depend_on_app_package():

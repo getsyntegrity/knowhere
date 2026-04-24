@@ -1,6 +1,5 @@
 """State-machine statuses and transition rules."""
 
-import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, Set

@@ -71,7 +71,7 @@ def eval_response(resp, answer_key=None):
         if answer_key is not None:
             answer = answer.get(answer_key, answer)
         return answer
-    except json.JSONDecodeError as e:
+    except json.JSONDecodeError:
         logger.warning(
             f"All JSON parse strategies failed; returning the raw string\n{resp}"
         )

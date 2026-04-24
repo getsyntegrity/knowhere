@@ -1,7 +1,6 @@
 """Redis configuration."""
 
 import asyncio
-import ssl
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis

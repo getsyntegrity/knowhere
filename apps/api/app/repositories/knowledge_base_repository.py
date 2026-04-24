@@ -291,7 +291,7 @@ async def update_directory(
             await db.refresh(db_directory)
             return True
         return False
-    except Exception as e:
+    except Exception:
         await db.rollback()
         return False
 

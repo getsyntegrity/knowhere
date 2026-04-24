@@ -5,16 +5,11 @@ from datetime import datetime
 
 import pandas as pd
 from bs4 import BeautifulSoup
-from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import (
-    ValidationException,
-    WorkerHandlingException,
-)
 from shared.utils.chunk_refs import extract_chunk_refs
 from shared.utils.file_utils import path_handle
-from shared.utils.text_utils import _CN_EN_NUM_RE, count_cn_en
+from shared.utils.text_utils import _CN_EN_NUM_RE
 
 SUMMARY_PATH_MARKERS: tuple[str, ...] = ("summary", "\u6458\u8981\u603b\u7ed3")
 

@@ -1,7 +1,5 @@
-from pathlib import Path
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
@@ -9,19 +7,6 @@ from alembic import context
 # Import the shared database configuration and metadata.
 from shared.core.config import settings
 from shared.core.database import Base
-from shared.models.database import (
-    api_key,
-    credits_transaction,
-    document,
-    knowledge_base,
-    payment_record,
-    stripe_price_config,
-    user,
-    user_balance,
-    webhook,
-    webhook_log,
-    webhook_secret,
-)
 
 # Build a synchronous database URL by replacing asyncpg with psycopg2.
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")

@@ -203,7 +203,7 @@ def postprocess_leaf_dics(
             continue
 
         local_contents = row["content_lst"]
-        if len(local_contents) > 0 and not llm_paras["doc_type"] in "templates":
+        if len(local_contents) > 0 and llm_paras["doc_type"] not in "templates":
             sublists, num = divide_long_contents(
                 local_contents, max_threshold=int(3 * summary_len)
             )
@@ -244,7 +244,7 @@ def postprocess_leaf_dics(
         needs_llm = (
             len(contents4summary) > summary_len
             and llm_paras["summary_txt"]
-            and (not llm_paras["doc_type"] in "templates")
+            and (llm_paras["doc_type"] not in "templates")
         )
         rows_data.append((row, contents4summary, needs_llm))
         if needs_llm:

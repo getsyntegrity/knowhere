@@ -14,7 +14,6 @@ Supported file types:
 """
 
 import math
-import re
 import tempfile
 from pathlib import Path
 

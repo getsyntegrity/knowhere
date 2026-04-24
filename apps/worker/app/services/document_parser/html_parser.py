@@ -15,7 +15,6 @@ from typing import Dict, List, Optional, Union
 import pandas as pd
 from bs4 import BeautifulSoup
 from docx.table import Table as DocxTable
-from loguru import logger
 
 from shared.core.exceptions.domain_exceptions import TableParsingException
 from shared.utils.text_utils import remove_duplicates_orderkept
@@ -468,7 +467,6 @@ def table2html(table: DocxTable, cell_image_map: dict = None) -> str:
     Returns:
         HTML string representation of the table with merged cells
     """
-    from lxml import etree
 
     NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 

@@ -16,10 +16,8 @@ import gevent
 import pandas as pd
 from app.services.common.kb_utils import (
     normalize_md,
-    truncate_text,
     truncate_text_by_tokens,
 )
-from app.services.document_parser.html_parser import df2html
 from app.services.document_parser.layout_parser import (
     hiearchy_llm,
     judge_by_conditions,

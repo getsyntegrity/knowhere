@@ -4,7 +4,6 @@ import io
 import os
 import re
 import threading
-import uuid
 from pathlib import Path
 
 import pandas as pd

@@ -153,7 +153,7 @@ def stream_download_and_upload(
                     f"Upload attempt {attempt} failed: host={target_host}, error={e}"
                 )
                 if attempt < upload_retries:
-                    logger.info(f"Retrying upload...")
+                    logger.info("Retrying upload...")
                 continue
 
         # All retries exhausted

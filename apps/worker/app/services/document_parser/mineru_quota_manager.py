@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from loguru import logger
 
 from shared.core.config import settings
 from shared.services.redis.redis_sync_service import (

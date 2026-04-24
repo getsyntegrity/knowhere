@@ -4,7 +4,7 @@ import re
 
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.mineru_pdf_service import parse_via_full
-from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
+from app.services.document_parser.pymupdf_subprocess import worker
 from app.services.document_parser.stage_profiler import stage_timer
 from loguru import logger
 

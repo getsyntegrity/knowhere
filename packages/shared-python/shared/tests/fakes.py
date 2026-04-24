@@ -1,8 +1,7 @@
-from typing import Any, List, Optional, Type, TypeVar
+from typing import Any, List, Optional, TypeVar
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-from sqlalchemy import ScalarResult
 
 T = TypeVar("T")
 

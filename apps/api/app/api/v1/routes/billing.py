@@ -6,7 +6,7 @@ from typing import Optional
 
 from app.services.billing.stripe_service import StripeService
 from app.services.rate_limit.dependencies import CurrentUser, with_current_user
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

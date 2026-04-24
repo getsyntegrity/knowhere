@@ -34,7 +34,6 @@ from shared.models.database.document import (
     GraphNode,
     RetrievalHitStat,
 )
-from shared.models.database.job_result import JobResult
 from shared.services.retrieval.hit_stats_service import compute_importance_score
 from shared.services.retrieval.llm_adapter import LLMFn
 

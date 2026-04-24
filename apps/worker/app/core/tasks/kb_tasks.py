@@ -6,11 +6,8 @@ All I/O operations use sync services that yield cooperatively under gevent.
 """
 
 import os
-import shutil
-import tempfile
 from datetime import datetime, timezone
 
-import requests
 
 # Base task class
 from app.core.tasks.base_task import KBBaseTask
@@ -36,12 +33,9 @@ from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 
 # Exception handling
 from shared.core.exceptions.domain_exceptions import (
-    FileSystemException,
     InsufficientCreditsException,
     NotFoundException,
     StorageServiceException,
-    SystemSettingInvalidException,
-    SystemSettingMissingException,
     ValidationException,
     WorkerHandlingException,
 )
@@ -70,7 +64,6 @@ celery_app = get_celery_app()
 
 from app.core.tasks.task_utils import (
     cleanup_task_workspace,
-    cleanup_temp_file,
     create_task_workspace,
     download_s3_file_to_temp,
 )

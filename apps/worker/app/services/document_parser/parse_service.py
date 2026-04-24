@@ -246,7 +246,7 @@ def checkerboard_inject_parse(
         or ".jpg" in file_path_lower
         or ".jpeg" in file_path_lower
     ):
-        logger.debug(f"file type is image")
+        logger.debug("file type is image")
         from app.services.document_parser.image_parser import parse_image
 
         parsed_df = parse_image(
@@ -259,7 +259,7 @@ def checkerboard_inject_parse(
         )
 
     elif ".pdf" in file_path_lower:
-        logger.debug(f"file type is pdf")
+        logger.debug("file type is pdf")
         from app.services.document_parser.pdf_parser import parse_pdfs
 
         if filename and file_full_path:
@@ -297,7 +297,7 @@ def checkerboard_inject_parse(
             )
 
     elif ".docx" in file_path_lower:
-        logger.debug(f"file type is docx")
+        logger.debug("file type is docx")
         from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
 
         if filename and file_full_path:
@@ -334,7 +334,7 @@ def checkerboard_inject_parse(
             )
 
     elif ".xlsx" in file_path_lower:
-        logger.debug(f"file type is xlsx")
+        logger.debug("file type is xlsx")
         from app.services.document_parser.table_parser import parse_xlsx
 
         if filename and file_full_path:
@@ -348,7 +348,7 @@ def checkerboard_inject_parse(
             )
 
     elif ".pptx" in file_path_lower:
-        logger.debug(f"file type is pptx")
+        logger.debug("file type is pptx")
         from app.services.document_parser.pptx_parser import parse_pptx
 
         if filename and file_full_path:
@@ -378,7 +378,7 @@ def checkerboard_inject_parse(
             # )
 
     elif ".md" in file_path_lower:
-        logger.debug(f"file type is md")
+        logger.debug("file type is md")
         from app.services.document_parser.md_parser import parse_md
 
         if filename and file_full_path:
@@ -391,7 +391,7 @@ def checkerboard_inject_parse(
             )
 
     elif ".json" in file_path_lower:
-        logger.debug(f"file type is json")
+        logger.debug("file type is json")
         # JSON parsing not yet implemented
 
     else:

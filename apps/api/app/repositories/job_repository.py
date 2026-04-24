@@ -1,7 +1,7 @@
 """Job repository."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from app.services.state_machine import JobStateMachine
 from loguru import logger
