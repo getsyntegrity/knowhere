@@ -130,6 +130,8 @@ async def update_sql_path(
         raise KnowledgeBaseOperationException(
             internal_message="Failed to update directory"
         )
+    except ValidationException:
+        raise
     except KnowledgeBaseOperationException:
         raise
     except Exception as e:

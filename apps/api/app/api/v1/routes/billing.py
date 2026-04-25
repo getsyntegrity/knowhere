@@ -175,9 +175,9 @@ async def parse_usage_overview(
                 func.count()
                 .filter(Job.status.in_(["done", "failed"]))
                 .label("terminal_cnt"),
-                func.avg(func.extract("epoch", Job.updated_at - Job.created_at)).label(
-                    "avg_secs"
-                ),
+                func.avg(func.extract("epoch", Job.updated_at - Job.created_at))
+                .filter(Job.status.in_(["done", "failed"]))
+                .label("avg_secs"),
             ).where(Job.user_id == current_user.user_id)
         )
         job_stats = job_row.first() or (0, 0, 0.0)

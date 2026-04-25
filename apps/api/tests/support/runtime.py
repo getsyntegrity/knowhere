@@ -102,6 +102,7 @@ def configure_contract_environment(monkeypatch: MonkeyPatch) -> None:
         "ENVIRONMENT": "development",
         "DEBUG": "true",
         "SECRET_KEY": "test-secret-key",
+        "WEBHOOK_MASTER_KEY": "contract-test-webhook-master-key",
         "DATABASE_URL": get_contract_database_url(),
         "DB_SSL_MODE": "disable",
         "REDIS_HOST": CONTRACT_REDIS_HOST,
@@ -125,8 +126,13 @@ def configure_contract_environment(monkeypatch: MonkeyPatch) -> None:
         "S3_REGION": "us-west-1",
         "S3_USE_SSL": "false",
         "S3_ADDRESSING_STYLE": "path",
+        "STRIPE_SECRET_KEY": "sk_test_contract_secret",
+        "STRIPE_PUBLISHABLE_KEY": "pk_test_contract_publishable",
+        "STRIPE_WEBHOOK_SECRET": "whsec_contract_test_secret",
         "DS_KEY": "test-deepseek-key",
         "DS_URL": "https://example.com/v1",
+        "QSTASH_CURRENT_SIGNING_KEY": "qstash-current-test-key",
+        "QSTASH_NEXT_SIGNING_KEY": "qstash-next-test-key",
         "QSTASH_CALLBACK_BASE_URL": "http://localhost:5005/api/v1",
     }
 

@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import cast
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -75,3 +76,181 @@ async def test_should_revoke_a_created_api_key_through_http_only(
     assert error["code"] == "UNAUTHENTICATED"
     assert error["message"] == "Invalid API Key"
     assert "details" not in error
+
+
+@pytest.mark.asyncio
+async def test_should_regenerate_an_api_key_and_invalidate_the_previous_raw_key(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    create_payload: dict[str, object] = {
+        "name": f"contract-regenerate-{uuid4().hex[:8]}",
+        "enabled_modules": ["jobs"],
+    }
+
+    async with developer_api_client_factory() as api_client:
+        create_response = await api_client.post("/api/v1/auth/create", json=create_payload)
+        assert create_response.status_code == 200
+        create_response_json = cast(dict[str, object], create_response.json())
+        old_api_key = cast(str, create_response_json["api_key"])
+
+        list_response = await api_client.get("/api/v1/auth/list")
+        assert list_response.status_code == 200
+        list_response_json = cast(dict[str, object], list_response.json())
+        api_keys = cast(list[dict[str, object]], list_response_json["api_keys"])
+        created_api_key = next(
+            api_key
+            for api_key in api_keys
+            if api_key["name"] == create_payload["name"]
+        )
+        created_api_key_id = cast(str, created_api_key["id"])
+
+        regenerate_response = await api_client.post(
+            "/api/v1/auth/regenerate",
+            json={"api_key_id": created_api_key_id},
+        )
+        assert regenerate_response.status_code == 200
+        regenerate_response_json = cast(dict[str, object], regenerate_response.json())
+        new_api_key = cast(str, regenerate_response_json["api_key"])
+
+        api_client.headers.update({"Authorization": f"Bearer {old_api_key}"})
+        old_key_response = await api_client.get("/api/v1/jobs")
+
+        api_client.headers.update({"Authorization": f"Bearer {new_api_key}"})
+        new_key_response = await api_client.get("/api/v1/jobs")
+
+    assert regenerate_response_json["message"] == "API key regenerated"
+    assert new_api_key.startswith("sk_")
+    assert new_api_key != old_api_key
+    assert old_key_response.status_code == 401
+    assert old_key_response.json()["error"]["code"] == "UNAUTHENTICATED"
+    assert new_key_response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_should_return_owned_api_key_metadata(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    create_payload: dict[str, object] = {
+        "name": f"contract-detail-{uuid4().hex[:8]}",
+        "enabled_modules": ["jobs"],
+    }
+
+    async with developer_api_client_factory() as api_client:
+        create_response = await api_client.post("/api/v1/auth/create", json=create_payload)
+        assert create_response.status_code == 200
+
+        list_response = await api_client.get("/api/v1/auth/list")
+        assert list_response.status_code == 200
+        list_response_json = cast(dict[str, object], list_response.json())
+        api_keys = cast(list[dict[str, object]], list_response_json["api_keys"])
+        created_api_key = next(
+            api_key
+            for api_key in api_keys
+            if api_key["name"] == create_payload["name"]
+        )
+        created_api_key_id = cast(str, created_api_key["id"])
+
+        response = await api_client.get(f"/api/v1/auth/{created_api_key_id}")
+
+    assert response.status_code == 200
+
+    response_json = cast(dict[str, object], response.json())
+
+    assert response_json["id"] == created_api_key_id
+    assert response_json["name"] == create_payload["name"]
+    assert response_json["enabled_modules"] == create_payload["enabled_modules"]
+    assert response_json["is_active"] is True
+    assert response_json["created_at"]
+    assert response_json["last_used_at"] is None
+    assert response_json["expires_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_should_return_not_found_for_a_missing_api_key_metadata_request(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    missing_api_key_id = f"key_{uuid4().hex[:12]}"
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.get(f"/api/v1/auth/{missing_api_key_id}")
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"]
+
+    response_json = cast(dict[str, object], response.json())
+    error = cast(dict[str, object], response_json["error"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "NOT_FOUND"
+    assert error["message"] == "APIKey not found"
+    assert error["details"] == {
+        "resource": "APIKey",
+        "id": missing_api_key_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_should_disable_and_then_reenable_an_api_key_via_the_toggle_route(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    create_payload: dict[str, object] = {
+        "name": f"contract-toggle-{uuid4().hex[:8]}",
+        "enabled_modules": ["jobs"],
+    }
+
+    async with developer_api_client_factory() as api_client:
+        create_response = await api_client.post("/api/v1/auth/create", json=create_payload)
+        assert create_response.status_code == 200
+        create_response_json = cast(dict[str, object], create_response.json())
+        raw_api_key = cast(str, create_response_json["api_key"])
+
+        list_response = await api_client.get("/api/v1/auth/list")
+        assert list_response.status_code == 200
+        list_response_json = cast(dict[str, object], list_response.json())
+        api_keys = cast(list[dict[str, object]], list_response_json["api_keys"])
+        created_api_key = next(
+            api_key
+            for api_key in api_keys
+            if api_key["name"] == create_payload["name"]
+        )
+        created_api_key_id = cast(str, created_api_key["id"])
+
+        api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
+        pre_toggle_response = await api_client.get("/api/v1/jobs")
+
+        api_client.headers.update(
+            {"Authorization": "Bearer sk_local_dev_demo_key_tier5_full_access"}
+        )
+        disable_response = await api_client.put(
+            f"/api/v1/auth/{created_api_key_id}/toggle"
+        )
+
+        api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
+        disabled_key_response = await api_client.get("/api/v1/jobs")
+
+        api_client.headers.update(
+            {"Authorization": "Bearer sk_local_dev_demo_key_tier5_full_access"}
+        )
+        enable_response = await api_client.put(
+            f"/api/v1/auth/{created_api_key_id}/toggle"
+        )
+
+        api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
+        reenabled_key_response = await api_client.get("/api/v1/jobs")
+
+    assert pre_toggle_response.status_code == 200
+    assert disable_response.status_code == 200
+    assert disable_response.json() == {"message": "API key status updated"}
+    assert disabled_key_response.status_code == 401
+    assert disabled_key_response.json()["error"]["code"] == "UNAUTHENTICATED"
+    assert enable_response.status_code == 200
+    assert enable_response.json() == {"message": "API key status updated"}
+    assert reenabled_key_response.status_code == 200
