@@ -269,6 +269,7 @@ Current note:
 - `apps/worker/tests/contract/test_stale_job_sweeper_contract.py` now covers the stale-job sweeper entrypoint with real Postgres and Redis side effects, including durable failure transitions and the Redis-backed duplicate-Beat lock.
 - `apps/worker/tests/contract/test_url_upload_contract.py` now covers the URL-upload worker entrypoint against the real contract Redis and database bootstrap, asserting the storage target, Redis progress publication, and the stable `waiting-file` job state while mocking only outbound URL/S3 boundaries.
 - `apps/worker/tests/contract/test_parse_task_contract.py` now covers parse-task success, terminal-skip behavior, and failure cleanup/refund behavior with real billing, finalization, and retrieval publication state.
+- `apps/worker/tests/contract/test_webhook_recovery_contract.py` now covers orphaned webhook recovery with real Postgres and Redis state, asserting filtered recovery, QStash delivery-state persistence, webhook-secret creation, and the Redis-backed duplicate-Beat lock.
 - `apps/worker/tests/tasks/test_kb_tasks.py` has been removed; narrow deterministic parse-name coverage now lives in `apps/worker/tests/services/document_parser/test_internal_parse_name.py`.
 - `apps/worker/tests` is still dominated by config and service-level tests outside those contract slices.
 

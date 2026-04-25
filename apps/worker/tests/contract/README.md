@@ -22,6 +22,8 @@ These tests should avoid:
   verifies the cached storage target, Redis progress publication, and the stable `waiting-file` job state while mocking only outbound URL download and S3 boundaries
 - `app.core.tasks.kb_tasks.parse_task`
   verifies success publication, terminal skip handling, and failure cleanup/refund behavior while keeping billing, finalization, and retrieval publication real
+- `app.core.tasks.webhook_tasks.recover_orphaned_webhooks`
+  verifies orphaned pending webhook recovery, durable QStash delivery-state persistence, and the Redis-backed duplicate-Beat lock
 
 ## Command
 
