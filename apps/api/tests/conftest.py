@@ -12,6 +12,7 @@ from tests.support.runtime import (
     clear_application_modules,
     configure_contract_environment,
     prepare_contract_storage,
+    seed_contract_developer,
 )
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[3]
@@ -59,3 +60,25 @@ def api_client_factory(
         return _create_api_client(monkeypatch)
 
     return create_api_client
+
+
+@asynccontextmanager
+async def _create_developer_api_client(
+    api_client_factory: Callable[[], AbstractAsyncContextManager[AsyncClient]],
+) -> AsyncGenerator[AsyncClient, None]:
+    async with api_client_factory() as api_client:
+        developer_profile: dict[str, str | int] = await seed_contract_developer()
+        api_client.headers.update(
+            {"Authorization": f"Bearer {str(developer_profile['api_key'])}"}
+        )
+        yield api_client
+
+
+@pytest.fixture
+def developer_api_client_factory(
+    api_client_factory: Callable[[], AbstractAsyncContextManager[AsyncClient]],
+) -> Callable[[], AbstractAsyncContextManager[AsyncClient]]:
+    def create_developer_api_client() -> AbstractAsyncContextManager[AsyncClient]:
+        return _create_developer_api_client(api_client_factory)
+
+    return create_developer_api_client

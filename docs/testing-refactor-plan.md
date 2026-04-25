@@ -27,9 +27,10 @@ The new suite must avoid coupling tests to:
 - Keep `pytest` as the main test runner.
 - Keep `pytest-asyncio` for async support.
 - Use `httpx.AsyncClient` + `ASGITransport` for API contract tests.
-- Use `asgi-lifespan` so tests execute FastAPI startup and shutdown correctly.
+- Drive startup and shutdown through the FastAPI lifespan context.
 - Use real PostgreSQL and real Redis for contract tests.
-- Prefer `testcontainers-python` for isolated test infra in CI and local runs.
+- Use a dedicated contract-only database and Redis DB on the local services the repo already expects.
+- Defer `testcontainers-python` unless local setup or CI isolation becomes a recurring blocker.
 - Add `pytest-alembic` for migration checks.
 - Keep `fakeredis` only for small component tests, not for main endpoint contract tests.
 - Mock only hard-to-control boundaries such as time, filesystem edge cases, and outbound third-party HTTP.
@@ -40,7 +41,10 @@ The new suite must avoid coupling tests to:
 - The main API test fixture overrides auth, billing, and database access.
 - The real API lifespan runs migrations, warms the database pool, initializes Redis, and loads rate-limit rules.
 - Config, database engine, and the FastAPI app are created at import time, which makes integration harness setup more fragile.
-- The repository currently has no real smoke-level API contract tests checked in.
+- The repository now has real API contract coverage for health, guest registration, authenticated file-mode job creation, and the first authenticated `400`/`401` job failure paths, but the authenticated API surface is still mostly uncovered.
+- The current API contract suite is green with `uv run pytest apps/api/tests/contract -q` and `uv run pytest apps/api/tests -q`.
+- The checked-in harness currently assumes PostgreSQL on `127.0.0.1:5432` and Redis on `127.0.0.1:6379`, isolated through `Knowhere_contract_test` and Redis DB `14`.
+- Dedicated migration tests, worker contract tests, and shared component-test migration have not started yet.
 
 ## Working Rules
 
@@ -116,11 +120,11 @@ Exit criteria:
 
 ### Phase 2: Test Harness Bootstrap
 
-Status: `[~]`
+Status: `[x]`
 
 Actions:
 
-- [ ] Add base dependencies for the new harness
+- [x] Finalize the base harness dependency set
 - [x] Create isolated Postgres and Redis test infrastructure
 - [x] Create deterministic test environment loading
 - [x] Ensure migrations run against the isolated test database before contract tests
@@ -144,6 +148,12 @@ Current Phase 2 snapshot:
 - The harness can now seed a deterministic authenticated local-developer profile for later endpoint contracts.
 - API `pytest` discovery now points at `apps/api/tests` by default.
 - During this work we found and fixed a real shutdown bug in `safe_dispose_engine()` where async engine disposal was not awaited.
+- Current green command: `uv run pytest apps/api/tests/contract -q`
+- Current green command: `uv run pytest apps/api/tests -q`
+- The current harness uses dedicated local infrastructure, not containers.
+- PostgreSQL contract database: `Knowhere_contract_test`
+- Redis contract database index: `14`
+- Shared authenticated API test support now exists for the seeded local developer profile.
 
 Exit criteria:
 
@@ -151,7 +161,7 @@ Exit criteria:
 
 ### Phase 3: First Vertical Slice
 
-Status: `[~]`
+Status: `[x]`
 
 Actions:
 
@@ -172,19 +182,35 @@ Exit criteria:
 
 ### Phase 4: API Contract Coverage Expansion
 
-Status: `[ ]`
+Status: `[~]`
 
 Actions:
 
-- [ ] Cover validation failures and `400` behavior
-- [ ] Cover auth failures and `401` behavior
+- [x] Cover validation failures and `400` behavior
+- [x] Cover auth failures and `401` behavior
 - [ ] Cover permission failures and `403` behavior
 - [ ] Cover conflict paths and `409` behavior
 - [ ] Cover not-found paths and `404` behavior
 - [ ] Cover rate limiting and `429` behavior with real Redis-backed state
-- [ ] Cover job creation side effects
+- [x] Cover job creation side effects
 - [ ] Cover job retrieval and lifecycle response shape
 - [ ] Cover API key revoke behavior through HTTP only
+
+Suggested rollout order:
+
+- `POST /api/v1/jobs` conflict behavior for an active job on the same document
+- `POST /api/v1/jobs` not-found behavior for update flows with an unknown or archived `document_id`
+- `GET /api/v1/jobs` list response shape after a created job exists
+- `GET /api/v1/jobs/{job_id}` normal flow, not-found, and ownership boundaries
+- `429` coverage only after the authenticated jobs baseline is stable
+
+Current Phase 4 snapshot:
+
+- File-mode `POST /api/v1/jobs` now has happy-path contract coverage with persisted DB and Redis side effects.
+- `400 INVALID_ARGUMENT` for missing `file_name`
+- `400 INVALID_ARGUMENT` for unsupported file type
+- `401 UNAUTHENTICATED` for missing `Authorization`
+- `401 UNAUTHENTICATED` for malformed `Authorization`
 
 Exit criteria:
 
@@ -202,6 +228,10 @@ Actions:
 - [ ] Verify important uniqueness and conflict guarantees through real inserts
 - [ ] Remove tests that only inspect migration file text when a stronger runtime test exists
 
+Current note:
+
+- Alembic already runs during contract bootstrap, but there is still no dedicated migration suite or explicit schema-assertion coverage.
+
 Exit criteria:
 
 - Schema behavior is proven through migrations and runtime persistence checks.
@@ -217,6 +247,10 @@ Actions:
 - [ ] Use real storage/database/Redis where stability depends on them
 - [ ] Mock outbound provider calls only at external boundaries
 - [ ] Keep parser algorithm micro-tests only where they protect deterministic pure logic
+
+Current note:
+
+- `apps/worker/tests` is still dominated by config, service, and task-level tests rather than queue-surface contracts.
 
 Exit criteria:
 
@@ -234,21 +268,37 @@ Actions:
 - [ ] Remove shared mock fixtures that no longer belong in the new architecture
 - [ ] Simplify pytest configuration after migration
 
+Current note:
+
+- `packages/shared-python/shared/tests/component` is defined, but the broader shared-test migration into that taxonomy is still pending.
+
 Exit criteria:
 
 - The suite is smaller, clearer, and dominated by surface-level specifications.
 
 ### Phase 8: CI and Developer Workflow
 
-Status: `[ ]`
+Status: `[~]`
 
 Actions:
 
-- [ ] Define fast local commands for contract tests
+- [x] Define fast local commands for contract tests
 - [ ] Define CI commands and execution order
 - [ ] Split fast checks and slower contract checks if needed
-- [ ] Document how to run the new suite locally
+- [x] Document how to run the new suite locally
 - [ ] Document how to seed or inspect failures
+
+Current local commands:
+
+- `uv run pytest apps/api/tests/contract -q`
+- `uv run pytest apps/api/tests -q`
+
+Local prerequisites:
+
+- PostgreSQL reachable at `127.0.0.1:5432`
+- Redis reachable at `127.0.0.1:6379`
+- The default contract bootstrap will create or reuse `Knowhere_contract_test` and Redis DB `14`
+- Contract tests should not be run in parallel today because they reuse the same contract database and Redis DB.
 
 Exit criteria:
 
@@ -259,14 +309,17 @@ Exit criteria:
 This is the exact working order to resume from:
 
 - [x] Finalize the new test taxonomy and directory structure.
-- [ ] Add harness dependencies and create the base contract test infrastructure.
+- [x] Stabilize the base contract test infrastructure on dedicated local Postgres and Redis.
 - [x] Refactor bootstrap points only as much as needed to make test environment initialization deterministic.
 - [x] Add database and Redis reset fixtures.
 - [x] Add app client fixture with lifespan support.
 - [x] Seed minimum required data for auth and rate limiting.
 - [x] Write the first contract suite for `POST /api/v1/guest`.
-- [ ] Write the first contract suite for `POST /api/v1/jobs`.
-- [ ] Expand to `404`, `409`, and `429` cases.
+- [x] Add an authenticated request helper that uses the seeded local-developer profile.
+- [x] Write the first contract suite for `POST /api/v1/jobs` in file-upload mode.
+- [x] Add the first authenticated `400` and `401` contracts for `POST /api/v1/jobs`.
+- [ ] Expand authenticated API coverage to `404`, `409`, and `429` cases.
+- [ ] Add read-side contracts for `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}`.
 - [ ] Add migration verification with `pytest-alembic`.
 - [ ] Move worker tests toward task-surface contracts.
 - [ ] Update local developer docs and CI commands.
@@ -276,7 +329,7 @@ This is the exact working order to resume from:
 When resuming work, start from this checklist:
 
 1. Open this file.
-2. Find the first unchecked action in the current phase.
+2. Find the first unchecked action in the current phase or concrete action list.
 3. Confirm whether any bootstrap refactor is still blocking the harness.
 4. Execute only the next smallest complete step.
 5. Update the status markers in this file before stopping.
@@ -301,9 +354,11 @@ Before stopping, always record:
 
 - Import-time app and engine creation may force a small architecture change before the new harness is clean.
 - Full contract tests will be slower than the current mock-heavy suite.
+- The current harness still depends on locally available PostgreSQL and Redis, so local ergonomics and CI isolation are not solved yet.
 - Deleting old tests too early would remove behavior inventory before replacement coverage exists.
 - Rate-limit tests must use real Redis-backed behavior or they will give false confidence.
 - Database conflict tests should prefer real transaction behavior over patched exceptions.
+- The first authenticated jobs contract should start with file mode, because URL mode immediately crosses into Celery scheduling and a wider external surface.
 
 ## Definition of Done
 
@@ -320,4 +375,4 @@ The refactor is done when:
 
 Current next action:
 
-- Review the legacy guest-registration tests and keep only the ones that still protect uncovered race/error paths, then start the first authenticated `POST /api/v1/jobs` contract using the seeded developer helper.
+- Add the next `POST /api/v1/jobs` state-path contracts for `409` active-document conflicts and `404` update flows against unknown or archived `document_id` values.

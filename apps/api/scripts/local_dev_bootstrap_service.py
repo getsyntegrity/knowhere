@@ -23,7 +23,7 @@ class LocalDevelopmentBootstrapService:
     LOCAL_DEV_USER_EMAIL: str = "local-dev-user@knowhere.local"
     LOCAL_DEV_TIER: str = "tier_5"
     LOCAL_DEV_API_KEY_ID: str = "local-dev-default-api-key"
-    LOCAL_DEV_API_KEY: str = "local_dev_demo_key_tier5_full_access"
+    LOCAL_DEV_API_KEY: str = "sk_local_dev_demo_key_tier5_full_access"
     LOCAL_DEV_API_KEY_NAME: str = "local-dev-full-access"
     LOCAL_DEV_PAYMENT_RECORD_ID: str = "local-dev-seed-payment-record"
     LOCAL_DEV_PAYMENT_INTENT_ID: str = "local-dev-seed-highest-tier"
