@@ -3,7 +3,6 @@
 
 import argparse
 import asyncio
-import datetime
 import os
 import sys
 from typing import cast
@@ -36,6 +35,7 @@ from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.models.database.webhook import WebhookEvent  # noqa: F401
 from shared.services.billing import CreditsService
+from shared.utils.utc_now import utc_now_naive
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -122,7 +122,7 @@ def _create_manual_payment_record(user_id: str, micro_amount: int) -> PaymentRec
         status="succeeded",
         credits_amount=micro_amount,
         payment_type="manual_grant",
-        processed_at=datetime.datetime.utcnow(),
+        processed_at=utc_now_naive(),
         extra_metadata={"reason": "Manual dev top-up via script"},
     )
 

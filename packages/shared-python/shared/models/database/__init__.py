@@ -17,6 +17,7 @@ from .document import (
 from .guest_device import GuestDevice
 from .job import Job
 from .job_result import JobChunk, JobResult
+from .knowledge_base import ContentBase, FileDirectory, PathBase
 
 # 3. Job-related log models
 from .job_state_audit_log import JobStateAuditLog
@@ -34,6 +35,7 @@ from .user import User
 from .user_balance import UserBalance
 from .webhook import WebhookEvent, WebhookEventStatus
 from .webhook_log import WebhookLog
+from .webhook_secret import WebhookSecret
 
 # 5. Finally import other models
 # from .oauth_provider import OAuthProvider  # Commented out temporarily to avoid circular imports
@@ -47,6 +49,9 @@ __all__ = [
     "Job",
     "JobResult",
     "JobChunk",
+    "ContentBase",
+    "PathBase",
+    "FileDirectory",
     "Document",
     "DocumentSection",
     "DocumentChunk",
@@ -60,6 +65,7 @@ __all__ = [
     "WebhookEvent",
     "WebhookEventStatus",
     "WebhookLog",
+    "WebhookSecret",
     "TierLimit",
     "SystemLimit",
     # "OAuthProvider"

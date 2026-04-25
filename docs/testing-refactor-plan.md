@@ -41,10 +41,13 @@ The new suite must avoid coupling tests to:
 - The main API test fixture overrides auth, billing, and database access.
 - The real API lifespan runs migrations, warms the database pool, initializes Redis, and loads rate-limit rules.
 - Config, database engine, and the FastAPI app are created at import time, which makes integration harness setup more fragile.
-- The repository now has real API contract coverage for health, guest registration, authenticated file-mode job creation, and the first authenticated `400`/`401` job failure paths, but the authenticated API surface is still mostly uncovered.
-- The current API contract suite is green with `uv run pytest apps/api/tests/contract -q` and `uv run pytest apps/api/tests -q`.
+- The repository now has real API contract coverage for health, guest registration, authenticated file-mode job creation, authenticated `400`/`401`/`403`/`404`/`409`/`429` paths, job list/detail reads, and API key revoke through HTTP only.
+- The current API contract and migration suites are green with `uv run pytest apps/api/tests/contract -q`, `uv run pytest apps/api/tests/migrations -q`, and `uv run pytest apps/api/tests -q`.
+- The combined API + worker contract command is now green and warning-clean with `uv run pytest apps/api/tests apps/worker/tests/contract -q -W error::pytest.PytestDeprecationWarning -W error::DeprecationWarning -W error::sqlalchemy.exc.SAWarning -W error::UserWarning`.
 - The checked-in harness currently assumes PostgreSQL on `127.0.0.1:5432` and Redis on `127.0.0.1:6379`, isolated through `Knowhere_contract_test` and Redis DB `14`.
-- Dedicated migration tests, worker contract tests, and shared component-test migration have not started yet.
+- Dedicated migration tests are now in place with `pytest-alembic`.
+- The worker suite now has its first real contract slice for stale-job sweeping against real Postgres and Redis.
+- The broader shared component-test migration is still pending.
 
 ## Working Rules
 
@@ -182,19 +185,19 @@ Exit criteria:
 
 ### Phase 4: API Contract Coverage Expansion
 
-Status: `[~]`
+Status: `[x]`
 
 Actions:
 
 - [x] Cover validation failures and `400` behavior
 - [x] Cover auth failures and `401` behavior
-- [ ] Cover permission failures and `403` behavior
-- [ ] Cover conflict paths and `409` behavior
-- [ ] Cover not-found paths and `404` behavior
-- [ ] Cover rate limiting and `429` behavior with real Redis-backed state
+- [x] Cover permission failures and `403` behavior
+- [x] Cover conflict paths and `409` behavior
+- [x] Cover not-found paths and `404` behavior
+- [x] Cover rate limiting and `429` behavior with real Redis-backed state
 - [x] Cover job creation side effects
-- [ ] Cover job retrieval and lifecycle response shape
-- [ ] Cover API key revoke behavior through HTTP only
+- [x] Cover job retrieval and lifecycle response shape
+- [x] Cover API key revoke behavior through HTTP only
 
 Suggested rollout order:
 
@@ -211,6 +214,13 @@ Current Phase 4 snapshot:
 - `400 INVALID_ARGUMENT` for unsupported file type
 - `401 UNAUTHENTICATED` for missing `Authorization`
 - `401 UNAUTHENTICATED` for malformed `Authorization`
+- `403 PERMISSION_DENIED` for cross-user job access
+- `404 NOT_FOUND` for missing jobs and unknown or archived update-flow documents
+- `409 ABORTED` for active-document ingestion conflicts
+- `429 RESOURCE_EXHAUSTED` for Redis-backed concurrent-job throttling
+- `GET /api/v1/jobs` list response shape after a created job exists
+- `GET /api/v1/jobs/{job_id}` detail response shape, not-found behavior, and ownership boundaries
+- `POST /api/v1/auth/revoke` verified through HTTP-only creation, revoke, list, and rejected reuse of the revoked key
 
 Exit criteria:
 
@@ -218,19 +228,21 @@ Exit criteria:
 
 ### Phase 5: Migration and Persistence Guarantees
 
-Status: `[ ]`
+Status: `[x]`
 
 Actions:
 
-- [ ] Add `pytest-alembic`
-- [ ] Verify migrations apply cleanly from an empty database
-- [ ] Verify schema constraints required by the contracts
-- [ ] Verify important uniqueness and conflict guarantees through real inserts
+- [x] Add `pytest-alembic`
+- [x] Verify migrations apply cleanly from an empty database
+- [x] Verify schema constraints required by the contracts
+- [x] Verify important uniqueness and conflict guarantees through real inserts
 - [ ] Remove tests that only inspect migration file text when a stronger runtime test exists
 
 Current note:
 
-- Alembic already runs during contract bootstrap, but there is still no dedicated migration suite or explicit schema-assertion coverage.
+- `apps/api/tests/migrations` now runs `pytest-alembic` against a fresh throwaway local Postgres database per test.
+- The suite now proves head upgrades, autogenerate drift checks, downgrade/upgrade consistency, and the active-document uniqueness guarantees through real inserts.
+- Alembic autogenerate now ignores the generated TSV search columns and the `documents` to `job_results` cycle no longer emits drift-check warnings during `test_model_definitions_match_ddl`.
 
 Exit criteria:
 
@@ -238,19 +250,20 @@ Exit criteria:
 
 ### Phase 6: Worker Surface Tests
 
-Status: `[ ]`
+Status: `[~]`
 
 Actions:
 
-- [ ] Define the worker surface that should be specified by tests
-- [ ] Cover task entrypoints and durable side effects
-- [ ] Use real storage/database/Redis where stability depends on them
+- [x] Define the worker surface that should be specified by tests
+- [x] Cover task entrypoints and durable side effects
+- [x] Use real storage/database/Redis where stability depends on them
 - [ ] Mock outbound provider calls only at external boundaries
 - [ ] Keep parser algorithm micro-tests only where they protect deterministic pure logic
 
 Current note:
 
-- `apps/worker/tests` is still dominated by config, service, and task-level tests rather than queue-surface contracts.
+- `apps/worker/tests/contract/test_stale_job_sweeper_contract.py` now covers the stale-job sweeper entrypoint with real Postgres and Redis side effects, including durable failure transitions and the Redis-backed duplicate-Beat lock.
+- `apps/worker/tests` is still dominated by config, service, and task-level tests outside that first contract slice.
 
 Exit criteria:
 
@@ -271,6 +284,7 @@ Actions:
 Current note:
 
 - `packages/shared-python/shared/tests/component` is defined, but the broader shared-test migration into that taxonomy is still pending.
+- Repo-root pytest configuration now mirrors the async fixture loop settings used by the app-level suites so combined root-level runs do not emit `pytest-asyncio` deprecation noise.
 
 Exit criteria:
 
@@ -278,20 +292,23 @@ Exit criteria:
 
 ### Phase 8: CI and Developer Workflow
 
-Status: `[~]`
+Status: `[x]`
 
 Actions:
 
 - [x] Define fast local commands for contract tests
-- [ ] Define CI commands and execution order
-- [ ] Split fast checks and slower contract checks if needed
+- [x] Define CI commands and execution order
+- [x] Split fast checks and slower contract checks if needed
 - [x] Document how to run the new suite locally
-- [ ] Document how to seed or inspect failures
+- [x] Document how to seed or inspect failures
 
 Current local commands:
 
 - `uv run pytest apps/api/tests/contract -q`
+- `uv run pytest apps/api/tests/migrations -q`
 - `uv run pytest apps/api/tests -q`
+- `uv run pytest apps/worker/tests/contract -q`
+- `uv run pytest apps/api/tests apps/worker/tests/contract -q`
 
 Local prerequisites:
 
@@ -299,6 +316,18 @@ Local prerequisites:
 - Redis reachable at `127.0.0.1:6379`
 - The default contract bootstrap will create or reuse `Knowhere_contract_test` and Redis DB `14`
 - Contract tests should not be run in parallel today because they reuse the same contract database and Redis DB.
+
+Recommended CI execution order:
+
+- Fast API HTTP contracts: `uv run pytest apps/api/tests/contract -q`
+- Migration guarantees: `uv run pytest apps/api/tests/migrations -q`
+- Worker contract slice: `uv run pytest apps/worker/tests/contract -q`
+- Full API tree when needed: `uv run pytest apps/api/tests -q`
+
+Failure inspection notes:
+
+- Re-run a single suite first; the shared contract database and Redis DB are intentionally stable and inspectable between failures.
+- Check the persisted rows in `Knowhere_contract_test` and the Redis keys in DB `14` before re-running if the failure depends on side effects.
 
 Exit criteria:
 
@@ -318,11 +347,11 @@ This is the exact working order to resume from:
 - [x] Add an authenticated request helper that uses the seeded local-developer profile.
 - [x] Write the first contract suite for `POST /api/v1/jobs` in file-upload mode.
 - [x] Add the first authenticated `400` and `401` contracts for `POST /api/v1/jobs`.
-- [ ] Expand authenticated API coverage to `404`, `409`, and `429` cases.
-- [ ] Add read-side contracts for `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}`.
-- [ ] Add migration verification with `pytest-alembic`.
-- [ ] Move worker tests toward task-surface contracts.
-- [ ] Update local developer docs and CI commands.
+- [x] Expand authenticated API coverage to `404`, `409`, and `429` cases.
+- [x] Add read-side contracts for `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}`.
+- [x] Add migration verification with `pytest-alembic`.
+- [x] Move worker tests toward task-surface contracts.
+- [x] Update local developer docs and CI commands.
 
 ## Resume Protocol
 
@@ -375,4 +404,4 @@ The refactor is done when:
 
 Current next action:
 
-- Add the next `POST /api/v1/jobs` state-path contracts for `409` active-document conflicts and `404` update flows against unknown or archived `document_id` values.
+- Review and migrate the remaining worker and shared mock-heavy tests into task-surface contracts or narrow component tests, starting with URL-upload and parse-task flows.

@@ -2,7 +2,7 @@
 Sync credits repository for worker-side billing operations.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import func, select, update
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user_balance import UserBalance
+from shared.utils.utc_now import utc_now_naive
 
 
 class SyncCreditsRepository:
@@ -67,7 +68,7 @@ class SyncCreditsRepository:
         days: int,
     ) -> int:
         """Return credits from succeeded payments still inside the validity window."""
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = utc_now_naive() - timedelta(days=days)
         result = session.execute(
             select(func.coalesce(func.sum(PaymentRecord.credits_amount), 0))
             .where(PaymentRecord.user_id == user_id)

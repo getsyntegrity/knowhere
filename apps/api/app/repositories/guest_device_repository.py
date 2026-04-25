@@ -1,6 +1,4 @@
 """Guest device data access layer."""
-
-from datetime import datetime
 from typing import Optional
 
 from app.repositories.base_repository import BaseRepository
@@ -8,6 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database.guest_device import GuestDevice
+from shared.utils.utc_now import utc_now_naive
 
 
 class GuestDeviceRepository(BaseRepository[GuestDevice, dict, dict]):
@@ -43,6 +42,6 @@ class GuestDeviceRepository(BaseRepository[GuestDevice, dict, dict]):
         await session.execute(
             update(GuestDevice)
             .where(GuestDevice.device_id == device_id)
-            .values(api_key_id=api_key_id, updated_at=datetime.utcnow())
+            .values(api_key_id=api_key_id, updated_at=utc_now_naive())
         )
         return await self.get_by_device_id(session, device_id)

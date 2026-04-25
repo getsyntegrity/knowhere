@@ -1,12 +1,14 @@
 from logging.config import fileConfig
 
 from sqlalchemy import pool
+from sqlalchemy.engine import Connection, Engine
 
 from alembic import context
 
 # Import the shared database configuration and metadata.
 from shared.core.config import settings
 from shared.core.database import Base
+from shared.models import database as shared_database_models  # noqa: F401
 
 # Build a synchronous database URL by replacing asyncpg with psycopg2.
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
@@ -27,10 +29,8 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
-
-def include_object(object, name, type_, reflected, compare_to):
-    """Exclude externally managed auth tables from Alembic autogenerate output."""
-    externally_managed_tables: set[str] = {
+_EXTERNALLY_MANAGED_TABLES: frozenset[str] = frozenset(
+    {
         "user",
         "verification",
         "jwks",
@@ -38,8 +38,39 @@ def include_object(object, name, type_, reflected, compare_to):
         "emailVerificationToken",
         "session",
     }
-    if type_ == "table" and name in externally_managed_tables:
+)
+_AUTOGENERATE_IGNORED_COLUMNS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("document_chunks", "content_search_tsv"),
+        ("document_chunks", "path_search_tsv"),
+    }
+)
+
+
+def _resolve_table_name(object_: object, compare_to: object | None) -> str | None:
+    for candidate in (object_, compare_to):
+        table = getattr(candidate, "table", None)
+        table_name = getattr(table, "name", None)
+        if isinstance(table_name, str):
+            return table_name
+    return None
+
+
+def include_object(
+    object_: object,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: object | None,
+) -> bool:
+    """Exclude externally managed auth tables and generated TSV columns."""
+    del reflected
+    if type_ == "table" and isinstance(name, str) and name in _EXTERNALLY_MANAGED_TABLES:
         return False
+    if type_ == "column" and isinstance(name, str):
+        table_name = _resolve_table_name(object_, compare_to)
+        if table_name is not None and (table_name, name) in _AUTOGENERATE_IGNORED_COLUMNS:
+            return False
     return True
 
 
@@ -84,6 +115,27 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    configured_connection = config.attributes.get("connection")
+
+    def run_with_connection(connection: Connection) -> None:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+    if isinstance(configured_connection, Connection):
+        run_with_connection(configured_connection)
+        return
+
+    if isinstance(configured_connection, Engine):
+        with configured_connection.connect() as connection:
+            run_with_connection(connection)
+        return
+
     # Use create_engine directly so SSL connect args are applied explicitly.
     from sqlalchemy import create_engine
 
@@ -94,14 +146,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            include_object=include_object,
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
+        run_with_connection(connection)
 
 
 if context.is_offline_mode():

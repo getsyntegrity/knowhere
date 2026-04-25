@@ -11,6 +11,7 @@ from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
+from shared.utils.utc_now import utc_now_naive
 
 if TYPE_CHECKING:
     pass
@@ -30,10 +31,13 @@ class UserBalance(Base):
         String(255), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
+        nullable=False,
     )
 
     def __repr__(self) -> str:

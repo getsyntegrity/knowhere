@@ -8,7 +8,6 @@ import json
 import os
 import tempfile
 import zipfile
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -23,6 +22,7 @@ from shared.core.exceptions.domain_exceptions import (
     KnowhereException,
     StorageServiceException,
 )
+from shared.utils.utc_now import utc_now_naive
 
 
 class ZipResultService:
@@ -818,7 +818,7 @@ class ZipResultService:
             "job_id": job_id,
             "data_id": data_id,
             "source_file_name": source_file_name,
-            "processing_date": datetime.utcnow().isoformat() + "Z",
+            "processing_date": utc_now_naive().isoformat() + "Z",
             "processing": {
                 "page_count": job_metadata.get("page_count"),
                 "billing_status": job_metadata.get("billing_status"),

@@ -12,6 +12,7 @@ from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
+from shared.utils.utc_now import utc_now_naive
 
 
 class APIKey(Base):
@@ -42,7 +43,7 @@ class APIKey(Base):
         Boolean, default=True, nullable=False
     )  # Active status
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
     last_used_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
@@ -57,7 +58,7 @@ class APIKey(Base):
         """Check if expired"""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
+        return utc_now_naive() > self.expires_at
 
     def is_valid(self) -> bool:
         """Check if valid"""

@@ -1,6 +1,5 @@
 """Stripe payment service."""
 
-from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID
 
@@ -24,6 +23,7 @@ from shared.core.logging import logger
 from shared.models.database.payment_record import PaymentRecord
 from shared.repositories.credits_repository import CreditsRepository
 from shared.services.billing import CreditsService
+from shared.utils.utc_now import utc_now_naive
 
 
 class StripeService:
@@ -379,7 +379,7 @@ class StripeService:
                 # Mark the payment record as completed.
                 payment_record.status = "succeeded"
                 payment_record.credits_amount = credits_amount
-                payment_record.processed_at = datetime.utcnow()
+                payment_record.processed_at = utc_now_naive()
 
                 await TierService.refresh_tier(user_id, db)
                 await db.commit()
@@ -521,7 +521,7 @@ class StripeService:
             # Mark the payment record as completed.
             payment_record.status = "succeeded"
             payment_record.credits_amount = credits_amount
-            payment_record.processed_at = datetime.utcnow()
+            payment_record.processed_at = utc_now_naive()
 
             await TierService.refresh_tier(user_id, db)
             await db.commit()
@@ -754,7 +754,7 @@ class StripeService:
             stripe_subscription_id=getattr(
                 original_record, "stripe_subscription_id", None
             ),
-            processed_at=datetime.utcnow(),
+            processed_at=utc_now_naive(),
             extra_metadata=refund_metadata,
         )
 

@@ -23,6 +23,7 @@ from shared.core.exceptions.domain_exceptions import (
 )
 from shared.models.database.api_key import APIKey
 from shared.models.database.user_balance import UserBalance
+from shared.utils.utc_now import utc_now_naive
 
 _DEFAULT_USER_TIER: str = "free"
 
@@ -250,7 +251,7 @@ class APIKeyService:
             .values(
                 key_hash=new_key_hash,
                 key_mask=new_key_mask,
-                updated_at=datetime.utcnow(),
+                updated_at=utc_now_naive(),
             )
         )
         await session.commit()

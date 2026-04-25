@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from sqlalchemy import (
+    Computed,
     JSON,
     DateTime,
     Float,
@@ -17,9 +18,11 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.core.database import Base
+from shared.utils.utc_now import utc_now_naive
 
 
 class Document(Base):
@@ -38,14 +41,19 @@ class Document(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     current_job_result_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("job_results.id", ondelete="SET NULL"), nullable=True
+        String(36),
+        ForeignKey("job_results.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
     )
     source_file_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
+        nullable=False,
     )
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -102,7 +110,7 @@ class DocumentSection(Base):
     )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
 
     document: Mapped[Document] = relationship("Document", back_populates="sections")
@@ -152,6 +160,22 @@ class DocumentChunk(Base):
     content_search_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     path_search_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     term_search_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_search_tsv: Mapped[Optional[str]] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('simple', COALESCE(content_search_text, ''))",
+            persisted=True,
+        ),
+        nullable=True,
+    )
+    path_search_tsv: Mapped[Optional[str]] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('simple', COALESCE(path_search_text, ''))",
+            persisted=True,
+        ),
+        nullable=True,
+    )
     source_chunk_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     chunk_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
@@ -159,7 +183,7 @@ class DocumentChunk(Base):
     )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
 
     document: Mapped[Document] = relationship("Document", back_populates="chunks")
@@ -175,6 +199,16 @@ class DocumentChunk(Base):
         Index("idx_document_chunks_chunk_id", "chunk_id"),
         Index("idx_document_chunks_doc_revision", "document_id", "job_result_id"),
         Index("idx_document_chunks_section", "section_id"),
+        Index(
+            "idx_chunk_content_search_tsv",
+            "content_search_tsv",
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_chunk_path_search_tsv",
+            "path_search_tsv",
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -201,10 +235,13 @@ class GraphNode(Base):
     ref_section_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     properties: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
+        nullable=False,
     )
 
     __table_args__ = (
@@ -248,10 +285,13 @@ class GraphEdge(Base):
     weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     properties: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
+        nullable=False,
     )
 
     __table_args__ = (
@@ -283,13 +323,16 @@ class RetrievalHitStat(Base):
     chunk_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_hit_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utc_now_naive, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
+        nullable=False,
     )
 
     __table_args__ = (

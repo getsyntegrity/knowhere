@@ -8,7 +8,7 @@ This service implements the ledger pattern where:
 - All operations are atomic within a transaction
 """
 
-from datetime import datetime
+from datetime import timedelta
 from typing import Any, Dict, Optional
 
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +22,7 @@ from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user_balance import UserBalance
 from shared.repositories.credits_repository import CreditsRepository
+from shared.utils.utc_now import utc_now_naive
 
 NON_EXPIRING_CREDIT_TRANSACTION_TYPES: tuple[str, ...] = ("refund",)
 
@@ -119,7 +120,7 @@ class CreditsService:
                     status="succeeded",
                     credits_amount=initial_amount,
                     extra_metadata={"reason": "initial_grant"},
-                    processed_at=datetime.utcnow(),
+                    processed_at=utc_now_naive(),
                 )
                 session.add(payment)
                 await session.flush()
@@ -436,9 +437,9 @@ class CreditsService:
 
         # Calculate time range
         if period == "month":
-            start_time = datetime.utcnow() - timedelta(days=30)
+            start_time = utc_now_naive() - timedelta(days=30)
         elif period == "week":
-            start_time = datetime.utcnow() - timedelta(days=7)
+            start_time = utc_now_naive() - timedelta(days=7)
         else:  # all_time
             start_time = None
 

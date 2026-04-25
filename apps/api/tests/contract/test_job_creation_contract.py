@@ -1,6 +1,9 @@
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from datetime import datetime, timezone
+import json
 from typing import cast
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -20,6 +23,126 @@ async def _count_jobs() -> int:
         async with engine.begin() as connection:
             result = await connection.execute(text("SELECT COUNT(*) FROM jobs"))
             return int(result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+async def _insert_document(
+    *,
+    document_id: str,
+    user_id: str = "local-dev-user",
+    namespace: str = "contract-jobs",
+    status: str = "active",
+) -> None:
+    engine = await _create_contract_engine()
+    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO documents (
+                        document_id,
+                        user_id,
+                        namespace,
+                        status,
+                        source_file_name,
+                        created_at,
+                        updated_at,
+                        archived_at
+                    ) VALUES (
+                        :document_id,
+                        :user_id,
+                        :namespace,
+                        :status,
+                        :source_file_name,
+                        :created_at,
+                        :updated_at,
+                        :archived_at
+                    )
+                    """
+                ),
+                {
+                    "document_id": document_id,
+                    "user_id": user_id,
+                    "namespace": namespace,
+                    "status": status,
+                    "source_file_name": f"{document_id}.pdf",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                    "archived_at": timestamp if status == "archived" else None,
+                },
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _insert_active_job(
+    *,
+    job_id: str,
+    document_id: str,
+    user_id: str = "local-dev-user",
+    namespace: str = "contract-jobs",
+    status: str = "running",
+) -> None:
+    engine = await _create_contract_engine()
+    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
+    job_metadata: dict[str, str] = {
+        "document_id": document_id,
+        "namespace": namespace,
+        "source_type": "file",
+    }
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO jobs (
+                        job_id,
+                        user_id,
+                        job_type,
+                        status,
+                        source_type,
+                        webhook_enabled,
+                        job_metadata,
+                        version,
+                        created_at,
+                        updated_at,
+                        credits_charged,
+                        billing_status
+                    ) VALUES (
+                        :job_id,
+                        :user_id,
+                        :job_type,
+                        :status,
+                        :source_type,
+                        :webhook_enabled,
+                        CAST(:job_metadata AS JSON),
+                        :version,
+                        :created_at,
+                        :updated_at,
+                        :credits_charged,
+                        :billing_status
+                    )
+                    """
+                ),
+                {
+                    "job_id": job_id,
+                    "user_id": user_id,
+                    "job_type": "kb_management",
+                    "status": status,
+                    "source_type": "file",
+                    "webhook_enabled": False,
+                    "job_metadata": json.dumps(job_metadata),
+                    "version": 0,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                    "credits_charged": 0,
+                    "billing_status": "pending",
+                },
+            )
     finally:
         await engine.dispose()
 
@@ -248,4 +371,115 @@ async def test_should_reject_a_malformed_authorization_header_when_creating_a_jo
     assert error["code"] == "UNAUTHENTICATED"
     assert error["message"] == "Invalid Authorization header format"
     assert "details" not in error
+    assert await _count_jobs() == 0
+
+
+@pytest.mark.asyncio
+async def test_should_return_conflict_when_creating_a_job_for_a_document_with_an_active_ingestion_job(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    document_id = f"doc_contract_{uuid4().hex[:12]}"
+    active_job_id = f"job_contract_{uuid4().hex[:12]}"
+
+    payload: dict[str, str] = {
+        "document_id": document_id,
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "conflict-upload.pdf",
+        "data_id": "contract-job-conflict",
+    }
+
+    async with developer_api_client_factory() as api_client:
+        await _insert_document(document_id=document_id)
+        await _insert_active_job(job_id=active_job_id, document_id=document_id)
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 409
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    error = cast(dict[str, object], response_json["error"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "ABORTED"
+    assert (
+        error["message"]
+        == f"Document already has an active ingestion job. Active job: {active_job_id}."
+    )
+    assert error["details"] == {
+        "reason": "ABORTED",
+        "resource": "Document",
+        "id": document_id,
+    }
+    assert await _count_jobs() == 1
+
+
+@pytest.mark.asyncio
+async def test_should_return_not_found_when_creating_a_job_for_an_unknown_document_id(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    payload: dict[str, str] = {
+        "document_id": f"doc_missing_{uuid4().hex[:12]}",
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "missing-document-upload.pdf",
+        "data_id": "contract-job-missing-document",
+    }
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    error = cast(dict[str, object], response_json["error"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "NOT_FOUND"
+    assert error["message"] == "Document not found"
+    assert error["details"] == {
+        "resource": "Document",
+        "id": payload["document_id"],
+    }
+    assert await _count_jobs() == 0
+
+
+@pytest.mark.asyncio
+async def test_should_return_not_found_when_creating_a_job_for_an_archived_document(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    document_id = f"doc_archived_{uuid4().hex[:12]}"
+
+    payload: dict[str, str] = {
+        "document_id": document_id,
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "archived-document-upload.pdf",
+        "data_id": "contract-job-archived-document",
+    }
+
+    async with developer_api_client_factory() as api_client:
+        await _insert_document(document_id=document_id, status="archived")
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    error = cast(dict[str, object], response_json["error"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "NOT_FOUND"
+    assert error["message"] == "Document not found"
+    assert error["details"] == {
+        "resource": "Document",
+        "id": document_id,
+    }
     assert await _count_jobs() == 0

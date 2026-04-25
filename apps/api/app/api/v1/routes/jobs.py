@@ -137,20 +137,21 @@ async def start_workflow_for_job(
         )
 
 
-def check_job_permission(job, user_id: str) -> None:
+def check_job_permission(job, user_id: str, job_id: str) -> None:
     """
     Verify that the job belongs to the current user.
 
     Args:
         job: Job object.
         user_id: Current user ID.
+        job_id: Requested job ID.
 
     Raises:
         HTTPException: Raised when the user does not own the job.
     """
     if not job:
         raise NotFoundException(
-            resource="Job", resource_id=user_id, internal_message="Job not found"
+            resource="Job", resource_id=job_id, internal_message="Job not found"
         )
 
     if str(job.user_id) != user_id:
@@ -863,7 +864,7 @@ async def get_job_result(
 
         # Load the job and verify access.
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, current_user.user_id)
+        check_job_permission(job, current_user.user_id, job_id)
         assert job is not None
 
         status_for_api = to_job_status_value(job.status)
@@ -1011,7 +1012,7 @@ async def confirm_upload(
 
         # Load the job and verify access.
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, current_user.user_id)
+        check_job_permission(job, current_user.user_id, job_id)
         assert job is not None
 
         # Check the current job state.

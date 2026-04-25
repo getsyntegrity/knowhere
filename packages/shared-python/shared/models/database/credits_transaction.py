@@ -12,6 +12,7 @@ from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
+from shared.utils.utc_now import utc_now_naive
 
 
 class CreditsTransaction(Base):
@@ -39,7 +40,7 @@ class CreditsTransaction(Base):
         JSON, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False, index=True
+        DateTime, default=utc_now_naive, nullable=False, index=True
     )
 
     # Relationship fields are intentionally omitted here for now.

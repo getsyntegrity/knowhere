@@ -7,10 +7,7 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, relationship
 
 from shared.core.database import Base
-
-
-def utc_now():
-    return datetime.utcnow()
+from shared.utils.utc_now import utc_now_naive
 
 
 class ContentBase(Base):
@@ -22,14 +19,14 @@ class ContentBase(Base):
         primary_key=True,
         index=True,
         default=lambda: str(uuid4()),
-        comment="Content order identifier",
+        comment="Content row identifier",
     )
-    content = Column(Text, nullable=True, comment="Content text")
+    content = Column(Text, nullable=True, comment="Raw content text")
     path = Column(Text, nullable=True, comment="File path or source")
     type = Column(
         String(2000),
         nullable=True,
-        comment="Content type (for example PTXT or SUMMARY)",
+        comment="Content type, for example PTXT or SUMMARY",
     )
     length = Column(Integer, nullable=True, comment="Content length or size")
     keywords = Column(String(511), nullable=True, comment="Content keywords")
@@ -37,13 +34,13 @@ class ContentBase(Base):
     know_id = Column(
         String(128),
         nullable=True,
-        comment="Knowledge ID, possibly linked to an external knowledge base",
+        comment="Knowledge record ID that may refer to an external knowledge base",
     )
     tokens = Column(Text, nullable=True, comment="Tokenized content")
     embedding = Column(
         Text,
         nullable=True,
-        comment="Content embedding for similarity search and related tasks",
+        comment="Semantic vector used for similarity search",
     )
 
 
@@ -54,13 +51,13 @@ class PathBase(Base):
         primary_key=True,
         index=True,
         default=lambda: str(uuid4()),
-        comment="Path order identifier",
+        comment="Path row identifier",
     )
     path = Column(Text, nullable=True, comment="File path or source")
     embedding = Column(
         Text,
         nullable=True,
-        comment="Content embedding for similarity search and related tasks",
+        comment="Semantic vector used for similarity search",
     )
 
 
@@ -92,25 +89,25 @@ class FileDirectory(Base):
         primary_key=True,
         index=True,
         default=lambda: str(uuid4()),
-        comment="Directory unique identifier",
+        comment="Directory record identifier",
     )
     title = Column(String(255), nullable=False, comment="Directory title")
     parent_id = Column(
         String(36),
         ForeignKey("file_directory.id"),
         nullable=True,
-        comment="Parent directory ID; NULL indicates the root directory",
+        comment="Parent directory ID; NULL means root directory",
     )
     user_id = Column(String(36), nullable=False, comment="Owning user ID")
     create_time = Column(
-        DateTime, nullable=True, default=utc_now, comment="Creation time"
+        DateTime, nullable=True, default=utc_now_naive, comment="Created time"
     )
     update_time = Column(
         DateTime,
         nullable=True,
-        default=utc_now,
-        onupdate=utc_now,
-        comment="Update time",
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
+        comment="Updated time",
     )
 
     # Self-referential relationship implemented through parent_id.
