@@ -2,11 +2,12 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 import json
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
+from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -23,6 +24,34 @@ async def _count_jobs() -> int:
         async with engine.begin() as connection:
             result = await connection.execute(text("SELECT COUNT(*) FROM jobs"))
             return int(result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+async def _load_job_record(job_id: str) -> dict[str, object]:
+    engine = await _create_contract_engine()
+    try:
+        async with engine.begin() as connection:
+            job_row = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT
+                            user_id,
+                            job_type,
+                            status,
+                            source_type,
+                            s3_key,
+                            webhook_enabled,
+                            job_metadata
+                        FROM jobs
+                        WHERE job_id = :job_id
+                        """
+                    ),
+                    {"job_id": job_id},
+                )
+            ).mappings().one()
+            return dict(job_row)
     finally:
         await engine.dispose()
 
@@ -483,3 +512,228 @@ async def test_should_return_not_found_when_creating_a_job_for_an_archived_docum
         "id": document_id,
     }
     assert await _count_jobs() == 0
+
+
+@pytest.mark.asyncio
+async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the_upload_worker(
+    monkeypatch: MonkeyPatch,
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "url",
+        "source_url": "https://example.com/contracts/knowhere-upload",
+        "data_id": "contract-job-url-upload",
+    }
+    requested_urls: list[str] = []
+    scheduled_tasks: list[dict[str, object]] = []
+
+    class _FakeHeadResponse:
+        def __init__(self, content_type: str) -> None:
+            self.headers: dict[str, str] = {"content-type": content_type}
+
+    class _FakeAsyncHttpClient:
+        async def head(
+            self,
+            url: str,
+            *,
+            follow_redirects: bool = True,
+        ) -> _FakeHeadResponse:
+            requested_urls.append(url)
+            assert follow_redirects is True
+            return _FakeHeadResponse("application/pdf")
+
+    class _FakeCeleryTask:
+        def __init__(self, task_name: str) -> None:
+            self._task_name = task_name
+
+        def apply_async(
+            self,
+            *,
+            args: list[object],
+            kwargs: dict[str, object],
+        ) -> None:
+            scheduled_tasks.append(
+                {
+                    "task_name": self._task_name,
+                    "args": args,
+                    "kwargs": kwargs,
+                }
+            )
+
+    class _FakeCeleryApp:
+        def signature(self, task_name: str) -> _FakeCeleryTask:
+            return _FakeCeleryTask(task_name)
+
+    import shared.core.celery_app as celery_app_module
+    import shared.utils.http_clients as http_clients_module
+
+    monkeypatch.setattr(
+        http_clients_module,
+        "get_async_client",
+        lambda: _FakeAsyncHttpClient(),
+    )
+    monkeypatch.setattr(
+        celery_app_module,
+        "get_celery_app",
+        lambda: _FakeCeleryApp(),
+    )
+
+    async with developer_api_client_factory() as api_client:
+        from shared.services.redis import JobInfoRedisService, JobMetadataService
+        from shared.services.redis.redis_service_factory import RedisServiceFactory
+
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+        assert response.status_code == 200
+
+        response_json: dict[str, object] = response.json()
+        job_id = cast(str, response_json["job_id"])
+
+        assert requested_urls == [payload["source_url"], payload["source_url"]]
+        assert response_json["status"] == "waiting-file"
+        assert response_json["source_type"] == "url"
+        assert response_json["namespace"] == payload["namespace"]
+        assert response_json["data_id"] == payload["data_id"]
+        assert response_json["document_id"] is None
+        assert response_json["upload_url"] is None
+        assert response_json["upload_headers"] is None
+        assert response_json["expires_in"] is None
+
+        job_row = await _load_job_record(job_id)
+        job_metadata = cast(dict[str, object], job_row["job_metadata"])
+        persisted_document_id = cast(str, job_metadata["document_id"])
+        original_request = cast(dict[str, object], job_metadata["original_request"])
+
+        assert job_row["user_id"] == "local-dev-user"
+        assert job_row["job_type"] == "kb_management"
+        assert job_row["status"] == "waiting-file"
+        assert job_row["source_type"] == "url"
+        assert job_row["s3_key"] == f"uploads/{job_id}.pdf"
+        assert job_row["webhook_enabled"] is False
+        assert persisted_document_id.startswith("doc_")
+        assert job_metadata["namespace"] == payload["namespace"]
+        assert job_metadata["source_type"] == "url"
+        assert job_metadata["source_file_name"] == "knowhere-upload.pdf"
+        assert job_metadata["source_url"] == payload["source_url"]
+        assert job_metadata["data_id"] == payload["data_id"]
+        assert original_request["source_type"] == payload["source_type"]
+        assert original_request["source_url"] == payload["source_url"]
+
+        redis_service = RedisServiceFactory.get_service()
+        metadata_service = JobMetadataService(redis_service)
+        job_info_service = JobInfoRedisService(redis_service)
+
+        cached_metadata = await metadata_service.get_metadata(job_id)
+        cached_job_info = await job_info_service.get_job_info(job_id)
+
+        assert cached_metadata is not None
+        assert cached_job_info is not None
+        assert cached_metadata["document_id"] == persisted_document_id
+        assert cached_metadata["namespace"] == payload["namespace"]
+        assert cached_metadata["source_type"] == "url"
+        assert cached_metadata["source_file_name"] == "knowhere-upload.pdf"
+        assert cached_metadata["source_url"] == payload["source_url"]
+        assert cached_job_info["job_id"] == job_id
+        assert cached_job_info["user_id"] == "local-dev-user"
+        assert cached_job_info["job_type"] == "kb_management"
+        assert cached_job_info["source_type"] == "url"
+        assert cached_job_info["s3_key"] == f"uploads/{job_id}.pdf"
+        assert cached_job_info["webhook_enabled"] is False
+        assert scheduled_tasks == [
+            {
+                "task_name": "app.core.tasks.kb_tasks.upload_url_file_task",
+                "args": [job_id, payload["source_url"], "local-dev-user"],
+                "kwargs": {"job_type": "kb_management"},
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_should_confirm_upload_and_start_processing_for_a_waiting_file_job(
+    monkeypatch: MonkeyPatch,
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "confirm-upload.pdf",
+        "data_id": "contract-job-confirm-upload",
+    }
+    started_workflows: list[dict[str, object]] = []
+
+    async def _fake_verify_s3_file_exists(
+        self: object,
+        s3_key: str,
+        bucket: str | None = None,
+    ) -> dict[str, object]:
+        assert bucket is None
+        return {"exists": True, "s3_key": s3_key}
+
+    async def _fake_start_workflow_for_job(
+        db: object,
+        job_id: str,
+        job_type: str,
+        source_type: str,
+        user_id: str,
+        file_path: str | None = None,
+        file_url: str | None = None,
+    ) -> None:
+        started_workflows.append(
+            {
+                "job_id": job_id,
+                "job_type": job_type,
+                "source_type": source_type,
+                "user_id": user_id,
+                "file_path": file_path,
+                "file_url": file_url,
+                "db_bound": db is not None,
+            }
+        )
+
+    async with developer_api_client_factory() as api_client:
+        import app.api.v1.routes.jobs as jobs_route_module
+        import shared.services.storage.file_upload_service as file_upload_service_module
+
+        monkeypatch.setattr(
+            file_upload_service_module.FileUploadService,
+            "verify_s3_file_exists",
+            _fake_verify_s3_file_exists,
+        )
+        monkeypatch.setattr(
+            jobs_route_module,
+            "start_workflow_for_job",
+            _fake_start_workflow_for_job,
+        )
+
+        create_response = await api_client.post("/api/v1/jobs", json=payload)
+        assert create_response.status_code == 200
+
+        create_response_json: dict[str, object] = create_response.json()
+        job_id = cast(str, create_response_json["job_id"])
+
+        confirm_response = await api_client.post(f"/api/v1/jobs/{job_id}/confirm-upload")
+
+    assert confirm_response.status_code == 200
+    assert confirm_response.headers["x-request-id"]
+    assert confirm_response.json() == {
+        "message": "File upload confirmed; processing started"
+    }
+
+    job_row = await _load_job_record(job_id)
+    assert job_row["status"] == "pending"
+    assert started_workflows == [
+        {
+            "job_id": job_id,
+            "job_type": "kb_management",
+            "source_type": "file",
+            "user_id": "local-dev-user",
+            "file_path": None,
+            "file_url": None,
+            "db_bound": True,
+        }
+    ]

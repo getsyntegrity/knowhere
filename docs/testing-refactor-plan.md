@@ -32,7 +32,7 @@ The new suite must avoid coupling tests to:
 - Use a dedicated contract-only database and Redis DB on the local services the repo already expects.
 - Defer `testcontainers-python` unless local setup or CI isolation becomes a recurring blocker.
 - Add `pytest-alembic` for migration checks.
-- Keep `fakeredis` only for small component tests, not for main endpoint contract tests.
+- Keep `fakeredis` only for narrow app-level component tests, not for main endpoint contract tests.
 - Mock only hard-to-control boundaries such as time, filesystem edge cases, and outbound third-party HTTP.
 
 ## Current Findings
@@ -41,18 +41,19 @@ The new suite must avoid coupling tests to:
 - The main API test fixture overrides auth, billing, and database access.
 - The real API lifespan runs migrations, warms the database pool, initializes Redis, and loads rate-limit rules.
 - Config, database engine, and the FastAPI app are created at import time, which makes integration harness setup more fragile.
-- The repository now has real API contract coverage for health, guest registration, authenticated file-mode job creation, authenticated `400`/`401`/`403`/`404`/`409`/`429` paths, job list/detail reads, and API key revoke through HTTP only.
+- The repository now has real API contract coverage for health, guest registration, authenticated file-mode and URL-mode job creation, authenticated `400`/`401`/`403`/`404`/`409` paths, all live jobs `429` layers, confirm-upload handoff, job list/detail reads, and API key revoke through HTTP only.
 - The current API contract and migration suites are green with `uv run pytest apps/api/tests/contract -q`, `uv run pytest apps/api/tests/migrations -q`, and `uv run pytest apps/api/tests -q`.
 - The combined API + worker contract command is now green and warning-clean with `uv run pytest apps/api/tests apps/worker/tests/contract -q -W error::pytest.PytestDeprecationWarning -W error::DeprecationWarning -W error::sqlalchemy.exc.SAWarning -W error::UserWarning`.
 - The checked-in harness currently assumes PostgreSQL on `127.0.0.1:5432` and Redis on `127.0.0.1:6379`, isolated through `Knowhere_contract_test` and Redis DB `14`.
 - Dedicated migration tests are now in place with `pytest-alembic`.
 - The worker suite now has real contract slices for stale-job sweeping, URL-upload task handling, and parse-task execution against real Postgres and Redis, with outbound URL/S3 boundaries mocked only at the edge.
-- The broader shared component-test migration is still pending.
+- No standalone shared-package test tree is planned; narrow deterministic checks should live under the owning app or worker test tree only when they protect project-level behavior.
+- The remaining route-group API backlog is tracked in `docs/api-contract-backlog.md`.
 
 ## Working Rules
 
-- Do not delete all existing tests first.
-- Replace coverage feature by feature, then remove obsolete tests.
+- Legacy mock-heavy suites may be removed once the project commits to the new taxonomy.
+- Reintroduce still-important scenarios only in the new app- or worker-level suites; do not preserve them in the deleted legacy tree.
 - A contract test must call the project surface, not internal functions.
 - A contract test must assert an externally visible result or side effect.
 - If a test only proves that an internal method was called, it should not live in the main contract suite.
@@ -94,7 +95,7 @@ Final taxonomy:
 - `apps/api/tests/support`: fixtures, seeds, builders, env bootstrapping
 - `apps/api/tests/migrations`: Alembic and schema checks
 - `apps/worker/tests/contract`: worker entrypoint and task-surface specifications
-- `packages/shared-python/shared/tests/component`: narrow tests that still provide value without pretending to be full contracts
+- App-level component tests, if retained later, should live under `apps/api/tests` or `apps/worker/tests`, never under `packages/shared-python`
 
 Naming rules:
 
@@ -109,13 +110,13 @@ Fixture boundaries:
 - `apps/api/tests/contract` may use support fixtures but may not override core dependencies such as database access, auth flow, or rate limiting for the behavior under test.
 - `apps/api/tests/migrations` owns migration lifecycle checks and schema guarantees.
 - `apps/worker/tests/contract` owns worker entrypoints, queued-work boundaries, and durable side effects.
-- `packages/shared-python/shared/tests/component` is reserved for pure logic, deterministic transformations, or adapter behavior that does not claim to prove the full application contract.
+- App-level component tests are reserved for pure logic, deterministic transformations, or adapter behavior that still protects a project-level surface without pretending to prove the full application contract.
 
 Removal policy for old tests:
 
 - `apps/api/__tests__` has been removed.
 - New API behavior tests must live under `apps/api/tests`.
-- If an old scenario still matters, it must be reintroduced in the new taxonomy as a contract, migration, or component test.
+- If an old scenario still matters, it must be reintroduced in the new taxonomy as an API contract, worker contract, migration, or app-level component test.
 
 Exit criteria:
 
@@ -194,8 +195,9 @@ Actions:
 - [x] Cover permission failures and `403` behavior
 - [x] Cover conflict paths and `409` behavior
 - [x] Cover not-found paths and `404` behavior
-- [x] Cover rate limiting and `429` behavior with real Redis-backed state
-- [x] Cover job creation side effects
+- [x] Cover rate limiting and `429` behavior across system, billing, concurrency, and daily-quota layers with real Redis-backed state
+- [x] Cover file and URL job creation side effects
+- [x] Cover upload confirmation handoff
 - [x] Cover job retrieval and lifecycle response shape
 - [x] Cover API key revoke behavior through HTTP only
 
@@ -210,6 +212,7 @@ Suggested rollout order:
 Current Phase 4 snapshot:
 
 - File-mode `POST /api/v1/jobs` now has happy-path contract coverage with persisted DB and Redis side effects.
+- URL-mode `POST /api/v1/jobs` now has happy-path contract coverage for URL file-type resolution, persisted DB and Redis side effects, and worker handoff.
 - `400 INVALID_ARGUMENT` for missing `file_name`
 - `400 INVALID_ARGUMENT` for unsupported file type
 - `401 UNAUTHENTICATED` for missing `Authorization`
@@ -217,14 +220,15 @@ Current Phase 4 snapshot:
 - `403 PERMISSION_DENIED` for cross-user job access
 - `404 NOT_FOUND` for missing jobs and unknown or archived update-flow documents
 - `409 ABORTED` for active-document ingestion conflicts
-- `429 RESOURCE_EXHAUSTED` for Redis-backed concurrent-job throttling
+- `POST /api/v1/jobs/{job_id}/confirm-upload` now has contract coverage for file verification, transition to `pending`, and workflow handoff.
+- `429 RESOURCE_EXHAUSTED` now covers the system limit, billing RPM, concurrent-job throttling, and daily-quota branches
 - `GET /api/v1/jobs` list response shape after a created job exists
 - `GET /api/v1/jobs/{job_id}` detail response shape, not-found behavior, and ownership boundaries
 - `POST /api/v1/auth/revoke` verified through HTTP-only creation, revoke, list, and rejected reuse of the revoked key
 
 Exit criteria:
 
-- The core API surface has contract coverage for normal flow and main failure modes.
+- The covered API surfaces have contract coverage for normal flow and main failure modes.
 
 ### Phase 5: Migration and Persistence Guarantees
 
@@ -280,13 +284,13 @@ Actions:
 
 - [ ] Review old tests one feature area at a time
 - [ ] Delete tests replaced by stronger contract coverage
-- [ ] Keep a small number of component tests only where they protect pure domain logic or edge-case parsing
+- [ ] Keep a small number of app-level component tests only where they protect pure domain logic or edge-case parsing
 - [ ] Remove shared mock fixtures that no longer belong in the new architecture
 - [ ] Simplify pytest configuration after migration
 
 Current note:
 
-- `packages/shared-python/shared/tests/component` is defined, but the broader shared-test migration into that taxonomy is still pending.
+- No standalone shared-package test tree is planned; remaining narrow deterministic checks should stay under `apps/api/tests` or `apps/worker/tests` when they still protect project-level behavior.
 - `apps/worker/tests/tasks/test_kb_tasks.py` has been removed after its task-surface behavior moved into worker contracts and its filename-normalization checks moved into a narrow helper test.
 - Repo-root pytest configuration now mirrors the async fixture loop settings used by the app-level suites so combined root-level runs do not emit `pytest-asyncio` deprecation noise.
 
@@ -350,8 +354,9 @@ This is the exact working order to resume from:
 - [x] Write the first contract suite for `POST /api/v1/guest`.
 - [x] Add an authenticated request helper that uses the seeded local-developer profile.
 - [x] Write the first contract suite for `POST /api/v1/jobs` in file-upload mode.
+- [x] Add URL-mode and confirm-upload contracts for the jobs surface.
 - [x] Add the first authenticated `400` and `401` contracts for `POST /api/v1/jobs`.
-- [x] Expand authenticated API coverage to `404`, `409`, and `429` cases.
+- [x] Expand authenticated API coverage to `404`, `409`, and all live jobs `429` cases.
 - [x] Add read-side contracts for `GET /api/v1/jobs` and `GET /api/v1/jobs/{job_id}`.
 - [x] Add migration verification with `pytest-alembic`.
 - [x] Move worker tests toward task-surface contracts.
@@ -391,7 +396,7 @@ Before stopping, always record:
 - Deleting old tests too early would remove behavior inventory before replacement coverage exists.
 - Rate-limit tests must use real Redis-backed behavior or they will give false confidence.
 - Database conflict tests should prefer real transaction behavior over patched exceptions.
-- The first authenticated jobs contract should start with file mode, because URL mode immediately crosses into Celery scheduling and a wider external surface.
+- URL-mode creation and confirm-upload cross Celery scheduling and Redis-backed handoff, so future jobs tests should keep those boundaries observable at the API surface instead of retreating to helper-level tests.
 
 ## Definition of Done
 
@@ -408,4 +413,4 @@ The refactor is done when:
 
 Current next action:
 
-- Review and migrate the remaining worker and shared mock-heavy tests into task-surface contracts or narrow component tests, continuing with provider-specific parse/publication flows and the shared cleanup they unlock.
+- Review and migrate the remaining worker mock-heavy tests into task-surface contracts or narrow app-level component tests, continuing with provider-specific parse/publication flows and the cleanup they unlock.

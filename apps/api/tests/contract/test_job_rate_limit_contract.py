@@ -7,7 +7,7 @@ from types import ModuleType
 from typing import cast
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -50,10 +50,11 @@ async def _count_jobs() -> int:
         await engine.dispose()
 
 
-async def _set_local_developer_concurrency_limit(
+async def _set_local_developer_tier_limits(
     *,
-    max_concurrent_jobs: int,
-    rpm_limit: int = 60,
+    max_concurrent_jobs: int = -1,
+    rpm_limit: int = -1,
+    daily_quota: int = -1,
 ) -> None:
     engine = await _create_contract_engine()
 
@@ -64,14 +65,46 @@ async def _set_local_developer_concurrency_limit(
                     """
                     UPDATE tier_limits
                     SET max_concurrent_jobs = :max_concurrent_jobs,
-                        rpm_limit = :rpm_limit
+                        rpm_limit = :rpm_limit,
+                        daily_quota = :daily_quota
                     WHERE tier_name = :tier_name
                     """
                 ),
                 {
                     "max_concurrent_jobs": max_concurrent_jobs,
                     "rpm_limit": rpm_limit,
+                    "daily_quota": daily_quota,
                     "tier_name": "tier_5",
+                },
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _set_default_system_limit(
+    *,
+    rpm: int,
+    period: str = "minute",
+) -> None:
+    engine = await _create_contract_engine()
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """
+                    UPDATE system_limits
+                    SET rpm = :rpm,
+                        period = :period
+                    WHERE method = :method
+                      AND api_pattern = :api_pattern
+                    """
+                ),
+                {
+                    "rpm": rpm,
+                    "period": period,
+                    "method": "*",
+                    "api_pattern": "*",
                 },
             )
     finally:
@@ -82,12 +115,22 @@ async def _set_local_developer_concurrency_limit(
 async def _create_rate_limited_developer_api_client(
     monkeypatch: MonkeyPatch,
     *,
-    max_concurrent_jobs: int,
+    max_concurrent_jobs: int = -1,
+    rpm_limit: int = -1,
+    daily_quota: int = -1,
+    default_system_rpm: int = 1000,
+    default_system_period: str = "minute",
 ) -> AsyncGenerator[AsyncClient, None]:
     configure_contract_environment(monkeypatch)
     await prepare_contract_storage()
-    await _set_local_developer_concurrency_limit(
-        max_concurrent_jobs=max_concurrent_jobs
+    await _set_local_developer_tier_limits(
+        max_concurrent_jobs=max_concurrent_jobs,
+        rpm_limit=rpm_limit,
+        daily_quota=daily_quota,
+    )
+    await _set_default_system_limit(
+        rpm=default_system_rpm,
+        period=default_system_period,
     )
     _ensure_import_paths()
     clear_application_modules()
@@ -103,6 +146,37 @@ async def _create_rate_limited_developer_api_client(
                 {"Authorization": f"Bearer {str(developer_profile['api_key'])}"}
             )
             yield client
+
+
+def _assert_retryable_rate_limit_response(
+    response: Response,
+    *,
+    expected_limit: int,
+    expected_period: str,
+) -> dict[str, object]:
+    assert response.status_code == 429
+    assert response.headers["x-request-id"]
+    assert response.headers["x-ratelimit-limit"] == str(expected_limit)
+    assert response.headers["x-ratelimit-period"] == expected_period
+
+    response_json = cast(dict[str, object], response.json())
+    error = cast(dict[str, object], response_json["error"])
+    details = cast(dict[str, object], error["details"])
+    retry_after = cast(int, details["retry_after"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "RESOURCE_EXHAUSTED"
+    assert error["message"] == (
+        f"Rate limit exceeded. Please retry after {retry_after} seconds."
+    )
+    assert response.headers["retry-after"] == str(retry_after)
+    assert details["reason"] == "RATE_LIMIT_EXCEEDED"
+    assert details["limit"] == expected_limit
+    assert details["period"] == expected_period
+    assert details["remaining"] == 0
+    assert isinstance(details["reset"], int)
+
+    return details
 
 
 @pytest.mark.asyncio
@@ -125,6 +199,7 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
     async with _create_rate_limited_developer_api_client(
         monkeypatch,
         max_concurrent_jobs=1,
+        rpm_limit=60,
     ) as api_client:
         first_response = await api_client.post("/api/v1/jobs", json=first_payload)
         second_response = await api_client.post("/api/v1/jobs", json=second_payload)
@@ -154,4 +229,110 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
         "active_jobs": 1,
         "available_slots": 0,
     }
+    assert await _count_jobs() == 1
+
+
+@pytest.mark.asyncio
+async def test_should_return_too_many_requests_when_the_jobs_route_exceeds_the_system_limit(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    first_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-system-limit-first.pdf",
+        "data_id": "contract-job-system-limit-first",
+    }
+    second_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-system-limit-second.pdf",
+        "data_id": "contract-job-system-limit-second",
+    }
+
+    async with _create_rate_limited_developer_api_client(
+        monkeypatch,
+        default_system_rpm=1,
+    ) as api_client:
+        first_response = await api_client.post("/api/v1/jobs", json=first_payload)
+        second_response = await api_client.post("/api/v1/jobs", json=second_payload)
+
+    assert first_response.status_code == 200
+    details = _assert_retryable_rate_limit_response(
+        second_response,
+        expected_limit=1,
+        expected_period="minute",
+    )
+
+    assert cast(int, details["retry_after"]) >= 1
+    assert await _count_jobs() == 1
+
+
+@pytest.mark.asyncio
+async def test_should_return_too_many_requests_when_the_authenticated_user_exceeds_their_billing_rpm(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    first_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-billing-rpm-first.pdf",
+        "data_id": "contract-job-billing-rpm-first",
+    }
+    second_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-billing-rpm-second.pdf",
+        "data_id": "contract-job-billing-rpm-second",
+    }
+
+    async with _create_rate_limited_developer_api_client(
+        monkeypatch,
+        rpm_limit=1,
+    ) as api_client:
+        first_response = await api_client.post("/api/v1/jobs", json=first_payload)
+        second_response = await api_client.post("/api/v1/jobs", json=second_payload)
+
+    assert first_response.status_code == 200
+    details = _assert_retryable_rate_limit_response(
+        second_response,
+        expected_limit=1,
+        expected_period="minute",
+    )
+
+    assert cast(int, details["retry_after"]) >= 1
+    assert await _count_jobs() == 1
+
+
+@pytest.mark.asyncio
+async def test_should_return_too_many_requests_when_the_authenticated_user_exceeds_their_daily_quota(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    first_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-daily-quota-first.pdf",
+        "data_id": "contract-job-daily-quota-first",
+    }
+    second_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-daily-quota-second.pdf",
+        "data_id": "contract-job-daily-quota-second",
+    }
+
+    async with _create_rate_limited_developer_api_client(
+        monkeypatch,
+        daily_quota=1,
+    ) as api_client:
+        first_response = await api_client.post("/api/v1/jobs", json=first_payload)
+        second_response = await api_client.post("/api/v1/jobs", json=second_payload)
+
+    assert first_response.status_code == 200
+    details = _assert_retryable_rate_limit_response(
+        second_response,
+        expected_limit=1,
+        expected_period="day",
+    )
+
+    retry_after = cast(int, details["retry_after"])
+    assert 1 <= retry_after <= 3600
     assert await _count_jobs() == 1
