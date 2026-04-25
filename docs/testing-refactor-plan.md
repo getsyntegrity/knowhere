@@ -46,7 +46,7 @@ The new suite must avoid coupling tests to:
 - The combined API + worker contract command is now green and warning-clean with `uv run pytest apps/api/tests apps/worker/tests/contract -q -W error::pytest.PytestDeprecationWarning -W error::DeprecationWarning -W error::sqlalchemy.exc.SAWarning -W error::UserWarning`.
 - The checked-in harness currently assumes PostgreSQL on `127.0.0.1:5432` and Redis on `127.0.0.1:6379`, isolated through `Knowhere_contract_test` and Redis DB `14`.
 - Dedicated migration tests are now in place with `pytest-alembic`.
-- The worker suite now has its first real contract slice for stale-job sweeping against real Postgres and Redis.
+- The worker suite now has real contract slices for stale-job sweeping, URL-upload task handling, and parse-task execution against real Postgres and Redis, with outbound URL/S3 boundaries mocked only at the edge.
 - The broader shared component-test migration is still pending.
 
 ## Working Rules
@@ -257,13 +257,16 @@ Actions:
 - [x] Define the worker surface that should be specified by tests
 - [x] Cover task entrypoints and durable side effects
 - [x] Use real storage/database/Redis where stability depends on them
-- [ ] Mock outbound provider calls only at external boundaries
+- [x] Mock outbound provider calls only at external boundaries
 - [ ] Keep parser algorithm micro-tests only where they protect deterministic pure logic
 
 Current note:
 
 - `apps/worker/tests/contract/test_stale_job_sweeper_contract.py` now covers the stale-job sweeper entrypoint with real Postgres and Redis side effects, including durable failure transitions and the Redis-backed duplicate-Beat lock.
-- `apps/worker/tests` is still dominated by config, service, and task-level tests outside that first contract slice.
+- `apps/worker/tests/contract/test_url_upload_contract.py` now covers the URL-upload worker entrypoint against the real contract Redis and database bootstrap, asserting the storage target, Redis progress publication, and the stable `waiting-file` job state while mocking only outbound URL/S3 boundaries.
+- `apps/worker/tests/contract/test_parse_task_contract.py` now covers parse-task success, terminal-skip behavior, and failure cleanup/refund behavior with real billing, finalization, and retrieval publication state.
+- `apps/worker/tests/tasks/test_kb_tasks.py` has been removed; narrow deterministic parse-name coverage now lives in `apps/worker/tests/services/document_parser/test_internal_parse_name.py`.
+- `apps/worker/tests` is still dominated by config and service-level tests outside those contract slices.
 
 Exit criteria:
 
@@ -271,7 +274,7 @@ Exit criteria:
 
 ### Phase 7: Test Suite Cleanup
 
-Status: `[ ]`
+Status: `[~]`
 
 Actions:
 
@@ -284,6 +287,7 @@ Actions:
 Current note:
 
 - `packages/shared-python/shared/tests/component` is defined, but the broader shared-test migration into that taxonomy is still pending.
+- `apps/worker/tests/tasks/test_kb_tasks.py` has been removed after its task-surface behavior moved into worker contracts and its filename-normalization checks moved into a narrow helper test.
 - Repo-root pytest configuration now mirrors the async fixture loop settings used by the app-level suites so combined root-level runs do not emit `pytest-asyncio` deprecation noise.
 
 Exit criteria:
@@ -404,4 +408,4 @@ The refactor is done when:
 
 Current next action:
 
-- Review and migrate the remaining worker and shared mock-heavy tests into task-surface contracts or narrow component tests, starting with URL-upload and parse-task flows.
+- Review and migrate the remaining worker and shared mock-heavy tests into task-surface contracts or narrow component tests, continuing with provider-specific parse/publication flows and the shared cleanup they unlock.
