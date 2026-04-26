@@ -431,7 +431,6 @@ class CreditsService:
         Returns:
             Dict with usage stats
         """
-        from datetime import datetime, timedelta
 
         from sqlalchemy import func, select
 

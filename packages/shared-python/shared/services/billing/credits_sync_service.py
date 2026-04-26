@@ -264,7 +264,6 @@ class SyncCreditsService:
         period: str = "month",
     ) -> Dict[str, Any]:
         """Return aggregate usage statistics for the user."""
-        from datetime import timedelta
 
         start_time = None
         if period == "month":
