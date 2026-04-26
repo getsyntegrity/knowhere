@@ -1,12 +1,12 @@
-"""
-Redis键值命名规范工具
-"""
+"""Helpers for standardized Redis key naming."""
+
 from enum import Enum
 from typing import Any, Dict
 
 
 class RedisKeyType(Enum):
-    """Redis键类型枚举"""
+    """Enumeration of Redis key types."""
+
     USER = "user"
     TASK = "task"
     CONVERSATION = "conversation"
@@ -21,268 +21,267 @@ class RedisKeyType(Enum):
 
 
 class RedisKeyBuilder:
-    """Redis键值构建器"""
-    
+    """Redis key builder."""
+
     def __init__(self, prefix: str = "knowhere-api"):
         self.prefix = prefix
-    
+
     def build_key(self, key_type: RedisKeyType, *parts: str, **kwargs) -> str:
         """
-        构建Redis键
-        
+        Build a Redis key.
+
         Args:
-            key_type: 键类型
-            *parts: 键的各个部分
-            **kwargs: 额外的键值对参数
-        
+            key_type: Key type.
+            *parts: Positional key segments.
+            **kwargs: Additional named segments.
+
         Returns:
-            完整的Redis键
+            Full Redis key.
         """
         key_parts = [self.prefix, key_type.value]
         key_parts.extend(parts)
-        
-        # 添加额外的键值对参数
+
+        # Append any extra key-value segments.
         if kwargs:
             for key, value in sorted(kwargs.items()):
                 key_parts.append(f"{key}:{value}")
-        
+
         return ":".join(key_parts)
-    
-    # ==================== 用户相关键 ====================
-    
+
+    # ==================== User Keys ====================
+
     def user_config(self, username: str) -> str:
-        """用户配置键"""
+        """User config key."""
         return self.build_key(RedisKeyType.USER, username, "config")
-    
+
     def user_session(self, username: str) -> str:
-        """用户会话键"""
+        """User session key."""
         return self.build_key(RedisKeyType.USER, username, "session")
-    
+
     def user_permissions(self, username: str) -> str:
-        """用户权限键"""
+        """User permissions key."""
         return self.build_key(RedisKeyType.USER, username, "permissions")
-    
+
     def user_activity(self, username: str) -> str:
-        """用户活动键"""
+        """User activity key."""
         return self.build_key(RedisKeyType.USER, username, "activity")
-    
-    # ==================== 任务相关键 ====================
-    
+
+    # ==================== Task Keys ====================
+
     def task_status(self, task_id: str) -> str:
-        """任务状态键"""
+        """Task status key."""
         return self.build_key(RedisKeyType.TASK, task_id, "status")
-    
+
     def task_result(self, task_id: str) -> str:
-        """任务结果键"""
+        """Task result key."""
         return self.build_key(RedisKeyType.TASK, task_id, "result")
-    
+
     def task_metadata(self, task_id: str) -> str:
-        """任务元数据键"""
+        """Task metadata key."""
         return self.build_key(RedisKeyType.TASK, task_id, "metadata")
-    
+
     def task_progress(self, task_id: str) -> str:
-        """任务进度键"""
+        """Task progress key."""
         return self.build_key(RedisKeyType.TASK, task_id, "progress")
-    
+
     def task_info(self, task_id: str) -> str:
-        """任务基本信息键"""
+        """Task info key."""
         return self.build_key(RedisKeyType.TASK, task_id, "info")
-    
+
     def task_queue(self, queue_name: str) -> str:
-        """任务队列键"""
+        """Task queue key."""
         return self.build_key(RedisKeyType.QUEUE, queue_name)
-    
-    # ==================== 对话相关键 ====================
-    
+
+    # ==================== Conversation Keys ====================
+
     def conversation_state(self, conversation_id: str) -> str:
-        """对话状态键"""
+        """Conversation state key."""
         return self.build_key(RedisKeyType.CONVERSATION, conversation_id, "state")
-    
+
     def conversation_history(self, conversation_id: str) -> str:
-        """对话历史键"""
+        """Conversation history key."""
         return self.build_key(RedisKeyType.CONVERSATION, conversation_id, "history")
-    
+
     def conversation_context(self, conversation_id: str) -> str:
-        """对话上下文键"""
+        """Conversation context key."""
         return self.build_key(RedisKeyType.CONVERSATION, conversation_id, "context")
-    
-    # ==================== 知识库相关键 ====================
-    
+
+    # ==================== Knowledge Base Keys ====================
+
     def kb_status(self, user_id: str) -> str:
-        """知识库状态键"""
+        """Knowledge-base status key."""
         return self.build_key(RedisKeyType.KNOWLEDGE_BASE, user_id, "status")
-    
+
     def kb_vectors(self, user_id: str) -> str:
-        """知识库向量键"""
+        """Knowledge-base vectors key."""
         return self.build_key(RedisKeyType.KNOWLEDGE_BASE, user_id, "vectors")
-    
+
     def kb_metadata(self, user_id: str) -> str:
-        """知识库元数据键"""
+        """Knowledge-base metadata key."""
         return self.build_key(RedisKeyType.KNOWLEDGE_BASE, user_id, "metadata")
-    
+
     def kb_index(self, user_id: str) -> str:
-        """知识库索引键"""
+        """Knowledge-base index key."""
         return self.build_key(RedisKeyType.KNOWLEDGE_BASE, user_id, "index")
-    
-    # ==================== 会话相关键 ====================
-    
+
+    # ==================== Session Keys ====================
+
     def session_data(self, session_id: str) -> str:
-        """会话数据键"""
+        """Session data key."""
         return self.build_key(RedisKeyType.SESSION, session_id, "data")
-    
+
     def session_expiry(self, session_id: str) -> str:
-        """会话过期时间键"""
+        """Session expiry key."""
         return self.build_key(RedisKeyType.SESSION, session_id, "expiry")
-    
-    # ==================== 缓存相关键 ====================
-    
+
+    # ==================== Cache Keys ====================
+
     def cache_data(self, cache_key: str) -> str:
-        """缓存数据键"""
+        """Cache data key."""
         return self.build_key(RedisKeyType.CACHE, cache_key)
-    
+
     def cache_metadata(self, cache_key: str) -> str:
-        """缓存元数据键"""
+        """Cache metadata key."""
         return self.build_key(RedisKeyType.CACHE, cache_key, "metadata")
-    
-    
-    # ==================== 计数器相关键 ====================
-    
+
+    # ==================== Counter Keys ====================
+
     def counter_user_requests(self, username: str) -> str:
-        """用户请求计数器键"""
+        """User-request counter key."""
         return self.build_key(RedisKeyType.COUNTER, "user_requests", username)
-    
+
     def counter_api_calls(self, api_name: str) -> str:
-        """API调用计数器键"""
+        """API-call counter key."""
         return self.build_key(RedisKeyType.COUNTER, "api_calls", api_name)
-    
+
     def counter_task_completed(self, task_type: str) -> str:
-        """任务完成计数器键"""
+        """Task-completed counter key."""
         return self.build_key(RedisKeyType.COUNTER, "task_completed", task_type)
-    
+
     def rate_limit_api(self, user_id: str, api_name: str) -> str:
-        """API速率限制键"""
+        """API rate-limit key."""
         return self.build_key(RedisKeyType.COUNTER, "rate_limit", api_name, user_id)
-    
-    # ==================== 集合相关键 ====================
-    
+
+    # ==================== Set Keys ====================
+
     def set_active_users(self) -> str:
-        """活跃用户集合键"""
+        """Active-users set key."""
         return self.build_key(RedisKeyType.SET, "active_users")
-    
+
     def set_online_users(self) -> str:
-        """在线用户集合键"""
+        """Online-users set key."""
         return self.build_key(RedisKeyType.SET, "online_users")
-    
+
     def set_processing_tasks(self) -> str:
-        """处理中任务集合键"""
+        """Processing-tasks set key."""
         return self.build_key(RedisKeyType.SET, "processing_tasks")
-    
-    # ==================== 哈希相关键 ====================
-    
+
+    # ==================== Hash Keys ====================
+
     def hash_user_stats(self, username: str) -> str:
-        """用户统计哈希键"""
+        """User-stats hash key."""
         return self.build_key(RedisKeyType.HASH, "user_stats", username)
-    
+
     def hash_system_stats(self) -> str:
-        """系统统计哈希键"""
+        """System-stats hash key."""
         return self.build_key(RedisKeyType.HASH, "system_stats")
-    
+
     def hash_task_stats(self, task_id: str) -> str:
-        """任务统计哈希键"""
+        """Task-stats hash key."""
         return self.build_key(RedisKeyType.HASH, "task_stats", task_id)
-    
-    # ==================== 列表相关键 ====================
-    
+
+    # ==================== List Keys ====================
+
     def list_recent_activities(self, username: str) -> str:
-        """最近活动列表键"""
+        """Recent-activities list key."""
         return self.build_key(RedisKeyType.LIST, "recent_activities", username)
-    
+
     def list_error_logs(self) -> str:
-        """错误日志列表键"""
+        """Error-logs list key."""
         return self.build_key(RedisKeyType.LIST, "error_logs")
-    
+
     def list_audit_logs(self) -> str:
-        """审计日志列表键"""
+        """Audit-logs list key."""
         return self.build_key(RedisKeyType.LIST, "audit_logs")
-    
-    # ==================== 锁相关键 ====================
+
+    # ==================== Lock Keys ====================
 
     def lock_job_processing(self, job_id: str) -> str:
         """Distributed lock key for exclusive job processing."""
         return f"lock:job_processing:{job_id}"
 
-    # ==================== 工具方法 ====================
-    
+    # ==================== Utility Methods ====================
+
     def parse_key(self, key: str) -> Dict[str, Any]:
         """
-        解析Redis键，提取各个部分
-        
+        Parse a Redis key into its components.
+
         Args:
-            key: Redis键
-        
+            key: Redis key.
+
         Returns:
-            解析后的键信息
+            Parsed key information.
         """
         if not key.startswith(self.prefix):
-            raise ValueError(f"键 '{key}' 不是有效的Redis键格式")
-        
-        parts = key[len(self.prefix):].lstrip(':').split(':')
-        
+            raise ValueError(f"Key '{key}' is not a valid Redis key format")
+
+        parts = key[len(self.prefix) :].lstrip(":").split(":")
+
         if len(parts) < 2:
-            raise ValueError(f"键 '{key}' 格式不正确")
-        
+            raise ValueError(f"Key '{key}' has an invalid format")
+
         result = {
-            'prefix': self.prefix,
-            'type': parts[0],
-            'parts': parts[1:],
-            'original_key': key
+            "prefix": self.prefix,
+            "type": parts[0],
+            "parts": parts[1:],
+            "original_key": key,
         }
-        
+
         return result
-    
+
     def is_key_type(self, key: str, key_type: RedisKeyType) -> bool:
         """
-        检查键是否属于指定类型
-        
+        Check whether a key belongs to the requested type.
+
         Args:
-            key: Redis键
-            key_type: 键类型
-        
+            key: Redis key.
+            key_type: Key type.
+
         Returns:
-            是否属于指定类型
+            Whether the key matches the requested type.
         """
         try:
             parsed = self.parse_key(key)
-            return parsed['type'] == key_type.value
+            return parsed["type"] == key_type.value
         except ValueError:
             return False
-    
+
     def get_key_ttl(self, key_type: RedisKeyType) -> int:
         """
-        获取键类型的默认TTL
-        
+        Get the default TTL for a key type.
+
         Args:
-            key_type: 键类型
-        
+            key_type: Key type.
+
         Returns:
-            TTL（秒）
+            TTL in seconds.
         """
         ttl_mapping = {
-            RedisKeyType.USER: 86400,      # 1天（user_config缓存）
-            RedisKeyType.TASK: 86400,      # 1天
-            RedisKeyType.CONVERSATION: 3600 * 2,  # 2小时
-            RedisKeyType.KNOWLEDGE_BASE: 86400 * 30,  # 30天
-            RedisKeyType.SESSION: 3600,    # 1小时
-            RedisKeyType.CACHE: 3600,      # 1小时
-            RedisKeyType.QUEUE: 86400,     # 1天
-            RedisKeyType.COUNTER: 86400,   # 1天
-            RedisKeyType.SET: 86400,       # 1天
-            RedisKeyType.HASH: 86400,      # 1天
-            RedisKeyType.LIST: 86400,      # 1天
+            RedisKeyType.USER: 86400,  # 1 day (user_config cache).
+            RedisKeyType.TASK: 86400,  # 1 day.
+            RedisKeyType.CONVERSATION: 3600 * 2,  # 2 hours.
+            RedisKeyType.KNOWLEDGE_BASE: 86400 * 30,  # 30 days.
+            RedisKeyType.SESSION: 3600,  # 1 hour.
+            RedisKeyType.CACHE: 3600,  # 1 hour.
+            RedisKeyType.QUEUE: 86400,  # 1 day.
+            RedisKeyType.COUNTER: 86400,  # 1 day.
+            RedisKeyType.SET: 86400,  # 1 day.
+            RedisKeyType.HASH: 86400,  # 1 day.
+            RedisKeyType.LIST: 86400,  # 1 day.
         }
-        
-        return ttl_mapping.get(key_type, 3600)  # 默认1小时
+
+        return ttl_mapping.get(key_type, 3600)  # Default to 1 hour.
 
 
-# 全局键构建器实例
+# Global key-builder instance.
 redis_key_builder = RedisKeyBuilder()

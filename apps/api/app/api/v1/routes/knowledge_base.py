@@ -1,34 +1,53 @@
 """
-知识库相关控制器 - 仅保留必要的API
+Knowledge-base endpoints retained for the public API surface.
 """
 
-from app.services.rate_limit.dependencies import with_current_user, CurrentUser
-from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryDto,
-                                      FileDirectoryListDto,
-                                      FileDirectoryUpdateDto)
-from app.repositories.knowledge_base_repository import (create_directory,
-                                                        delete_directory,
-                                                        update_directory)
+from app.repositories.knowledge_base_repository import (
+    create_directory,
+    delete_directory,
+    update_directory,
+)
+from app.services.rate_limit.dependencies import CurrentUser, with_current_user
 from fastapi import APIRouter, Depends
 from starlette import status
-from shared.core.exceptions.domain_exceptions import KnowledgeBaseOperationException
 
-router = APIRouter(tags=["知识库"])
+from shared.core.exceptions.domain_exceptions import (
+    KnowledgeBaseOperationException,
+    ValidationException,
+)
+from shared.models.schemas.files import (
+    FileDirectoryCreateDto,
+    FileDirectoryDto,
+    FileDirectoryListDto,
+    FileDirectoryUpdateDto,
+)
 
-# 文件上传API已移除，请使用统一的 /v1/jobs 接口
+router = APIRouter(tags=["Knowledge Base"])
 
-# 目录管理API
-@router.post('/create_directory', status_code=status.HTTP_201_CREATED, summary="增加SQL路径",description="用户注入知识路径")
-async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: CurrentUser = Depends(with_current_user)):
+# File-upload endpoints were removed. Use the unified /v1/jobs API instead.
+
+
+# Directory management
+@router.post(
+    "/create_directory",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a directory",
+    description="Create a directory for the current user's knowledge-base tree",
+)
+async def add_sql_path(
+    request_data: FileDirectoryCreateDto,
+    current_user: CurrentUser = Depends(with_current_user),
+):
     """
-    模拟知识库知识片段增加的时候，增加目录树
+    Create a directory entry in the knowledge-base tree.
     """
     try:
         request_data.user_id = current_user.user_id
         from shared.core.database import get_db_context
+
         async with get_db_context() as db:
             if await create_directory(db, request_data):
-                return {"message": "创建目录成功"}
+                return {"message": "Directory created"}
         raise KnowledgeBaseOperationException(
             internal_message="Failed to create directory"
         )
@@ -36,22 +55,33 @@ async def add_sql_path(request_data: FileDirectoryCreateDto, current_user: Curre
         raise
     except Exception as e:
         from loguru import logger
-        logger.error(f"创建目录失败:{e}")
+
+        logger.error(f"Failed to create directory: {e}")
         raise KnowledgeBaseOperationException(
             internal_message=f"Failed to create directory: {str(e)}"
         )
 
-@router.post('/delete_directory', status_code=status.HTTP_201_CREATED, summary="删除SQL路径",description="用户删除知识路径")
-async def delete_sql_path(request_data: FileDirectoryDto, current_user: CurrentUser = Depends(with_current_user)):
+
+@router.post(
+    "/delete_directory",
+    status_code=status.HTTP_201_CREATED,
+    summary="Delete a directory",
+    description="Delete a directory from the current user's knowledge-base tree",
+)
+async def delete_sql_path(
+    request_data: FileDirectoryDto,
+    current_user: CurrentUser = Depends(with_current_user),
+):
     """
-    模拟知识库知识片段增加的时候，增加目录树
+    Delete a directory entry from the knowledge-base tree.
     """
     try:
         request_data.user_id = current_user.user_id
         from shared.core.database import get_db_context
+
         async with get_db_context() as db:
             if await delete_directory(db, request_data.id):
-                return {"message": "删除目录成功"}
+                return {"message": "Directory deleted"}
         raise KnowledgeBaseOperationException(
             internal_message="Failed to delete directory"
         )
@@ -59,118 +89,177 @@ async def delete_sql_path(request_data: FileDirectoryDto, current_user: CurrentU
         raise
     except Exception as e:
         from loguru import logger
-        logger.error(f"删除目录失败:{e}")
+
+        logger.error(f"Failed to delete directory: {e}")
         raise KnowledgeBaseOperationException(
             internal_message=f"Failed to delete directory: {str(e)}"
         )
 
-@router.post('/update_directory', status_code=status.HTTP_201_CREATED, summary="更新SQL路径",description="用户更新知识路径")
-async def update_sql_path(request_data: FileDirectoryUpdateDto, current_user: CurrentUser = Depends(with_current_user)):
+
+@router.post(
+    "/update_directory",
+    status_code=status.HTTP_201_CREATED,
+    summary="Update a directory",
+    description="Update a directory in the current user's knowledge-base tree",
+)
+async def update_sql_path(
+    request_data: FileDirectoryUpdateDto,
+    current_user: CurrentUser = Depends(with_current_user),
+):
     """
-    模拟知识库知识片段增加的时候，增加目录树
+    Update a directory entry in the knowledge-base tree.
     """
     try:
         request_data.user_id = current_user.user_id
         from shared.core.database import get_db_context
+
+        if request_data.id is None:
+            raise ValidationException(
+                user_message="Directory id is required",
+                violations=[
+                    {
+                        "field": "id",
+                        "description": "Directory id is required for updates",
+                    }
+                ],
+            )
+
         async with get_db_context() as db:
-            if await update_directory(db, request_data):
-                return {"message": "更新目录成功"}
+            if await update_directory(db, request_data.id, request_data):
+                return {"message": "Directory updated"}
         raise KnowledgeBaseOperationException(
             internal_message="Failed to update directory"
         )
+    except ValidationException:
+        raise
     except KnowledgeBaseOperationException:
         raise
     except Exception as e:
         from loguru import logger
-        logger.error(f"更新目录失败:{e}")
+
+        logger.error(f"Failed to update directory: {e}")
         raise KnowledgeBaseOperationException(
             internal_message=f"Failed to update directory: {str(e)}"
         )
 
-@router.post('/get_directory', status_code=status.HTTP_201_CREATED, summary="获取用户知识库路径",description="用户获取知识路径")
+
+@router.post(
+    "/get_directory",
+    status_code=status.HTTP_201_CREATED,
+    summary="Get the directory tree",
+    description="Return the current user's knowledge-base directory tree",
+)
 async def get_sql_path(current_user: CurrentUser = Depends(with_current_user)):
     """
-    获取用户知识库目录树，如果用户没有目录则自动创建默认目录
+    Return the user's directory tree, creating a default root when needed.
     """
     try:
+        from app.repositories.knowledge_base_repository import (
+            create_directory,
+            get_directories,
+            get_directories_by_user,
+        )
+
         from shared.core.database import get_db_context
         from shared.models.schemas.files import FileDirectoryCreateDto
-        from app.repositories.knowledge_base_repository import (
-            create_directory, get_directories, get_directories_by_user)
-        
+
         async with get_db_context() as db:
-            # 获取用户的所有目录
+            # Load every directory owned by the current user.
             user_directories = await get_directories_by_user(db, current_user.user_id)
 
-            # 如果用户没有目录，创建默认目录
+            # Create the default root when the user has no directories yet.
             if not user_directories:
                 create_request = FileDirectoryCreateDto(
-                    title="默认目录",
+                    title="Default Directory",
                     parent_id=None,
-                    user_id=current_user.user_id
+                    user_id=current_user.user_id,
                 )
 
                 success = await create_directory(db, create_request)
                 if not success:
                     from loguru import logger
-                    logger.error(f"Failed to create default directory: user_id={current_user.user_id}")
+
+                    logger.error(
+                        f"Failed to create default directory: user_id={current_user.user_id}"
+                    )
                     raise KnowledgeBaseOperationException(
                         internal_message="Failed to create default directory"
                     )
 
-            # 获取目录树结构
+            # Return the hydrated directory tree.
             directories = await get_directories(db, current_user.user_id)
             return directories
     except KnowledgeBaseOperationException:
         raise
     except Exception as e:
         from loguru import logger
-        logger.error(f"获取目录失败:{e}")
+
+        logger.error(f"Failed to load directory tree: {e}")
         raise KnowledgeBaseOperationException(
             internal_message=f"Failed to get directory: {str(e)}"
         )
 
-@router.post('/list_directory', status_code=status.HTTP_201_CREATED, summary="知识详情",description="根据用户路径获取知识点")
-async def list_directory(request_data: FileDirectoryListDto, current_user: CurrentUser = Depends(with_current_user)):
+
+@router.post(
+    "/list_directory",
+    status_code=status.HTTP_201_CREATED,
+    summary="List directory contents",
+    description="Return knowledge-base content for the selected directory",
+)
+async def list_directory(
+    request_data: FileDirectoryListDto,
+    current_user: CurrentUser = Depends(with_current_user),
+):
     """
-    模拟知识库知识片段增加的时候，增加目录树
+    Return the knowledge-base content stored under one directory.
     """
     try:
+        from app.repositories.knowledge_base_repository import get_directory_contents
+
         from shared.core.database import get_db_context
-        from app.repositories.knowledge_base_repository import \
-            get_directory_contents
+
         async with get_db_context() as db:
             contents = await get_directory_contents(db, request_data.id)
             return contents
     except Exception as e:
         from loguru import logger
-        logger.error(f"获取目录内容失败:{e}")
+
+        logger.error(f"Failed to load directory contents: {e}")
         raise KnowledgeBaseOperationException(
             internal_message=f"Failed to get directory contents: {str(e)}"
         )
 
-# 添加知识库路径API
-@router.post('/add_kb', status_code=status.HTTP_201_CREATED, summary="添加知识库路径", description="添加知识库路径")
-async def add_kb_path(request_data: dict, current_user: CurrentUser = Depends(with_current_user)):
+
+# Add a knowledge-base path
+@router.post(
+    "/add_kb",
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a knowledge-base path",
+    description="Add a root knowledge-base path for the current user",
+)
+async def add_kb_path(
+    request_data: dict, current_user: CurrentUser = Depends(with_current_user)
+):
     """
-    添加知识库路径
+    Add a knowledge-base path.
     """
     try:
-        from shared.core.database import get_db_context
-        from shared.models.schemas.files import FileDirectoryCreateDto
         from app.repositories.knowledge_base_repository import create_directory
 
-        # 构建目录创建请求
+        from shared.core.database import get_db_context
+        from shared.models.schemas.files import FileDirectoryCreateDto
+
+        # Build the backing directory creation request.
         create_request = FileDirectoryCreateDto(
-            title=request_data.get('path', ''),
-            parent_id=None,  # 默认为根目录
-            user_id=current_user.user_id
+            title=request_data.get("path", ""),
+            parent_id=None,  # Default to the root directory.
+            user_id=current_user.user_id,
         )
-        
+
         async with get_db_context() as db:
             success = await create_directory(db, create_request)
             if success:
-                return {"message": "知识库路径添加成功"}
+                return {"message": "Knowledge-base path added"}
             else:
                 raise KnowledgeBaseOperationException(
                     internal_message="Failed to add knowledge base path"
@@ -179,61 +268,74 @@ async def add_kb_path(request_data: dict, current_user: CurrentUser = Depends(wi
         raise
     except Exception as e:
         from loguru import logger
-        logger.error(f"添加知识库路径失败: {e}")
+
+        logger.error(f"Failed to add knowledge-base path: {e}")
         raise KnowledgeBaseOperationException(
             internal_message=f"Failed to add knowledge base path: {str(e)}"
         )
 
-# 临时文件上传API已移除，请使用统一的 /v1/jobs 接口
 
-# 注意：以下旧方案同步API已删除，请使用新的异步API: /v1/jobs
-# - /add_kb_data (增加知识内容)
-# - /add_kb_fragment (增加知识碎片)  
-# - /search (知识库搜索) - 已移除，请使用Worker服务处理
-# - /get_kb_data (查询知识库信息)
-# - /delete_kb_data (删除知识信息)
-# - /delete_kb (删除知识库)
-# - /encode_know (向量化知识文件)
-# - /get_fragments (查看知识片段)
-# - /get_fileTree (查看知识树)
-# - /tree_kb (建立单树结构)
-# - /forest_kb (建立森林结构)
+# Temporary file-upload endpoints were removed. Use /v1/jobs instead.
 
-# 添加知识库内容删除API
-@router.delete('/contents/{content_id}', status_code=status.HTTP_200_OK, summary="删除知识库内容或目录", description="根据ID自动判断删除内容或目录")
+# The older synchronous endpoints below were removed in favor of /v1/jobs:
+# - /add_kb_data
+# - /add_kb_fragment
+# - /search (removed; use the Worker-backed retrieval flow instead)
+# - /get_kb_data
+# - /delete_kb_data
+# - /delete_kb
+# - /encode_know
+# - /get_fragments
+# - /get_fileTree
+# - /tree_kb
+# - /forest_kb
+
+
+# Delete knowledge-base content or directories
+@router.delete(
+    "/contents/{content_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete knowledge-base content or a directory",
+    description="Delete content or a directory by ID",
+)
 async def delete_knowledge_content(
-    content_id: str,
-    current_user: CurrentUser = Depends(with_current_user)
+    content_id: str, current_user: CurrentUser = Depends(with_current_user)
 ):
     """
-    删除知识库内容或目录
-    根据ID类型自动判断是删除内容还是目录
+    Delete knowledge-base content or a directory.
+
+    The route determines whether the ID points at content or a directory.
     """
     try:
-        from shared.core.database import get_db_context
         from app.repositories.knowledge_base_repository import (
-            delete_directory, delete_kb_content)
+            delete_directory,
+            delete_kb_content,
+        )
         from sqlalchemy import text
-        
+
+        from shared.core.database import get_db_context
+
         async with get_db_context() as db:
-            # 首先检查是否是目录
-            result = await db.execute(text('SELECT id FROM file_directory WHERE id = :id'), {'id': content_id})
+            # Check whether the ID belongs to a directory first.
+            result = await db.execute(
+                text("SELECT id FROM file_directory WHERE id = :id"), {"id": content_id}
+            )
             is_directory = result.fetchone() is not None
-            
+
             if is_directory:
-                # 删除目录
+                # Delete the directory.
                 success = await delete_directory(db, content_id)
                 if success:
-                    return {"message": "目录删除成功"}
+                    return {"message": "Directory deleted"}
                 else:
                     raise KnowledgeBaseOperationException(
                         internal_message="Failed to delete directory"
                     )
             else:
-                # 删除内容
+                # Delete the content row.
                 success = await delete_kb_content(db, content_id)
                 if success:
-                    return {"message": "内容删除成功"}
+                    return {"message": "Content deleted"}
                 else:
                     raise KnowledgeBaseOperationException(
                         internal_message="Failed to delete content"
@@ -242,7 +344,8 @@ async def delete_knowledge_content(
         raise
     except Exception as e:
         from loguru import logger
-        logger.error(f"删除知识库内容失败: {e}")
+
+        logger.error(f"Failed to delete knowledge-base content: {e}")
         raise KnowledgeBaseOperationException(
             internal_message=f"Failed to delete knowledge base content: {str(e)}"
         )

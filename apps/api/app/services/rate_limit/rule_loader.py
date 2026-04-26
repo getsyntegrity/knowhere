@@ -4,12 +4,13 @@ Startup rule loader for rate limit configuration.
 Queries tier_limits and system_limits from the database and updates the
 RateLimitConfig singleton during application startup.
 """
+
+from app.services.rate_limit.config import RateLimitConfig
+from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.rate_limit.config import RateLimitConfig
-from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from shared.models.database.system_limit import SystemLimit
 from shared.models.database.tier_limit import TierLimit
 

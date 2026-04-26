@@ -4,13 +4,14 @@ Async state machine service — core transition logic for API service.
 Provides optimistic-lock (CAS) state transitions, audit logging, and Redis
 cache management.  All methods accept an ``AsyncSession``.
 """
+
 import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import cast, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
@@ -70,13 +71,22 @@ class AsyncStateMachineService:
 
                 # Record audit log (before CAS so the INSERT is within the same tx)
                 await self._record_audit_log(
-                    db, job_id, old_state, to_state,
-                    transition_reason, operator_id, operator_type, metadata,
+                    db,
+                    job_id,
+                    old_state,
+                    to_state,
+                    transition_reason,
+                    operator_id,
+                    operator_type,
+                    metadata,
                 )
 
                 # CAS update
                 success = await self._cas_update_state(
-                    db, job_id, to_state, old_version,
+                    db,
+                    job_id,
+                    to_state,
+                    old_version,
                 )
                 if success:
                     await self._update_redis_cache(job_id, to_state, metadata)
@@ -86,7 +96,9 @@ class AsyncStateMachineService:
                     else:
                         await db.flush()
 
-                    logger.info(f"Job {job_id} state transition: {old_state} → {to_state}")
+                    logger.info(
+                        f"Job {job_id} state transition: {old_state} → {to_state}"
+                    )
                     return True
 
                 # CAS miss — retry with backoff
@@ -94,7 +106,7 @@ class AsyncStateMachineService:
                     logger.warning(
                         f"Job {job_id} CAS conflict, retry {attempt + 1}/{max_retries}"
                     )
-                    await asyncio.sleep(0.1 * (2 ** attempt))
+                    await asyncio.sleep(0.1 * (2**attempt))
                     continue
                 else:
                     logger.error(f"Job {job_id} CAS retries exhausted")
@@ -126,7 +138,11 @@ class AsyncStateMachineService:
         try:
             normalized_details = normalize_error_details(error_details)
             await self._update_job_error(
-                db, job_id, error_message, error_code, normalized_details,
+                db,
+                job_id,
+                error_message,
+                error_code,
+                normalized_details,
             )
 
             transition_metadata = (metadata or {}).copy()
@@ -136,9 +152,14 @@ class AsyncStateMachineService:
                 transition_metadata["error_details"] = normalized_details
 
             return await self.transition(
-                db, job_id, JobStatus.FAILED.value,
-                "mark_failed", operator_id, "system",
-                transition_metadata, auto_commit=auto_commit,
+                db,
+                job_id,
+                JobStatus.FAILED.value,
+                "mark_failed",
+                operator_id,
+                "system",
+                transition_metadata,
+                auto_commit=auto_commit,
             )
         except Exception as e:
             logger.error(f"Failed to mark Job {job_id} as failed: {e}")
@@ -155,9 +176,14 @@ class AsyncStateMachineService:
         """Mark a job as completed."""
         try:
             return await self.transition(
-                db, job_id, JobStatus.DONE.value,
-                "mark_completed", operator_id, "system",
-                result_metadata, auto_commit=auto_commit,
+                db,
+                job_id,
+                JobStatus.DONE.value,
+                "mark_completed",
+                operator_id,
+                "system",
+                result_metadata,
+                auto_commit=auto_commit,
             )
         except Exception as e:
             logger.error(f"Failed to mark Job {job_id} as completed: {e}")
@@ -195,8 +221,13 @@ class AsyncStateMachineService:
 
             # Always use full transition() for CAS protection — even same-state
             return await self.transition(
-                db, job_id, retry_target,
-                "retry_transition", operator_id, "retry", retry_metadata,
+                db,
+                job_id,
+                retry_target,
+                "retry_transition",
+                operator_id,
+                "retry",
+                retry_metadata,
             )
         except Exception as e:
             logger.error(f"Job {job_id} retry failed: {e}")
@@ -208,7 +239,9 @@ class AsyncStateMachineService:
             return False
 
     async def get_current_state(
-        self, db: AsyncSession, job_id: str,
+        self,
+        db: AsyncSession,
+        job_id: str,
     ) -> Optional[str]:
         """Get current job state (Redis first, then DB fallback)."""
         try:
@@ -225,13 +258,17 @@ class AsyncStateMachineService:
     # ── Private helpers ─────────────────────────────────────────────────
 
     async def _get_job(
-        self, db: AsyncSession, job_id: str,
+        self,
+        db: AsyncSession,
+        job_id: str,
     ) -> Optional[Job]:
         result = await db.execute(select(Job).where(Job.job_id == job_id))
         return result.scalar_one_or_none()
 
     async def _get_job_with_version(
-        self, db: AsyncSession, job_id: str,
+        self,
+        db: AsyncSession,
+        job_id: str,
     ) -> Optional[Job]:
         result = await db.execute(
             select(Job)
@@ -278,15 +315,17 @@ class AsyncStateMachineService:
                 logger.warning(f"Metadata serialization failed: {e}")
                 serialized = {"error": "metadata_serialization_failed"}
 
-        db.add(JobStateAuditLog(
-            job_id=job_id,
-            from_state=from_state,
-            to_state=to_state,
-            transition_reason=transition_reason,
-            operator_id=operator_id,
-            operator_type=operator_type,
-            transition_metadata=serialized,
-        ))
+        db.add(
+            JobStateAuditLog(
+                job_id=job_id,
+                from_state=from_state,
+                to_state=to_state,
+                transition_reason=transition_reason,
+                operator_id=operator_id,
+                operator_type=operator_type,
+                transition_metadata=serialized,
+            )
+        )
 
     async def _update_job_error(
         self,
@@ -299,7 +338,8 @@ class AsyncStateMachineService:
         """Update error fields on the Job row (single UPDATE, no ORM load)."""
         try:
             from sqlalchemy import func
-            from sqlalchemy.dialects.postgresql import JSONB, array as pg_array
+            from sqlalchemy.dialects.postgresql import JSONB
+            from sqlalchemy.dialects.postgresql import array as pg_array
 
             update_values: Dict[str, Any] = {
                 "error_message": error_message,
@@ -308,16 +348,21 @@ class AsyncStateMachineService:
 
             if error_details:
                 import json as _json
+
                 update_values["job_metadata"] = func.jsonb_set(
-                    func.coalesce(Job.job_metadata.cast(JSONB), func.cast("{}", JSONB)),
+                    func.coalesce(Job.job_metadata.cast(JSONB), cast(literal("{}"), JSONB)),
                     pg_array(["error_details"]),
-                    func.cast(_json.dumps(error_details), JSONB),
+                    cast(literal(_json.dumps(error_details)), JSONB),
                 )
 
-                from shared.services.redis.job_metadata_service import JobMetadataService
+                from shared.services.redis.job_metadata_service import (
+                    JobMetadataService,
+                )
+
                 metadata_svc = JobMetadataService(self.redis)
                 await metadata_svc.update_metadata(
-                    job_id, {"error_details": error_details},
+                    job_id,
+                    {"error_details": error_details},
                 )
 
             await db.execute(
@@ -333,12 +378,16 @@ class AsyncStateMachineService:
                 )
 
     async def _update_redis_cache(
-        self, job_id: str, status: str, metadata: Optional[Dict[str, Any]],
+        self,
+        job_id: str,
+        status: str,
+        metadata: Optional[Dict[str, Any]],
     ) -> None:
         try:
             status_key = redis_key_builder.task_status(job_id)
             await self.redis.set(
-                status_key, status,
+                status_key,
+                status,
                 ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK),
             )
 
@@ -355,9 +404,8 @@ class AsyncStateMachineService:
 
             await self.redis.hset(progress_key, mapping=progress_data)
             await self.redis.expire(
-                progress_key, redis_key_builder.get_key_ttl(RedisKeyType.TASK),
+                progress_key,
+                redis_key_builder.get_key_ttl(RedisKeyType.TASK),
             )
         except Exception as e:
             logger.error(f"Redis cache update failed for Job {job_id}: {e}")
-
-

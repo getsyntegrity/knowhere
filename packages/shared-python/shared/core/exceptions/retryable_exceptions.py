@@ -11,22 +11,21 @@ Principle:
 """
 
 from shared.core.exceptions.domain_exceptions import (
+    LLMServiceException,
+    MinerUServiceException,
+    RedisServiceException,
+    StorageServiceException,
     TimeoutException,
     UnavailableException,
-    LLMServiceException,
-    StorageServiceException,
-    RedisServiceException,
-    MinerUServiceException,
 )
-
 
 # Transient errors that may succeed on retry
 RETRYABLE_EXCEPTIONS = (
     # Domain exceptions (5xx transient)
-    TimeoutException,           # Network/service timeout
-    UnavailableException,       # Service temporarily down
-    LLMServiceException,        # LLM API transient failures
-    StorageServiceException,    # S3/MinIO transient failures
-    RedisServiceException,      # Redis transient failures
-    MinerUServiceException,     # MinerU service transient failures
+    TimeoutException,  # Network/service timeout
+    UnavailableException,  # Service temporarily down
+    LLMServiceException,  # LLM API transient failures
+    StorageServiceException,  # S3/MinIO transient failures
+    RedisServiceException,  # Redis transient failures
+    MinerUServiceException,  # MinerU service transient failures
 )

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from app.services.document_service import DocumentService
+from app.services.rate_limit.dependencies import CurrentUser, with_current_user
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.document_service import DocumentService
-from app.services.rate_limit.dependencies import CurrentUser, with_current_user
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import NotFoundException
 

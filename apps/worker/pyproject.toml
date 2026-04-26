@@ -35,10 +35,11 @@ dev = [
     "pytest==8.3.4",
     "pytest-asyncio==0.24.0",
     "pytest-mock==3.14.0",
+    "pytest-postgresql>=7.0.2",
 ]
 
 [tool.uv.sources]
-knowhere-shared = { path = "../../packages/shared-python", editable = true }
+knowhere-shared = { workspace = true }
 
 [tool.uv]
 package = false

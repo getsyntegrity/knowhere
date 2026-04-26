@@ -13,6 +13,7 @@ worker pool starvation when iLoveAPI is slow or rate-limited.
 This is an optional enhancement path — all failures fail open to
 LibreOffice local conversion.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,10 @@ from typing import List, Optional
 from loguru import logger
 
 from shared.core.config import settings
-from shared.services.redis.redis_sync_service import SyncRedisService, SyncRedisServiceFactory
+from shared.services.redis.redis_sync_service import (
+    SyncRedisService,
+    SyncRedisServiceFactory,
+)
 from shared.utils.quota_manager import BaseQuotaManager, TokenConfig
 
 
@@ -74,7 +78,9 @@ return redis.call('DECR', key)
         self.max_concurrent = max_concurrent
 
     @classmethod
-    def from_settings(cls, redis_service: Optional[SyncRedisService] = None) -> "ILoveApiQuotaManager":
+    def from_settings(
+        cls, redis_service: Optional[SyncRedisService] = None
+    ) -> "ILoveApiQuotaManager":
         """Create an ILoveApiQuotaManager from application settings."""
         tokens = cls.parse_tokens_from_settings()
         max_concurrent: int = getattr(settings, "ILOVEAPI_MAX_CONCURRENT", 5)
@@ -106,10 +112,16 @@ return redis.call('DECR', key)
                         if pub and sec:
                             specs.append(
                                 TokenConfig(
-                                    token_id=str(entry.get("token_id") or f"iloveapi-{index + 1}"),
+                                    token_id=str(
+                                        entry.get("token_id") or f"iloveapi-{index + 1}"
+                                    ),
                                     api_key=f"{pub}:{sec}",
-                                    rpm_limit=int(entry.get("rpm_limit") or default_rpm_limit),
-                                    daily_limit=int(entry.get("daily_limit") or default_daily_limit),
+                                    rpm_limit=int(
+                                        entry.get("rpm_limit") or default_rpm_limit
+                                    ),
+                                    daily_limit=int(
+                                        entry.get("daily_limit") or default_daily_limit
+                                    ),
                                 )
                             )
             except json.JSONDecodeError:

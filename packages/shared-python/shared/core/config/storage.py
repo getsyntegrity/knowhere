@@ -1,10 +1,10 @@
-"""
-存储配置
-"""
+"""Storage configuration."""
+
 import os
 import threading
 
 import boto3
+from botocore.client import BaseClient
 from botocore.config import Config
 from pydantic import BaseModel, Field, model_validator
 
@@ -14,118 +14,142 @@ from shared.core.exceptions.domain_exceptions import (
     SystemSettingMissingException,
 )
 
-# Storage适配器延迟导入，避免循环依赖
+# Storage adapters are imported lazily to avoid circular imports.
 # from shared.services.storage.adapters import S3StorageAdapter
-# OSSStorageAdapter延迟导入，只在S3_TYPE=oss时导入
+# OSSStorageAdapter is imported only when S3_TYPE=oss.
 
 
 class StorageConfig(BaseModel):
-    model_config = {"extra": "ignore"}  # 忽略额外字段
-    """存储配置"""
-    
-    # 存储类型配置
-    S3_TYPE: str = Field(default="s3", description="存储类型: s3, oss, minio")
-    
-    # S3存储配置（通用配置，所有类型共用变量名）
-    S3_BUCKET_NAME: str = Field(..., description="存储桶名称")
-    S3_ACCESS_KEY_ID: str = Field(..., description="访问密钥ID")
-    S3_SECRET_ACCESS_KEY: str = Field(..., description="秘密访问密钥")
-    S3_ENDPOINT_URL: str = Field(default="", description="端点URL（S3/MinIO使用）")
-    S3_PRIVATE_DOMAIN: str = Field(default="", description="私有域名")
-    S3_TEMP_PATH: str = Field(..., description="临时路径")
-    
-    # S3高级配置
-    S3_REGION: str = Field(default="", description="S3区域（MinIO等可留空）")
-    S3_USE_SSL: bool = Field(default=True, description="是否使用SSL连接")
-    S3_ADDRESSING_STYLE: str = Field(default="auto", description="S3寻址风格：auto/path/virtual")
-    
-    # OSS专用配置（仅S3_TYPE=oss时使用）
-    OSS_ENDPOINT: str = Field(default="", description="OSS端点（例如: oss-cn-hangzhou.aliyuncs.com）")
-    
-    # 文件处理配置
-    MAX_FILE_SIZE: int = Field(default=104857600, description="最大文件大小（字节）")
-    MAX_IMAGE_SIZE: int = Field(default=10485760, description="最大图像大小（字节）")
+    model_config = {"extra": "ignore"}  # Ignore unrelated fields.
+    """Storage configuration."""
+
+    # Storage backend selection.
+    S3_TYPE: str = Field(default="s3", description="Storage backend: s3, oss, or minio")
+
+    # Shared S3-style configuration used by S3, OSS, and MinIO.
+    S3_BUCKET_NAME: str = Field(..., description="Bucket name")
+    S3_ACCESS_KEY_ID: str = Field(..., description="Access key ID")
+    S3_SECRET_ACCESS_KEY: str = Field(..., description="Secret access key")
+    S3_ENDPOINT_URL: str = Field(
+        default="", description="Endpoint URL for S3-compatible services such as MinIO"
+    )
+    S3_PRIVATE_DOMAIN: str = Field(default="", description="Private asset domain")
+    S3_TEMP_PATH: str = Field(..., description="Temporary path")
+
+    # Advanced S3 client configuration.
+    S3_REGION: str = Field(
+        default="", description="S3 region; can stay empty for MinIO"
+    )
+    S3_USE_SSL: bool = Field(
+        default=True, description="Use SSL/TLS for storage connections"
+    )
+    S3_ADDRESSING_STYLE: str = Field(
+        default="auto", description="S3 addressing style: auto, path, or virtual"
+    )
+
+    # OSS-only configuration.
+    OSS_ENDPOINT: str = Field(
+        default="", description="OSS endpoint, for example oss-cn-hangzhou.aliyuncs.com"
+    )
+
+    # File-handling limits.
+    MAX_FILE_SIZE: int = Field(
+        default=104857600, description="Maximum file size in bytes"
+    )
+    MAX_IMAGE_SIZE: int = Field(
+        default=10485760, description="Maximum image size in bytes"
+    )
     SUPPORTED_EXTENSIONS: str = Field(
         default=".doc,.docx,.pdf,.txt,.xls,.xlsx,.pptx,.jpg,.jpeg,.png,.md",
-        description="支持的文件扩展名"
+        description="Supported file extensions",
     )
-    
-    # 用户数据目录配置（API和Worker共享，必须配置绝对路径）
-    USERS_DATA_PATH: str = Field(..., description="用户数据目录的绝对路径（必填）")
-    
-    @model_validator(mode='after')
+
+    # Shared user-data directory for API and worker processes.
+    USERS_DATA_PATH: str = Field(
+        ..., description="Absolute path to the shared user-data directory"
+    )
+
+    @model_validator(mode="after")
     def _validate_users_data_path(self):
-        """验证 USERS_DATA_PATH 配置"""
+        """Validate the USERS_DATA_PATH setting."""
         if not self.USERS_DATA_PATH:
             raise SystemSettingMissingException(
                 internal_message="USERS_DATA_PATH must be configured, cannot be empty"
             )
-        
-        # 检查是否为绝对路径
+
+        # Require an absolute path.
         if not os.path.isabs(self.USERS_DATA_PATH):
             raise SystemSettingInvalidException(
                 internal_message=f"USERS_DATA_PATH must be an absolute path, current value: {self.USERS_DATA_PATH}"
             )
-        
-        # 只在目录已存在时检查可写性（不自动创建）
+
+        # Only check writeability when the directory already exists.
         if os.path.exists(self.USERS_DATA_PATH):
             if not os.access(self.USERS_DATA_PATH, os.W_OK):
                 raise SystemSettingInvalidException(
                     internal_message=f"USERS_DATA_PATH directory is not writable: {self.USERS_DATA_PATH}"
                 )
-        
+
         return self
-    
-    # S3事件通知配置
-    S3_WEBHOOK_AUTH_TOKEN: str = Field(default="", description="MinIO webhook认证token")
-    SNS_SIGNATURE_VERIFICATION: bool = Field(default=True, description="是否验证SNS签名")
-    
-    # OSS事件通知配置
-    OSS_EVENT_CALLBACK_KEY: str = Field(default="", description="OSS事件回调密钥")
-    OSS_EVENT_VERIFY_SIGNATURE: bool = Field(default=True, description="是否验证OSS事件签名")
-    
-    def get_s3_client(self) -> 'boto3.client':
-        """获取S3客户端（用于S3和MinIO）"""
-        # 构建配置
-        config_kwargs = {}
-        
-        # 配置addressing style
-        if self.S3_ADDRESSING_STYLE in ['path', 'virtual']:
-            config_kwargs['s3'] = {'addressing_style': self.S3_ADDRESSING_STYLE}
-        
-        # 配置重试策略
-        config_kwargs['retries'] = {'max_attempts': 5, 'mode': 'standard'}
-        
+
+    # S3 event-notification configuration.
+    S3_WEBHOOK_AUTH_TOKEN: str = Field(
+        default="", description="MinIO webhook authentication token"
+    )
+    SNS_SIGNATURE_VERIFICATION: bool = Field(
+        default=True, description="Verify SNS signatures"
+    )
+
+    # OSS event-notification configuration.
+    OSS_EVENT_CALLBACK_KEY: str = Field(
+        default="", description="OSS callback signing key"
+    )
+    OSS_EVENT_VERIFY_SIGNATURE: bool = Field(
+        default=True, description="Verify OSS event signatures"
+    )
+
+    def get_s3_client(self) -> BaseClient:
+        """Return an S3 client for S3-compatible backends."""
+        # Build the client config.
+        config_kwargs: dict[str, object] = {}
+
+        # Configure addressing style.
+        if self.S3_ADDRESSING_STYLE in ["path", "virtual"]:
+            config_kwargs["s3"] = {"addressing_style": self.S3_ADDRESSING_STYLE}
+
+        # Configure retries.
+        config_kwargs["retries"] = {"max_attempts": 5, "mode": "standard"}
+
         config = Config(**config_kwargs) if config_kwargs else None
-        
-        # 构建客户端参数
-        client_kwargs = {
+
+        # Build client kwargs.
+        client_kwargs: dict[str, object] = {
             "service_name": "s3",
             "aws_access_key_id": self.S3_ACCESS_KEY_ID,
             "aws_secret_access_key": self.S3_SECRET_ACCESS_KEY,
         }
-        
-        # 如果有endpoint_url（MinIO或自定义S3兼容服务），则添加
+
+        # Add endpoint_url for MinIO or custom S3-compatible services.
         if self.S3_ENDPOINT_URL:
             client_kwargs["endpoint_url"] = self.S3_ENDPOINT_URL
-        
-        # 只有在指定了region时才添加region_name
+
+        # Only pass region_name when it is configured.
         if self.S3_REGION:
             client_kwargs["region_name"] = self.S3_REGION
-        
-        # 配置SSL
+
+        # Configure SSL/TLS.
         if not self.S3_USE_SSL:
             client_kwargs["use_ssl"] = False
-        
-        # 只有在有配置时才添加config
+
+        # Only add config when extra settings are present.
         if config:
             client_kwargs["config"] = config
-        
+
         return boto3.client(**client_kwargs)
-    
+
     def get_oss_bucket(self):
-        """获取OSS Bucket对象"""
-        # 延迟导入oss2，只在需要时导入
+        """Return an OSS Bucket object."""
+        # Import oss2 lazily so non-OSS environments do not require it.
         try:
             import oss2
         except ImportError as e:
@@ -133,37 +157,41 @@ class StorageConfig(BaseModel):
                 internal_message="oss2 module is not installed. When S3_TYPE=oss, please install: pip install oss2>=2.18.0",
                 original_exception=e,
             ) from e
-        
+
         if not self.OSS_ENDPOINT:
             raise SystemSettingMissingException(
                 internal_message="OSS_ENDPOINT is required when S3_TYPE=oss"
             )
-        
+
         auth = oss2.Auth(self.S3_ACCESS_KEY_ID, self.S3_SECRET_ACCESS_KEY)
         bucket = oss2.Bucket(auth, self.OSS_ENDPOINT, self.S3_BUCKET_NAME)
         return bucket
-    
+
     def get_storage_adapter(self):
         """
-        获取存储适配器（工厂方法）
-        根据S3_TYPE环境变量或配置返回对应的存储适配器
+        Return the storage adapter for the configured backend.
+
+        This factory chooses the adapter from the S3_TYPE environment variable
+        or the explicit config value.
         """
-        storage_type = os.getenv('S3_TYPE', self.S3_TYPE).lower()
-        
-        if storage_type == 'oss':
-            # OSS存储适配器（延迟导入）
+        storage_type = os.getenv("S3_TYPE", self.S3_TYPE).lower()
+
+        if storage_type == "oss":
+            # OSS storage adapter (imported lazily).
             from shared.services.storage.adapters.oss_adapter import OSSStorageAdapter
+
             bucket = self.get_oss_bucket()
             return OSSStorageAdapter(bucket, self.S3_BUCKET_NAME)
         else:
-            # S3存储适配器（支持AWS S3和MinIO，延迟导入）
+            # S3 storage adapter for AWS S3 and MinIO (imported lazily).
             from shared.services.storage.adapters import S3StorageAdapter
+
             s3_client = self.get_s3_client()
             return S3StorageAdapter(s3_client, self.S3_BUCKET_NAME)
-    
+
     def get_supported_extensions(self) -> list:
-        """获取支持的文件扩展名列表"""
-        return [ext.strip() for ext in self.SUPPORTED_EXTENSIONS.split(',')]
+        """Return the supported file extensions as a list."""
+        return [ext.strip() for ext in self.SUPPORTED_EXTENSIONS.split(",")]
 
 
 _cached_adapter = None
@@ -180,5 +208,6 @@ def get_cached_storage_adapter():
         with _cached_adapter_lock:
             if _cached_adapter is None:
                 from shared.core.config import app_config
+
                 _cached_adapter = app_config.get_storage_adapter()
     return _cached_adapter

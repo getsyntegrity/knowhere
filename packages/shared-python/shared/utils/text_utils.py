@@ -2,11 +2,25 @@
 文本处理通用工具函数
 这些函数被多个服务使用，保留在 shared-python 中
 """
+import importlib
 import re
 import warnings
 from collections.abc import Iterable
-from typing import List, Optional
+from typing import List, Optional, Protocol, cast
+
+from syntok.tokenizer import Tokenizer as _SyntokTokenizer
+
 from shared.utils.chunk_refs import CHUNK_REF_PATTERN
+
+try:
+    from blingfire import text_to_words as _blingfire_text_to_words
+except (ImportError, OSError):  # blingfire ships a native lib; fall back to syntok when unusable.
+    _blingfire_text_to_words = None
+
+
+class _JiebaModule(Protocol):
+    def lcut(self, sentence: str) -> list[str]: ...
+
 
 warnings.filterwarnings(
     "ignore",
@@ -14,15 +28,7 @@ warnings.filterwarnings(
     category=UserWarning,
     module=r"jieba\._compat",
 )
-
-import jieba
-
-try:
-    from blingfire import text_to_words as _blingfire_text_to_words
-except (ImportError, OSError):  # blingfire ships a native lib; fall back to syntok when unusable.
-    _blingfire_text_to_words = None
-
-from syntok.tokenizer import Tokenizer as _SyntokTokenizer
+_jieba = cast(_JiebaModule, importlib.import_module("jieba"))
 
 
 def remove_duplicates_orderkept(input_list: List) -> List:
@@ -146,14 +152,14 @@ def _tokenize_english_segment(text: str) -> list[str]:
     if not text.strip():
         return []
     if _blingfire_text_to_words is not None:
-        return _blingfire_text_to_words(text).split()
+        return [str(token) for token in str(_blingfire_text_to_words(text)).split()]
     return [str(token.value) for token in _SyntokTokenizer().tokenize(text)]
 
 
 def _tokenize_cjk_segment(text: str) -> list[str]:
     if not text.strip():
         return []
-    return list(jieba.lcut(text))
+    return list(_jieba.lcut(text))
 
 
 def _resolve_retrieval_stopwords(
@@ -252,7 +258,7 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
     for content in contents:
         # Pre-clean: remove IMAGE_/TABLE_ markers and reference labels
         content = _CHUNK_MARKER_RE.sub('', content)
-        raw_tokens = jieba.lcut(content)
+        raw_tokens = _jieba.lcut(content)
         # Filter: keep only tokens with meaningful characters (Chinese/English/numbers)
         tokens = [t for t in raw_tokens if _is_meaningful_token(t)]
         # Remove stopwords
@@ -262,4 +268,3 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
         tokens = remove_duplicates_orderkept(tokens)
         res_contents.append(link_char.join(tokens))
     return res_contents
-

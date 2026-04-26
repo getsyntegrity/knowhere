@@ -1,30 +1,29 @@
 #!/bin/bash
 
-# LocalStack AWS资源初始化脚本
-# 此脚本在LocalStack启动后自动执行
+# Initialize LocalStack AWS resources after the container becomes ready.
 
 set -e
 
-echo "🚀 开始初始化LocalStack AWS资源..."
+echo "Starting LocalStack AWS resource initialization..."
 
-# 等待LocalStack完全启动
-echo "⏳ 等待LocalStack服务启动..."
+# Wait until LocalStack is ready to accept requests.
+echo "Waiting for LocalStack to become ready..."
 sleep 10
 
-# 设置AWS CLI配置（指向LocalStack）
+# Point the AWS CLI at LocalStack.
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
 export AWS_DEFAULT_REGION=us-west-1
 export AWS_ENDPOINT_URL=http://localhost:4566
 
-# 创建S3存储桶
-echo "📦 创建S3存储桶..."
+# Create the buckets used by local development.
+echo "Creating S3 buckets..."
 aws --endpoint-url=http://localhost:4566 s3 mb s3://knowhere-dev
 aws --endpoint-url=http://localhost:4566 s3 mb s3://knowhere-uploads
 aws --endpoint-url=http://localhost:4566 s3 mb s3://knowhere-results
 
-# 配置S3存储桶CORS
-echo "🌐 配置S3 CORS策略..."
+# Configure bucket CORS for local browser-based development.
+echo "Configuring bucket CORS..."
 aws --endpoint-url=http://localhost:4566 s3api put-bucket-cors \
   --bucket knowhere-dev \
   --cors-configuration '{
@@ -53,16 +52,16 @@ aws --endpoint-url=http://localhost:4566 s3api put-bucket-cors \
     ]
   }'
 
-# 创建SNS主题
-echo "📢 创建SNS主题..."
+# Create the SNS topic used for upload notifications.
+echo "Creating SNS topic..."
 TOPIC_ARN=$(aws --endpoint-url=http://localhost:4566 sns create-topic \
   --name knowhere-s3-upload-events \
   --query 'TopicArn' --output text)
 
-echo "SNS主题ARN: $TOPIC_ARN"
+echo "SNS topic ARN: $TOPIC_ARN"
 
-# 配置S3事件通知
-echo "⚡ 配置S3事件通知..."
+# Configure S3 event notifications.
+echo "Configuring S3 event notifications..."
 aws --endpoint-url=http://localhost:4566 s3api put-bucket-notification-configuration \
   --bucket knowhere-uploads \
   --notification-configuration "{
@@ -89,25 +88,25 @@ aws --endpoint-url=http://localhost:4566 s3api put-bucket-notification-configura
     ]
   }"
 
-# 验证配置
-echo "✅ 验证配置..."
+# Show the resulting LocalStack state.
+echo "Verifying LocalStack resources..."
 aws --endpoint-url=http://localhost:4566 s3 ls
 aws --endpoint-url=http://localhost:4566 sns list-topics
 aws --endpoint-url=http://localhost:4566 s3api get-bucket-notification-configuration --bucket knowhere-uploads
 
-# 订阅SNS主题到webhook
+# Subscribe the SNS topic to the local webhook endpoint.
 # NOTE: The API server runs on the host (WSL2), so use host.docker.internal
 # to reach it from inside the container.
-echo "🔗 等待API服务启动以订阅SNS到webhook..."
+echo "Waiting for the API before subscribing SNS to the webhook..."
 ATTEMPT=0
 while true; do
   ATTEMPT=$((ATTEMPT + 1))
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://host.docker.internal:5005/health 2>&1) || true
   if [ "$HTTP_CODE" = "200" ]; then
-    echo "✅ API服务已就绪 (attempt #$ATTEMPT)"
+    echo "API is ready (attempt #$ATTEMPT)"
     break
   fi
-  echo "⏳ [attempt #$ATTEMPT] API服务未就绪 - http_code=$HTTP_CODE, retrying in 2s..."
+  echo "[attempt #$ATTEMPT] API not ready yet - http_code=$HTTP_CODE, retrying in 2s..."
   sleep 2
 done
 
@@ -115,20 +114,41 @@ aws --endpoint-url=http://localhost:4566 sns subscribe \
   --topic-arn "$TOPIC_ARN" \
   --protocol http \
   --notification-endpoint http://host.docker.internal:5005/v1/internal/s3-events
-echo "✅ SNS订阅完成"
+echo "SNS subscription created."
 
-echo "🎉 LocalStack AWS资源初始化完成！"
+echo "LocalStack AWS resource initialization completed."
 echo ""
-echo "📋 服务信息："
-echo "  - S3端点: http://localhost:4566"
-echo "  - SNS端点: http://localhost:4566"
-echo "  - 管理界面: http://localhost:4566/_localstack/health"
+echo "Service endpoints:"
+echo "  - S3 endpoint: http://localhost:4566"
+echo "  - SNS endpoint: http://localhost:4566"
+echo "  - LocalStack health: http://localhost:4566/_localstack/health"
 echo ""
-echo "🔧 环境变量配置："
+echo "Suggested local environment values:"
 echo "  S3_ENDPOINT_URL=http://localhost:4566"
 echo "  S3_ACCESS_KEY_ID=test"
 echo "  S3_SECRET_ACCESS_KEY=test"
-echo "  S3_BUCKET_NAME=knowhere-dev"
+echo "  S3_BUCKET_NAME=knowhere-uploads"
+echo "  S3_UPLOADS_BUCKET=knowhere-uploads"
+echo "  S3_RESULTS_BUCKET=knowhere-results"
 echo "  S3_REGION=us-west-1"
 echo "  S3_USE_SSL=false"
 echo "  S3_ADDRESSING_STYLE=path"
+
+```bash
+curl http://localhost:5005/health
+```
+
+If the API is healthy, you can also open:
+
+- `http://localhost:5005/docs` for the local OpenAPI docs
+- `http://localhost:4566/_localstack/health` for LocalStack health
+
+## 5. Stop Local Infrastructure
+
+```bash
+cd deploy/local-dev
+./stop-dev.sh
+```
+
+That start and stop flow is the documented public local baseline. Anything more
+complex should build on top of these helpers instead of replacing them.

@@ -8,9 +8,9 @@ from loguru import logger
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import (
     FileSystemException,
-    SystemSettingMissingException,
-    SystemSettingInvalidException,
     StorageServiceException,
+    SystemSettingInvalidException,
+    SystemSettingMissingException,
 )
 
 
@@ -76,7 +76,9 @@ def download_s3_file_to_temp(file_url: str, file_ext: str, temp_dir: str) -> str
 
     try:
         os.makedirs(temp_dir, exist_ok=True)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=temp_dir) as tmp_file:
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=file_ext, dir=temp_dir
+        ) as tmp_file:
             local_temp_path = tmp_file.name
             with requests.get(
                 file_url,

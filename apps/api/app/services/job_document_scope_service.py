@@ -1,21 +1,22 @@
 """
 Document-scope rules used by job creation/update flows.
 """
+
 from __future__ import annotations
 
 import uuid
 from typing import Optional
 
+from app.repositories.document_repository import DocumentRepository
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.repositories.document_repository import DocumentRepository
-from shared.models.database.job import Job
 from shared.core.exceptions.domain_exceptions import (
     ConflictException,
     NotFoundException,
     ValidationException,
 )
+from shared.models.database.job import Job
 
 _ACTIVE_JOB_STATUSES = ("waiting-file", "pending", "running", "converting")
 
@@ -90,6 +91,11 @@ async def resolve_effective_document_scope(
     if requested_namespace and requested_namespace != document.namespace:
         raise ValidationException(
             user_message="namespace must match the existing document namespace",
-            violations=[{"field": "namespace", "description": "Does not match existing document namespace"}],
+            violations=[
+                {
+                    "field": "namespace",
+                    "description": "Does not match existing document namespace",
+                }
+            ],
         )
     return document.document_id, document.namespace

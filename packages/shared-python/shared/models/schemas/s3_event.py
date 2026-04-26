@@ -1,69 +1,71 @@
-"""
-S3事件相关Schema
-"""
+"""S3 event schemas."""
+
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
 class S3Object(BaseModel):
-    """S3对象信息"""
-    key: str = Field(..., description="S3对象键")
-    size: Optional[int] = Field(None, description="对象大小")
+    """S3 object metadata."""
+
+    key: str = Field(..., description="S3 object key")
+    size: Optional[int] = Field(None, description="Object size")
     eTag: Optional[str] = Field(None, description="ETag")
-    sequencer: Optional[str] = Field(None, description="序列号")
+    sequencer: Optional[str] = Field(None, description="Sequencer value")
 
 
 class S3Bucket(BaseModel):
-    """S3存储桶信息"""
-    name: str = Field(..., description="存储桶名称")
-    arn: Optional[str] = Field(None, description="存储桶ARN")
+    """S3 bucket metadata."""
+
+    name: str = Field(..., description="Bucket name")
+    arn: Optional[str] = Field(None, description="Bucket ARN")
 
 
 class S3EventRecord(BaseModel):
-    """S3事件记录"""
-    eventVersion: str = Field(..., description="事件版本")
-    eventSource: str = Field(..., description="事件源")
-    awsRegion: str = Field(..., description="AWS区域")
-    eventTime: str = Field(..., description="事件时间")
-    eventName: str = Field(..., description="事件名称")
-    userIdentity: Optional[Dict[str, Any]] = Field(None, description="用户身份")
-    requestParameters: Optional[Dict[str, Any]] = Field(None, description="请求参数")
-    responseElements: Optional[Dict[str, Any]] = Field(None, description="响应元素")
-    s3: Dict[str, Any] = Field(..., description="S3信息")
-    
-    # 解析后的字段
-    bucket_name: Optional[str] = Field(None, description="存储桶名称")
-    object_key: Optional[str] = Field(None, description="对象键")
-    
+    """One S3 event record."""
+
+    eventVersion: str = Field(..., description="Event version")
+    eventSource: str = Field(..., description="Event source")
+    awsRegion: str = Field(..., description="AWS region")
+    eventTime: str = Field(..., description="Event time")
+    eventName: str = Field(..., description="Event name")
+    userIdentity: Optional[Dict[str, Any]] = Field(None, description="User identity")
+    requestParameters: Optional[Dict[str, Any]] = Field(
+        None, description="Request parameters"
+    )
+    responseElements: Optional[Dict[str, Any]] = Field(
+        None, description="Response elements"
+    )
+    s3: Dict[str, Any] = Field(..., description="S3 payload")
+
+    # Parsed convenience fields.
+    bucket_name: Optional[str] = Field(None, description="Bucket name")
+    object_key: Optional[str] = Field(None, description="Object key")
+
     def __init__(self, **data):
         super().__init__(**data)
-        # 解析s3字段
+        # Parse the nested s3 payload into convenience fields.
         if self.s3:
-            self.bucket_name = self.s3.get('bucket', {}).get('name')
-            self.object_key = self.s3.get('object', {}).get('key')
+            self.bucket_name = self.s3.get("bucket", {}).get("name")
+            self.object_key = self.s3.get("object", {}).get("key")
 
 
 class S3Event(BaseModel):
-    """S3事件通知"""
-    Records: List[S3EventRecord] = Field(..., description="事件记录列表")
-    
+    """S3 event notification payload."""
+
+    Records: List[S3EventRecord] = Field(..., description="Event records")
+
     def get_upload_events(self) -> List[S3EventRecord]:
-        """获取文件上传事件"""
+        """Return only upload-related event records."""
         upload_events = []
         for record in self.Records:
             name = record.eventName or ""
-            # 兼容多种事件名变体：
+            # Support the common upload event-name variants:
             # - ObjectCreated:Put / Post / CompleteMultipartUpload
-            # - ObjectCreated:PutObject / PostObject（如OSS转S3格式）
-            # - s3:ObjectCreated:PutObject 等带前缀形式
-            if (
-                "ObjectCreated" in name
-                and (
-                    "Put" in name
-                    or "Post" in name
-                    or "CompleteMultipartUpload" in name
-                )
+            # - ObjectCreated:PutObject / PostObject (for OSS-to-S3 adaptation)
+            # - prefixed names such as s3:ObjectCreated:PutObject
+            if "ObjectCreated" in name and (
+                "Put" in name or "Post" in name or "CompleteMultipartUpload" in name
             ):
                 upload_events.append(record)
         return upload_events

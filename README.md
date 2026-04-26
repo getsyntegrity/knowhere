@@ -1,138 +1,128 @@
-# Knowhere Monorepo
+# Knowhere API
 
-Knowhere application source code lives in this repository.
+Knowhere API is the backend repository for document ingestion, parsing,
+retrieval, and MCP-oriented knowledge access.
 
-This repository owns:
+## Features
 
-- application code under `apps/` and `packages/`
-- local development infrastructure under `deploy/local-dev/`
-- container image build assets under `deploy/docker/`
-- CI workflows that build and publish Docker images
+## Project Governance
 
-This repository does not own runtime deployment state.
+- Licensed under Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+- Contribution workflow and branch expectations live in
+  [CONTRIBUTING.md](CONTRIBUTING.md).
+- Security reporting guidance lives in [SECURITY.md](SECURITY.md).
+- Community behavior expectations live in
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Repository Layout
 
 ```text
-knowhere/
+knowhere-api/
 ├── apps/
 │   ├── api/
-│   ├── worker/
-│   ├── web/
-│   └── docs/
+│   └── worker/
 ├── packages/
-│   ├── sdk-typescript/
-│   ├── sdk-python/
-│   ├── shared-types/
-│   └── openapi-specs/
+│   └── shared-python/
 ├── deploy/
 │   ├── docker/
 │   └── local-dev/
-└── .github/workflows/build-images.yml
+└── .github/workflows/
+    └── build-images.yml
 ```
+
+## Architecture Overview
 
 ## Prerequisites
 
-- Node.js 18+
-- `pnpm`
 - Python 3.11+
 - `uv`
-- Docker
+- Docker with `docker compose`
+- a local Chrome or Chromium driver if you plan to run document layout parsing
+  flows
 
-## Install Dependencies
+## Configuration
 
-```bash
-pnpm install
+## Quick Start
 
-cd apps/api
-uv sync
-
-cd ../worker
-uv sync
-```
-
-## Local Development
-
-Start local infrastructure services:
+1. Sync the workspace dependencies:
 
 ```bash
-cd deploy/local-dev
-./start-dev.sh
+uv sync --all-packages
 ```
 
-Initialize the local user/auth state too when needed:
+2. Copy the environment examples:
 
 ```bash
-cd deploy/local-dev
-./start-dev.sh --init-user
+cp apps/api/env.example apps/api/.env
+cp apps/worker/env.example apps/worker/.env
 ```
 
-Start application processes in separate terminals:
+3. Update the copied `.env` files with the values you need for local work:
+
+- database and Redis connection settings
+- S3-compatible storage credentials
+- `SECRET_KEY`
+- `USERS_DATA_PATH`
+- `DS_KEY`
+- any optional LLM, billing, or webhook providers you want to enable
+
+4. Start the local infrastructure stack:
 
 ```bash
-pnpm dev:api
-pnpm dev:worker
-pnpm dev:web
-pnpm dev:docs
+./deploy/local-dev/start-dev.sh
 ```
 
-Local API development bootstrap:
-
-- Use the shell helpers under `deploy/local-dev/` for start/stop instead of calling Compose directly from docs.
-- Pass `--init-user` when you want the helper to prepare local API auth state:
-  - `cd deploy/local-dev && ./start-dev.sh --init-user`
-- The `--init-user` path is idempotent. It can be rerun safely against an existing local database.
-- The `--init-user` path now prepares the local API database before you start the API process:
-  - forces `DATABASE_URL=postgresql+asyncpg://root:root123@localhost:5432/Knowhere` for the bootstrap commands even if `apps/api/.env` is stale
-  - forces `DB_SSL_MODE=disable` for the same bootstrap path
-  - creates a dashboard-compatible local `user` table needed by API foreign keys
-  - runs local API Alembic migrations
-  - seeds one deterministic local developer account
-
-Deterministic local developer account:
-
-- `user_id`: `local-dev-user`
-- `email`: `local-dev-user@knowhere.local`
-- `tier`: `tier_5`
-- `api_key`: `sk_local_dev_tier5_full_access`
-
-Stop local infrastructure services:
+If you also want the helper to initialize the local API user state, rerun it
+with `--init-user`:
 
 ```bash
-cd deploy/local-dev
-./stop-dev.sh
+./deploy/local-dev/start-dev.sh --init-user
 ```
 
-Common local endpoints:
+5. Start the API and worker in separate terminals:
+
+```bash
+cd apps/api && uv run main.py
+cd apps/worker && uv run worker.py
+```
+
+## Quality Checks
+
+Run lint checks from the repository root:
+
+```bash
+make lint
+```
+
+Apply safe Ruff fixes:
+
+```bash
+make lint-fix
+```
+
+Run type checks across the API, worker, and shared package:
+
+```bash
+make typecheck
+```
+
+Run both lint and type checks:
+
+```bash
+make check
+```
+
+## Local Endpoints
 
 - API: `http://localhost:5005`
-- API docs: `http://localhost:5005/docs`
-- Web: `http://localhost:3000`
-- Docs: `http://localhost:3001`
+- OpenAPI docs: `http://localhost:5005/docs`
 - LocalStack: `http://localhost:4566`
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`
 
-## Image Builds
+## Quick Example Request
 
-Docker build assets live in `deploy/docker/`.
+## Additional Guides
 
-The active GitHub Actions workflow in `.github/workflows/build-images.yml` only builds and publishes Docker images for the `api` and `worker` services.
-
-- `main` and Git tags build production-tagged images
-- `staging` builds staging-tagged images
-- pull requests run build validation without publishing
-- `workflow_dispatch` can build a selected service for `staging` or `prod`
-
-## Deployment Boundary
-
-Runtime deployment, cloud infrastructure, rollout procedures, and live environment references are intentionally kept out of this repository.
-
-Use the `knowhere-api-infra` repository for:
-
-- Kubernetes and cloud runtime ownership
-- live environment snapshots
-- rollout and rollback procedures
-- operator-facing infrastructure documentation
-
-Do not reintroduce cloud deployment manifests, Terraform state, SSH keys, or runtime secrets into this repository.
+- External dependency guide:
+  [docs/external-services.md](docs/external-services.md)

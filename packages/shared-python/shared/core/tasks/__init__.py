@@ -1,7 +1,5 @@
-"""
-Celery任务定义
-注意：知识库相关任务已迁移到 Worker 服务
-状态机相关任务已迁移到 API 服务
-这里只保留通用的 Celery 任务
-"""
+"""Shared Celery task definitions.
 
+Knowledge-base tasks moved to the Worker service, and state-machine tasks moved
+to the API service. Only generic Celery tasks remain here.
+"""

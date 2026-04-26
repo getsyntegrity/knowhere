@@ -1,54 +1,58 @@
 """
-API Key 管理 API
+API key management endpoints.
 """
 
-from shared.core.database import get_db
-from app.services.rate_limit.dependencies import (
-    with_current_user,
-    CurrentUser,
-)
-from shared.models.schemas.api_key import (APIKeyListResponse, APIKeyResponse,
-                                        CreateAPIKeyRequest,
-                                        CreateAPIKeyResponse,
-                                        RegenerateAPIKeyRequest,
-                                        RevokeAPIKeyRequest)
 from app.services.auth.api_key_service import APIKeyService
-from fastapi import APIRouter, Depends, status
+from app.services.rate_limit.dependencies import (
+    CurrentUser,
+    with_current_user,
+)
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
-    ValidationException,
+    APIKeyOperationException,
     NotFoundException,
-    APIKeyOperationException
+    ValidationException,
+)
+from shared.models.schemas.api_key import (
+    APIKeyListResponse,
+    APIKeyResponse,
+    CreateAPIKeyRequest,
+    CreateAPIKeyResponse,
+    RegenerateAPIKeyRequest,
+    RevokeAPIKeyRequest,
 )
 
 router = APIRouter(tags=["API Key Management"])
 
 
-@router.post("/create", summary="创建API Key")
+@router.post("/create", summary="Create an API key")
 async def create_api_key(
     request: CreateAPIKeyRequest,
     current_user: CurrentUser = Depends(with_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """创建API Key"""
+    """Create an API key."""
     api_key_service = APIKeyService()
-    
+
     try:
         api_key = await api_key_service.create_api_key(
             session=db,
             user_id=current_user.user_id,
             name=request.name,
             enabled_modules=request.enabled_modules,
-            expires_at=request.expires_at
+            expires_at=request.expires_at,
         )
-        
+
         return CreateAPIKeyResponse(
             api_key=api_key,
             name=request.name,
             enabled_modules=request.enabled_modules,
-            expires_at=request.expires_at
+            expires_at=request.expires_at,
         )
-        
+
     except ValidationException:
         raise
     except NotFoundException:
@@ -59,17 +63,19 @@ async def create_api_key(
         )
 
 
-@router.get("/list", summary="获取API Key列表")
+@router.get("/list", summary="List API keys")
 async def list_api_keys(
     current_user: CurrentUser = Depends(with_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取API Key列表"""
+    """List API keys for the current user."""
     api_key_service = APIKeyService()
-    
+
     try:
-        api_keys_data = await api_key_service.list_user_api_keys(db, current_user.user_id)
-        
+        api_keys_data = await api_key_service.list_user_api_keys(
+            db, current_user.user_id
+        )
+
         api_keys = [
             APIKeyResponse(
                 id=key["id"],
@@ -79,43 +85,35 @@ async def list_api_keys(
                 is_active=key["is_active"],
                 created_at=key["created_at"],
                 last_used_at=key["last_used_at"],
-                expires_at=key["expires_at"]
+                expires_at=key["expires_at"],
             )
             for key in api_keys_data
         ]
-        
-        return APIKeyListResponse(
-            api_keys=api_keys,
-            total=len(api_keys)
-        )
-        
+
+        return APIKeyListResponse(api_keys=api_keys, total=len(api_keys))
+
     except Exception as e:
         raise APIKeyOperationException(
             internal_message=f"Failed to list API Keys: {str(e)}"
         )
 
 
-@router.post("/regenerate", summary="重新生成API Key")
+@router.post("/regenerate", summary="Regenerate an API key")
 async def regenerate_api_key(
     request: RegenerateAPIKeyRequest,
     current_user: CurrentUser = Depends(with_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """重新生成API Key"""
+    """Regenerate an API key."""
     api_key_service = APIKeyService()
-    
+
     try:
         new_api_key = await api_key_service.regenerate_api_key(
-            session=db,
-            api_key_id=request.api_key_id,
-            user_id=current_user.user_id
+            session=db, api_key_id=request.api_key_id, user_id=current_user.user_id
         )
-        
-        return {
-            "api_key": new_api_key,
-            "message": "API Key已重新生成"
-        }
-        
+
+        return {"api_key": new_api_key, "message": "API key regenerated"}
+
     except NotFoundException:
         raise
     except Exception as e:
@@ -124,23 +122,21 @@ async def regenerate_api_key(
         )
 
 
-@router.post("/revoke", summary="撤销API Key")
+@router.post("/revoke", summary="Revoke an API key")
 async def revoke_api_key(
     request: RevokeAPIKeyRequest,
     current_user: CurrentUser = Depends(with_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """撤销API Key"""
+    """Revoke an API key."""
     api_key_service = APIKeyService()
-    
+
     try:
         await api_key_service.revoke_api_key(
-            session=db,
-            api_key_id=request.api_key_id,
-            user_id=current_user.user_id
+            session=db, api_key_id=request.api_key_id, user_id=current_user.user_id
         )
-        return {"message": "API Key已撤销"}
-            
+        return {"message": "API key revoked"}
+
     except NotFoundException:
         raise
     except APIKeyOperationException:
@@ -151,24 +147,26 @@ async def revoke_api_key(
         )
 
 
-@router.get("/{api_key_id}", summary="获取API Key详情")
+@router.get("/{api_key_id}", summary="Get API key details")
 async def get_api_key(
     api_key_id: str,
     current_user: CurrentUser = Depends(with_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取单个API Key详情"""
+    """Get details for a single API key."""
     api_key_service = APIKeyService()
-    
+
     try:
-        api_key = await api_key_service.get_api_key(db, current_user.user_id, api_key_id)
+        api_key = await api_key_service.get_api_key(
+            db, current_user.user_id, api_key_id
+        )
         if not api_key:
             raise NotFoundException(
                 resource="APIKey",
                 resource_id=api_key_id,
-                internal_message="API Key not found"
+                internal_message="API Key not found",
             )
-        
+
         return {
             "id": str(api_key.id),
             "name": api_key.name,
@@ -176,9 +174,9 @@ async def get_api_key(
             "is_active": api_key.is_active,
             "created_at": api_key.created_at,
             "last_used_at": api_key.last_used_at,
-            "expires_at": api_key.expires_at
+            "expires_at": api_key.expires_at,
         }
-        
+
     except NotFoundException:
         raise
     except Exception as e:
@@ -187,19 +185,21 @@ async def get_api_key(
         )
 
 
-@router.put("/{api_key_id}/toggle", summary="启用/禁用API Key")
+@router.put("/{api_key_id}/toggle", summary="Enable or disable an API key")
 async def toggle_api_key(
     api_key_id: str,
     current_user: CurrentUser = Depends(with_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """启用/禁用API Key"""
+    """Enable or disable an API key."""
     api_key_service = APIKeyService()
-    
+
     try:
-        success = await api_key_service.toggle_api_key(db, current_user.user_id, api_key_id)
+        success = await api_key_service.toggle_api_key(
+            db, current_user.user_id, api_key_id
+        )
         if success:
-            return {"message": "API Key状态更新成功"}
+            return {"message": "API key status updated"}
         else:
             raise APIKeyOperationException(
                 internal_message="Failed to toggle API Key status"

@@ -1,6 +1,8 @@
+# pyright: reportArgumentType=false, reportCallIssue=false
 """Helpers for internal parser filenames."""
-from dataclasses import dataclass
+
 import os
+from dataclasses import dataclass
 
 from shared.utils.file_utils import path_handle
 
@@ -19,10 +21,16 @@ def normalize_internal_parse_name(
     prefer_fallback_ext: bool = False,
 ) -> str:
     """Normalize internal parse filenames to match pymupdf4llm path rewriting."""
-    candidate_name = os.path.basename(filename) if isinstance(filename, str) and filename else ""
-    cleaned_name = path_handle(candidate_name, mode="clean_single") if candidate_name else ""
+    candidate_name = (
+        os.path.basename(filename) if isinstance(filename, str) and filename else ""
+    )
+    cleaned_name = (
+        path_handle(candidate_name, mode="clean_single") if candidate_name else ""
+    )
     name_root, name_ext = os.path.splitext(cleaned_name)
-    sanitized_fallback_ext = path_handle(fallback_ext, mode="clean_single") if fallback_ext else ""
+    sanitized_fallback_ext = (
+        path_handle(fallback_ext, mode="clean_single") if fallback_ext else ""
+    )
     effective_ext = (
         sanitized_fallback_ext
         if prefer_fallback_ext and sanitized_fallback_ext

@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false
 """
 Atlas-specific parsing pipeline.
 
@@ -18,25 +19,27 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
-from loguru import logger
-from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import PDFParsingException
 from app.services.common.kb_utils import (
-    gen_str_codes, get_str_time, process_dup_paths_df
+    gen_str_codes,
+    get_str_time,
+    process_dup_paths_df,
 )
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
 from app.services.document_parser.toc_parser import detect_tocs_in_texts
+from loguru import logger
+
+from shared.core.config import settings
 from shared.utils.chunk_refs import build_chunk_ref
 from shared.utils.text_utils import tokenize2stw_remove
 
-
 # ─── Config ───────────────────────────────────────────────────────────
-VLM_CONCURRENCY = 3          # concurrent VLM calls
-IMG_RENDER_DPI = 150         # DPI for full-page rendering
-IMG_MAX_SIDE = 1280          # max pixels on longest side for VLM input
+VLM_CONCURRENCY = 3  # concurrent VLM calls
+IMG_RENDER_DPI = 150  # DPI for full-page rendering
+IMG_MAX_SIDE = 1280  # max pixels on longest side for VLM input
 
 
 # ─── Helper: compress image for VLM ──────────────────────────────────
+
 
 def _build_atlas_know_id(page_num: int, image_bytes: bytes) -> str:
     """Keep atlas chunk IDs deterministic while preserving per-page uniqueness."""
@@ -88,13 +91,14 @@ def _compress_for_vlm(img_path: str, max_side: int = IMG_MAX_SIDE) -> str:
 
 # ─── Helper: derive chunk title from page text ───────────────────────
 
+
 def _make_title_from_text(page_text: str, page_num: int, max_len: int = 25) -> str:
     """
     Build a chunk title from the first and last non-empty lines + page number.
-    
-    Example: "P5 室外出入口一般规定...比例1:50"
+
+    Example: "P5 General entrance requirements...Scale 1:50"
     """
-    lines = [l.strip() for l in page_text.split("\n") if l.strip()]
+    lines = [line.strip() for line in page_text.split("\n") if line.strip()]
     if not lines:
         return f"P{page_num}"
 
@@ -107,14 +111,15 @@ def _make_title_from_text(page_text: str, page_num: int, max_len: int = 25) -> s
 
 # ─── Helper: VLM page info extraction ────────────────────────────────
 
+
 def _vlm_extract_page_info(output_dir: str, img_name: str) -> str:
     """
     Send the full page image (compressed) to VLM with atlas-page-info prompt.
     Uses IMAGE_MODEL (PLUS) for cost efficiency.
-    
+
     Returns extracted info string, or empty string on failure.
     """
-    from app.services.document_parser.image_parser import ask_image, _get_vision_client
+    from app.services.document_parser.image_parser import _get_vision_client, ask_image
 
     img_path = os.path.join(output_dir, "images", img_name)
     if not os.path.exists(img_path):
@@ -128,10 +133,12 @@ def _vlm_extract_page_info(output_dir: str, img_name: str) -> str:
     try:
         client = _get_vision_client()
         result = ask_image(
-            client, output_dir, [vlm_rel],
+            client,
+            output_dir,
+            [vlm_rel],
             title_text="",
             task="atlas-page-info",
-            size_cut=False
+            size_cut=False,
         )
 
         # Clean up compressed file if different from original
@@ -151,10 +158,12 @@ def _vlm_extract_page_info(output_dir: str, img_name: str) -> str:
 
 # ─── Child-process workers (top-level for pickling) ─────────────────
 
+
 @worker
 def _atlas_extract_texts_worker(queue, pdf_path):
     """Child: extract text from all pages for TOC detection + total page count."""
     import pymupdf
+
     doc = pymupdf.open(pdf_path)
     total_pages = len(doc)
     page_texts = []
@@ -167,9 +176,12 @@ def _atlas_extract_texts_worker(queue, pdf_path):
 
 
 @worker
-def _atlas_render_pages_worker(queue, pdf_path, img_dir, skip_pages_list, dpi, page_texts_list):
+def _atlas_render_pages_worker(
+    queue, pdf_path, img_dir, skip_pages_list, dpi, page_texts_list
+):
     """Child: render non-skipped pages to images, reuse pre-extracted text."""
     import pymupdf
+
     skip_pages = set(skip_pages_list)
     doc = pymupdf.open(pdf_path)
     page_data = []
@@ -230,7 +242,7 @@ def _detect_toc_pages_from_texts(
     if not toc_hierarchies:
         return set(), None
 
-    page_marker_re = re.compile(r'<!--\s*page\s+(\d+)\s*-->', re.IGNORECASE)
+    page_marker_re = re.compile(r"<!--\s*page\s+(\d+)\s*-->", re.IGNORECASE)
     line_to_page = {}
     current_page = 0
     for i, line in enumerate(md_lines):
@@ -253,6 +265,7 @@ def _detect_toc_pages_from_texts(
 
 # ─── Main entry point ────────────────────────────────────────────────
 
+
 def parse_atlas(
     pdf_path: str,
     output_dir: str,
@@ -262,17 +275,17 @@ def parse_atlas(
 ) -> pd.DataFrame:
     """
     Atlas-specific parsing: one chunk per page using PyMuPDF directly.
-    
+
     For scanned atlases (no extractable text), automatically calls VLM
     to extract drawing info from each page with 3-way concurrency.
-    
+
     Args:
         pdf_path: original PDF file path
         output_dir: output directory for images, full.md, etc.
         base_llm_paras: LLM parameters dict
         relative_root: path prefix for chunk path field
         profile: DocProfile with scan_type info
-    
+
     Returns:
         pd.DataFrame with ALL_DF_COLS columns
     """
@@ -284,7 +297,9 @@ def parse_atlas(
 
     # ── Phase 0: Extract all page texts in child process (fast, subsecond) ──
     text_result = run_in_child_process(
-        _atlas_extract_texts_worker, pdf_path, timeout=120,
+        _atlas_extract_texts_worker,
+        pdf_path,
+        timeout=120,
     )
     total_pages = text_result["total_pages"]
     page_texts = text_result["page_texts"]
@@ -321,7 +336,11 @@ def parse_atlas(
     # ── Phase 1: Render non-TOC pages in child process (heavy, 73s for 475 pages) ──
     render_result = run_in_child_process(
         _atlas_render_pages_worker,
-        pdf_path, img_dir, list(toc_page_set), IMG_RENDER_DPI, page_texts,
+        pdf_path,
+        img_dir,
+        list(toc_page_set),
+        IMG_RENDER_DPI,
+        page_texts,
         timeout=600,
     )
     page_data = render_result["page_data"]
@@ -331,7 +350,9 @@ def parse_atlas(
     vlm_results = {}  # page_num → vlm_info string
 
     if use_vlm and page_data:
-        logger.info(f"📐 Atlas: starting VLM extraction with {VLM_CONCURRENCY}-way concurrency")
+        logger.info(
+            f"📐 Atlas: starting VLM extraction with {VLM_CONCURRENCY}-way concurrency"
+        )
 
         def _vlm_task(page_num, img_name):
             info = _vlm_extract_page_info(output_dir, img_name)
@@ -339,8 +360,7 @@ def parse_atlas(
 
         with ThreadPoolExecutor(max_workers=VLM_CONCURRENCY) as executor:
             futures = {
-                executor.submit(_vlm_task, pn, iname): pn
-                for pn, _, iname in page_data
+                executor.submit(_vlm_task, pn, iname): pn for pn, _, iname in page_data
             }
             done_count = 0
             for future in as_completed(futures):
@@ -351,7 +371,9 @@ def parse_atlas(
                     logger.info(f"📐 VLM progress: {done_count}/{len(page_data)}")
 
         vlm_ok = sum(1 for v in vlm_results.values() if v)
-        logger.info(f"📐 VLM extraction complete: {vlm_ok}/{len(page_data)} pages got info")
+        logger.info(
+            f"📐 VLM extraction complete: {vlm_ok}/{len(page_data)} pages got info"
+        )
 
     # ── Phase 3: Build chunks ──
     df_list = []
@@ -375,7 +397,7 @@ def parse_atlas(
             chunk_title = _make_title_from_text(page_text, page_num)
 
         # Sanitize title for path usage
-        safe_title = re.sub(r'[/\\:*?"<>|]', '_', chunk_title)
+        safe_title = re.sub(r'[/\\:*?"<>|]', "_", chunk_title)
 
         # Rename image file to use descriptive title (match Phase 1 JPEG format)
         img_ext = os.path.splitext(img_name)[1]  # .jpg from Phase 1
@@ -393,7 +415,7 @@ def parse_atlas(
         # from different atlas pages cannot collapse into the same chunk ID.
         # Read the image file saved in Phase 1 (may have been renamed above)
         actual_img_path = new_img_path if os.path.exists(new_img_path) else old_img_path
-        with open(actual_img_path, 'rb') as img_f:
+        with open(actual_img_path, "rb") as img_f:
             know_id = _build_atlas_know_id(page_num, img_f.read())
         img_marker = build_chunk_ref(img_ref)
 
@@ -418,19 +440,21 @@ def parse_atlas(
         # chunk type classifier to misclassify as "text" instead of "image".
         match_type = "image"
         tokens = tokenize2stw_remove([content], stopwords)
-        df_list.append([
-            content,        # content
-            chunk_path,     # path
-            match_type,     # type
-            len(content),   # length
-            "",             # keywords
-            "",             # summary
-            know_id,        # know_id
-            tokens,         # tokens
-            "",             # connectto
-            time_stamp,     # addtime
-            str(page_num),  # page_nums
-        ])
+        df_list.append(
+            [
+                content,  # content
+                chunk_path,  # path
+                match_type,  # type
+                len(content),  # length
+                "",  # keywords
+                "",  # summary
+                know_id,  # know_id
+                tokens,  # tokens
+                "",  # connectto
+                time_stamp,  # addtime
+                str(page_num),  # page_nums
+            ]
+        )
 
         # Build custom md line
         custom_md_lines.append(f"<!-- page {page_num} -->")

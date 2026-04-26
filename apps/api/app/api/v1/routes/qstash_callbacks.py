@@ -6,6 +6,7 @@ delivers (or fails to deliver) a webhook to the customer's endpoint.
 
 Both endpoints verify the QStash JWT signature before processing.
 """
+
 from __future__ import annotations
 
 import json
@@ -99,7 +100,8 @@ def _find_event_id(data: Dict[str, Any]) -> Optional[str]:
     """Extract the Knowhere event ID from QStash sourceHeader."""
     source_header = data.get("sourceHeader", {}) or {}
     event_id = _normalize_header_value(
-        source_header.get("X-Knowhere-Event-Id") or source_header.get("x-knowhere-event-id")
+        source_header.get("X-Knowhere-Event-Id")
+        or source_header.get("x-knowhere-event-id")
     )
     if not event_id:
         for key, value in source_header.items():
@@ -140,7 +142,11 @@ def _process_qstash_callback(
     response_body = data.get("body", "")
     qstash_message_id = data.get("sourceMessageId")
     retried = data.get("retried", 0)
-    error_message = data.get("error", response_body) if terminal_status == WebhookEventStatus.FAILED else None
+    error_message = (
+        data.get("error", response_body)
+        if terminal_status == WebhookEventStatus.FAILED
+        else None
+    )
 
     with get_sync_db_context() as db:
         event = db.execute(
@@ -163,7 +169,9 @@ def _process_qstash_callback(
             attempt_number=retried + 1,
             request_payload=event.payload,
             signature="",
-            idempotency_key=_build_callback_log_idempotency_key(qstash_message_id, event.id),
+            idempotency_key=_build_callback_log_idempotency_key(
+                qstash_message_id, event.id
+            ),
             response_status_code=int(response_status) if response_status else None,
             response_body=response_body[:4096] if response_body else None,
             error_message=str(error_message)[:4096] if error_message else None,
@@ -202,7 +210,9 @@ async def handle_qstash_callback(request: Request) -> Response:
         f"retried={retried}, qstash_message_id={data.get('sourceMessageId')}"
     )
 
-    return _process_qstash_callback(data, event_id, WebhookEventStatus.DELIVERED, "callback")
+    return _process_qstash_callback(
+        data, event_id, WebhookEventStatus.DELIVERED, "callback"
+    )
 
 
 @router.post("/qstash/failure")
@@ -232,4 +242,6 @@ async def handle_qstash_failure(request: Request) -> Response:
         f"retried={retried}/{max_retries}, qstash_message_id={data.get('sourceMessageId')}"
     )
 
-    return _process_qstash_callback(data, event_id, WebhookEventStatus.FAILED, "failure")
+    return _process_qstash_callback(
+        data, event_id, WebhookEventStatus.FAILED, "failure"
+    )

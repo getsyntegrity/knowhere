@@ -1,15 +1,18 @@
 """
 Application service for document lifecycle routes.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
+from app.repositories.document_repository import DocumentRepository
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.repositories.document_repository import DocumentRepository
-from shared.services.retrieval.cache_service import invalidate_retrieval_cache_namespaces
+from shared.services.retrieval.cache_service import (
+    invalidate_retrieval_cache_namespaces,
+)
 from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
 
 
@@ -22,7 +25,9 @@ def document_payload(document) -> dict[str, Any]:
         "source_file_name": document.source_file_name,
         "created_at": document.created_at.isoformat() if document.created_at else None,
         "updated_at": document.updated_at.isoformat() if document.updated_at else None,
-        "archived_at": document.archived_at.isoformat() if document.archived_at else None,
+        "archived_at": (
+            document.archived_at.isoformat() if document.archived_at else None
+        ),
     }
 
 
@@ -100,5 +105,7 @@ class DocumentService:
                 namespaces=[previous_namespace],
             )
         except Exception as e:
-            logger.warning(f"Cache invalidation failed after archiving document {document_id}: {e}")
+            logger.warning(
+                f"Cache invalidation failed after archiving document {document_id}: {e}"
+            )
         return document_payload(document)

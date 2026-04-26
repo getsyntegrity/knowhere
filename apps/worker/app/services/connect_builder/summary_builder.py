@@ -19,6 +19,7 @@ from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from openai.types.chat import ChatCompletionMessageParam
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ def _llm_summarize(snippets_text: str, node_name: str) -> str:
                 "lang": detected_lang,
             },
         )
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": "you are a helpful assistant"},
             {"role": "user", "content": prompt},
         ]

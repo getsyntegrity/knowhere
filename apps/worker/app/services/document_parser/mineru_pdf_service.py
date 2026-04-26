@@ -1,14 +1,15 @@
+# pyright: reportUnusedExpression=false
 import os
 import time
 from typing import Any, Callable, Optional
 
 import requests
+from app.services.document_parser.mineru_quota_manager import get_mineru_quota_manager
+from app.services.document_parser.parser_log_utils import truncate_log_value
 from loguru import logger
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from app.services.document_parser.parser_log_utils import truncate_log_value
-from app.services.document_parser.mineru_quota_manager import get_mineru_quota_manager
 from shared.core.config import settings
 from shared.core.constants import APIConstants
 from shared.core.exceptions.domain_exceptions import (
@@ -107,9 +108,7 @@ def _log_mineru_url_mode_ingestion_fallback(
         source_path=None if is_remote(pdf_url) else pdf_url,
         error_type=type(exc).__name__,
         error_message=truncate_log_value(exc),
-    ).warning(
-        "MinerU URL-mode ingestion setup failed. Falling back to direct upload."
-    )
+    ).warning("MinerU URL-mode ingestion setup failed. Falling back to direct upload.")
 
 
 def _inspect_mineru_source_s3_key(s3_key: Optional[str]) -> tuple[Optional[str], bool]:
@@ -191,7 +190,12 @@ def _get_retry_after_seconds(
     retry_after_header = response.headers.get("Retry-After")
     if retry_after_header:
         try:
-            return max(1, min(int(retry_after_header), settings.MINERU_RATE_LIMIT_MAX_RETRY_AFTER))
+            return max(
+                1,
+                min(
+                    int(retry_after_header), settings.MINERU_RATE_LIMIT_MAX_RETRY_AFTER
+                ),
+            )
         except ValueError:
             logger.debug(f"Invalid MinerU Retry-After header: {retry_after_header}")
 
@@ -307,7 +311,8 @@ def poll_mineru_task(
                 ).info("Acquired MinerU token for polling")
                 last_token_id = lease.token_id
 
-            response = get_mineru_session().get(status_url,
+            response = get_mineru_session().get(
+                status_url,
                 headers=get_mineru_headers(lease.api_key),
                 timeout=settings.MINERU_API_TIMEOUT,
             )
@@ -375,7 +380,7 @@ def poll_mineru_task(
                 if state == "running":
                     if "extract_progress" in status:
                         try:
-                            progress = (
+                            (
                                 status["extract_progress"]["extracted_pages"]
                                 / status["extract_progress"]["total_pages"]
                             )
@@ -670,9 +675,7 @@ def _submit_url_task(presigned_url: str, filename: str) -> tuple[str, str]:
     )
 
     if response.status_code == 429:
-        _raise_mineru_unavailable(
-            lease.token_id, response, operation="submit_url_task"
-        )
+        _raise_mineru_unavailable(lease.token_id, response, operation="submit_url_task")
 
     if response.status_code != 200:
         submit_logger.bind(
@@ -704,9 +707,9 @@ def _submit_url_task(presigned_url: str, filename: str) -> tuple[str, str]:
         )
 
     batch_id = result["data"]["batch_id"]
-    submit_logger.bind(
-        token_id=lease.token_id, batch_id=batch_id
-    ).info("MinerU URL task submitted")
+    submit_logger.bind(token_id=lease.token_id, batch_id=batch_id).info(
+        "MinerU URL task submitted"
+    )
     return batch_id, lease.token_id
 
 

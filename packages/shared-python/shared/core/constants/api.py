@@ -1,21 +1,19 @@
-"""
-API常量
-"""
+"""API constants."""
 
 
 class APIConstants:
-    """API相关常量"""
-    
-    # 响应状态码
+    """API-related constants."""
+
+    # Response status codes.
     SUCCESS_CODE = 200
     FAIL_CODE = 1
     AUTH_ERROR_CODE = 401
-    
-    # 分页配置
+
+    # Pagination defaults.
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE = 100
-    
-    # 超时配置
+
+    # Timeout defaults.
     DEFAULT_TIMEOUT = 30
     LONG_TIMEOUT = 300
     HTTP_TIMEOUT = 30

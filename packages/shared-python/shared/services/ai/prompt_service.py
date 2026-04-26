@@ -4,7 +4,7 @@ Only contains prompts required for document parsing workflow.
 
 Removed prompts for:
 - RAG/Knowledge Base: talk-kb, merge-answers, judge-kb, rerank, connect-kb, detect-contradict
-- Document Generation: gen-titles-oneoff, gen-root-titles, gen-thoughts, reason-content-layout, 
+- Document Generation: gen-titles-oneoff, gen-root-titles, gen-thoughts, reason-content-layout,
                        rewrite-paras, rewrite-sentence, construct-table, reason-source
 - Table Filling: filling-tb-kv, filling-tb-ck
 - Other: eval-images, gen-table-query
@@ -13,7 +13,6 @@ Removed prompts for:
 import re
 
 from shared.services.ai.response_process_service import process_llm_history
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Language detection & directive injection
@@ -60,17 +59,18 @@ def _language_directive(lang) -> str:
             "keywords, titles, or punctuation marks."
         )
     if lang == "zh":
-        return (
-            "你必须完全使用简体中文作答，禁止出现英文单词（专有名词除外）、日文、韩文或其他任何语言。"
-        )
+        return "你必须完全使用简体中文作答，禁止出现英文单词（专有名词除外）、日文、韩文或其他任何语言。"
     return ""
 
 
 def build_prompt(task, texts, query, **kwargs):
     from loguru import logger
-    logger.debug(f"build_prompt 调用: task={task}, texts长度={len(str(texts)) if texts else 0}")
-    his_record = process_llm_history(kwargs.get('paras', {}))
-    logger.debug("process_llm_history 完成")
+
+    logger.debug(
+        f"build_prompt called: task={task}, texts_length={len(str(texts)) if texts else 0}"
+    )
+    process_llm_history(kwargs.get("paras", {}))
+    logger.debug("process_llm_history completed")
     temperature = 0.1
     top_p = 0.1
     max_tokens = 2000
@@ -78,9 +78,9 @@ def build_prompt(task, texts, query, **kwargs):
 
     # ==================== Text Processing Prompts ====================
 
-    if task == 'summary':
-        max_tokens = kwargs['paras']['max_tokens']
-        lang = kwargs['paras'].get('lang')
+    if task == "summary":
+        max_tokens = kwargs["paras"]["max_tokens"]
+        lang = kwargs["paras"].get("lang")
         lang_directive = _language_directive(lang)
         lang_rule = (
             f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
@@ -101,9 +101,9 @@ def build_prompt(task, texts, query, **kwargs):
         - Do not add any format wrappers, prefixes, or explanations beyond the summary
         """
 
-    elif task == 'summary-titled':
-        max_tokens = kwargs['paras']['max_tokens']
-        lang = kwargs['paras'].get('lang')
+    elif task == "summary-titled":
+        max_tokens = kwargs["paras"]["max_tokens"]
+        lang = kwargs["paras"].get("lang")
         lang_directive = _language_directive(lang)
         lang_rule = (
             f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
@@ -123,11 +123,11 @@ def build_prompt(task, texts, query, **kwargs):
         - If the input content is too short, mostly empty, or lacks meaningful text, return exactly: null
         - Output DIRECTLY without any prefixes like "Title:" or "Summary:"
         """
-        
-    elif task == 'summary-keywords':
-        max_tokens = kwargs['paras']['max_tokens']
-        kw_num = kwargs['paras']['kw_num']
-        lang = kwargs['paras'].get('lang')
+
+    elif task == "summary-keywords":
+        max_tokens = kwargs["paras"]["max_tokens"]
+        kw_num = kwargs["paras"]["kw_num"]
+        lang = kwargs["paras"].get("lang")
         lang_directive = _language_directive(lang)
         lang_rule = (
             f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
@@ -135,10 +135,10 @@ def build_prompt(task, texts, query, **kwargs):
             else "- Keywords must be in the SAME LANGUAGE as the input text"
         )
 
-        example = '''
+        example = """
          {"answer":"<keyword_1>;<keyword_2>;<keyword_3>"}
-        '''
-        
+        """
+
         prompt = f"""
         You will receive a text passage:
         '''
@@ -153,10 +153,10 @@ def build_prompt(task, texts, query, **kwargs):
         - Do not output any additional explanations or descriptions besides the keywords
         """
 
-    elif task == 'summary-full':
-        max_tokens = kwargs['paras']['max_tokens']
-        kw_num = kwargs['paras'].get('kw_num', 3)
-        lang = kwargs['paras'].get('lang')
+    elif task == "summary-full":
+        max_tokens = kwargs["paras"]["max_tokens"]
+        kw_num = kwargs["paras"].get("kw_num", 3)
+        lang = kwargs["paras"].get("lang")
         lang_directive = _language_directive(lang)
         if lang_directive:
             lang_line = (
@@ -169,9 +169,9 @@ def build_prompt(task, texts, query, **kwargs):
                 "**SAME LANGUAGE** as the input text"
             )
 
-        example = '''
+        example = """
          {"title":"<title>","keywords":"<keyword_1>;<keyword_2>;<keyword_3>","summary":"<summary>"}
-        '''
+        """
 
         prompt = f"""
         You will receive a text passage (which may include HTML tables or structured data):
@@ -201,7 +201,7 @@ def build_prompt(task, texts, query, **kwargs):
     # `_compact_for_llm` collapses consecutive body rows into placeholders.
     # Kept as reference; DO NOT delete.  The live prompt below targets the
     # COMPACT input shape used when `KB_LAYOUT_LLM_COMPACT_INPUT` is on
-    # (default).  See plan: hierarchy_llm_compact_input_0c446abf.plan.md.
+    # (default). The live prompt below is the publication baseline.
     # ---------------------------------------------------------------------
     #     elif task == 'eval-headings':
     #         temperature = 0
@@ -261,8 +261,10 @@ def build_prompt(task, texts, query, **kwargs):
     #         Scan ALL candidate heading rows across the entire input.
     #         Identify every distinct structural/numbering pattern that signals hierarchy depth, for example:
     #         - Decimal numbering: "1", "1.1", "1.1.1" → depth increases with dot count
-    #         - Enumeration styles: "一、" "（一）" "1、" "①" → shallower to deeper
-    #         - Chapter/section keywords: "Chapter X", "Part X", "第X章", "第X节"
+    #         - Enumeration styles such as Chinese numerals, numbered bullets,
+    #           or circled digits map from shallower to deeper levels
+    #         - Chapter/section keywords: "Chapter X", "Part X", and Chinese
+    #           chapter/section markers
     #         - Indentation or formatting cues visible in the text prefix
     #         Rank these patterns from shallowest to deepest to form a pattern → level mapping.
     #
@@ -336,7 +338,7 @@ def build_prompt(task, texts, query, **kwargs):
     #         - Do not add any explanations, comments, or descriptive text
     #         """
 
-    elif task == 'eval-headings':
+    elif task == "eval-headings":
         # COMPACT-input variant.  Input is pre-compressed by `_compact_for_llm`
         # so that consecutive body-text rows are folded into a single
         # ``[N BODY LINES]`` placeholder row.  The LLM therefore sees only:
@@ -346,9 +348,9 @@ def build_prompt(task, texts, query, **kwargs):
         #     signals.
         temperature = 0
         top_p = 0.01
-        max_depth = kwargs['paras']['max_depth']
-        max_tokens = kwargs['paras']['max_tokens']
-        toc_context = kwargs['paras'].get('toc_context', '')
+        max_depth = kwargs["paras"]["max_depth"]
+        max_tokens = kwargs["paras"]["max_tokens"]
+        toc_context = kwargs["paras"].get("toc_context", "")
 
         if toc_context:
             toc_section = f"""
@@ -468,11 +470,11 @@ def build_prompt(task, texts, query, **kwargs):
 
     # ==================== TOC Heading Evaluation Prompts ====================
 
-    elif task == 'eval-toc-headings':
+    elif task == "eval-toc-headings":
         temperature = 0
         top_p = 0.01
-        max_depth = kwargs['paras']['max_depth']
-        max_tokens = kwargs['paras']['max_tokens']
+        max_depth = kwargs["paras"]["max_depth"]
+        max_tokens = kwargs["paras"]["max_tokens"]
 
         prompt = f"""
         You are a document structure auditing expert specializing in Table of Contents (TOC) analysis. You will receive a Markdown table representing a TOC extracted from a document. Each row is a TOC entry, including:
@@ -519,13 +521,13 @@ def build_prompt(task, texts, query, **kwargs):
 
     elif task == "summary-images":
         temperature = 0.1
-        max_tokens = int(kwargs['paras']['max_tokens'] * 1.2)
+        max_tokens = int(kwargs["paras"]["max_tokens"] * 1.2)
         if texts.strip():
             img_context = f"- Image context is [{texts}], you may reference the title for summarization"
         else:
             img_context = ""
 
-        prompt = f'''
+        prompt = f"""
         You will receive an image, which may be a photo, chart, or an image requiring OCR.
         Your task is to extract the main content described in the image. Note:
         - Line 1: Output a short title (no more than 15 characters) summarizing the image's core topic
@@ -536,25 +538,25 @@ def build_prompt(task, texts, query, **kwargs):
         {img_context}
         - Output DIRECTLY without any prefixes like "Title:" or "Summary:" or "This image shows"
         - Do not add any format wrappers, prefixes, or explanations beyond the content
-        '''
+        """
 
     elif task == "ocr-image":
         temperature = 0.1
 
-        prompt = f'''
+        prompt = """
         You will receive an image, which may be a photo, chart, or an image requiring OCR.
         Your task is to perform OCR operation, fully extract and return the image content. Note:
         - **MUST Preserve the ORIGINAL LANGUAGE** of the text in the image
         - If the image contains no readable text, return exactly: null
         - Output the text content DIRECTLY, do not start with phrases like "The text reads"
         - Do not add any format wrappers, prefixes, or explanations beyond the text content
-        '''
+        """
 
     elif task == "ask-image":
         temperature = 0.1
-        max_tokens = int(kwargs['paras']['max_tokens'] * 1.2)
+        max_tokens = int(kwargs["paras"]["max_tokens"] * 1.2)
 
-        prompt = f'''
+        prompt = f"""
         You will receive one or more images and the user's current question: [{query}]
         You may also receive context related to the image(s).
         
@@ -565,31 +567,31 @@ def build_prompt(task, texts, query, **kwargs):
         - Provide a complete and accurate answer with some explanation, but not exceeding {max_tokens} characters
         - If the image content is unrelated to the user's question, return exactly: null
         - Do not return any additional explanations or descriptions beyond the answer
-        '''
+        """
 
     elif task == "judge-image-type":
         temperature = 0.1
-        prompt = f'''
+        prompt = """
         You will receive an image. Your task is to determine whether the image is primarily text-based or image-based. Note:
         - Text-based images include posters, display boards, scanned documents, etc.
         - All images except those with rich text content are considered image-based
         - Output strictly in JSON dictionary format with key "answer" and value can only be "text" or "image"
         - Do not return any additional explanations or descriptions
-        '''
+        """
 
     elif task == "atlas-page-info":
         temperature = 0.1
         max_tokens = 300
-        prompt = '''
+        prompt = """
         You will receive a scanned page from an engineering atlas (drawing collection).
         Your task is to extract the atlas number, atlas name, and page label from the title block (info bar), then format the output EXACTLY as shown below.
 
         Steps:
         1. FIRST: Find the title block / info bar (usually at the bottom-right corner or bottom edge of the page).
            - Extract:
-             a) Atlas number (图集号): a code with letters and digits, may include hyphens
-             b) Atlas name (图集名): the Chinese or English name of this drawing collection
-             c) Page label (页码): the page number or label shown in the title block
+             a) Atlas number: a code with letters and digits, which may include hyphens
+             b) Atlas name: the drawing collection name, whether shown in Chinese or English
+             c) Page label: the page number or page tag shown in the title block
            - Output EXACTLY this format (replace placeholders with real values):
              <atlas_no (if any)> (<atlas_name>) <page number>
 
@@ -607,15 +609,15 @@ def build_prompt(task, texts, query, **kwargs):
         - Use the SAME LANGUAGE as the text visible on the page
         - Do NOT wrap the output in quotes or markdown
         - Do NOT add any explanation before or after the formatted string
-        '''
+        """
 
     # ==================== Table Processing Prompts ====================
 
     elif task == "detect-table-headers":
         temperature = 0.1
-        context = f'        {texts}'
+        context = f"        {texts}"
 
-        prompt = f'''
+        prompt = f"""
         You are an intelligent assistant familiar with table data structures. You will receive the first few rows of a table (in HTML format).
         
         {context}
@@ -633,15 +635,15 @@ def build_prompt(task, texts, query, **kwargs):
         {{
           "answer": [<row_number1>, <row_number2>, ...]
         }}
-        '''
+        """
 
     # ==================== TOC Detection Prompts ====================
 
     elif task == "detect-toc-range":
         temperature = 0.1
         max_tokens = 100
-        start_idx = kwargs['paras']['start_idx']
-        end_idx = kwargs['paras']['end_idx']
+        start_idx = kwargs["paras"]["start_idx"]
+        end_idx = kwargs["paras"]["end_idx"]
 
         prompt = f"""You are a document analysis expert. You need to identify the actual start and end positions of the table of contents from the candidate region.
 
@@ -680,9 +682,9 @@ def build_prompt(task, texts, query, **kwargs):
     # ==================== Hierarchical Summary Prompts ====================
 
     elif task == "file-summary":
-        max_tokens = kwargs['paras'].get('max_tokens', 100)
-        node_name = kwargs['paras'].get('node_name', '')
-        lang = kwargs['paras'].get('lang')
+        max_tokens = kwargs["paras"].get("max_tokens", 100)
+        node_name = kwargs["paras"].get("node_name", "")
+        lang = kwargs["paras"].get("lang")
         lang_directive = _language_directive(lang)
         lang_rule = (
             f"- **LANGUAGE (HARD CONSTRAINT)**: {lang_directive}"
@@ -705,6 +707,7 @@ def build_prompt(task, texts, query, **kwargs):
 
     else:
         from loguru import logger
+
         logger.warning(f"Unknown task: {task}, returning empty prompt")
         prompt = ""
 

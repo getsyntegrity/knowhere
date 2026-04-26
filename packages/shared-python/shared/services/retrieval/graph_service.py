@@ -5,9 +5,9 @@ import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Iterable, Sequence
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -196,15 +196,17 @@ class DocumentGraphService:
             types_breakdown[chunk_type or 'text'] += 1
         chunks_count = len(chunk_meta_rows)
 
-        sections = list(
-            db.execute(
+        sections = [
+            section_title
+            for section_title in db.execute(
                 select(DocumentSection.section_title)
                 .where(DocumentSection.document_id == document_id)
                 .where(DocumentSection.job_result_id == job_result_id)
                 .where(DocumentSection.section_level <= 2)
                 .order_by(DocumentSection.sort_order)
             ).scalars()
-        )
+            if section_title is not None
+        ]
         top_summary = _extract_document_top_summary(chunk_metadata_list, sections)
 
         # ── Clean up old graph data for this document ──

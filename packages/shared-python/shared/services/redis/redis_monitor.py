@@ -1,6 +1,5 @@
-"""
-Redis监控服务
-"""
+"""Monitoring helpers for Redis state and business metrics."""
+
 import asyncio
 import time
 from typing import Any, Dict, List
@@ -12,25 +11,25 @@ from shared.utils.redis_key_builder import redis_key_builder
 
 
 class RedisMonitor:
-    """Redis监控服务"""
-    
+    """Redis monitoring service."""
+
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
         self._metrics = {}
         self._alerts = []
-    
+
     async def get_redis_info(self) -> Dict[str, Any]:
-        """获取Redis信息"""
+        """Get raw Redis INFO output."""
         try:
             client = await self.redis._get_client()
             info = await client.info()
             return info
         except Exception as e:
-            logger.error(f"获取Redis信息失败: {e}")
+            logger.error(f"Failed to get Redis info: {e}")
             return {}
-    
+
     async def get_memory_usage(self) -> Dict[str, Any]:
-        """获取内存使用情况"""
+        """Get Redis memory usage details."""
         try:
             info = await self.get_redis_info()
             memory_info = {
@@ -41,32 +40,36 @@ class RedisMonitor:
                 "used_memory_peak_human": info.get("used_memory_peak_human", "0B"),
                 "mem_fragmentation_ratio": info.get("mem_fragmentation_ratio", 0),
                 "maxmemory": info.get("maxmemory", 0),
-                "maxmemory_human": info.get("maxmemory_human", "0B")
+                "maxmemory_human": info.get("maxmemory_human", "0B"),
             }
             return memory_info
         except Exception as e:
-            logger.error(f"获取内存使用情况失败: {e}")
+            logger.error(f"Failed to get memory usage: {e}")
             return {}
-    
+
     async def get_connection_info(self) -> Dict[str, Any]:
-        """获取连接信息"""
+        """Get Redis connection details."""
         try:
             info = await self.get_redis_info()
             connection_info = {
                 "connected_clients": info.get("connected_clients", 0),
-                "client_recent_max_input_buffer": info.get("client_recent_max_input_buffer", 0),
-                "client_recent_max_output_buffer": info.get("client_recent_max_output_buffer", 0),
+                "client_recent_max_input_buffer": info.get(
+                    "client_recent_max_input_buffer", 0
+                ),
+                "client_recent_max_output_buffer": info.get(
+                    "client_recent_max_output_buffer", 0
+                ),
                 "blocked_clients": info.get("blocked_clients", 0),
                 "tracking_clients": info.get("tracking_clients", 0),
-                "clients_in_timeout_table": info.get("clients_in_timeout_table", 0)
+                "clients_in_timeout_table": info.get("clients_in_timeout_table", 0),
             }
             return connection_info
         except Exception as e:
-            logger.error(f"获取连接信息失败: {e}")
+            logger.error(f"Failed to get connection info: {e}")
             return {}
-    
+
     async def get_stats_info(self) -> Dict[str, Any]:
-        """获取统计信息"""
+        """Get Redis statistics."""
         try:
             info = await self.get_redis_info()
             stats_info = {
@@ -79,19 +82,19 @@ class RedisMonitor:
                 "rejected_connections": info.get("rejected_connections", 0),
                 "sync_full": info.get("sync_full", 0),
                 "sync_partial_ok": info.get("sync_partial_ok", 0),
-                "sync_partial_err": info.get("sync_partial_err", 0)
+                "sync_partial_err": info.get("sync_partial_err", 0),
             }
             return stats_info
         except Exception as e:
-            logger.error(f"获取统计信息失败: {e}")
+            logger.error(f"Failed to get statistics: {e}")
             return {}
-    
+
     async def get_keyspace_info(self) -> Dict[str, Any]:
-        """获取键空间信息"""
+        """Get Redis keyspace details."""
         try:
             info = await self.get_redis_info()
             keyspace_info = {}
-            
+
             for key, value in info.items():
                 if key.startswith("db"):
                     db_name = key
@@ -101,18 +104,18 @@ class RedisMonitor:
                             k, v = item.split("=", 1)
                             db_info[k] = v
                     keyspace_info[db_name] = db_info
-            
+
             return keyspace_info
         except Exception as e:
-            logger.error(f"获取键空间信息失败: {e}")
+            logger.error(f"Failed to get keyspace info: {e}")
             return {}
-    
+
     async def get_slow_log(self, count: int = 10) -> List[Dict[str, Any]]:
-        """获取慢查询日志"""
+        """Get slow-query log entries."""
         try:
             client = await self.redis._get_client()
             slow_log = await client.slowlog_get(count)
-            
+
             formatted_log = []
             for entry in slow_log:
                 formatted_entry = {
@@ -121,125 +124,141 @@ class RedisMonitor:
                     "duration": entry[2],
                     "command": " ".join(entry[3]),
                     "client": entry[4],
-                    "client_name": entry[5]
+                    "client_name": entry[5],
                 }
                 formatted_log.append(formatted_entry)
-            
+
             return formatted_log
         except Exception as e:
-            logger.error(f"获取慢查询日志失败: {e}")
+            logger.error(f"Failed to get slow query log: {e}")
             return []
-    
+
     async def get_key_count_by_type(self) -> Dict[str, int]:
-        """按类型统计键数量"""
+        """Count keys by database name."""
         try:
-            client = await self.redis._get_client()
+            await self.redis._get_client()
             keyspace_info = await self.get_keyspace_info()
-            
+
             key_counts = {}
             for db_name, db_info in keyspace_info.items():
                 key_count = int(db_info.get("keys", 0))
                 if key_count > 0:
                     key_counts[db_name] = key_count
-            
+
             return key_counts
         except Exception as e:
-            logger.error(f"统计键数量失败: {e}")
+            logger.error(f"Failed to count keys: {e}")
             return {}
-    
+
     async def get_business_metrics(self) -> Dict[str, Any]:
-        """获取业务指标"""
+        """Get application-facing business metrics from Redis."""
         try:
             metrics = {}
-            
-            # 在线用户数
-            online_users = await self.redis.smembers(redis_key_builder.set_online_users())
+
+            # Online user count.
+            online_users = await self.redis.smembers(
+                redis_key_builder.set_online_users()
+            )
             metrics["online_users_count"] = len(online_users)
-            
-            # 活跃用户数
-            active_users = await self.redis.smembers(redis_key_builder.set_active_users())
+
+            # Active user count.
+            active_users = await self.redis.smembers(
+                redis_key_builder.set_active_users()
+            )
             metrics["active_users_count"] = len(active_users)
-            
-            # 处理中任务数
-            processing_tasks = await self.redis.smembers(redis_key_builder.set_processing_tasks())
+
+            # Processing task count.
+            processing_tasks = await self.redis.smembers(
+                redis_key_builder.set_processing_tasks()
+            )
             metrics["processing_tasks_count"] = len(processing_tasks)
-            
-            # 错误日志数
+
+            # Error-log count.
             error_logs = await self.redis.llen(redis_key_builder.list_error_logs())
             metrics["error_logs_count"] = error_logs
-            
+
             return metrics
         except Exception as e:
-            logger.error(f"获取业务指标失败: {e}")
+            logger.error(f"Failed to get business metrics: {e}")
             return {}
-    
+
     async def check_health(self) -> Dict[str, Any]:
-        """检查Redis健康状态"""
+        """Check overall Redis health."""
         try:
             health_status = {
                 "is_healthy": False,
                 "ping_latency": 0,
                 "memory_usage": 0,
                 "connection_count": 0,
-                "issues": []
+                "issues": [],
             }
-            
-            # 检查PING延迟
+
+            # Measure PING latency.
             start_time = time.time()
             ping_result = await self.redis.ping()
-            ping_latency = (time.time() - start_time) * 1000  # 转换为毫秒
-            
+            ping_latency = (time.time() - start_time) * 1000  # Convert to milliseconds.
+
             if ping_result:
                 health_status["ping_latency"] = ping_latency
             else:
-                health_status["issues"].append("PING失败")
-            
-            # 检查内存使用
+                health_status["issues"].append("PING failed")
+
+            # Check memory usage.
             memory_info = await self.get_memory_usage()
             if memory_info:
                 used_memory = memory_info.get("used_memory", 0)
                 max_memory = memory_info.get("maxmemory", 0)
-                
+
                 if max_memory > 0:
                     memory_usage_percent = (used_memory / max_memory) * 100
                     health_status["memory_usage"] = memory_usage_percent
-                    
+
                     if memory_usage_percent > 90:
-                        health_status["issues"].append(f"内存使用率过高: {memory_usage_percent:.2f}%")
+                        health_status["issues"].append(
+                            f"Memory usage too high: {memory_usage_percent:.2f}%"
+                        )
                 else:
                     health_status["memory_usage"] = 0
-            
-            # 检查连接数
+
+            # Check connection count.
             connection_info = await self.get_connection_info()
             connection_count = connection_info.get("connected_clients", 0)
             health_status["connection_count"] = connection_count
-            
-            if connection_count > 1000:  # 假设1000个连接为警告阈值
-                health_status["issues"].append(f"连接数过多: {connection_count}")
-            
-            # 检查慢查询
+
+            if (
+                connection_count > 1000
+            ):  # Use 1000 connections as the warning threshold.
+                health_status["issues"].append(
+                    f"Too many connections: {connection_count}"
+                )
+
+            # Check slow queries.
             slow_log = await self.get_slow_log(5)
             if slow_log:
-                slow_queries = [log for log in slow_log if log["duration"] > 1000]  # 超过1秒的查询
+                slow_queries = [
+                    log for log in slow_log if log["duration"] > 1000
+                ]  # Queries slower than one second.
                 if slow_queries:
-                    health_status["issues"].append(f"发现 {len(slow_queries)} 个慢查询")
-            
-            # 判断整体健康状态
+                    health_status["issues"].append(
+                        f"Detected {len(slow_queries)} slow queries"
+                    )
+
+            # Compute the overall health flag.
             health_status["is_healthy"] = len(health_status["issues"]) == 0
-            
+
             return health_status
         except Exception as e:
-            logger.error(f"检查Redis健康状态失败: {e}")
+            logger.error(f"Failed to check Redis health: {e}")
             return {
                 "is_healthy": False,
                 "ping_latency": 0,
                 "memory_usage": 0,
                 "connection_count": 0,
-                "issues": [f"健康检查失败: {e}"]
+                "issues": [f"Health check failed: {e}"],
             }
-    
+
     async def get_comprehensive_report(self) -> Dict[str, Any]:
-        """获取综合监控报告"""
+        """Get a comprehensive monitoring report."""
         try:
             report = {
                 "timestamp": time.time(),
@@ -249,48 +268,46 @@ class RedisMonitor:
                 "stats": await self.get_stats_info(),
                 "keyspace": await self.get_keyspace_info(),
                 "business_metrics": await self.get_business_metrics(),
-                "slow_log": await self.get_slow_log(5)
+                "slow_log": await self.get_slow_log(5),
             }
             return report
         except Exception as e:
-            logger.error(f"生成监控报告失败: {e}")
+            logger.error(f"Failed to generate monitoring report: {e}")
             return {"error": str(e)}
-    
+
     async def start_monitoring(self, interval: int = 60):
-        """开始监控"""
-        logger.info("Redis监控已启动")
-        
+        """Start the monitoring loop."""
+        logger.info("Redis monitoring started")
+
         while True:
             try:
                 report = await self.get_comprehensive_report()
-                
-                # 检查健康状态
+
+                # Check the current health state.
                 if not report.get("health", {}).get("is_healthy", False):
                     issues = report.get("health", {}).get("issues", [])
                     for issue in issues:
-                        logger.warning(f"Redis健康检查警告: {issue}")
-                
-                # 记录指标
+                        logger.warning(f"Redis health check warning: {issue}")
+
+                # Record the latest metrics snapshot.
                 self._metrics[time.time()] = report
-                
-                # 清理旧指标（保留最近1小时的数据）
+
+                # Drop metrics older than one hour.
                 current_time = time.time()
                 self._metrics = {
-                    k: v for k, v in self._metrics.items() 
-                    if current_time - k < 3600
+                    k: v for k, v in self._metrics.items() if current_time - k < 3600
                 }
-                
+
                 await asyncio.sleep(interval)
-                
+
             except Exception as e:
-                logger.error(f"监控过程中出错: {e}")
+                logger.error(f"Error during monitoring: {e}")
                 await asyncio.sleep(interval)
-    
+
     def get_metrics_history(self, duration: int = 3600) -> Dict[str, Any]:
-        """获取历史指标"""
+        """Get recent metrics history."""
         current_time = time.time()
         filtered_metrics = {
-            k: v for k, v in self._metrics.items() 
-            if current_time - k < duration
+            k: v for k, v in self._metrics.items() if current_time - k < duration
         }
         return filtered_metrics

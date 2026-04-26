@@ -1,22 +1,27 @@
-"""
-垃圾回收工具函数
-这些函数被多个服务使用，保留在 shared-python 中
-"""
-import gc
+"""Garbage-collection utilities shared across services."""
 
-# torch 是可选依赖，只在需要 CUDA 清理时使用
-try:
-    import torch
-    HAS_TORCH = True
-except ImportError:
-    HAS_TORCH = False
+import gc
+import importlib
+from types import ModuleType
+
+_torch: ModuleType | bool | None = None
+
+
+def _get_torch() -> ModuleType | None:
+    global _torch
+    if _torch is None:
+        try:
+            _torch = importlib.import_module("torch")
+        except ImportError:
+            _torch = False
+    return _torch if isinstance(_torch, ModuleType) else None
 
 
 def gc_collect():
     """
-    执行垃圾回收，包括 CUDA 缓存清理（如果 torch 可用）
+    Run garbage collection, including CUDA cache cleanup when torch is available.
     """
     gc.collect()
-    if HAS_TORCH and torch.cuda.is_available():
+    torch = _get_torch()
+    if torch and torch.cuda.is_available():
         torch.cuda.empty_cache()
-

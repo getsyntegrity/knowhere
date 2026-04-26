@@ -1,4 +1,5 @@
 """Worker runtime limits for parser subprocesses and native thread pools."""
+
 from collections.abc import MutableMapping
 
 NATIVE_THREAD_CAPS = {
@@ -19,7 +20,9 @@ def read_pymupdf_max_concurrent() -> int:
     return settings.PYMUPDF_MAX_CONCURRENT
 
 
-def apply_native_thread_caps(env: MutableMapping[str, str] | None = None) -> dict[str, str]:
+def apply_native_thread_caps(
+    env: MutableMapping[str, str] | None = None,
+) -> dict[str, str]:
     """Force conservative native thread caps to protect the main worker loop."""
     import os
 

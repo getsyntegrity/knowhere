@@ -3,6 +3,7 @@ Sync database engine for Celery worker (gevent pool).
 Uses psycopg2 + psycogreen for cooperative DB access under gevent.
 API service continues using the async engine in database.py.
 """
+
 from contextlib import contextmanager
 from threading import RLock
 from typing import Generator

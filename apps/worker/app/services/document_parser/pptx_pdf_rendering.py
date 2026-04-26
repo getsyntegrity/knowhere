@@ -1,9 +1,8 @@
 import os
 import tempfile
 
-from loguru import logger
-
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
+from loguru import logger
 
 
 @worker
@@ -46,13 +45,16 @@ def render_pdf_to_image_pdf(pdf_bytes: bytes, scale: int = 3) -> bytes:
 
     try:
         result = run_in_child_process(
-            _render_pdf_worker, src_path, dst_path, scale,
+            _render_pdf_worker,
+            src_path,
+            dst_path,
+            scale,
         )
         with open(dst_path, "rb") as file_obj:
             rendered = file_obj.read()
         logger.info(
             f"[parse_pptx] Image-only PDF rendered: "
-            f"{len(rendered)/1024:.1f} KB, {result['page_count']} pages"
+            f"{len(rendered) / 1024:.1f} KB, {result['page_count']} pages"
         )
         return rendered
     finally:

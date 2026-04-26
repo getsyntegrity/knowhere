@@ -1,32 +1,19 @@
-from pathlib import Path
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy.engine import Connection, Engine
 
 from alembic import context
 
-# 导入我们的数据库配置和模型
+# Import the shared database configuration and metadata.
 from shared.core.config import settings
 from shared.core.database import Base
-from shared.models.database import (
-    api_key,
-    credits_transaction,
-    document,
-    knowledge_base,
-    payment_record,
-    stripe_price_config,
-    user,
-    user_balance,
-    webhook,
-    webhook_log,
-    webhook_secret,
-)
+from shared.models import database as shared_database_models  # noqa: F401
 
-# 创建同步数据库URL（将asyncpg替换为psycopg2）
+# Build a synchronous database URL by replacing asyncpg with psycopg2.
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
 
-# 获取SSL连接参数
+# Read SSL connect args from shared settings.
 ssl_connect_args = settings.get_ssl_connect_args()
 
 # this is the Alembic Config object, which provides
@@ -42,11 +29,50 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
-def include_object(object, name, type_, reflected, compare_to):
-    """Exclude externally managed tables from Alembic autogenerate output."""
-    if type_ == "table" and (name == "user" or name == "verification" or name == "jwks" or name == "account" or name == "emailVerificationToken" or name == "session"):
+_EXTERNALLY_MANAGED_TABLES: frozenset[str] = frozenset(
+    {
+        "user",
+        "verification",
+        "jwks",
+        "account",
+        "emailVerificationToken",
+        "session",
+    }
+)
+_AUTOGENERATE_IGNORED_COLUMNS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("document_chunks", "content_search_tsv"),
+        ("document_chunks", "path_search_tsv"),
+    }
+)
+
+
+def _resolve_table_name(object_: object, compare_to: object | None) -> str | None:
+    for candidate in (object_, compare_to):
+        table = getattr(candidate, "table", None)
+        table_name = getattr(table, "name", None)
+        if isinstance(table_name, str):
+            return table_name
+    return None
+
+
+def include_object(
+    object_: object,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: object | None,
+) -> bool:
+    """Exclude externally managed auth tables and generated TSV columns."""
+    del reflected
+    if type_ == "table" and isinstance(name, str) and name in _EXTERNALLY_MANAGED_TABLES:
         return False
+    if type_ == "column" and isinstance(name, str):
+        table_name = _resolve_table_name(object_, compare_to)
+        if table_name is not None and (table_name, name) in _AUTOGENERATE_IGNORED_COLUMNS:
+            return False
     return True
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -66,7 +92,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    # 使用我们的数据库配置（同步版本）
+    # Use the shared synchronous database configuration.
     url = sync_database_url
     context.configure(
         url=url,
@@ -74,8 +100,8 @@ def run_migrations_offline() -> None:
         include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        # 使用配置的SSL参数
-        connect_args=ssl_connect_args
+        # Pass through configured SSL connect args.
+        connect_args=ssl_connect_args,
     )
 
     with context.begin_transaction():
@@ -89,16 +115,9 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    # 直接使用create_engine来确保SSL参数被正确传递
-    from sqlalchemy import create_engine
-    
-    connectable = create_engine(
-        sync_database_url,
-        poolclass=pool.NullPool,
-        connect_args=ssl_connect_args
-    )
+    configured_connection = config.attributes.get("connection")
 
-    with connectable.connect() as connection:
+    def run_with_connection(connection: Connection) -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
@@ -107,6 +126,27 @@ def run_migrations_online() -> None:
 
         with context.begin_transaction():
             context.run_migrations()
+
+    if isinstance(configured_connection, Connection):
+        run_with_connection(configured_connection)
+        return
+
+    if isinstance(configured_connection, Engine):
+        with configured_connection.connect() as connection:
+            run_with_connection(connection)
+        return
+
+    # Use create_engine directly so SSL connect args are applied explicitly.
+    from sqlalchemy import create_engine
+
+    connectable = create_engine(
+        sync_database_url,
+        poolclass=pool.NullPool,
+        connect_args=ssl_connect_args,
+    )
+
+    with connectable.connect() as connection:
+        run_with_connection(connection)
 
 
 if context.is_offline_mode():

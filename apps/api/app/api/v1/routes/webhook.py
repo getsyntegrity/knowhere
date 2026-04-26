@@ -4,29 +4,30 @@ Webhook API Routes
 - GET /logs: Get webhook delivery history
 - POST /trigger: Manually trigger webhook for a job
 """
-from datetime import datetime
-import time
+
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query, Request
+from app.repositories.job_repository import JobRepository
+from app.repositories.webhook_repository import WebhookRepository
+from app.services.rate_limit.dependencies import CurrentUser, with_current_user
+from fastapi import APIRouter, Depends, Query
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.database import get_db
-from app.services.rate_limit.dependencies import with_current_user, CurrentUser
-from app.repositories.job_repository import JobRepository
-from app.repositories.webhook_repository import WebhookRepository
-from shared.services.webhook import get_webhook_dispatcher
+from shared.core.exceptions.domain_exceptions import (
+    NotFoundException,
+    PermissionDeniedException,
+    WebhookServiceException,
+)
 from shared.core.exceptions.knowhere_exception import KnowhereException
-from shared.core.exceptions.domain_exceptions import WebhookServiceException, PermissionDeniedException
 from shared.models.schemas.webhook import (
     WebhookLogList,
     WebhookLogResponse,
     WebhookTriggerRequest,
     WebhookTriggerResponse,
 )
-from shared.services.storage.file_upload_service import FileUploadService
-
+from shared.services.webhook import get_webhook_dispatcher
 
 router = APIRouter(tags=["Webhook"])
 
@@ -41,7 +42,7 @@ async def get_webhook_logs(
 ):
     """
     Get webhook delivery history logs.
-    
+
     Returns a paginated list of webhook delivery attempts, optionally filtered by job_id.
     Each log entry includes the delivery status, duration, and response details.
     """
@@ -49,9 +50,13 @@ async def get_webhook_logs(
         repo = WebhookRepository()
         offset = (page - 1) * page_size
         logs, total = await repo.get_webhook_logs(
-            db=db, user_id=current_user.user_id, job_id=job_id, limit=page_size, offset=offset
+            db=db,
+            user_id=current_user.user_id,
+            job_id=job_id,
+            limit=page_size,
+            offset=offset,
         )
-        
+
         return WebhookLogList(
             total=total,
             page=page,
@@ -62,7 +67,7 @@ async def get_webhook_logs(
                     job_id=log.job_id,
                     webhook_url=log.webhook_url,
                     attempt_number=log.attempt_number,
-                    request_payload=log.request_payload,
+                    request_payload=log.request_payload or {},
                     signature=log.signature,
                     idempotency_key=log.idempotency_key,
                     response_status_code=log.response_status_code,
@@ -81,7 +86,11 @@ async def get_webhook_logs(
         )
 
 
-@router.post("/trigger", response_model=WebhookTriggerResponse, summary="Manually Trigger Webhook")
+@router.post(
+    "/trigger",
+    response_model=WebhookTriggerResponse,
+    summary="Manually Trigger Webhook",
+)
 async def trigger_webhook(
     request: WebhookTriggerRequest,
     current_user: CurrentUser = Depends(with_current_user),
@@ -89,69 +98,78 @@ async def trigger_webhook(
 ):
     """
     Manually trigger a webhook for a completed or failed job.
-    
+
     This sends a webhook notification synchronously and returns the delivery result.
     Use this for testing or retrying failed webhook deliveries.
     """
     try:
         job_repo = JobRepository()
-        
+
         # 1. Fetch Job
         job = await job_repo.get_job_by_id(db, request.job_id)
         if not job:
-            from shared.core.exceptions.domain_exceptions import NotFoundException
-            raise NotFoundException(
-                resource="Job",
-                resource_id=request.job_id
-            )
-        
+            raise NotFoundException(resource="Job", resource_id=request.job_id)
+
         # Verify ownership
         if str(job.user_id) != current_user.user_id:
-             raise PermissionDeniedException(
+            raise PermissionDeniedException(
                 user_message="You don't have permission to trigger webhook for this job",
-                resource="Job"
+                required_permission="job:webhook:trigger",
             )
-        
+
         # 2. Validation - client errors (400)
         if not job.is_terminal_state():
             from shared.core.exceptions.domain_exceptions import ValidationException
+
             raise ValidationException(
                 user_message=f"Job must be in terminal state to trigger webhook. Current status: {job.status}",
-                violations=[{"field": "job_id", "description": f"Job status is '{job.status}', expected 'done' or 'failed'"}]
+                violations=[
+                    {
+                        "field": "job_id",
+                        "description": f"Job status is '{job.status}', expected 'done' or 'failed'",
+                    }
+                ],
             )
-        
+
         if not job.webhook_url:
             from shared.core.exceptions.webhook_exceptions import WebhookConfigException
+
             raise WebhookConfigException(
                 internal_message=f"Job {request.job_id} does not have webhook_url configured",
                 user_message="Job does not have a webhook URL configured. Configure webhook_url when creating the job.",
-                details={"field": "webhook_url", "reason": "not_configured"}
+                details={"field": "webhook_url", "reason": "not_configured"},
             )
-        
+
         # 3. Fetch existing WebhookEvent (Transactional Outbox)
         from sqlalchemy import select
+
         from shared.models.database.webhook import WebhookEvent
-        
-        result = await db.execute(select(WebhookEvent).where(WebhookEvent.job_id == request.job_id))
+
+        result = await db.execute(
+            select(WebhookEvent).where(WebhookEvent.job_id == request.job_id)
+        )
         event = result.scalars().first()
-        
+
         if not event:
-             from shared.core.exceptions.domain_exceptions import NotFoundException
-             raise NotFoundException(
+            raise NotFoundException(
                 resource="WebhookEvent",
                 resource_id=request.job_id,
-                user_message="No webhook event found for this job. Ensure the job has completed and webhooks are configured."
+                internal_message=(
+                    "No webhook event found for this job. Ensure the job has "
+                    "completed and webhooks are configured."
+                ),
             )
-        
+
         # Use dispatcher to send synchronously
         dispatcher = get_webhook_dispatcher()
         # Pass db session and is_manual=True to handle logging internally
-        success, status_code, duration_ms, error_message = await dispatcher._send_webhook(
-            db=db,
-            event=event,
-            is_manual=True
-        )
-        
+        (
+            success,
+            status_code,
+            duration_ms,
+            error_message,
+        ) = await dispatcher._send_webhook(db=db, event=event, is_manual=True)
+
         # 5. Return response
         return WebhookTriggerResponse(
             success=success,
@@ -161,7 +179,7 @@ async def trigger_webhook(
             delivery_id=None,  # Manual trigger doesn't create delivery log
             error_message=error_message,
         )
-        
+
     except KnowhereException:
         # Re-raise all known exceptions (NotFoundException, ValidationException, etc.)
         raise
@@ -178,7 +196,7 @@ async def trigger_webhook(
 # ):
 #     """
 #     Test endpoint to receive webhook callbacks.
-    
+
 #     Use this endpoint to verify webhook delivery. It logs receiving data
 #     to the server console and returns the received payload.
 #     """
@@ -186,7 +204,7 @@ async def trigger_webhook(
 #     logger.info("🔔 [Test Callback] Webhook Received!")
 #     logger.info(f"Headers: {dict(request.headers)}")
 #     logger.info(f"Payload: {payload}")
-    
+
 #     return {
 #         "status": "received",
 #         "timestamp": datetime.utcnow().isoformat(),

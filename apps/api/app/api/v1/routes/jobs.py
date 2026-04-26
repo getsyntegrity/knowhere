@@ -1,63 +1,73 @@
 """
-统一Jobs API路由（符合PRD规范）
+Unified Jobs API routes.
 """
 
 from __future__ import annotations
 
-from shared.core.billing import MicroDollar
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, cast
+from datetime import datetime, timezone
+from typing import Any, Dict, Literal, Optional, cast
 from urllib.parse import urlparse
 
-from shared.core.config import settings
-from shared.utils.url_file_type import resolve_file_extension_async
-from shared.utils.error_details import normalize_error_details
-from shared.core.database import get_db
+from app.repositories.job_repository import JobRepository
 from app.services.job_document_scope_service import (
     find_active_job_for_document,
     is_active_document_job_unique_violation,
     raise_document_ingestion_conflict,
     resolve_effective_document_scope,
 )
-from app.services.rate_limit.dependencies import (
-    with_current_user,
-    require_billing_limits,
-    enforce_job_creation_capacity,
-    CurrentUser,
-)
-from shared.core.state_machine.states import JobStatus
-from shared.models.schemas.job import (ConfirmUploadRequest, JobCreate, JobList,
-                                    JobResponse, JobResultResponse, StandardErrorObject)
-from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
+from app.services.rate_limit.dependencies import (
+    CurrentUser,
+    enforce_job_creation_capacity,
+    require_billing_limits,
+    with_current_user,
+)
 from app.services.state_machine import JobStateMachine
-from shared.services.storage.file_upload_service import FileUploadService
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.core.billing import MicroDollar
+from shared.core.config import settings
+from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
     ConflictException,
-    ValidationException,
+    JobOperationException,
     NotFoundException,
     PermissionDeniedException,
-    JobOperationException,
     RateLimitException,
     UnavailableException,
+    ValidationException,
 )
 from shared.core.exceptions.webhook_exceptions import WebhookConfigException
+from shared.core.state_machine.states import JobStatus
+from shared.models.schemas.job import (
+    ConfirmUploadRequest,
+    JobCreate,
+    JobList,
+    JobResponse,
+    JobResultResponse,
+    StandardErrorObject,
+)
+from shared.services.storage.file_upload_service import FileUploadService
 from shared.services.webhook.validator import validate_webhook_url_async
+from shared.utils.error_details import normalize_error_details
+from shared.utils.url_file_type import resolve_file_extension_async
 
 router = APIRouter(tags=["Jobs"])
+JobStatusValue = Literal[
+    "pending", "waiting-file", "running", "converting", "done", "failed"
+]
 
 
-# ==================== 公共工具函数 ====================
+# ==================== Shared Helpers ====================
 
 
 def get_supported_formats() -> str:
-    """获取所有支持的文件格式字符串"""
+    """Return the supported file extensions as a comma-separated string."""
     return ", ".join(sorted(settings.get_supported_extensions()))
 
 
@@ -68,17 +78,17 @@ async def transition_to_uploaded(
     trigger: str = "manual_upload_completed",
 ):
     """
-    将任务状态转换为uploaded
+    Move the job into the uploaded flow.
 
     Args:
-        db: 数据库会话
-        job_id: 任务ID
-        job_type: 任务类型
-        trigger: 触发原因
+        db: Database session.
+        job_id: Job identifier.
+        job_type: Job type.
+        trigger: Transition trigger.
     """
     state_machine = JobStateMachine()
 
-    # 文件上传完成后，转换到pending状态
+    # Once the upload is confirmed, transition the job to pending.
     await state_machine.transition(
         db, job_id, JobStatus.PENDING.value, trigger, None, "system"
     )
@@ -94,16 +104,16 @@ async def start_workflow_for_job(
     file_url: Optional[str] = None,
 ):
     """
-    为任务启动工作流
+    Start the workflow for a job.
 
     Args:
-        db: 数据库会话
-        job_id: 任务ID
-        job_type: 任务类型
-        source_type: 来源类型
-        user_id: 用户ID
-        file_path: 文件路径
-        file_url: 文件URL
+        db: Database session.
+        job_id: Job identifier.
+        job_type: Job type.
+        source_type: Source type.
+        user_id: User identifier.
+        file_path: File path.
+        file_url: File URL.
     """
     if job_type == "kb_management":
         orchestrator = KBOrchestrator()
@@ -118,26 +128,30 @@ async def start_workflow_for_job(
     else:
         raise ValidationException(
             user_message="Unsupported job type",
-            violations=[{"field": "job_type", "description": f"Job type '{job_type}' is not supported"}]
+            violations=[
+                {
+                    "field": "job_type",
+                    "description": f"Job type '{job_type}' is not supported",
+                }
+            ],
         )
 
 
-def check_job_permission(job, user_id: str) -> None:
+def check_job_permission(job, user_id: str, job_id: str) -> None:
     """
-    检查任务权限
+    Verify that the job belongs to the current user.
 
     Args:
-        job: 任务对象
-        user_id: Current user ID
+        job: Job object.
+        user_id: Current user ID.
+        job_id: Requested job ID.
 
     Raises:
-        HTTPException: 权限不足时抛出异常
+        HTTPException: Raised when the user does not own the job.
     """
     if not job:
         raise NotFoundException(
-            resource="Job",
-            resource_id=user_id,
-            internal_message="Job not found"
+            resource="Job", resource_id=job_id, internal_message="Job not found"
         )
 
     if str(job.user_id) != user_id:
@@ -146,7 +160,9 @@ def check_job_permission(job, user_id: str) -> None:
         )
 
 
-def _build_error_response(job: Any, job_metadata: Optional[dict] = None) -> Optional[StandardErrorObject]:
+def _build_error_response(
+    job: Any, job_metadata: Optional[dict] = None
+) -> Optional[StandardErrorObject]:
     """
     Build StandardErrorObject for embedded error pattern.
 
@@ -185,19 +201,19 @@ def create_job_response(
     expires_in: Optional[int] = None,
 ) -> JobResponse:
     """
-    创建JobResponse对象
+    Build a JobResponse object.
 
     Args:
-        job_id: 任务ID
-        job: 任务对象
-        source_type: 来源类型
-        data_id: 数据ID
-        upload_url: 上传URL（仅文件模式）
-        upload_headers: 上传头（仅文件模式）
-        expires_in: 过期时间（仅文件模式）
+        job_id: Job identifier.
+        job: Job object.
+        source_type: Source type.
+        data_id: Data identifier.
+        upload_url: Upload URL in file mode.
+        upload_headers: Upload headers in file mode.
+        expires_in: Upload expiry in file mode.
 
     Returns:
-        JobResponse: 任务响应对象
+        JobResponse: Serialized job response payload.
     """
     return JobResponse(
         job_id=job_id,
@@ -225,13 +241,13 @@ def resolve_public_document_id(job) -> Optional[str]:
 
 def validate_file_type(file_name: str) -> bool:
     """
-    验证文件类型是否支持所有SUPPORTED_EXTENSIONS格式
+    Return whether the file extension is supported.
 
     Args:
-        file_name: 文件名
+        file_name: File name.
 
     Returns:
-        bool: 是否支持的文件类型
+        bool: Whether the file type is supported.
     """
     if not file_name:
         return False
@@ -242,7 +258,7 @@ def validate_file_type(file_name: str) -> bool:
 
 
 def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    """确保返回UTC时间"""
+    """Normalize a datetime to UTC."""
     if not dt:
         return None
     if dt.tzinfo:
@@ -250,68 +266,108 @@ def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.replace(tzinfo=timezone.utc)
 
 
-@router.post("", response_model=JobResponse, summary="创建解析任务")
+def require_utc(dt: Optional[datetime], *, field_name: str) -> datetime:
+    """Normalize a required datetime to UTC."""
+    normalized_dt = ensure_utc(dt)
+    if normalized_dt is None:
+        raise JobOperationException(
+            internal_message=f"Job is missing required datetime field: {field_name}"
+        )
+    return normalized_dt
+
+
+def to_job_status_value(status: str) -> JobStatusValue:
+    """Cast a persisted job status into the response literal type."""
+    return cast(JobStatusValue, status)
+
+
+@router.post("", response_model=JobResponse, summary="Create a parsing job")
 @router.post("/", include_in_schema=False)
-async def create_job(
+async def create_job(  # pyright: ignore[reportGeneralTypeIssues]
     payload: JobCreate,
     http_request: Request,
     current_user: CurrentUser = Depends(require_billing_limits),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    创建解析任务 - 符合PRD第5.1.3节规范
+    Create a parsing job.
     """
     try:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
-        # 验证参数
+        # Validate input parameters.
         if payload.source_type == "file" and not payload.file_name:
             raise ValidationException(
                 user_message="file_name is required when source_type is 'file'",
-                violations=[{"field": "file_name", "description": "Required for file source type"}]
+                violations=[
+                    {
+                        "field": "file_name",
+                        "description": "Required for file source type",
+                    }
+                ],
             )
         if payload.source_type == "url" and not payload.source_url:
             raise ValidationException(
                 user_message="source_url is required when source_type is 'url'",
-                violations=[{"field": "source_url", "description": "Required for url source type"}]
+                violations=[
+                    {
+                        "field": "source_url",
+                        "description": "Required for url source type",
+                    }
+                ],
             )
 
         # Validate webhook config if present
         if payload.webhook:
             # Check for URL validity
             if payload.webhook.url:
-                validation_result = await validate_webhook_url_async(payload.webhook.url)
+                validation_result = await validate_webhook_url_async(
+                    payload.webhook.url
+                )
                 if not validation_result.is_valid:
-                     raise WebhookConfigException(
+                    raise WebhookConfigException(
                         user_message="Invalid webhook URL",
-                        internal_message=f"Webhook validation failed: {validation_result.error_message}"
+                        internal_message=f"Webhook validation failed: {validation_result.error_message}",
                     )
 
-        # 验证文件类型
-        if payload.source_type == "file" and payload.file_name and not validate_file_type(payload.file_name):
+        # Validate the source file type.
+        if (
+            payload.source_type == "file"
+            and payload.file_name
+            and not validate_file_type(payload.file_name)
+        ):
             supported_formats = get_supported_formats()
             raise ValidationException(
                 user_message=f"Unsupported file type. Supported formats: {supported_formats}",
-                violations=[{"field": "file_name", "description": "File type not supported"}]
+                violations=[
+                    {"field": "file_name", "description": "File type not supported"}
+                ],
             )
         elif payload.source_type == "url":
+            assert payload.source_url is not None
             # Resolve file type from URL path or Content-Type header
             file_ext = await resolve_file_extension_async(payload.source_url)
             if not file_ext:
                 supported_formats = get_supported_formats()
                 raise ValidationException(
                     user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
-                    violations=[{"field": "source_url", "description": "URL file type not supported"}]
+                    violations=[
+                        {
+                            "field": "source_url",
+                            "description": "URL file type not supported",
+                        }
+                    ],
                 )
 
         job_type = "kb_management"
 
-        # 简化版：不再在API层获取user_config，Worker直接使用settings.USERS_DATA_PATH
+        # Keep job creation lightweight. The worker reads USERS_DATA_PATH directly.
         from shared.services.redis import RedisServiceFactory
-        
+
         redis_service = RedisServiceFactory.get_service()
-        
-        # 构建job_metadata（不再包含user_config）
+
+        # Build job_metadata without embedding user_config.
         from shared.models.schemas.job_metadata import JobMetadataHelper
+
         job_metadata = JobMetadataHelper.create_from_request(payload)
         requested_document_id = cast(Optional[str], job_metadata.get("document_id"))
         if requested_document_id:
@@ -325,7 +381,10 @@ async def create_job(
                     document_id=requested_document_id,
                     active_job_id=active_job.job_id,
                 )
-        effective_document_id, effective_namespace = await resolve_effective_document_scope(
+        (
+            effective_document_id,
+            effective_namespace,
+        ) = await resolve_effective_document_scope(
             db,
             user_id=current_user.user_id,
             document_id=requested_document_id,
@@ -354,14 +413,14 @@ async def create_job(
         )
 
         if payload.source_type == "file":
-            # 文件上传模式 - 申请萝卜坑
+            # File-upload mode: reserve the job row first.
             assert payload.file_name is not None
             file_extension = os.path.splitext(payload.file_name)[1]
             s3_key = f"uploads/{job_id}{file_extension}"
             job_metadata["source_file_name"] = payload.file_name
             job_metadata["source_type"] = "file"
 
-            # 创建状态为waiting-file的job (s3_key set at creation — single INSERT)
+            # Create the waiting-file job row with the final S3 key in one insert.
             job_repo = JobRepository()
             try:
                 job = await job_repo.create_job(
@@ -370,7 +429,7 @@ async def create_job(
                     user_id=current_user.user_id,
                     job_type=job_type,
                     source_type="file",
-                    file_path=None,  # 文件还未上传
+                    file_path=None,  # The file has not been uploaded yet.
                     webhook_url=payload.webhook.url if payload.webhook else None,
                     metadata=job_metadata,
                     initial_state="waiting-file",
@@ -386,22 +445,23 @@ async def create_job(
                     internal_message="Failed to create job in database"
                 )
 
-            # 生成预签名URL
+            # Generate the presigned upload URL.
             upload_service = FileUploadService()
             upload_info = await upload_service.generate_upload_url(
                 job_id, file_extension
             )
 
-            # 3. 保存job_metadata到Redis（2小时缓存）
-            from shared.services.redis.job_metadata_service import \
-                JobMetadataService
+            # 3. Cache job_metadata in Redis for two hours.
+            from shared.services.redis.job_metadata_service import JobMetadataService
+
             metadata_service = JobMetadataService(redis_service)
             await metadata_service.save_metadata(job_id, job_metadata)
-            
-            # 4. 保存Job基本信息到Redis（2小时缓存）
+
+            # 4. Cache the basic job info in Redis for two hours.
             from datetime import datetime
 
             from shared.services.redis import JobInfoRedisService
+
             job_info_service = JobInfoRedisService(redis_service)
             job_info = {
                 "job_id": job_id,
@@ -410,13 +470,15 @@ async def create_job(
                 "webhook_enabled": bool(payload.webhook and payload.webhook.url),
                 "job_type": job_type,
                 "source_type": "file",
-                "created_at": datetime.now(timezone.utc).isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await job_info_service.save_job_info(job_id, job_info)
 
-            logger.info(f"Job {job_id} upload_url returned to client: {upload_info['upload_url']}")
+            logger.info(
+                f"Job {job_id} upload_url returned to client: {upload_info['upload_url']}"
+            )
 
-            # 构建响应
+            # Build the response payload.
             response = create_job_response(
                 job_id=job_id,
                 job=job,
@@ -431,30 +493,41 @@ async def create_job(
             return response
 
         else:
-            # URL模式 - 创建Job后异步下载和上传
+            # URL mode: create the job first, then download and upload asynchronously.
             try:
+                assert payload.source_url is not None
                 # Resolve file extension (URL path first, then Content-Type header)
                 file_extension = await resolve_file_extension_async(payload.source_url)
                 if not file_extension:
                     supported_formats = get_supported_formats()
                     raise ValidationException(
                         user_message=f"Unsupported URL file type. Supported formats: {supported_formats}",
-                        violations=[{"field": "source_url", "description": "URL file type not supported"}]
+                        violations=[
+                            {
+                                "field": "source_url",
+                                "description": "URL file type not supported",
+                            }
+                        ],
                     )
 
                 parsed_url = urlparse(payload.source_url)
                 url_basename = str(os.path.basename(parsed_url.path))
                 # Ensure source_file_name carries the correct extension.
                 # URLs like arxiv.org/pdf/1706.03762 have no real extension in the path.
-                if url_basename and os.path.splitext(url_basename)[1].lower() == file_extension:
+                if (
+                    url_basename
+                    and os.path.splitext(url_basename)[1].lower() == file_extension
+                ):
                     source_file_name = url_basename
                 elif url_basename:
                     source_file_name = f"{url_basename}{file_extension}"
                 else:
-                    source_file_name = f"url_file_{uuid.uuid4().hex[:8]}{file_extension}"
+                    source_file_name = (
+                        f"url_file_{uuid.uuid4().hex[:8]}{file_extension}"
+                    )
 
                 s3_key = f"uploads/{job_id}{file_extension}"
-                
+
                 job_metadata.update(
                     {
                         "source_file_name": source_file_name,
@@ -463,7 +536,7 @@ async def create_job(
                     }
                 )
 
-                # 创建状态为pending的job（文件将异步上传）
+                # Create the waiting-file job row; the file will arrive asynchronously.
                 job_repo = JobRepository()
                 try:
                     job = await job_repo.create_job(
@@ -475,12 +548,14 @@ async def create_job(
                         file_path=None,
                         webhook_url=payload.webhook.url if payload.webhook else None,
                         metadata=job_metadata,
-                        initial_state=JobStatus.WAITING_FILE.value,  # 使用pending状态
-                        s3_key=s3_key,  # 预设s3_key
+                        initial_state=JobStatus.WAITING_FILE.value,  # Reuse waiting-file for URL uploads.
+                        s3_key=s3_key,  # Precomputed target S3 key.
                     )
                 except IntegrityError as exc:
                     if is_active_document_job_unique_violation(exc):
-                        raise_document_ingestion_conflict(document_id=effective_document_id)
+                        raise_document_ingestion_conflict(
+                            document_id=effective_document_id
+                        )
                     raise
 
                 if not job:
@@ -488,16 +563,19 @@ async def create_job(
                         internal_message="Failed to create URL job in database"
                     )
 
-                # 保存job_metadata到Redis（2小时缓存）
-                from shared.services.redis.job_metadata_service import \
-                    JobMetadataService
+                # Cache job_metadata in Redis for two hours.
+                from shared.services.redis.job_metadata_service import (
+                    JobMetadataService,
+                )
+
                 metadata_service = JobMetadataService(redis_service)
                 await metadata_service.save_metadata(job_id, job_metadata)
-                
-                # 保存Job基本信息到Redis（2小时缓存）
+
+                # Cache the basic job info in Redis for two hours.
                 from datetime import datetime
 
                 from shared.services.redis import JobInfoRedisService
+
                 job_info_service = JobInfoRedisService(redis_service)
                 job_info = {
                     "job_id": job_id,
@@ -506,22 +584,25 @@ async def create_job(
                     "webhook_enabled": bool(payload.webhook and payload.webhook.url),
                     "job_type": job_type,
                     "source_type": "url",
-                    "created_at": datetime.now(timezone.utc).isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 await job_info_service.save_job_info(job_id, job_info)
 
-                # 异步启动URL文件下载和上传任务（任务已迁移到 Worker，通过名称引用）
+                # Start the URL download/upload task asynchronously in the worker.
                 from shared.core.celery_app import get_celery_app
+
                 celery_app = get_celery_app()
-                upload_url_file_task = celery_app.signature('app.core.tasks.kb_tasks.upload_url_file_task')
+                upload_url_file_task = celery_app.signature(
+                    "app.core.tasks.kb_tasks.upload_url_file_task"
+                )
                 upload_url_file_task.apply_async(
                     args=[job_id, payload.source_url, current_user.user_id],
                     kwargs={
                         "job_type": job_type,
-                    }
+                    },
                 )
 
-                # 构建响应
+                # Build the response payload.
                 response = create_job_response(
                     job_id=job_id,
                     job=job,
@@ -543,7 +624,7 @@ async def create_job(
             except JobOperationException:
                 raise
             except Exception as e:
-                logger.error(f"URL任务创建失败: {e}")
+                logger.error(f"Failed to create URL job: {e}")
                 raise JobOperationException(
                     internal_message=f"URL job creation failed: {str(e)}"
                 )
@@ -561,52 +642,59 @@ async def create_job(
     except JobOperationException:
         raise
     except Exception as e:
-        logger.error(f"创建任务失败: {e}")
-        raise JobOperationException(
-            internal_message=f"Job creation failed: {str(e)}"
-        )
+        logger.error(f"Failed to create job: {e}")
+        raise JobOperationException(internal_message=f"Job creation failed: {str(e)}")
 
 
-@router.get("", response_model=JobList, summary="获取任务列表")
+@router.get("", response_model=JobList, summary="List jobs")
 @router.get("/page", response_model=JobList, include_in_schema=False)
 async def list_jobs(
-    page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
-    job_status: Optional[str] = Query(None, description="状态过滤"),
-    job_type: Optional[str] = Query(None, description="任务类型过滤"),
-    recent_days: Optional[int] = Query(None, description="最近天数过滤，支持 1/7/30", enum=[1, 7, 30]),
-    start_time: Optional[datetime] = Query(None, description="开始时间，ISO格式"),
-    end_time: Optional[datetime] = Query(None, description="结束时间，ISO格式"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    job_status: Optional[str] = Query(None, description="Status filter"),
+    job_type: Optional[str] = Query(None, description="Job type filter"),
+    recent_days: Optional[int] = Query(
+        None,
+        description="Recent-day filter; supported values are 1, 7, and 30",
+        enum=[1, 7, 30],
+    ),
+    start_time: Optional[datetime] = Query(
+        None, description="Start time in ISO format"
+    ),
+    end_time: Optional[datetime] = Query(None, description="End time in ISO format"),
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取任务列表
+    List jobs for the current user.
     """
     try:
         job_repo = JobRepository()
-        
+
         if recent_days not in (None, 1, 7, 30):
             raise ValidationException(
                 user_message="recent_days only supports 1, 7, or 30",
-                violations=[{"field": "recent_days", "description": "Invalid value"}]
+                violations=[{"field": "recent_days", "description": "Invalid value"}],
             )
         created_after = None
         if recent_days:
             from datetime import datetime, timedelta
+
             created_after = datetime.now() - timedelta(days=recent_days)
-        
+
         if start_time and end_time and start_time > end_time:
             raise ValidationException(
                 user_message="start_time cannot be later than end_time",
-                violations=[{"field": "start_time", "description": "Must be before end_time"}]
+                violations=[
+                    {"field": "start_time", "description": "Must be before end_time"}
+                ],
             )
-        # start_time / end_time 优先于 recent_days
+        # start_time / end_time take priority over recent_days.
         if start_time:
             created_after = start_time
         created_before = end_time
 
-        # 获取符合条件的总记录数
+        # Count matching rows.
         total_count = await job_repo.count_jobs_by_user(
             db=db,
             user_id=current_user.user_id,
@@ -616,7 +704,7 @@ async def list_jobs(
             job_status=job_status,
         )
 
-        # 获取任务列表
+        # Fetch the matching jobs.
         jobs = await job_repo.get_jobs_by_user(
             db=db,
             user_id=current_user.user_id,
@@ -628,7 +716,7 @@ async def list_jobs(
             job_status=job_status,
         )
 
-        # 构建响应
+        # Build the response payload.
         job_responses = []
         upload_service = FileUploadService()
         from shared.models.schemas.job_metadata import JobMetadataHelper
@@ -636,33 +724,49 @@ async def list_jobs(
 
         redis_service = RedisServiceFactory.get_service()
         for job in jobs:
-            # 使用统一接口获取job_metadata
-            job_metadata = await job_repo.get_job_metadata(db, job.job_id, redis_service)
+            # Load job_metadata through the shared access path.
+            job_metadata = await job_repo.get_job_metadata(
+                db, job.job_id, redis_service
+            )
             job_result = job.job_result
-            status_for_api = job.status
+            status_for_api = to_job_status_value(job.status)
 
             result_url = None
             result = None
-            result_url_expires_at = job.created_at  # 默认使用创建时间
+            result_url_expires_at = job.created_at  # Default to created_at.
 
             if job_result and job_result.result_s3_key:
-                result_url_info = cast(Dict[str, Any], await upload_service.generate_download_url(
-                    job_result.result_s3_key
-                ))
+                result_url_info = cast(
+                    Dict[str, Any],
+                    await upload_service.generate_download_url(
+                        job_result.result_s3_key
+                    ),
+                )
                 result_url = result_url_info["download_url"]
 
-                # 从 inline_payload 获取 checksum（只包含 checksum）
+                # Read checksum-only data from inline_payload when present.
                 if job_result.inline_payload:
                     result = job_result.inline_payload
 
-                # 处理result_url_expires_at字段
+                # Compute result_url_expires_at when a download URL was issued.
                 if result_url:
                     from datetime import datetime, timedelta
-                    expires_in = int(result_url_info.get("expires_in", 3600))
-                    result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
-            original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
-            source_url = original_request.get("source_url") if isinstance(original_request, dict) else None
+                    expires_in = int(result_url_info.get("expires_in", 3600))
+                    result_url_expires_at = datetime.now() + timedelta(
+                        seconds=expires_in
+                    )
+
+            original_request = (
+                job_metadata.get("original_request")
+                if isinstance(job_metadata, dict)
+                else {}
+            )
+            source_url = (
+                original_request.get("source_url")
+                if isinstance(original_request, dict)
+                else None
+            )
             file_name = None
             if source_url:
                 parsed_source = urlparse(source_url)
@@ -673,82 +777,102 @@ async def list_jobs(
             if file_name:
                 ext = os.path.splitext(file_name)[1]
                 file_extension = ext[1:].upper() if ext else None
-            
+
             parsing_params = {}
             if isinstance(original_request, dict):
                 parsing_params = original_request.get("parsing_params") or {}
             if not parsing_params and isinstance(job_metadata, dict):
                 parsing_params = job_metadata.get("parsing_params") or {}
-            model = parsing_params.get("model") if isinstance(parsing_params, dict) else None
-            ocr_enabled = parsing_params.get("ocr_enabled") if isinstance(parsing_params, dict) else None
-            
+            model = (
+                parsing_params.get("model")
+                if isinstance(parsing_params, dict)
+                else None
+            )
+            ocr_enabled = (
+                parsing_params.get("ocr_enabled")
+                if isinstance(parsing_params, dict)
+                else None
+            )
+
             duration_seconds = None
             if job.updated_at and job.created_at:
                 duration_seconds = (job.updated_at - job.created_at).total_seconds()
-            
+
             job_responses.append(
                 JobResultResponse(
                     job_id=job.job_id,
+                    namespace=JobMetadataHelper.get_field(job_metadata, "namespace"),
+                    document_id=resolve_public_document_id(job),
                     status=status_for_api,
                     source_type=job.source_type,
                     data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-                    created_at=ensure_utc(job.created_at),
-                    progress=None,  # 任务列表不显示详细进度
+                    created_at=require_utc(job.created_at, field_name="created_at"),
+                    progress=None,  # The list view does not expose detailed progress.
                     error=_build_error_response(job, job_metadata),
                     result=result,
                     result_url=result_url,
-                    result_url_expires_at=ensure_utc(result_url_expires_at),
+                    result_url_expires_at=require_utc(
+                        result_url_expires_at,
+                        field_name="result_url_expires_at",
+                    ),
                     file_name=file_name,
                     file_extension=file_extension,
                     model=model,
                     ocr_enabled=ocr_enabled,
                     duration_seconds=duration_seconds,
-                    credits_spent=MicroDollar(job.credits_charged).to_credit() if hasattr(job, "credits_charged") else 0,
+                    credits_spent=(
+                        MicroDollar(job.credits_charged).to_credit()
+                        if hasattr(job, "credits_charged")
+                        else 0
+                    ),
                 )
             )
 
-        # 计算总页数
+        # Compute the total page count.
         import math
+
         total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
 
         response = JobList(
-            jobs=job_responses, total=total_count, page=page, page_size=page_size, total_pages=total_pages
+            jobs=job_responses,
+            total=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
         )
 
         return response
 
     except Exception as e:
-        logger.error(f"获取任务列表失败: {e}")
+        logger.error(f"Failed to list jobs: {e}")
         raise JobOperationException(
             internal_message=f"Failed to get job list: {str(e)}"
         )
 
 
-@router.get(
-    "/{job_id}", response_model=JobResultResponse, summary="获取任务结果"
-)
+@router.get("/{job_id}", response_model=JobResultResponse, summary="Get a job result")
 async def get_job_result(
     job_id: str,
     current_user: CurrentUser = Depends(with_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取任务结果 - 符合PRD第5.1.3节规范
+    Return the result payload for one job.
     """
     try:
         job_repo = JobRepository()
 
-        # 获取Job并检查权限
+        # Load the job and verify access.
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, current_user.user_id)
+        check_job_permission(job, current_user.user_id, job_id)
         assert job is not None
 
-        status_for_api = job.status
+        status_for_api = to_job_status_value(job.status)
 
-        # 获取进度信息，当任务状态为running时，从Redis获取详细进度信息
+        # Load detailed progress from Redis while the job is running.
         progress = None
         if status_for_api == "running":
-            # TODO：从Redis获取详细进度信息，并转换为progress格式
+            # TODO: Load detailed progress from Redis and convert it to the progress schema.
             # from shared.services.redis import RedisServiceFactory
             # redis_service = RedisServiceFactory.get_service()
             # from shared.utils.redis_key_builder import redis_key_builder
@@ -757,38 +881,48 @@ async def get_job_result(
             # progress = await redis_service.hgetall(progress_key)
             progress = {"total_pages": 10, "processed_pages": 5}
 
-        # 使用统一接口获取job_metadata
+        # Load job_metadata through the shared access path.
         from shared.models.schemas.job_metadata import JobMetadataHelper
         from shared.services.redis import RedisServiceFactory
-        
+
         redis_service = RedisServiceFactory.get_service()
         job_metadata = await job_repo.get_job_metadata(db, job_id, redis_service)
 
-        # 结果交付信息
+        # Result delivery fields.
         job_result = job.job_result
         result_url = None
         result = None
-        result_url_expires_at = job.created_at  # 默认使用创建时间
-        
+        result_url_expires_at = job.created_at  # Default to created_at.
+
         if job_result and job_result.result_s3_key:
             upload_service = FileUploadService()
-            result_url_info = cast(Dict[str, Any], await upload_service.generate_download_url(
-                job_result.result_s3_key
-            ))
+            result_url_info = cast(
+                Dict[str, Any],
+                await upload_service.generate_download_url(job_result.result_s3_key),
+            )
             result_url = result_url_info["download_url"]
             expires_in = int(result_url_info["expires_in"])
 
-            # 从 inline_payload 获取 checksum 和 statistics
+            # Read checksum/statistics data from inline_payload when present.
             if job_result.inline_payload:
                 result = job_result.inline_payload
 
-            # 处理result_url_expires_at字段
+            # Compute result_url_expires_at when a download URL was issued.
             if result_url:
                 from datetime import datetime, timedelta
+
                 result_url_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
-        original_request = job_metadata.get("original_request") if isinstance(job_metadata, dict) else {}
-        source_url = original_request.get("source_url") if isinstance(original_request, dict) else None
+        original_request = (
+            job_metadata.get("original_request")
+            if isinstance(job_metadata, dict)
+            else {}
+        )
+        source_url = (
+            original_request.get("source_url")
+            if isinstance(original_request, dict)
+            else None
+        )
         file_name = None
         if source_url:
             parsed_source = urlparse(source_url)
@@ -799,15 +933,21 @@ async def get_job_result(
         if file_name:
             ext = os.path.splitext(file_name)[1]
             file_extension = ext[1:].upper() if ext else None
-        
+
         parsing_params = {}
         if isinstance(original_request, dict):
             parsing_params = original_request.get("parsing_params") or {}
         if not parsing_params and isinstance(job_metadata, dict):
             parsing_params = job_metadata.get("parsing_params") or {}
-        model = parsing_params.get("model") if isinstance(parsing_params, dict) else None
-        ocr_enabled = parsing_params.get("ocr_enabled") if isinstance(parsing_params, dict) else None
-        
+        model = (
+            parsing_params.get("model") if isinstance(parsing_params, dict) else None
+        )
+        ocr_enabled = (
+            parsing_params.get("ocr_enabled")
+            if isinstance(parsing_params, dict)
+            else None
+        )
+
         response_data = JobResultResponse(
             job_id=job.job_id,
             namespace=JobMetadataHelper.get_field(job_metadata, "namespace"),
@@ -815,18 +955,29 @@ async def get_job_result(
             status=status_for_api,
             source_type=job.source_type,
             data_id=JobMetadataHelper.get_field(job_metadata, "data_id"),
-            created_at=ensure_utc(job.created_at),
+            created_at=require_utc(job.created_at, field_name="created_at"),
             progress=progress,
             error=_build_error_response(job, job_metadata),
             result=result,
             result_url=result_url,
-            result_url_expires_at=ensure_utc(result_url_expires_at),
+            result_url_expires_at=require_utc(
+                result_url_expires_at,
+                field_name="result_url_expires_at",
+            ),
             file_name=file_name,
             file_extension=file_extension,
             model=model,
             ocr_enabled=ocr_enabled,
-            duration_seconds=(job.updated_at - job.created_at).total_seconds() if job.updated_at and job.created_at else None,
-            credits_spent=MicroDollar(job.credits_charged).to_credit() if hasattr(job, "credits_charged") else 0,
+            duration_seconds=(
+                (job.updated_at - job.created_at).total_seconds()
+                if job.updated_at and job.created_at
+                else None
+            ),
+            credits_spent=(
+                MicroDollar(job.credits_charged).to_credit()
+                if hasattr(job, "credits_charged")
+                else 0
+            ),
         )
 
         return response_data
@@ -836,7 +987,7 @@ async def get_job_result(
     except PermissionDeniedException:
         raise
     except Exception as e:
-        logger.error(f"获取任务结果失败: {e}")
+        logger.error(f"Failed to get job result: {e}")
         raise JobOperationException(
             internal_message=f"Failed to get job result: {str(e)}"
         )
@@ -845,7 +996,7 @@ async def get_job_result(
 @router.post(
     "/{job_id}/confirm-upload",
     response_model=dict,
-    summary="确认文件上传",
+    summary="Confirm file upload",
 )
 async def confirm_upload(
     job_id: str,
@@ -854,27 +1005,30 @@ async def confirm_upload(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    确认文件上传完成 - 备用机制
+    Confirm a completed file upload as a fallback path.
     """
     try:
         job_repo = JobRepository()
 
-        # 获取Job并检查权限
+        # Load the job and verify access.
         job = await job_repo.get_job_by_id(db, job_id)
-        check_job_permission(job, current_user.user_id)
+        check_job_permission(job, current_user.user_id, job_id)
+        assert job is not None
 
-        # 检查任务状态
+        # Check the current job state.
         logger.info(f"Confirm upload - Job {job_id} current status: {job.status}")
         if job.status not in [JobStatus.PENDING.value, JobStatus.WAITING_FILE.value]:
-            # 如果已经被webhook触发，返回成功（幂等性）
+            # If the webhook already advanced the job, return success idempotently.
             logger.info(f"Job {job_id} already processed, status: {job.status}")
-            return {"message": "任务状态已更新"}
+            return {"message": "Job status already updated"}
 
-        # 验证S3文件存在
+        # Verify that the S3 object exists.
         if not job.s3_key:
             raise ValidationException(
                 user_message="Job is missing S3 key information",
-                violations=[{"field": "s3_key", "description": "S3 key not set for this job"}]
+                violations=[
+                    {"field": "s3_key", "description": "S3 key not set for this job"}
+                ],
             )
 
         upload_service = FileUploadService()
@@ -883,15 +1037,15 @@ async def confirm_upload(
         if not file_info.get("exists"):
             raise ValidationException(
                 user_message="S3 file does not exist, please upload the file first",
-                violations=[{"field": "file", "description": "File not found in S3"}]
+                violations=[{"field": "file", "description": "File not found in S3"}],
             )
 
-        # 更新任务状态
+        # Advance the job state.
         await transition_to_uploaded(
             db, job_id, job.job_type, "manual_upload_completed"
         )
 
-        # 触发任务处理
+        # Start job processing.
         await start_workflow_for_job(
             db=db,
             job_id=job_id,
@@ -900,7 +1054,7 @@ async def confirm_upload(
             user_id=current_user.user_id,
         )
 
-        return {"message": "文件上传确认成功，任务已开始处理"}
+        return {"message": "File upload confirmed; processing started"}
 
     except NotFoundException:
         raise
@@ -909,7 +1063,7 @@ async def confirm_upload(
     except ValidationException:
         raise
     except Exception as e:
-        logger.error(f"确认上传失败: {e}")
+        logger.error(f"Failed to confirm upload: {e}")
         raise JobOperationException(
             internal_message=f"Failed to confirm upload: {str(e)}"
         )

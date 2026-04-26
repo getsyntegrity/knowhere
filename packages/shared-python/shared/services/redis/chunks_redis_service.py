@@ -1,6 +1,5 @@
-"""
-Chunks数据Redis服务
-"""
+"""Redis service for persisted chunk payloads."""
+
 import json
 import os
 import uuid
@@ -18,30 +17,30 @@ except ImportError:
 
 
 class ChunksRedisService:
-    """Chunks数据Redis服务"""
+    """Redis service for chunk data."""
 
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
 
     def _dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
         """
-        将DataFrame转换为chunks格式
+        Convert a DataFrame into chunk records.
 
         Args:
-            df: pandas DataFrame，包含文档解析结果
+            df: pandas DataFrame containing document parsing results.
 
         Returns:
-            List[Dict]: chunks数据列表
+            List[Dict]: Chunk record list.
         """
         if df is None or len(df) == 0:
-            logger.warning("DataFrame为空，返回空chunks列表")
+            logger.warning("DataFrame is empty; returning an empty chunks list")
             return []
 
-        logger.debug(f"开始转换DataFrame为chunks: DataFrame长度={len(df)}")
+        logger.debug(f"Converting DataFrame to chunks: length={len(df)}")
 
-        # 辅助函数
+        # Helper functions.
         def safe_int(x):
-            """安全转换为整数"""
+            """Safely coerce a value to int."""
             if pd is not None and pd.isna(x):
                 return 0
             try:
@@ -50,25 +49,26 @@ class ChunksRedisService:
                 return 0
 
         def safe_split_kws(kw):
-            """安全分割关键词，过滤单字符（与 tokens 的 _is_meaningful_token 一致）"""
+            """Split keywords safely and drop single-character entries."""
             if pd is not None and pd.isna(kw):
                 return []
             kw_str = str(kw)
-            # 支持多种分隔符：分号、逗号
+            # Support multiple separators: semicolon or comma.
             if ";" in kw_str:
                 parts = [k.strip() for k in kw_str.split(";") if k.strip()]
             elif "," in kw_str:
                 parts = [k.strip() for k in kw_str.split(",") if k.strip()]
             else:
                 parts = [kw_str.strip()] if kw_str.strip() else []
-            # 过滤单字符关键词（单个数字、汉字、字母无检索意义）
+            # Drop single-character keywords with low retrieval value.
             return [k for k in parts if len(k) > 1]
 
         def safe_parse_tokens(raw):
-            """解析 tokens 字段：保留 jieba 分词链为列表，兼容新旧格式。
-            
-            新格式：分号分隔 'word1;word2;word3'（与 keywords 列一致）
-            旧格式：箭头分隔 'word1->word2->word3' 或 "['word1->word2->...']"
+            """Parse token payloads while supporting legacy and current formats.
+
+            New format: semicolon-delimited `word1;word2;word3`.
+            Legacy format: arrow-delimited `word1->word2->word3` or a
+            list-like wrapper around that payload.
             """
             if raw is None or (pd is not None and pd.isna(raw)):
                 return []
@@ -78,11 +78,12 @@ class ChunksRedisService:
             # List-like string from DataFrame: "['w1;w2']" or "['w1->w2']"
             if raw_str.startswith("[") and raw_str.endswith("]"):
                 inner = raw_str[1:-1].strip()
-                if (inner.startswith("'") and inner.endswith("'")) or \
-                   (inner.startswith('"') and inner.endswith('"')):
+                if (inner.startswith("'") and inner.endswith("'")) or (
+                    inner.startswith('"') and inner.endswith('"')
+                ):
                     inner = inner[1:-1]
                 raw_str = inner
-            # Determine separator: semicolon (new) or arrow (legacy)
+            # Determine separator: semicolon (current) or arrow (legacy).
             if ";" in raw_str:
                 return [t.strip() for t in raw_str.split(";") if t.strip()]
             if "->" in raw_str:
@@ -90,13 +91,15 @@ class ChunksRedisService:
             return []
 
         def safe_parse_rels(type_val):
-            """安全解析 intra-doc 关系 (图文表引用，来自 type 字段)"""
+            """Parse intra-document relationships from the type field."""
             rels = []
             type_is_valid = type_val and not (pd is not None and pd.isna(type_val))
             if type_is_valid:
                 type_str = str(type_val)
                 if "\n" in type_str:
-                    lines = [line.strip() for line in type_str.split("\n") if line.strip()]
+                    lines = [
+                        line.strip() for line in type_str.split("\n") if line.strip()
+                    ]
                     rels.extend([line for line in lines[1:] if line.upper() != "PTXT"])
             return rels if rels else []
 
@@ -115,8 +118,9 @@ class ChunksRedisService:
                 if normalized_ref.startswith(resource_prefix):
                     return normalized_ref
             return ""
+
         def parse_connect_to(connects):
-            """解析 connectto 字段为 cross-chunk 关系列表"""
+            """Parse the connectto field into cross-chunk relationships."""
             if not connects or (pd is not None and pd.isna(connects)):
                 return []
             if isinstance(connects, list):
@@ -131,9 +135,18 @@ class ChunksRedisService:
                         return parsed
                 except json.JSONDecodeError:
                     pass
-            return [{"target": connects_str, "relation": "related", "score": 1.0, "keywords": []}]
+            return [
+                {
+                    "target": connects_str,
+                    "relation": "related",
+                    "score": 1.0,
+                    "keywords": [],
+                }
+            ]
 
-        def build_resource_target_map(chunk_list: List[Dict[str, Any]]) -> Dict[str, str]:
+        def build_resource_target_map(
+            chunk_list: List[Dict[str, Any]],
+        ) -> Dict[str, str]:
             """Build ref/path -> chunk_id aliases for image and table chunks."""
             target_map: Dict[str, str] = {}
             for item in chunk_list:
@@ -156,7 +169,9 @@ class ChunksRedisService:
                         target_map[alias] = item_id
             return target_map
 
-        def refs_to_embed_connections(refs: List[str], target_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        def refs_to_embed_connections(
+            refs: List[str], target_map: Dict[str, str]
+        ) -> List[Dict[str, Any]]:
             """Convert resource refs to connect_to embeds entries."""
             connections: List[Dict[str, Any]] = []
             for ref in refs:
@@ -168,14 +183,18 @@ class ChunksRedisService:
                     target_id = target_map.get(ref_str[1:-1].strip())
                 if not target_id:
                     continue
-                connections.append({
-                    "target": target_id,
-                    "relation": "embeds",
-                    "ref": ref_str,
-                })
+                connections.append(
+                    {
+                        "target": target_id,
+                        "relation": "embeds",
+                        "ref": ref_str,
+                    }
+                )
             return connections
 
-        def merge_connections(*connection_lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        def merge_connections(
+            *connection_lists: List[Dict[str, Any]],
+        ) -> List[Dict[str, Any]]:
             """Merge connect_to entries while keeping stable order."""
             merged: List[Dict[str, Any]] = []
             seen = set()
@@ -218,7 +237,7 @@ class ChunksRedisService:
             else:
                 chunk_type = "text"
 
-            # 构建metadata
+            # Build chunk metadata.
             relationship_refs = safe_parse_rels(type_val) or extract_chunk_refs(content)
             metadata = {
                 "keywords": safe_split_kws(row.get("keywords")),
@@ -229,27 +248,36 @@ class ChunksRedisService:
             }
             metadata["_relationship_refs"] = relationship_refs
 
-            # 解析 page_nums: "3,4" → [3, 4]
+            # Parse page_nums values such as "3,4" into [3, 4].
             raw_page_nums = row.get("page_nums", "")
             if raw_page_nums and not (pd is not None and pd.isna(raw_page_nums)):
                 try:
-                    page_nums_list = [int(p.strip()) for p in str(raw_page_nums).split(",") if p.strip()]
+                    page_nums_list = [
+                        int(p.strip())
+                        for p in str(raw_page_nums).split(",")
+                        if p.strip()
+                    ]
                 except (ValueError, TypeError):
                     page_nums_list = []
             else:
                 page_nums_list = []
             metadata["page_nums"] = page_nums_list
 
-            # 根据类型添加特定字段
+            # Add type-specific metadata.
             if chunk_type == "image":
-                embedded_image_path = find_embedded_resource_path(relationship_refs, "images")
+                embedded_image_path = find_embedded_resource_path(
+                    relationship_refs, "images"
+                )
                 if embedded_image_path:
                     img_name = os.path.basename(embedded_image_path)
                     metadata["file_path"] = embedded_image_path
                     metadata["original_name"] = img_name
                 else:
+                    normalized_path = path.replace("-->", "/")
                     img_name = (
-                        os.path.basename(path) if path else f"image_{chunk_id}.jpg"
+                        os.path.basename(normalized_path)
+                        if normalized_path
+                        else f"image_{chunk_id}.jpg"
                     )
                     _, img_ext = os.path.splitext(img_name)
                     # Atlas image paths may lack an extension entirely; keep any real suffix.
@@ -258,23 +286,28 @@ class ChunksRedisService:
                     metadata["file_path"] = f"images/{img_name}"
                     metadata["original_name"] = img_name
             elif chunk_type == "table":
-                embedded_table_path = find_embedded_resource_path(relationship_refs, "tables")
+                embedded_table_path = find_embedded_resource_path(
+                    relationship_refs, "tables"
+                )
                 if embedded_table_path:
                     metadata["file_path"] = embedded_table_path
                 else:
+                    normalized_path = path.replace("-->", "/")
                     tbl_name = (
-                        os.path.basename(path) if path else f"table_{chunk_id}.html"
+                        os.path.basename(normalized_path)
+                        if normalized_path
+                        else f"table_{chunk_id}.html"
                     )
                     metadata["file_path"] = f"tables/{tbl_name}"
 
-            # 构建chunk对象
+            # Build the chunk payload.
             chunk = {
                 "chunk_id": chunk_id,
                 "type": chunk_type,
                 "content": content,
                 "path": path,
                 "metadata": metadata,
-                # 兼容性字段（用于内部处理）
+                # Compatibility fields kept for internal consumers.
                 "text": content,
                 "order": i,
                 "know_id": str(know_id),
@@ -293,60 +326,64 @@ class ChunksRedisService:
             relationship_refs = metadata.pop("_relationship_refs", [])
             if chunk.get("type") != "text":
                 continue
-            embed_connections = refs_to_embed_connections(relationship_refs, resource_target_map)
+            embed_connections = refs_to_embed_connections(
+                relationship_refs, resource_target_map
+            )
             metadata["connect_to"] = merge_connections(
                 embed_connections,
                 metadata.get("connect_to", []),
             )
 
-        logger.debug(f"DataFrame转换完成: chunks数量={len(chunks)}")
+        logger.debug(f"DataFrame conversion completed: chunk count={len(chunks)}")
         return chunks
 
     async def save_dataframe_as_chunks(self, job_id: str, df) -> bool:
-        """将DataFrame转换为chunks并保存到Redis"""
+        """Convert a DataFrame to chunks and store the result in Redis."""
         try:
             chunks = self._dataframe_to_chunks(df)
             return await self.save_chunks(job_id, chunks)
         except Exception as e:
-            logger.error(f"保存DataFrame为chunks失败: job_id={job_id}, error={e}")
+            logger.error(
+                f"Failed to save DataFrame as chunks: job_id={job_id}, error={e}"
+            )
             return False
 
     async def save_chunks(self, job_id: str, chunks: List[Dict[str, Any]]) -> bool:
-        """保存chunks数据到Redis"""
+        """Save chunk data to Redis."""
         try:
             chunks_key = f"job_chunks:{job_id}"
-            await self.redis.set(
-                chunks_key,
-                chunks,
-                ttl=3600  # 1小时过期
+            await self.redis.set(chunks_key, chunks, ttl=3600)  # 1 hour TTL.
+            logger.debug(
+                f"Chunk data saved successfully: job_id={job_id}, count={len(chunks)}"
             )
-            logger.debug(f"Chunks数据保存成功: job_id={job_id}, count={len(chunks)}")
             return True
         except Exception as e:
-            logger.error(f"保存chunks数据失败: job_id={job_id}, error={e}")
+            logger.error(f"Failed to save chunk data: job_id={job_id}, error={e}")
             return False
 
     async def get_chunks(self, job_id: str) -> Optional[List[Dict[str, Any]]]:
-        """从Redis获取chunks数据"""
+        """Load chunk data from Redis."""
         try:
             chunks_key = f"job_chunks:{job_id}"
             chunks = await self.redis.get(chunks_key)
             if chunks:
-                logger.debug(f"Chunks数据获取成功: job_id={job_id}, count={len(chunks)}")
+                logger.debug(
+                    f"Chunk data loaded successfully: job_id={job_id}, count={len(chunks)}"
+                )
             else:
-                logger.warning(f"Chunks数据不存在: job_id={job_id}")
+                logger.warning(f"Chunk data does not exist: job_id={job_id}")
             return chunks
         except Exception as e:
-            logger.error(f"获取chunks数据失败: job_id={job_id}, error={e}")
+            logger.error(f"Failed to get chunk data: job_id={job_id}, error={e}")
             return None
 
     async def delete_chunks(self, job_id: str) -> bool:
-        """删除chunks数据"""
+        """Delete chunk data."""
         try:
             chunks_key = f"job_chunks:{job_id}"
             await self.redis.delete(chunks_key)
-            logger.debug(f"Chunks数据删除成功: job_id={job_id}")
+            logger.debug(f"Chunk data deleted successfully: job_id={job_id}")
             return True
         except Exception as e:
-            logger.error(f"删除chunks数据失败: job_id={job_id}, error={e}")
+            logger.error(f"Failed to delete chunk data: job_id={job_id}, error={e}")
             return False

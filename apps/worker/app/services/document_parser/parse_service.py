@@ -1,45 +1,51 @@
+# pyright: reportArgumentType=false, reportReturnType=false
 """
 main parsing service
 """
+
 import os
 import re
 
-from shared.core.config import settings
-from shared.utils.file_utils import path_handle
-from loguru import logger
-from shared.core.exceptions.domain_exceptions import (
-    ValidationException,
-)
+import pandas as pd
+from app.services.document_parser.atlas_classifier import classify_atlas_with_vlm
 
 # document_parser imports
 from app.services.document_parser.doc_profiler import profile_document
 from app.services.document_parser.stage_profiler import stage_timer
-from app.services.document_parser.atlas_classifier import classify_atlas_with_vlm
+from loguru import logger
+
+from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import (
+    ValidationException,
+)
+from shared.utils.file_utils import path_handle
 
 
 def cleanup_unreferenced_images(output_dir: str) -> int:
     """
     Clean up unreferenced UUID-named images from the images directory.
-    
+
     After document parsing (PDF, DOCX, PPTX, etc.), the images/ directory may contain:
     1. Processed images: renamed with semantic names like 'image-0-xxx.jpg'
     2. Unreferenced images: UUID-named (64-char hex) that were parsed as tables/formulas
-    
+
     This function removes the unreferenced UUID-named images to reduce final package size.
-    
+
     Args:
         output_dir: The full output directory path
-    
+
     Returns:
         Number of files removed
     """
     img_dir = os.path.join(output_dir, "images")
     if not os.path.isdir(img_dir):
         return 0
-    
+
     # UUID pattern: 64 hex characters followed by image extension
-    uuid_pattern = re.compile(r'^[a-f0-9]{64}\.(?:jpg|jpeg|png|gif|webp)$', re.IGNORECASE)
-    
+    uuid_pattern = re.compile(
+        r"^[a-f0-9]{64}\.(?:jpg|jpeg|png|gif|webp)$", re.IGNORECASE
+    )
+
     removed_count = 0
     for filename in os.listdir(img_dir):
         if uuid_pattern.match(filename):
@@ -50,15 +56,18 @@ def cleanup_unreferenced_images(output_dir: str) -> int:
                 logger.debug(f"Removed unreferenced image: {filename}")
             except OSError as e:
                 logger.warning(f"Failed to remove {filename}: {e}")
-    
+
     if removed_count > 0:
-        logger.info(f"Cleaned up {removed_count} unreferenced UUID-named images from {img_dir}")
-    
+        logger.info(
+            f"Cleaned up {removed_count} unreferenced UUID-named images from {img_dir}"
+        )
+
     return removed_count
 
+
 def checkerboard_inject_parse(
-    file_full_path: str, 
-    filename: str, 
+    file_full_path: str,
+    filename: str,
     output_dir: str,
     internal_output_filename: str,
     job_id: str | None = None,
@@ -74,10 +83,10 @@ def checkerboard_inject_parse(
     base_url: str = "",
     fragment_content: str = "",
     s3_key: str | None = None,
-) -> tuple[str, object]:
+) -> tuple[str, pd.DataFrame | None]:
     """
     main parsing function
-    
+
     Args:
         file_full_path: source file path (local or URL)
         filename: file name
@@ -96,7 +105,7 @@ def checkerboard_inject_parse(
         job_id: optional job identifier used for parser artifacts
         internal_output_filename: normalized internal folder name for on-disk output
         s3_key: optional S3 key for downstream parsers
-    
+
     Returns:
         tuple: (output_dir, parsed_df)
             - output_dir: directory path after parsing
@@ -115,15 +124,15 @@ def checkerboard_inject_parse(
         "model_name": settings.NORMOL_MODEL,
         "hierarchy_model_name": settings.HIERARCHY_LLM_MODEL or settings.NORMOL_MODEL,
     }
-    
+
     baseurl = base_url
-        
+
     logger.debug(f"baseurl: {baseurl}")
     logger.debug(f"file_full_path: {file_full_path}")
-    
+
     # ========== Path handling ==========
     split_char = settings.SPLIT_CHAR or "/"
-    
+
     # Develop relative root path for chunk path field
     kb_dir_parts = kb_dir.split(split_char)
     if filename and "images" not in kb_dir_parts:
@@ -135,19 +144,21 @@ def checkerboard_inject_parse(
         internal_relative_root = "/".join(kb_dir_parts + [internal_output_filename])
     else:
         internal_relative_root = "/".join(kb_dir_parts)
-    
+
     # Develop full output directory (output_dir + relative_root)
-    full_output_dir = os.path.join(output_dir, internal_relative_root.replace("/", os.sep))
+    full_output_dir = os.path.join(
+        output_dir, internal_relative_root.replace("/", os.sep)
+    )
     full_output_dir = path_handle(full_output_dir, mode="sanitize")
     os.makedirs(full_output_dir, exist_ok=True)
-    
+
     logger.debug(f"relative_root: {relative_root}")
     logger.debug(f"internal_relative_root: {internal_relative_root}")
     logger.debug(f"full_output_dir: {full_output_dir}")
 
     file_path_lower = file_full_path.lower()
     parsed_df = None
-    
+
     # ── Agentic Profiler: classify document before routing ──
     with stage_timer("document.profile", filename=filename):
         profile = profile_document(file_full_path, internal_output_filename)
@@ -158,8 +169,13 @@ def checkerboard_inject_parse(
     # Heuristics can miss atlases that have a rich OCR text layer on top of
     # scanned drawing pages (avg_text_density too high). VLM sees the actual
     # page layout and makes the final call.
-    if profile.atlas_candidate and profile.doc_category not in ("atlas", "ppt_converted"):
-        logger.info(f"🔍 Atlas candidate detected, running VLM visual check for {filename}")
+    if profile.atlas_candidate and profile.doc_category not in (
+        "atlas",
+        "ppt_converted",
+    ):
+        logger.info(
+            f"🔍 Atlas candidate detected, running VLM visual check for {filename}"
+        )
         with stage_timer("document.atlas_vlm_check", filename=filename):
             vlm_is_atlas = classify_atlas_with_vlm(file_full_path)
         if vlm_is_atlas:
@@ -178,10 +194,12 @@ def checkerboard_inject_parse(
                 f"Document too large: {profile.page_count} pages exceeds the {PDF_PAGE_LIMIT}-page limit. "
                 f"Please split the document and upload in smaller batches."
             ),
-            violations=[{
-                "field": "page_count",
-                "description": f"PDF has {profile.page_count} pages, limit is {PDF_PAGE_LIMIT}",
-            }],
+            violations=[
+                {
+                    "field": "page_count",
+                    "description": f"PDF has {profile.page_count} pages, limit is {PDF_PAGE_LIMIT}",
+                }
+            ],
         )
 
     # Atlas routing: rename output folder from .pdf → .atlas for easy filtering
@@ -192,39 +210,72 @@ def checkerboard_inject_parse(
         internal_output_filename = internal_name_base + ".atlas"
         relative_root = "/".join(kb_dir_parts + [filename])
         internal_relative_root = "/".join(kb_dir_parts + [internal_output_filename])
-        full_output_dir = os.path.join(output_dir, internal_relative_root.replace("/", os.sep))
+        full_output_dir = os.path.join(
+            output_dir, internal_relative_root.replace("/", os.sep)
+        )
         full_output_dir = path_handle(full_output_dir, mode="sanitize")
         os.makedirs(full_output_dir, exist_ok=True)
         logger.info(f"📐 Atlas output renamed: {filename}")
-    
+
     if ".fragment" in file_path_lower:
         logger.debug("file type is fragment")
         from app.services.document_parser.fragment_parser import parse_fragment
 
-        full_output_dir, relative_root, parsed_df = parse_fragment(fragment_content, filename=filename, output_dir=output_dir, kb_dir=kb_dir, base_llm_paras=base_llm_paras)
+        full_output_dir, relative_root, parsed_df = parse_fragment(
+            fragment_content,
+            filename=filename,
+            output_dir=output_dir,
+            kb_dir=kb_dir,
+            base_llm_paras=base_llm_paras,
+        )
 
-    elif '.txt' in file_path_lower:
+    elif ".txt" in file_path_lower:
         logger.debug("file type is txt")
         from app.services.document_parser.md_parser import parse_md
         from app.services.document_parser.txt_parser import parse_texts
 
         txt_lines = parse_texts(file_path=file_full_path, baseurl=baseurl)
-        parsed_df = parse_md(full_output_dir, source_type='md', md_lines=txt_lines, base_llm_paras=base_llm_paras, relative_root=relative_root)
+        parsed_df = parse_md(
+            full_output_dir,
+            source_type="md",
+            md_lines=txt_lines,
+            base_llm_paras=base_llm_paras,
+            relative_root=relative_root,
+        )
 
-    elif ('.png' in file_path_lower or '.jpg' in file_path_lower or '.jpeg' in file_path_lower):
-        logger.debug(f"file type is image")
+    elif (
+        ".png" in file_path_lower
+        or ".jpg" in file_path_lower
+        or ".jpeg" in file_path_lower
+    ):
+        logger.debug("file type is image")
         from app.services.document_parser.image_parser import parse_image
 
-        parsed_df = parse_image(file_full_path, filename=filename, output_dir=full_output_dir, baseurl=baseurl, base_llm_paras=base_llm_paras, relative_root=relative_root)
+        parsed_df = parse_image(
+            file_full_path,
+            filename=filename,
+            output_dir=full_output_dir,
+            baseurl=baseurl,
+            base_llm_paras=base_llm_paras,
+            relative_root=relative_root,
+        )
 
-    elif '.pdf' in file_path_lower:
-        logger.debug(f"file type is pdf")
+    elif ".pdf" in file_path_lower:
+        logger.debug("file type is pdf")
         from app.services.document_parser.pdf_parser import parse_pdfs
 
         if filename and file_full_path:
-            parsed_df = parse_pdfs(file_full_path, filename=filename, output_dir=full_output_dir, base_llm_paras=base_llm_paras, profile=profile, relative_root=relative_root, s3_key=s3_key)
+            parsed_df = parse_pdfs(
+                file_full_path,
+                filename=filename,
+                output_dir=full_output_dir,
+                base_llm_paras=base_llm_paras,
+                profile=profile,
+                relative_root=relative_root,
+                s3_key=s3_key,
+            )
 
-    elif '.doc' in file_path_lower and '.docx' not in file_path_lower:
+    elif ".doc" in file_path_lower and ".docx" not in file_path_lower:
         logger.debug("file type is doc")
         from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
         from app.services.document_parser.legacy_converter import doc_to_docx
@@ -247,15 +298,28 @@ def checkerboard_inject_parse(
                 relative_root=relative_root,
             )
 
-    elif '.docx' in file_path_lower:
-        logger.debug(f"file type is docx")
+    elif ".docx" in file_path_lower:
+        logger.debug("file type is docx")
         from app.services.document_parser.doc_parser import convert_doc2dics, parse_docx
 
         if filename and file_full_path:
-            parsed_structure, df_list = parse_docx(file_full_path, base_llm_paras, full_output_dir, filename, baseurl, relative_root=relative_root)
-            parsed_df = convert_doc2dics(parsed_structure, df_list, full_output_dir, base_llm_paras=base_llm_paras, relative_root=relative_root)
+            parsed_structure, df_list = parse_docx(
+                file_full_path,
+                base_llm_paras,
+                full_output_dir,
+                filename,
+                baseurl,
+                relative_root=relative_root,
+            )
+            parsed_df = convert_doc2dics(
+                parsed_structure,
+                df_list,
+                full_output_dir,
+                base_llm_paras=base_llm_paras,
+                relative_root=relative_root,
+            )
 
-    elif '.xls' in file_path_lower and '.xlsx' not in file_path_lower:
+    elif ".xls" in file_path_lower and ".xlsx" not in file_path_lower:
         logger.debug("file type is xls")
         from app.services.document_parser.legacy_converter import xls_to_xlsx
         from app.services.document_parser.table_parser import parse_xlsx
@@ -271,21 +335,29 @@ def checkerboard_inject_parse(
                 relative_root=relative_root,
             )
 
-    elif '.xlsx' in file_path_lower:
-        logger.debug(f"file type is xlsx")
+    elif ".xlsx" in file_path_lower:
+        logger.debug("file type is xlsx")
         from app.services.document_parser.table_parser import parse_xlsx
 
         if filename and file_full_path:
-            parsed_df = parse_xlsx(file_full_path, filename, full_output_dir, baseurl, base_llm_paras=base_llm_paras, relative_root=relative_root)
+            parsed_df = parse_xlsx(
+                file_full_path,
+                filename,
+                full_output_dir,
+                baseurl,
+                base_llm_paras=base_llm_paras,
+                relative_root=relative_root,
+            )
 
-    elif '.pptx' in file_path_lower:
-        logger.debug(f"file type is pptx")
+    elif ".pptx" in file_path_lower:
+        logger.debug("file type is pptx")
         from app.services.document_parser.pptx_parser import parse_pptx
 
         if filename and file_full_path:
             # ====== iLoveAPI PPTX → PDF → MinerU (default production route) ======
             parsed_df = parse_pptx(
-                file_full_path, filename=filename,
+                file_full_path,
+                filename=filename,
                 output_dir=full_output_dir,
                 base_llm_paras=base_llm_paras,
                 strategy="to_pdf_api",
@@ -293,7 +365,7 @@ def checkerboard_inject_parse(
                 relative_root=relative_root,
                 baseurl=baseurl,
             )
-            
+
             # ====== [EXPERIMENTAL] Directly send PPTX to MinerU via parse_pdfs ======
             # Uncomment the block below (and comment out parse_pptx above) to bypass iLoveAPI
             # from app.services.document_parser.pdf_parser import parse_pdfs
@@ -307,40 +379,65 @@ def checkerboard_inject_parse(
             #     s3_key=s3_key
             # )
 
-    elif '.md' in file_path_lower:
-        logger.debug(f"file type is md")
+    elif ".md" in file_path_lower:
+        logger.debug("file type is md")
         from app.services.document_parser.md_parser import parse_md
 
         if filename and file_full_path:
-            parsed_df = parse_md(full_output_dir, source_type="md", file_path=file_full_path, base_llm_paras=base_llm_paras, relative_root=relative_root)
+            parsed_df = parse_md(
+                full_output_dir,
+                source_type="md",
+                file_path=file_full_path,
+                base_llm_paras=base_llm_paras,
+                relative_root=relative_root,
+            )
 
-    elif '.json' in file_path_lower:
-        logger.debug(f"file type is json")
+    elif ".json" in file_path_lower:
+        logger.debug("file type is json")
         # JSON parsing not yet implemented
-        
+
     else:
         # Unsupported file type
         file_ext = os.path.splitext(file_full_path)[1].lower()
-        supported_types = ['.txt', '.fragment', '.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.pptx', '.md', '.json']
+        supported_types = [
+            ".txt",
+            ".fragment",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".xls",
+            ".xlsx",
+            ".pptx",
+            ".md",
+            ".json",
+        ]
         raise ValidationException(
             user_message=f"Unsupported file type: {file_ext}",
-            violations=[{
-                "field": "file_type",
-                "description": f"Must be one of: {', '.join(supported_types)}"
-            }]
+            violations=[
+                {
+                    "field": "file_type",
+                    "description": f"Must be one of: {', '.join(supported_types)}",
+                }
+            ],
         )
-        
+
     logger.debug(f"full_output_dir: {full_output_dir}")
-    
+
     # Post-processing: clean up unreferenced UUID-named images
-    with stage_timer("document.cleanup_unreferenced_images", output_dir=full_output_dir):
+    with stage_timer(
+        "document.cleanup_unreferenced_images", output_dir=full_output_dir
+    ):
         cleanup_unreferenced_images(full_output_dir)
 
     # Post-processing: compress output images (PNG→JPEG, resize oversized)
     from app.services.document_parser.image_compressor import (
-        compress_output_images,
         apply_rename_map_to_dataframe,
+        compress_output_images,
     )
+
     with stage_timer("document.compress_images", output_dir=full_output_dir):
         compress_stats = compress_output_images(full_output_dir)
         if compress_stats.processed > 0:
@@ -353,7 +450,8 @@ def checkerboard_inject_parse(
             )
         # Update DataFrame references when PNG→JPG conversions occurred
         if compress_stats.rename_map and parsed_df is not None:
-            parsed_df = apply_rename_map_to_dataframe(parsed_df, compress_stats.rename_map)
+            parsed_df = apply_rename_map_to_dataframe(
+                parsed_df, compress_stats.rename_map
+            )
 
     return full_output_dir, parsed_df
-

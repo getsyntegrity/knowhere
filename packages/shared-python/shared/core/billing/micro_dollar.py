@@ -7,36 +7,38 @@ This allows representing prices like $0.0015 as 1,500 integers.
 Usage:
     # Create from int (e.g., from database value)
     balance = MicroDollar(user.credits_balance)
-    
+
     # Calculations
     cost = MicroDollar(1500) * 10  # 10 pages @ $0.0015/page
-    
+
     # Get raw int value (e.g., for database storage)
     user.credits_balance = cost.amount
-    
+
     # To frontend display
     display_credits = cost.to_credit()  # Returns int for display
 """
 
+
 class MicroDollar:
     """
     Value object representing currency in micro-units (1/1,000,000 of a dollar).
-    
+
     All arithmetic is integer-based to prevent floating-point errors in billing.
-    
+
     Example:
         price = MicroDollar(1_500)  # $0.0015
         total = price * 10          # 10 pages -> 15,000 micros ($0.015)
     """
+
     SCALE = 1_000_000  # $1.00 = 1,000,000 micros
 
     def __init__(self, micro_credits: int):
         """
         Initialize with an integer amount in micro-credits.
-        
+
         Args:
             micro_credits: Integer value in micro-units (1/1,000,000 of a dollar)
-            
+
         Raises:
             TypeError: If micro_credits is not an integer
         """
@@ -55,18 +57,18 @@ class MicroDollar:
     # Factory Methods
     # =============================================
 
-    # shoud we call this from_credits? 
+    # shoud we call this from_credits?
     @classmethod
     def from_dollars(cls, amount: int) -> "MicroDollar":
         """
         Convert a dollar amount to MicroDollar.
-        
+
         Args:
             amount: Dollar amount as int (e.g., 1 for $1.00)
-            
+
         Returns:
             MicroDollar instance
-            
+
         Example:
             MicroDollar.from_dollars(1) -> MicroDollar(1_000_000)
         """
@@ -96,7 +98,7 @@ class MicroDollar:
     def __mul__(self, quantity: int) -> "MicroDollar":
         """
         Multiply by a scalar quantity (integer only).
-        
+
         Example: 10 pages * $0.0015/page = $0.015
         """
         if not isinstance(quantity, int):
@@ -172,9 +174,9 @@ class MicroDollar:
     def to_credit(self) -> float:
         """
         Convert micro-credits to display credits for frontend.
-        
+
         1 display credit = 1,000,000 micro-credits = $1.00
-        
+
         Returns:
             Float display credits with 4 decimal precision (e.g., 10.0005)
         """

@@ -1,4 +1,5 @@
 """Helpers for deterministic mock responses from OpenAI-compatible LLM calls."""
+
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -96,7 +97,10 @@ def _detect_mock_task(prompt_text: str) -> str:
         and "keywords" in normalized_prompt
     ):
         return "summary-keywords"
-    if "json array only" in normalized_prompt and "toc, not body text" in normalized_prompt:
+    if (
+        "json array only" in normalized_prompt
+        and "toc, not body text" in normalized_prompt
+    ):
         return "eval-toc-headings"
     if (
         "json array" in normalized_prompt
@@ -112,7 +116,10 @@ def _detect_mock_task(prompt_text: str) -> str:
         and "line 1: output a short title" in normalized_prompt
     ):
         return "summary-images"
-    if "you will receive one or more images and the user's current question" in normalized_prompt:
+    if (
+        "you will receive one or more images and the user's current question"
+        in normalized_prompt
+    ):
         return "ask-image"
     if "summaries of sub-sections from a document section" in normalized_prompt:
         return "file-summary"

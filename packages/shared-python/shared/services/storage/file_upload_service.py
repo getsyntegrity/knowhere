@@ -1,6 +1,4 @@
-"""
-文件上传服务
-"""
+"""Storage upload service."""
 
 import asyncio
 import json
@@ -12,11 +10,14 @@ import aiohttp
 from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import StorageServiceException, KnowhereException
+from shared.core.exceptions.domain_exceptions import (
+    KnowhereException,
+    StorageServiceException,
+)
 
 
 class FileUploadService:
-    """文件上传服务（支持S3/OSS/MinIO）"""
+    """File upload service supporting S3, OSS, and MinIO."""
 
     def __init__(self):
         self.adapter = settings.get_storage_adapter()
@@ -27,103 +28,105 @@ class FileUploadService:
 
     async def handle_direct_upload(self, file_path: str, job_id: str) -> str:
         """
-        处理直传文件
+        Handle a direct file upload.
 
         Args:
-            file_path: 本地文件路径
-            job_id: 任务ID
+            file_path: Local file path.
+            job_id: Job ID.
 
         Returns:
-            str: S3键
+            str: Storage key.
         """
         try:
-            # 生成S3键
+            # Build the storage key.
             file_extension = os.path.splitext(file_path)[1]
             s3_key = f"uploads/{job_id}{file_extension}"
 
-            # 上传到S3
+            # Upload the file.
             await self._upload_to_s3(file_path, s3_key, self.uploads_bucket)
 
-            logger.info(f"文件直传成功: {file_path} -> {s3_key}")
+            logger.info(f"Direct file upload succeeded: {file_path} -> {s3_key}")
             return s3_key
 
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"文件直传失败: {e}")
+            logger.error(f"Direct file upload failed: {e}")
             raise StorageServiceException(
-                internal_message=f"文件直传失败: {str(e)}",
+                internal_message=f"Direct file upload failed: {str(e)}",
                 operation="direct_upload",
-                original_exception=e
+                original_exception=e,
             )
 
     async def handle_url_upload(self, file_url: str, job_id: str) -> str:
         """
-        处理URL外链下载
+        Handle a URL-based upload flow.
 
         Args:
-            file_url: 文件URL
-            job_id: 任务ID
+            file_url: File URL.
+            job_id: Job ID.
 
         Returns:
-            str: S3键
+            str: Storage key.
         """
         try:
-            # 下载文件到临时目录
+            # Download the file into a temporary location first.
             temp_file_path = await self._download_file_from_url(file_url)
 
             try:
-                # 生成S3键
+                # Build the storage key.
                 file_extension = os.path.splitext(file_url.split("?")[0])[1]
                 s3_key = f"uploads/{job_id}{file_extension}"
 
-                # 上传到S3
+                # Upload the downloaded file.
                 await self._upload_to_s3(temp_file_path, s3_key, self.uploads_bucket)
 
-                logger.info(f"URL文件下载上传成功: {file_url} -> {s3_key}")
+                logger.info(
+                    f"URL file download and upload succeeded: {file_url} -> {s3_key}"
+                )
                 return s3_key
 
             finally:
-                # 清理临时文件
+                # Clean up the temporary file.
                 if os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"URL文件处理失败: {e}")
+            logger.error(f"URL file handling failed: {e}")
             raise StorageServiceException(
-                internal_message=f"URL文件处理失败: {str(e)}",
+                internal_message=f"URL file handling failed: {str(e)}",
                 operation="url_upload",
-                original_exception=e
+                original_exception=e,
             )
 
     async def generate_upload_url(
         self, job_id: str, file_extension: str = ""
     ) -> Dict[str, Any]:
         """
-        生成预签名上传URL
+        Generate a presigned upload URL.
 
         Args:
-            job_id: 任务ID
-            file_extension: 文件扩展名
+            job_id: Job ID.
+            file_extension: File extension.
 
         Returns:
-            Dict: 包含上传URL和S3键的字典
+            Dict: Upload URL payload including the storage key.
         """
         try:
             s3_key = f"uploads/{job_id}{file_extension}"
 
-            # 智能识别Content-Type
+            # Infer a Content-Type from the file extension.
             content_type = self.get_content_type(file_extension)
 
-            # 生成预签名URL（过期时间由JOB_WAITING_EXPIRE_SECONDS控制）
+            # Use the job waiting expiry as the upload URL TTL.
             upload_url = self.adapter.generate_presigned_url(
                 s3_key,
                 expiration=settings.JOB_WAITING_EXPIRE_SECONDS,
                 bucket=self.uploads_bucket,
                 method="PUT",
-                headers={"Content-Type": content_type}
+                headers={"Content-Type": content_type},
             )
 
             logger.info(f"Generated presigned upload URL: {upload_url}")
@@ -138,30 +141,30 @@ class FileUploadService:
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"生成上传URL失败: {e}")
+            logger.error(f"Failed to generate upload URL: {e}")
             raise StorageServiceException(
-                internal_message=f"生成上传URL失败: {str(e)}",
+                internal_message=f"Failed to generate upload URL: {str(e)}",
                 operation="generate_upload_url",
-                original_exception=e
+                original_exception=e,
             )
 
     async def generate_download_url(
         self, s3_key: str, bucket: Optional[str] = None, expires_in: int = 3600
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
-        生成预签名下载URL
+        Generate a presigned download URL.
 
         Args:
-            s3_key: S3键
-            bucket: 存储桶名称（可选）
+            s3_key: Storage key.
+            bucket: Optional bucket name.
 
         Returns:
-            str: 下载URL
+            str: Download URL.
         """
         try:
             bucket_name = bucket or self.results_bucket
 
-            # 生成预签名URL（1小时过期）
+            # Generate a one-hour presigned URL by default.
             download_url = self.adapter.generate_presigned_url(
                 s3_key, expiration=expires_in, bucket=bucket_name, method="GET"
             )
@@ -171,81 +174,81 @@ class FileUploadService:
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"生成下载URL失败: {e}")
+            logger.error(f"Failed to generate download URL: {e}")
             raise StorageServiceException(
-                internal_message=f"生成下载URL失败: {str(e)}",
+                internal_message=f"Failed to generate download URL: {str(e)}",
                 operation="generate_download_url",
-                original_exception=e
+                original_exception=e,
             )
 
     async def get_file_info(
         self, s3_key: str, bucket: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        获取文件信息
+        Get file information.
 
         Args:
-            s3_key: S3键
-            bucket: 存储桶名称（可选）
+            s3_key: Storage key.
+            bucket: Optional bucket name.
 
         Returns:
-            Dict: 文件信息
+            Dict: File metadata.
         """
         try:
             bucket_name = bucket or self.results_bucket
 
-            # 检查文件是否存在并获取大小
+            # Check existence and load the object size.
             if not self.adapter.exists(s3_key, bucket_name):
                 return None
-            
+
             size = self.adapter.get_object_size(s3_key, bucket_name)
             return {
                 "size": size,
-                "content_type": None,  # 适配器接口暂不支持获取content_type
+                "content_type": None,  # The adapter interface does not expose content_type yet.
                 "last_modified": None,
                 "etag": None,
             }
 
         except Exception as e:
-            # 文件不存在
-            if '404' in str(e) or 'not found' in str(e).lower():
+            # Treat not-found responses as a missing object.
+            if "404" in str(e) or "not found" in str(e).lower():
                 return None
-            logger.error(f"获取文件信息失败: {e}")
+            logger.error(f"Failed to get file info: {e}")
             raise StorageServiceException(
-                internal_message=f"获取文件信息失败: {str(e)}",
+                internal_message=f"Failed to get file info: {str(e)}",
                 operation="get_file_info",
-                original_exception=e
+                original_exception=e,
             )
 
     async def upload_result_file(
         self, local_file_path: str, job_id: str, file_extension: str = ""
     ) -> str:
         """
-        上传结果文件
+        Upload a result file.
 
         Args:
-            local_file_path: 本地文件路径
-            job_id: 任务ID
-            file_extension: 文件扩展名
+            local_file_path: Local file path.
+            job_id: Job ID.
+            file_extension: File extension.
 
         Returns:
-            str: S3键
+            str: Storage key.
         """
         try:
             s3_key = f"results/{job_id}{file_extension}"
             await self._upload_to_s3(local_file_path, s3_key, self.results_bucket)
 
-            logger.info(f"结果文件上传成功: {local_file_path} -> {s3_key}")
+            logger.info(f"Result file upload succeeded: {local_file_path} -> {s3_key}")
             return s3_key
 
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"结果文件上传失败: {e}")
+            logger.error(f"Result file upload failed: {e}")
             raise StorageServiceException(
-                internal_message=f"结果文件上传失败: {str(e)}",
+                internal_message=f"Result file upload failed: {str(e)}",
                 operation="upload_result_file",
-                original_exception=e
+                original_exception=e,
             )
 
     async def upload_json_result(
@@ -255,27 +258,28 @@ class FileUploadService:
         *,
         content_type: str = "application/json",
     ) -> str:
-        """上传JSON结果文件（已废弃，保留用于兼容）"""
+        """Upload a JSON result file; deprecated but kept for compatibility."""
         try:
             s3_key = f"results/{job_id}.json"
             from io import BytesIO
+
             body = json.dumps(result_data, ensure_ascii=False).encode("utf-8")
             self.adapter.upload_fileobj(
                 BytesIO(body),
                 s3_key,
                 bucket=self.results_bucket,
-                content_type=content_type
+                content_type=content_type,
             )
-            logger.info(f"结果JSON上传成功: job_id={job_id}, key={s3_key}")
+            logger.info(f"Result JSON upload succeeded: job_id={job_id}, key={s3_key}")
             return s3_key
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"上传结果JSON失败: {e}")
+            logger.error(f"Failed to upload result JSON: {e}")
             raise StorageServiceException(
-                internal_message=f"上传结果JSON失败: {str(e)}",
+                internal_message=f"Failed to upload result JSON: {str(e)}",
                 operation="upload_json_result",
-                original_exception=e
+                original_exception=e,
             )
 
     async def upload_zip_result(
@@ -283,120 +287,124 @@ class FileUploadService:
         job_id: str,
         zip_file_path: str,
     ) -> str:
-        """上传ZIP结果文件"""
+        """Upload a ZIP result file."""
         try:
             s3_key = f"results/{job_id}.zip"
             await self._upload_to_s3(zip_file_path, s3_key, self.results_bucket)
-            logger.info(f"结果ZIP上传成功: job_id={job_id}, key={s3_key}")
-            
-            # 清理临时文件
+            logger.info(f"Result ZIP upload succeeded: job_id={job_id}, key={s3_key}")
+
+            # Clean up the temporary ZIP after upload.
             try:
                 if os.path.exists(zip_file_path):
                     os.remove(zip_file_path)
             except Exception as e:
-                logger.warning(f"清理临时ZIP文件失败: {e}")
-            
+                logger.warning(f"Failed to clean up temporary ZIP file: {e}")
+
             return s3_key
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"上传结果ZIP失败: {e}")
+            logger.error(f"Failed to upload result ZIP: {e}")
             raise StorageServiceException(
-                internal_message=f"上传结果ZIP失败: {str(e)}",
+                internal_message=f"Failed to upload result ZIP: {str(e)}",
                 operation="upload_zip_result",
-                original_exception=e
+                original_exception=e,
             )
 
     def _ensure_bucket_exists(self, bucket_name: str) -> bool:
         """
-        确保存储桶存在，如果不存在则创建
+        Ensure the bucket is accessible.
 
         Args:
-            bucket_name: 存储桶名称
+            bucket_name: Bucket name.
 
         Returns:
-            bool: 是否成功
+            bool: Whether the bucket check succeeded.
         """
         try:
-            # 对于适配器模式，尝试访问bucket来验证其是否存在
-            # 通过尝试列出对象来检查bucket是否存在
+            # In adapter mode, probe accessibility by listing objects.
             adapter = settings.get_storage_adapter()
             list(adapter.list_objects(prefix="", bucket=bucket_name))
-            logger.debug(f"存储桶 {bucket_name} 可访问")
+            logger.debug(f"Bucket {bucket_name} is accessible")
             return True
         except Exception as e:
-            # bucket不存在或无法访问
-            # 注意：对于OSS，bucket需要预先创建，这里只检查可访问性
-            logger.warning(f"存储桶 {bucket_name} 可能不存在或无法访问: {e}")
-            # 对于生产环境，bucket应该预先创建，这里返回True继续执行
-            # 如果需要严格检查，可以返回False
+            # The bucket is missing or inaccessible.
+            # For OSS, buckets should already exist; only accessibility is checked here.
+            logger.warning(
+                f"Bucket {bucket_name} may not exist or may be inaccessible: {e}"
+            )
+            # In production, buckets should already be provisioned, so continue.
+            # Return False here instead if strict enforcement is ever needed.
             return True
 
     async def _ensure_bucket_exists_async(self, bucket_name: str) -> bool:
         """
-        异步确保存储桶存在，如果不存在则创建
+        Asynchronously ensure the bucket is accessible.
 
         Args:
-            bucket_name: 存储桶名称
+            bucket_name: Bucket name.
 
         Returns:
-            bool: 是否成功
+            bool: Whether the bucket check succeeded.
         """
+
         def _check_and_create():
             try:
-                # 对于适配器模式，尝试访问bucket来验证其是否存在
+                # In adapter mode, probe accessibility by listing objects.
                 adapter = settings.get_storage_adapter()
                 list(adapter.list_objects(prefix="", bucket=bucket_name))
-                logger.debug(f"存储桶 {bucket_name} 可访问")
+                logger.debug(f"Bucket {bucket_name} is accessible")
                 return True
             except Exception as e:
-                # bucket不存在或无法访问
-                logger.warning(f"存储桶 {bucket_name} 可能不存在或无法访问: {e}")
-                # 对于生产环境，bucket应该预先创建，这里返回True继续执行
+                # The bucket is missing or inaccessible.
+                logger.warning(
+                    f"Bucket {bucket_name} may not exist or may be inaccessible: {e}"
+                )
+                # In production, buckets should already be provisioned, so continue.
                 return True
 
-        # 在线程池中执行同步操作
+        # Run the synchronous probe in a thread pool.
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _check_and_create)
 
     async def _upload_to_s3(self, local_file_path: str, s3_key: str, bucket: str):
-        """上传文件到S3"""
-        # 确保存储桶存在
+        """Upload a file to storage."""
+        # Ensure the bucket is accessible before uploading.
         if not await self._ensure_bucket_exists_async(bucket):
             raise StorageServiceException(
-                internal_message=f"无法确保存储桶 {bucket} 存在",
-                operation="ensure_bucket"
+                internal_message=f"Could not ensure bucket {bucket} exists",
+                operation="ensure_bucket",
             )
 
         def _upload():
             self.adapter.upload_file(local_file_path, s3_key, bucket)
 
-        # 在线程池中执行同步上传
+        # Run the blocking upload in a thread pool.
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _upload)
 
     async def download_from_s3(self, s3_key: str, bucket: Optional[str] = None) -> str:
-        """从S3下载文件到本地临时目录"""
+        """Download a file from storage into a local temporary directory."""
         import uuid
 
         if bucket is None:
             bucket = settings.S3_BUCKET_NAME
 
-        # 创建临时文件
+        # Create the temporary destination directory.
         temp_dir = getattr(settings, "TMP_PATH", "/tmp")
         os.makedirs(temp_dir, exist_ok=True)
 
-        # 生成临时文件名，保持原文件扩展名
+        # Generate a temporary filename while preserving the original extension.
         file_extension = os.path.splitext(s3_key)[1]
         temp_filename = f"temp_{uuid.uuid4().hex}{file_extension}"
         temp_file_path = os.path.join(temp_dir, temp_filename)
 
         try:
-            # 使用适配器下载文件
+            # Use the adapter to download the file.
             def _download():
                 self.adapter.download_file(s3_key, temp_file_path, bucket)
 
-            # 在事件循环中执行同步操作
+            # Run the blocking download in the event loop executor.
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _download)
 
@@ -407,49 +415,55 @@ class FileUploadService:
                 os.remove(temp_file_path)
             raise
         except Exception as e:
-            # 清理临时文件
+            # Clean up the temporary file on failure.
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             raise StorageServiceException(
-                internal_message=f"从S3下载文件失败: {str(e)}",
+                internal_message=f"Failed to download file from S3: {str(e)}",
                 operation="download_from_s3",
-                original_exception=e
+                original_exception=e,
             )
 
     async def _download_file_from_url(self, file_url: str) -> str:
-        """从URL下载文件到临时目录"""
+        """Download a file from a URL into a temporary directory."""
         temp_dir = getattr(settings, "TMP_PATH", "/tmp")
         os.makedirs(temp_dir, exist_ok=True)
 
-        # 生成临时文件名
+        # Generate a temporary filename.
         temp_filename = f"temp_{uuid.uuid4().hex}"
         temp_file_path = os.path.join(temp_dir, temp_filename)
 
         try:
-            # 配置aiohttp客户端，优化下载性能
-            timeout = aiohttp.ClientTimeout(total=300, connect=30)  # 5分钟总超时，30秒连接超时
+            # Configure aiohttp for efficient large-file downloads.
+            timeout = aiohttp.ClientTimeout(
+                total=300, connect=30
+            )  # 5-minute total timeout, 30-second connect timeout.
             connector = aiohttp.TCPConnector(
-                limit=100,  # 总连接池大小
-                limit_per_host=30,  # 每个主机的连接数
-                ttl_dns_cache=300,  # DNS缓存5分钟
+                limit=100,  # Total connection pool size.
+                limit_per_host=30,  # Connection limit per host.
+                ttl_dns_cache=300,  # Cache DNS for 5 minutes.
                 use_dns_cache=True,
             )
-            
+
             async with aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
-                headers={'User-Agent': 'Knowhere-FileDownloader/1.0'}
+                headers={"User-Agent": "Knowhere-FileDownloader/1.0"},
             ) as session:
                 async with session.get(file_url) as response:
                     if response.status != 200:
                         raise StorageServiceException(
-                            internal_message=f"下载失败，状态码: {response.status}",
-                            operation="download_from_url"
+                            internal_message=(
+                                f"Download failed with status code: {response.status}"
+                            ),
+                            operation="download_from_url",
                         )
 
-                    # 使用更大的chunk大小提高下载速度
+                    # Use a larger chunk size to improve download throughput.
                     with open(temp_file_path, "wb") as f:
-                        async for chunk in response.content.iter_chunked(65536):  # 64KB chunks
+                        async for chunk in response.content.iter_chunked(
+                            65536
+                        ):  # 64 KB chunks.
                             f.write(chunk)
 
             return temp_file_path
@@ -459,36 +473,36 @@ class FileUploadService:
                 os.remove(temp_file_path)
             raise
         except Exception as e:
-            # 清理临时文件
+            # Clean up the temporary file on failure.
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             raise StorageServiceException(
-                internal_message=f"下载文件失败: {str(e)}",
+                internal_message=f"Failed to download file: {str(e)}",
                 operation="download_from_url",
-                original_exception=e
+                original_exception=e,
             )
 
     async def verify_s3_file_exists(
         self, s3_key: str, bucket: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        验证S3文件是否存在
+        Verify whether a file exists in storage.
 
         Args:
-            s3_key: S3键
-            bucket: 存储桶名称（可选）
+            s3_key: Storage key.
+            bucket: Optional bucket name.
 
         Returns:
-            Dict: 文件信息或 {"exists": False}
+            Dict: File info payload, or `{"exists": False}` when missing.
         """
         try:
             bucket_name = bucket or self.uploads_bucket
 
-            # 使用适配器检查文件是否存在
+            # Use the adapter to check object existence.
             exists = self.adapter.exists(s3_key, bucket_name)
             if not exists:
                 return {"exists": False}
-            
+
             size = self.adapter.get_object_size(s3_key, bucket_name)
             return {
                 "exists": True,
@@ -499,22 +513,22 @@ class FileUploadService:
             }
 
         except Exception as e:
-            # 文件不存在或其他错误
-            if '404' in str(e) or 'not found' in str(e).lower():
+            # Treat not-found responses as a missing object.
+            if "404" in str(e) or "not found" in str(e).lower():
                 return {"exists": False}
-            logger.error(f"验证文件存在性失败: {e}")
+            logger.error(f"Failed to verify file existence: {e}")
             raise StorageServiceException(
-                internal_message=f"验证文件存在性失败: {str(e)}",
+                internal_message=f"Failed to verify file existence: {str(e)}",
                 operation="verify_s3_file_exists",
-                original_exception=e
+                original_exception=e,
             )
 
     def get_content_type(self, file_extension: str) -> str:
         """
-        根据文件扩展名返回Content-Type
+        Return a Content-Type for a file extension.
 
         Args:
-            file_extension: 文件扩展名（如 .pdf, .docx）
+            file_extension: File extension, such as `.pdf` or `.docx`.
 
         Returns:
             str: Content-Type
@@ -553,49 +567,49 @@ class FileUploadService:
         self, s3_key: str, bucket: Optional[str] = None, expires_in: int = 3600
     ) -> str:
         """
-        通过S3键获取文件URL
+        Get a file URL from a storage key.
 
         Args:
-            s3_key: S3键
-            bucket: 存储桶名称（可选）
-            expires_in: URL过期时间（秒），默认1小时
+            s3_key: Storage key.
+            bucket: Optional bucket name.
+            expires_in: URL TTL in seconds, defaulting to one hour.
 
         Returns:
-            str: 文件URL
+            str: File URL.
         """
         try:
             bucket_name = bucket or self.uploads_bucket
 
-            # 生成预签名URL
+            # Generate a presigned GET URL.
             file_url = self.adapter.generate_presigned_url(
                 s3_key, expiration=expires_in, bucket=bucket_name, method="GET"
             )
 
-            logger.info(f"生成文件URL成功: {s3_key} -> {file_url}")
+            logger.info(f"Generated file URL successfully: {s3_key} -> {file_url}")
             return file_url
 
         except KnowhereException:
             raise
         except Exception as e:
-            logger.error(f"获取文件URL失败: {e}")
+            logger.error(f"Failed to get file URL: {e}")
             raise StorageServiceException(
-                internal_message=f"获取文件URL失败: {str(e)}",
+                internal_message=f"Failed to get file URL: {str(e)}",
                 operation="get_file_url",
-                original_exception=e
+                original_exception=e,
             )
 
     def generate_s3_key(
         self, job_id: str, file_extension: str = "", prefix: str = "uploads"
     ) -> str:
         """
-        生成S3键
+        Generate a storage key.
 
         Args:
-            job_id: 任务ID
-            file_extension: 文件扩展名
-            prefix: 前缀（uploads 或 results）
+            job_id: Job ID.
+            file_extension: File extension.
+            prefix: Key prefix such as `uploads` or `results`.
 
         Returns:
-            str: S3键
+            str: Storage key.
         """
         return f"{prefix}/{job_id}{file_extension}"

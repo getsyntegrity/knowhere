@@ -1,17 +1,18 @@
 """Guest registration business logic."""
+
 import hashlib
 from datetime import datetime
 from typing import NoReturn
 from uuid import uuid4
 
-from loguru import logger
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.repositories.guest_device_repository import GuestDeviceRepository
 from app.services.auth.api_key_service import APIKeyService
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
+from loguru import logger
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from shared.core.exceptions.domain_exceptions import (
     ConflictException,
     UnavailableException,
@@ -73,7 +74,9 @@ class GuestRegistrationService:
             if not self._is_concurrent_guest_registration_error(error):
                 raise
             await session.rollback()
-            locked = await self._device_repo.get_by_device_id_for_update(session, device_id)
+            locked = await self._device_repo.get_by_device_id_for_update(
+                session, device_id
+            )
             if locked is None:
                 raise
             logger.info(
@@ -108,7 +111,7 @@ class GuestRegistrationService:
         session.add(user)
 
         await self._credits_service.ensure_user_initialized(session, user_id)
-        
+
         balance = await session.get(UserBalance, user_id)
         if balance is not None:
             balance.user_tier = _GUEST_TIER
@@ -208,7 +211,9 @@ class GuestRegistrationService:
     @staticmethod
     def _build_guest_name(device_id: str) -> str:
         """Build a deterministic display name for guest-owned user rows."""
-        available_length = _GUEST_DISPLAY_NAME_MAX_LENGTH - len(_GUEST_DISPLAY_NAME_PREFIX)
+        available_length = _GUEST_DISPLAY_NAME_MAX_LENGTH - len(
+            _GUEST_DISPLAY_NAME_PREFIX
+        )
         normalized_device_id = device_id.strip()
         guest_suffix = normalized_device_id[:available_length]
         if guest_suffix:
@@ -237,7 +242,9 @@ class GuestRegistrationService:
             or "unique constraint" in error_text
         )
 
-        return targets_guest_device and is_unique_violation and "device_id" in error_text
+        return (
+            targets_guest_device and is_unique_violation and "device_id" in error_text
+        )
 
     @staticmethod
     def _get_device_id_log_token(device_id: str) -> str:
@@ -258,7 +265,9 @@ class GuestRegistrationService:
     async def _resolve_api_key_id(session: AsyncSession, api_key: str) -> str | None:
         """Resolve the DB id for a just-created API key by its hash."""
         import hashlib
+
         from sqlalchemy import select
+
         from shared.models.database.api_key import APIKey
 
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()

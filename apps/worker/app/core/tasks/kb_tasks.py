@@ -4,12 +4,30 @@ Knowledge Base Management Celery Tasks
 Sync implementation for gevent worker pool.
 All I/O operations use sync services that yield cooperatively under gevent.
 """
+
 import os
-import shutil
-import tempfile
 from datetime import datetime, timezone
 
-import requests
+import pandas as pd
+
+# Base task class
+from app.core.tasks.base_task import KBBaseTask
+from app.core.tasks.task_utils import (
+    cleanup_task_workspace,
+    create_task_workspace,
+    download_s3_file_to_temp,
+)
+from app.services.common.job_start_service import mark_job_running
+from app.services.document_parser.stage_profiler import stage_timer
+
+# Storage operations
+from app.services.storage.sync_storage_service import (
+    download_file_from_url,
+    generate_download_url,
+    upload_to_s3,
+    verify_s3_file_exists,
+)
+from app.services.workload.page_estimator import PageEstimator
 from loguru import logger
 from sqlalchemy import select
 
@@ -17,66 +35,42 @@ from shared.core.billing import BillingCalculator
 from shared.core.celery_app import get_celery_app
 from shared.core.config import settings
 from shared.core.database_sync import get_sync_db_context
-from shared.core.logging import log_context, LogEvent
-from shared.models.database.job import Job
-from shared.services.billing.credits_sync_service import SyncCreditsService
-
-# Sync services for gevent worker
-from shared.services.redis.redis_sync_service import (
-    SyncRedisServiceFactory,
-    SyncJobInfoRedisService,
-    SyncJobMetadataService,
-    SyncChunksRedisService,
-)
-from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
-from shared.services.redis.distributed_lock import RedisJobLock
+from shared.core.exceptions import RETRYABLE_EXCEPTIONS
 
 # Exception handling
 from shared.core.exceptions.domain_exceptions import (
-    ValidationException,
-    FileSystemException,
+    InsufficientCreditsException,
     NotFoundException,
     StorageServiceException,
+    ValidationException,
     WorkerHandlingException,
-    InsufficientCreditsException,
-    SystemSettingMissingException,
-    SystemSettingInvalidException,
 )
-from shared.core.exceptions import RETRYABLE_EXCEPTIONS
-
-# Storage operations
-from app.services.storage.sync_storage_service import (
-    verify_s3_file_exists,
-    generate_download_url,
-    download_file_from_url,
-    upload_to_s3,
-)
-
-# Base task class
-from app.core.tasks.base_task import KBBaseTask
+from shared.core.logging import LogEvent, log_context
+from shared.models.database.job import Job
 
 # Domain services
 from shared.models.schemas.job_metadata import JobMetadataHelper
+from shared.services.billing.credits_sync_service import SyncCreditsService
+from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
+from shared.services.redis.distributed_lock import RedisJobLock
+
+# Sync services for gevent worker
+from shared.services.redis.redis_sync_service import (
+    SyncChunksRedisService,
+    SyncJobInfoRedisService,
+    SyncJobMetadataService,
+    SyncRedisServiceFactory,
+)
 from shared.services.storage.result_storage import get_result_storage
 from shared.services.storage.zip_result_service import ZipResultService
-from app.services.common.job_start_service import mark_job_running
 from app.services.connect_builder.summary_builder import (
     ensure_hierarchy_json,
     load_navigation_top_summary,
 )
-from app.services.document_parser.stage_profiler import stage_timer
-from app.services.workload.page_estimator import PageEstimator
 
 # Get Celery application
 celery_app = get_celery_app()
 
-
-from app.core.tasks.task_utils import (
-    cleanup_temp_file,
-    cleanup_task_workspace,
-    create_task_workspace,
-    download_s3_file_to_temp,
-)
 
 @celery_app.task(
     bind=True,
@@ -84,9 +78,18 @@ from app.core.tasks.task_utils import (
     name="app.core.tasks.kb_tasks.upload_url_file_task",
     ignore_result=True,
     autoretry_for=RETRYABLE_EXCEPTIONS,
-    retry_kwargs={"countdown": settings.KB_TASK_RETRY_COUNTDOWN, "max_retries": settings.KB_TASK_MAX_RETRIES},
+    retry_kwargs={
+        "countdown": settings.KB_TASK_RETRY_COUNTDOWN,
+        "max_retries": settings.KB_TASK_MAX_RETRIES,
+    },
 )
-def upload_url_file_task(self, job_id: str, source_url: str, user_id: str | None = None, job_type: str | None = None):
+def upload_url_file_task(
+    self,
+    job_id: str,
+    source_url: str,
+    user_id: str | None = None,
+    job_type: str | None = None,
+):
     """Download file from URL and upload to S3."""
     with log_context(task_id=self.request.id):
         if not job_id:
@@ -97,11 +100,15 @@ def upload_url_file_task(self, job_id: str, source_url: str, user_id: str | None
 
         result = _upload_url_file(job_id, source_url, user_id, job_type)
 
-        logger.bind(event=LogEvent.WORKER_TASK_COMPLETE.value).info("Task completed: upload_url_file_task")
+        logger.bind(event=LogEvent.WORKER_TASK_COMPLETE.value).info(
+            "Task completed: upload_url_file_task"
+        )
         return result
 
 
-def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type: str | None = None):
+def _upload_url_file(
+    job_id: str, source_url: str, user_id: str | None, job_type: str | None = None
+):
     """Sync URL file download and upload to S3."""
     lifecycle_service = get_sync_job_lifecycle_service()
 
@@ -132,7 +139,9 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: validating file type
-    lifecycle_service.update_progress(job_id, progress=3, message="Validating URL file type...")
+    lifecycle_service.update_progress(
+        job_id, progress=3, message="Validating URL file type..."
+    )
 
     # Step 1: Validate URL file type (path first, then Content-Type header)
     from shared.utils.url_file_type import resolve_file_extension_sync
@@ -144,11 +153,18 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         supported_formats = ", ".join(sorted(all_supported_extensions))
         raise ValidationException(
             user_message="Unsupported file type",
-            violations=[{"field": "file_extension", "description": f"Must be one of: {supported_formats}"}],
+            violations=[
+                {
+                    "field": "file_extension",
+                    "description": f"Must be one of: {supported_formats}",
+                }
+            ],
         )
 
     # Publish progress: downloading
-    lifecycle_service.update_progress(job_id, progress=10, message="Downloading file from URL...")
+    lifecycle_service.update_progress(
+        job_id, progress=10, message="Downloading file from URL..."
+    )
 
     # Step 2: Download file to temp directory
     try:
@@ -156,13 +172,20 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
     except Exception as e:
         raise ValidationException(
             user_message="Failed to download file from URL",
-            violations=[{"field": "source_url", "description": "Could not download file from the provided URL"}],
+            violations=[
+                {
+                    "field": "source_url",
+                    "description": "Could not download file from the provided URL",
+                }
+            ],
             internal_message=f"Failed to download file from URL: {source_url}, error: {e}",
         )
 
     try:
         # Publish progress: validating file size
-        lifecycle_service.update_progress(job_id, progress=30, message="Validating file size...")
+        lifecycle_service.update_progress(
+            job_id, progress=30, message="Validating file size..."
+        )
 
         # Step 3: Validate file size
         file_size = os.path.getsize(temp_file_path)
@@ -171,11 +194,18 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
             limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
             raise ValidationException(
                 user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
-                violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {settings.MAX_FILE_SIZE} bytes"}],
+                violations=[
+                    {
+                        "field": "file_size",
+                        "description": f"Size {file_size} bytes exceeds limit of {settings.MAX_FILE_SIZE} bytes",
+                    }
+                ],
             )
 
         # Publish progress: uploading to S3
-        lifecycle_service.update_progress(job_id, progress=50, message="Uploading file to S3...")
+        lifecycle_service.update_progress(
+            job_id, progress=50, message="Uploading file to S3..."
+        )
 
         # Step 4: Upload to S3
         uploads_bucket = settings.S3_BUCKET_NAME
@@ -188,7 +218,9 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
             logger.debug(f"Temp file cleaned up: {temp_file_path}")
 
     # Publish progress: verifying upload
-    lifecycle_service.update_progress(job_id, progress=80, message="Verifying upload result...")
+    lifecycle_service.update_progress(
+        job_id, progress=80, message="Verifying upload result..."
+    )
 
     # Step 5: Verify S3 file exists
     file_info = verify_s3_file_exists(s3_key)
@@ -199,9 +231,15 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         )
 
     # Publish progress: complete
-    lifecycle_service.update_progress(job_id, progress=100, message="URL file upload complete, waiting for processing...")
+    lifecycle_service.update_progress(
+        job_id,
+        progress=100,
+        message="URL file upload complete, waiting for processing...",
+    )
 
-    logger.info(f"URL file upload complete, waiting for S3 webhook: {job_id} -> {s3_key}")
+    logger.info(
+        f"URL file upload complete, waiting for S3 webhook: {job_id} -> {s3_key}"
+    )
 
     return {
         "status": "success",
@@ -210,15 +248,21 @@ def _upload_url_file(job_id: str, source_url: str, user_id: str | None, job_type
         "file_size": file_info.get("size"),
     }
 
+
 @celery_app.task(
     bind=True,
     base=KBBaseTask,
     name="app.core.tasks.kb_tasks.parse_task",
     ignore_result=True,
     autoretry_for=RETRYABLE_EXCEPTIONS,
-    retry_kwargs={"countdown": settings.KB_TASK_RETRY_COUNTDOWN, "max_retries": settings.KB_TASK_MAX_RETRIES},
+    retry_kwargs={
+        "countdown": settings.KB_TASK_RETRY_COUNTDOWN,
+        "max_retries": settings.KB_TASK_MAX_RETRIES,
+    },
 )
-def parse_task(self, job_id: str, user_id: str | None = None, job_type: str = "kb_management"):
+def parse_task(
+    self, job_id: str, user_id: str | None = None, job_type: str = "kb_management"
+):
     """Parse and vectorize task (file already uploaded to S3)."""
     with log_context(task_id=self.request.id):
         if not job_id:
@@ -229,7 +273,9 @@ def parse_task(self, job_id: str, user_id: str | None = None, job_type: str = "k
 
         result = _parse(job_id, user_id)
 
-        logger.bind(event=LogEvent.WORKER_TASK_COMPLETE.value).info("Task completed: parse_task")
+        logger.bind(event=LogEvent.WORKER_TASK_COMPLETE.value).info(
+            "Task completed: parse_task"
+        )
         return result
 
 
@@ -267,15 +313,17 @@ def _parse(job_id: str, user_id: str | None):
             f"Recovered JobInfo from database: job_id={job_id}, s3_key={s3_key}"
         )
     else:
-        s3_key = job_info.get("s3_key")
-        if not s3_key:
+        raw_s3_key = job_info.get("s3_key")
+        if not isinstance(raw_s3_key, str) or not raw_s3_key:
             raise NotFoundException(
                 resource="JobInfo",
                 resource_id="s3_key",
                 internal_message="Missing s3_key in job_info",
             )
 
-        job_user_id = job_info.get("user_id") or user_id
+        s3_key = raw_s3_key
+        raw_job_user_id = job_info.get("user_id")
+        job_user_id = raw_job_user_id if isinstance(raw_job_user_id, str) else user_id
 
     # Verify S3 file exists (sync)
     file_info = verify_s3_file_exists(s3_key)
@@ -296,7 +344,12 @@ def _parse(job_id: str, user_id: str | None):
         limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
         raise ValidationException(
             user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
-            violations=[{"field": "file_size", "description": f"Size {file_size} bytes exceeds limit of {settings.MAX_FILE_SIZE} bytes"}],
+            violations=[
+                {
+                    "field": "file_size",
+                    "description": f"Size {file_size} bytes exceeds limit of {settings.MAX_FILE_SIZE} bytes",
+                }
+            ],
         )
 
     # Get job_metadata from Redis
@@ -328,11 +381,15 @@ def _parse(job_id: str, user_id: str | None):
         output_dir = os.path.join(task_workspace_dir, "output")
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"Task workspace ready: job_id={job_id}, workspace={task_workspace_dir}")
+        logger.info(
+            f"Task workspace ready: job_id={job_id}, workspace={task_workspace_dir}"
+        )
 
         try:
             # Publish progress: start parsing
-            lifecycle_service.update_progress(job_id, progress=10, message="Parsing document...")
+            lifecycle_service.update_progress(
+                job_id, progress=10, message="Parsing document..."
+            )
 
             # Generate download URL and download file (sync)
             file_url_response = generate_download_url(s3_key, settings.S3_BUCKET_NAME)
@@ -349,13 +406,15 @@ def _parse(job_id: str, user_id: str | None):
             file_ext = os.path.splitext(s3_key)[1].lower() if s3_key else ""
             local_temp_path = download_s3_file_to_temp(file_url, file_ext, input_dir)
 
-            logger.info(f"File downloaded: job_id={job_id}, local_path={local_temp_path}")
-
-            from app.services.document_parser.parse_service import (
-                checkerboard_inject_parse,
+            logger.info(
+                f"File downloaded: job_id={job_id}, local_path={local_temp_path}"
             )
+
             from app.services.document_parser.internal_parse_name import (
                 prepare_internal_parse_input,
+            )
+            from app.services.document_parser.parse_service import (
+                checkerboard_inject_parse,
             )
 
             prepared_parse_input = prepare_internal_parse_input(
@@ -373,13 +432,22 @@ def _parse(job_id: str, user_id: str | None):
 
             # Estimate workload
             page_count = PageEstimator.estimate(local_temp_path)
-            logger.info(f"Workload estimation: job_id={job_id}, page_count={page_count}")
+            logger.info(
+                f"Workload estimation: job_id={job_id}, page_count={page_count}"
+            )
 
             billing_calculator = BillingCalculator()
             credits_service = SyncCreditsService()
             billing_amount = billing_calculator.calculate_page_cost(page_count)
             billing_reason = billing_calculator.format_description(page_count, filename)
             processing_started_at = datetime.now(timezone.utc)
+
+            if not job_user_id:
+                raise NotFoundException(
+                    resource="JobInfo",
+                    resource_id="user_id",
+                    internal_message=f"Missing user_id in job info for job_id={job_id}",
+                )
 
             with get_sync_db_context() as db:
                 job_result = db.execute(
@@ -436,53 +504,82 @@ def _parse(job_id: str, user_id: str | None):
             metadata_service.update_metadata(job_id, metadata_updates)
             job_metadata.update(metadata_updates)
 
-            doc_type = JobMetadataHelper.get_parsing_param(job_metadata, "doc_type", "auto")
+            doc_type = JobMetadataHelper.get_parsing_param(
+                job_metadata, "doc_type", "auto"
+            )
             logger.info(
                 f"Start parse: job_id={job_id}, filename={filename}, "
                 f"internal_filename={internal_parse_name}, type={doc_type}"
             )
 
-            with stage_timer("worker.parse.document", job_id=job_id, filename=filename, doc_type=doc_type):
+            with stage_timer(
+                "worker.parse.document",
+                job_id=job_id,
+                filename=filename,
+                doc_type=doc_type,
+            ):
                 add_dir, add_contents_df = checkerboard_inject_parse(
                     file_full_path=local_temp_path,
                     filename=filename,
                     output_dir=output_dir,
                     job_id=job_id,
                     internal_output_filename=internal_parse_name,
-                    kb_dir=JobMetadataHelper.get_parsing_param(job_metadata, "kb_dir", "Default_Root"),
+                    kb_dir=JobMetadataHelper.get_parsing_param(
+                        job_metadata, "kb_dir", "Default_Root"
+                    ),
                     doc_type=doc_type,
-                    smart_title_parse=JobMetadataHelper.get_parsing_param(job_metadata, "smart_title_parse", True),
-                    summary_image=JobMetadataHelper.get_parsing_param(job_metadata, "summary_image", True),
-                    summary_table=JobMetadataHelper.get_parsing_param(job_metadata, "summary_table", True),
-                    summary_txt=JobMetadataHelper.get_parsing_param(job_metadata, "summary_txt", True),
-                    add_frag_desc=JobMetadataHelper.get_parsing_param(job_metadata, "add_frag_desc", ""),
+                    smart_title_parse=JobMetadataHelper.get_parsing_param(
+                        job_metadata, "smart_title_parse", True
+                    ),
+                    summary_image=JobMetadataHelper.get_parsing_param(
+                        job_metadata, "summary_image", True
+                    ),
+                    summary_table=JobMetadataHelper.get_parsing_param(
+                        job_metadata, "summary_table", True
+                    ),
+                    summary_txt=JobMetadataHelper.get_parsing_param(
+                        job_metadata, "summary_txt", True
+                    ),
+                    add_frag_desc=JobMetadataHelper.get_parsing_param(
+                        job_metadata, "add_frag_desc", ""
+                    ),
                     s3_key=s3_key,
                 )
+                parsed_contents_df: pd.DataFrame | None = add_contents_df
 
-            logger.info(f"File parsing completed: job_id={job_id}, add_dir={add_dir}, chunks={len(add_contents_df) if add_contents_df is not None else 0}")
+            logger.info(
+                f"File parsing completed: job_id={job_id}, add_dir={add_dir}, chunks={len(parsed_contents_df) if parsed_contents_df is not None else 0}"
+            )
 
-            if add_contents_df is None:
+            if parsed_contents_df is None:
                 raise WorkerHandlingException(
                     user_message="We could not extract content from your file",
                     internal_message="File parsing failed, no content returned from parser",
                 )
 
-            if add_contents_df.empty:
-                logger.warning(f"No content returned from file parsing: job_id={job_id}, filename={filename}")
+            if parsed_contents_df.empty:
+                logger.warning(
+                    f"No content returned from file parsing: job_id={job_id}, filename={filename}"
+                )
 
-            lifecycle_service.update_progress(job_id, progress=30, message="Parse completed, preparing chunks...")
+            lifecycle_service.update_progress(
+                job_id, progress=30, message="Parse completed, preparing chunks..."
+            )
 
             chunks = []
 
-            if add_contents_df is not None:
-                chunks_redis_service = SyncChunksRedisService(redis_service)
-                chunks = chunks_redis_service.dataframe_to_chunks(add_contents_df)
+            chunks_redis_service = SyncChunksRedisService(redis_service)
+            chunks = chunks_redis_service.dataframe_to_chunks(parsed_contents_df)
 
-            lifecycle_service.update_progress(job_id, progress=70, message="Chunks ready, generating zip...")
+            lifecycle_service.update_progress(
+                job_id, progress=70, message="Chunks ready, generating zip..."
+            )
             logger.info(f"Chunks prepared: job_id={job_id}, count={len(chunks)}")
 
             # Get source file name
-            source_file_name = JobMetadataHelper.get_field(job_metadata, "source_file_name") or JobMetadataHelper.get_field(job_metadata, "source_url")
+            source_file_name = JobMetadataHelper.get_field(
+                job_metadata, "source_file_name"
+            ) or JobMetadataHelper.get_field(job_metadata, "source_url")
             if isinstance(source_file_name, str) and "/" in source_file_name:
                 source_file_name = os.path.basename(source_file_name)
 
@@ -504,13 +601,20 @@ def _parse(job_id: str, user_id: str | None):
 
             data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 
-            lifecycle_service.update_progress(job_id, progress=80, message="Generating ZIP package...")
+            lifecycle_service.update_progress(
+                job_id, progress=80, message="Generating ZIP package..."
+            )
             processing_completed_at = datetime.now(timezone.utc)
             processing_timing_updates = {
                 "processing_completed_at": processing_completed_at.isoformat(),
                 "processing_duration_ms": max(
                     0,
-                    int((processing_completed_at - processing_started_at).total_seconds() * 1000),
+                    int(
+                        (
+                            processing_completed_at - processing_started_at
+                        ).total_seconds()
+                        * 1000
+                    ),
                 ),
             }
             metadata_service.update_metadata(job_id, processing_timing_updates)
@@ -518,20 +622,28 @@ def _parse(job_id: str, user_id: str | None):
 
             # Generate ZIP package
             zip_service = ZipResultService()
-            zip_file_path, checksum, statistics, zip_size = zip_service.generate_zip_package(
-                job_id=job_id,
-                chunks=chunks,
-                add_dir=str(add_dir) if add_dir else "",
-                source_file_name=source_file_name,
-                data_id=data_id,
-                job_metadata=job_metadata,
-                parsed_df=add_contents_df,
-                temp_dir=task_workspace_dir,
+            zip_file_path, checksum, statistics, zip_size = (
+                zip_service.generate_zip_package(
+                    job_id=job_id,
+                    chunks=chunks,
+                    add_dir=str(add_dir) if add_dir else "",
+                    source_file_name=source_file_name,
+                    data_id=data_id,
+                    job_metadata=job_metadata,
+                    parsed_df=parsed_contents_df,
+                    temp_dir=task_workspace_dir,
+                )
             )
 
-            checksum_value = checksum.get("value", "") if isinstance(checksum, dict) else (checksum or "")
+            checksum_value = (
+                checksum.get("value", "")
+                if isinstance(checksum, dict)
+                else (checksum or "")
+            )
 
-            lifecycle_service.update_progress(job_id, progress=90, message="Uploading results to S3...")
+            lifecycle_service.update_progress(
+                job_id, progress=90, message="Uploading results to S3..."
+            )
 
             result_bundle = get_result_storage().upload(
                 job_id=job_id,
@@ -543,7 +655,9 @@ def _parse(job_id: str, user_id: str | None):
             stored_count = 0
             kb_records = []
 
-            lifecycle_service.update_progress(job_id, progress=100, message="Task complete!")
+            lifecycle_service.update_progress(
+                job_id, progress=100, message="Task complete!"
+            )
 
             # Finalize job success directly to the database
             lifecycle_service.finalize_job_success(
@@ -557,14 +671,16 @@ def _parse(job_id: str, user_id: str | None):
                 delivery_mode="url",
             )
 
-            logger.info(f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}")
+            logger.info(
+                f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}"
+            )
 
             return {
                 "status": "success",
                 "job_id": job_id,
                 "add_dir": None,
                 "vectors_count": 0,
-                "contents_count": len(add_contents_df) if add_contents_df is not None else 0,
+                "contents_count": len(parsed_contents_df),
                 "stored_count": stored_count,
                 "delivery_mode": "url",
                 "result_s3_key": result_s3_key,

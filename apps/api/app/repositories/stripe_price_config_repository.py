@@ -1,55 +1,62 @@
-"""
-Stripe价格配置数据访问层
-"""
-from typing import List, Optional, Sequence
+"""Stripe price-config repository."""
 
-from shared.models.database.stripe_price_config import StripePriceConfig
+from typing import Optional, Sequence
+
 from app.repositories.base_repository import BaseRepository
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.models.database.stripe_price_config import StripePriceConfig
+
 
 class StripePriceConfigRepository(BaseRepository[StripePriceConfig, dict, dict]):
-    """Stripe价格配置数据访问"""
-    
+    """Stripe price-config data access."""
+
     def __init__(self):
         super().__init__(StripePriceConfig)
-    
-    async def get_by_price_id(self, session: AsyncSession, price_id: str) -> Optional[StripePriceConfig]:
-        """根据价格ID获取配置"""
+
+    async def get_by_price_id(
+        self, session: AsyncSession, price_id: str
+    ) -> Optional[StripePriceConfig]:
+        """Get config by Stripe price ID."""
         result = await session.execute(
             select(StripePriceConfig)
             .where(StripePriceConfig.price_id == price_id)
-            .where(StripePriceConfig.is_active == True)
+            .where(StripePriceConfig.is_active)
         )
         return result.scalar_one_or_none()
-    
-    async def get_by_plan_id(self, session: AsyncSession, plan_id: str) -> Optional[StripePriceConfig]:
-        """根据计划ID获取配置（订阅类型）"""
+
+    async def get_by_plan_id(
+        self, session: AsyncSession, plan_id: str
+    ) -> Optional[StripePriceConfig]:
+        """Get subscription config by plan ID."""
         result = await session.execute(
             select(StripePriceConfig)
             .where(StripePriceConfig.plan_id == plan_id)
-            .where(StripePriceConfig.product_type == 'subscription')
-            .where(StripePriceConfig.is_active == True)
+            .where(StripePriceConfig.product_type == "subscription")
+            .where(StripePriceConfig.is_active)
         )
         return result.scalar_one_or_none()
-    
-    async def get_all_active(self, session: AsyncSession) -> Sequence[StripePriceConfig]:
-        """获取所有启用的价格配置"""
+
+    async def get_all_active(
+        self, session: AsyncSession
+    ) -> Sequence[StripePriceConfig]:
+        """Get all active price configs."""
         result = await session.execute(
             select(StripePriceConfig)
-            .where(StripePriceConfig.is_active == True)
+            .where(StripePriceConfig.is_active)
             .order_by(StripePriceConfig.product_type, StripePriceConfig.plan_id)
         )
         return result.scalars().all()
-    
-    async def get_credits_packages(self, session: AsyncSession) -> Sequence[StripePriceConfig]:
-        """获取所有Credits包配置"""
+
+    async def get_credits_packages(
+        self, session: AsyncSession
+    ) -> Sequence[StripePriceConfig]:
+        """Get all credit-package configs."""
         result = await session.execute(
             select(StripePriceConfig)
-            .where(StripePriceConfig.product_type == 'credits_package')
-            .where(StripePriceConfig.is_active == True)
+            .where(StripePriceConfig.product_type == "credits_package")
+            .where(StripePriceConfig.is_active)
             .order_by(StripePriceConfig.credits_amount)
         )
         return result.scalars().all()
-

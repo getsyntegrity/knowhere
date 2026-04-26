@@ -1,31 +1,38 @@
+# pyright: reportArgumentType=false, reportCallIssue=false, reportOptionalSubscript=false
 import base64
 import hashlib
 import io
 import os
 import re
 import threading
-import uuid
 from pathlib import Path
 
 import pandas as pd
-from shared.core.config import settings
-from shared.services.ai.prompt_service import build_prompt
-from shared.services.ai.response_process_service import eval_response
-from app.services.common.kb_utils import (gen_str_codes, get_str_time,
-                                          process_dup_paths_df)
-from shared.utils.CommonHelperSync import is_remote, load_file_bytes
-from shared.utils.chunk_refs import build_chunk_ref
-from shared.utils.file_utils import path_handle
-from loguru import logger
-from shared.core.exceptions.domain_exceptions import (
-    LLMServiceException,
-    ImageParsingException,
+from app.services.common.kb_utils import (
+    gen_str_codes,
+    get_str_time,
+    process_dup_paths_df,
 )
-from shared.core.exceptions.knowhere_exception import KnowhereException
-from shared.utils.OpenAICompatibleClientSync import OpenAICompatibleClientSync, get_openai_client
+from loguru import logger
 from PIL import Image
 
-MD_IMAGE_PATTERN = r'!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)'
+from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import (
+    ImageParsingException,
+    LLMServiceException,
+)
+from shared.core.exceptions.knowhere_exception import KnowhereException
+from shared.services.ai.prompt_service import build_prompt
+from shared.services.ai.response_process_service import eval_response
+from shared.utils.chunk_refs import build_chunk_ref
+from shared.utils.CommonHelperSync import is_remote, load_file_bytes
+from shared.utils.file_utils import path_handle
+from shared.utils.OpenAICompatibleClientSync import (
+    OpenAICompatibleClientSync,
+    get_openai_client,
+)
+
+MD_IMAGE_PATTERN = r"!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)"
 g_img_lock = threading.Lock()
 
 
@@ -35,19 +42,20 @@ def _get_vision_client() -> OpenAICompatibleClientSync:
     return get_openai_client(model=image_model)
 
 
-def image_bytes_to_base64(img_data: bytes, ext: str):
+def image_bytes_to_base64(img_data: bytes, ext: str) -> str:
     mime_type = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
         ".webp": "image/webp",
     }.get(ext, "application/octet-stream")
-    # b64_data = base64.b64encode(img_data).decode("utf-8")
-    return f"data:{mime_type};base64,{img_data}"
+    b64_data = base64.b64encode(img_data).decode("utf-8")
+    return f"data:{mime_type};base64,{b64_data}"
 
 
 def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
     from shared.core.constants import ProcessingConstants
+
     if min_size is None:
         min_size = ProcessingConstants.IMG_MIN_SIZE
     if max_size is None:
@@ -57,17 +65,18 @@ def local_image_to_data_url(path, cut=True, min_size=None, max_size=None):
         return None
 
     if cut:
-        file_size = path.stat().st_size  # 字节
-        if file_size < min_size:  # 小于10KB
-            logger.debug(f"Skipping {path} (too small: {file_size/1024:.1f} KB)")
+        file_size = path.stat().st_size  # Bytes.
+        if file_size < min_size:  # Smaller than 10 KB.
+            logger.debug(f"Skipping {path} (too small: {file_size / 1024:.1f} KB)")
             return None
-        if file_size >= max_size:  # 大于5MB
-            logger.debug(f"Skipping {path} (too large: {file_size/1024/1024:.1f} MB)")
+        if file_size >= max_size:  # Larger than 5 MB.
+            logger.debug(
+                f"Skipping {path} (too large: {file_size / 1024 / 1024:.1f} MB)"
+            )
             return None
 
     with open(path, "rb") as f:
-        img_data = base64.b64encode(f.read()).decode("utf-8")
-        img_data_base64 = image_bytes_to_base64(img_data, path.suffix.lower())
+        img_data_base64 = image_bytes_to_base64(f.read(), path.suffix.lower())
     return img_data_base64
 
 
@@ -84,13 +93,23 @@ def process_img_path4read(paths_, kb_dir, cut):
     return urls
 
 
-def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="", task="summary-images", query="", max_tokens=None, size_cut=True):
+def ask_image(
+    client: OpenAICompatibleClientSync,
+    kb_dir,
+    paths_,
+    title_text="",
+    task="summary-images",
+    query="",
+    max_tokens=None,
+    size_cut=True,
+):
     from shared.core.constants import ProcessingConstants
+
     if max_tokens is None:
         max_tokens = ProcessingConstants.IMG_MAX_TOKENS
-    
+
     # Filter unsupported formats (sxjg logic)
-    valid_exts = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+    valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
     valid_paths = []
     for p in paths_:
         ext = os.path.splitext(p)[-1].lower()
@@ -101,34 +120,28 @@ def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="",
 
     if not valid_paths:
         return None
-    
+
     urls_ = process_img_path4read(valid_paths, kb_dir, size_cut)
 
     if task in ("summary-images", "atlas-page-info"):
         image_model = settings.IMAGE_MODEL or "gpt-4-vision-preview"
-    else: # Image Q&A and OCR use better models
+    else:  # Image Q&A and OCR use better models
         image_model = settings.IMAGE_MODEL_MAX or "gpt-4-vision-preview"
 
-    if len(urls_)>0:
-        prompt, temperature, top_p, max_tokens = build_prompt(task=task, texts=title_text, query=query, paras={'max_tokens': max_tokens})
-        messages = [{
+    if len(urls_) > 0:
+        prompt, temperature, top_p, max_tokens = build_prompt(
+            task=task, texts=title_text, query=query, paras={"max_tokens": max_tokens}
+        )
+        messages = [
+            {
                 "role": "user",
-                "content": [{
-                    "type": "text",
-                    "text": prompt
-                    }
-                ],
+                "content": [{"type": "text", "text": prompt}],
             }
         ]
         for url_ in urls_:
-            url_header = {
-                "type": "image_url",
-                "image_url": {
-                    "url": url_
-                }
-            }
-            messages[0]['content'].append(url_header)
-        resp = ''
+            url_header = {"type": "image_url", "image_url": {"url": url_}}
+            messages[0]["content"].append(url_header)
+        resp = ""
         try:
             resp = client.chat_completion(
                 messages=messages,
@@ -151,7 +164,7 @@ def ask_image(client: OpenAICompatibleClientSync, kb_dir, paths_, title_text="",
             raise LLMServiceException(
                 internal_message=f"Understanding image content failed: {str(e)}",
                 provider="openai_image",
-                original_exception=e
+                original_exception=e,
             )
     else:
         return None
@@ -166,12 +179,15 @@ def detect_summary_img_md(line, last_context, kb_dir, mode=False):
             try:
                 llm_resp = ask_image(client, kb_dir, paths_=[ip])
                 if llm_resp:
-                    from app.services.document_parser.txt_parser import split_title_summary
+                    from app.services.document_parser.txt_parser import (
+                        split_title_summary,
+                    )
+
                     img_title, image_summary = split_title_summary(llm_resp)
                 else:
                     img_title = None
                     image_summary = last_context + str(i)
-            except:
+            except Exception:
                 img_title = None
                 image_summary = last_context + str(i)
         else:
@@ -182,7 +198,15 @@ def detect_summary_img_md(line, last_context, kb_dir, mode=False):
     return imgs
 
 
-def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm_paras=None, auto_rename=True, relative_root=None):
+def parse_image(
+    image_path,
+    filename=None,
+    output_dir=None,
+    baseurl="",
+    base_llm_paras=None,
+    auto_rename=True,
+    relative_root=None,
+):
     split_char = settings.SPLIT_CHAR or "/"
     df_list = []
     time_stamp = get_str_time()
@@ -201,11 +225,14 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
 
         # Early exit: skip images smaller than 10KB
         from shared.core.constants import ProcessingConstants
+
         saved_size = os.path.getsize(img_path)
         if saved_size < ProcessingConstants.IMG_MIN_SIZE:
-            logger.debug(f"Skipping image {filename} (too small: {saved_size/1024:.1f} KB)")
+            logger.debug(
+                f"Skipping image {filename} (too small: {saved_size / 1024:.1f} KB)"
+            )
             os.remove(img_path)
-            return pd.DataFrame(columns=settings.ALL_DF_COLS.split(','))
+            return pd.DataFrame(columns=settings.ALL_DF_COLS.split(","))
 
         # Extract image content
         client = _get_vision_client()
@@ -214,31 +241,56 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
         img_task = "summary-images"
         img_max_tokens = ProcessingConstants.IMG_MAX_TOKENS
         img_context = f"{filename}\n{base_llm_paras['frag_desc']}"
-        type_resp = ask_image(client, output_dir, paths_=[relative_source_path], title_text=img_context, task="judge-image-type", size_cut=False)
+        type_resp = ask_image(
+            client,
+            output_dir,
+            paths_=[relative_source_path],
+            title_text=img_context,
+            task="judge-image-type",
+            size_cut=False,
+        )
         if type_resp is not None:
-            if type_resp["answer"]=="text":
+            if type_resp["answer"] == "text":
                 img_task = "ocr-image"
                 img_max_tokens = ProcessingConstants.IMG_OCR_MAX_TOKENS
 
-        if base_llm_paras['summary_image']: # Leave room for context to help understand the image
-            image_content = ask_image(client, output_dir, paths_=[relative_source_path], title_text=img_context, task=img_task, max_tokens=img_max_tokens, size_cut=False)
+        if base_llm_paras[
+            "summary_image"
+        ]:  # Leave room for context to help understand the image
+            image_content = ask_image(
+                client,
+                output_dir,
+                paths_=[relative_source_path],
+                title_text=img_context,
+                task=img_task,
+                max_tokens=img_max_tokens,
+                size_cut=False,
+            )
             if image_content is None:
                 image_content = filename
         else:
             image_content = filename
 
-        if type_resp["answer"]=="text" and base_llm_paras['summary_image']:
-            llm_resp = ask_image(client, output_dir, paths_=[relative_source_path], title_text=filename, size_cut=False)
+        if type_resp["answer"] == "text" and base_llm_paras["summary_image"]:
+            llm_resp = ask_image(
+                client,
+                output_dir,
+                paths_=[relative_source_path],
+                title_text=filename,
+                size_cut=False,
+            )
             if llm_resp:
                 from app.services.document_parser.txt_parser import split_title_summary
+
                 img_title, image_summary = split_title_summary(llm_resp)
             else:
                 img_title = None
                 image_summary = image_content
         else:
             # For non-text images, split title from summary-images response
-            if base_llm_paras['summary_image'] and image_content != filename:
+            if base_llm_paras["summary_image"] and image_content != filename:
                 from app.services.document_parser.txt_parser import split_title_summary
+
                 img_title, image_summary = split_title_summary(image_content)
             else:
                 img_title = None
@@ -258,7 +310,9 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
                 # Store the relative filename for path construction
                 final_img_name = f"{img_name}{img_suffix}"
             else:
-                logger.warning(f"Image file missing before rename, keeping original name: {filename}")
+                logger.warning(
+                    f"Image file missing before rename, keeping original name: {filename}"
+                )
                 update_img_path = img_path
                 final_img_name = filename
         else:
@@ -267,23 +321,41 @@ def parse_image(image_path, filename=None, output_dir=None, baseurl="", base_llm
     except KnowhereException:
         raise
     except Exception as e:
-        logger.error(f'Failed to save image: {e}...')
+        logger.error(f"Failed to save image: {e}...")
         raise ImageParsingException(
             user_message="Failed to process the image file",
             reason="IMAGE_STORAGE_FAILED",
             internal_message=f"Storage error: {str(e)}",
-            original_exception=e
+            original_exception=e,
         )
 
     # Deterministic know_id: use image binary hash
     temp_uid = gen_str_codes(hashlib.md5(img_bytes).hexdigest())
     # Use relative path with relative_root prefix
-    relative_img_path = f"{relative_root}{split_char}{final_img_name}" if relative_root else final_img_name
+    relative_img_path = (
+        f"{relative_root}{split_char}{final_img_name}"
+        if relative_root
+        else final_img_name
+    )
     img_ref = build_chunk_ref(relative_img_path)
     img_bottom_content = f"{img_ref}\nImage Content:\n{image_content}"
-    df_list.append([img_bottom_content, relative_img_path, "image", len(img_bottom_content), "", image_summary, temp_uid, "", "", time_stamp, ""])
+    df_list.append(
+        [
+            img_bottom_content,
+            relative_img_path,
+            "image",
+            len(img_bottom_content),
+            "",
+            image_summary,
+            temp_uid,
+            "",
+            "",
+            time_stamp,
+            "",
+        ]
+    )
 
-    img_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(','))
+    img_df = pd.DataFrame(df_list, columns=settings.ALL_DF_COLS.split(","))
     img_df = process_dup_paths_df(img_df)
 
     return img_df

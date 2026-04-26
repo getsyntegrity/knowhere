@@ -1,480 +1,496 @@
 """
-S3事件Webhook路由
+S3 event webhook routes.
 """
+
 import base64
 import json
 import os
 from typing import Any, Dict
 
 import aiohttp
-from shared.core.database import get_db_context
-from shared.core.logging import LogEvent
-from shared.core.state_machine.states import JobStatus
-from shared.models.schemas.oss_event import OSSEvent
-from shared.models.schemas.s3_event import S3Event
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
 from fastapi import APIRouter, Header, Request
 from loguru import logger
 
+from shared.core.database import get_db_context
+from shared.core.logging import LogEvent
+from shared.core.state_machine.states import JobStatus
+from shared.models.schemas.oss_event import OSSEvent
+from shared.models.schemas.s3_event import S3Event
+
 router = APIRouter(tags=["Internal"])
 
 
 def verify_sns_signature(request_body: bytes, signature: str, message: str) -> bool:
     """
-    验证SNS消息签名
-    
+    Validate an SNS message signature.
+
     Args:
-        request_body: 请求体
-        signature: 签名
-        message: 消息内容
-        
+        request_body: Request body.
+        signature: Signature header value.
+        message: Message payload.
+
     Returns:
-        bool: 验证是否通过
+        bool: Whether validation succeeded.
     """
     try:
-        # 这里简化处理，实际应该使用AWS SDK验证
-        # 在生产环境中应该实现完整的SNS签名验证
+        # This is intentionally simplified. Production code should use the AWS SDK.
         return True
     except Exception as e:
-        logger.error(f"SNS签名验证失败: {e}")
+        logger.error(f"SNS signature verification failed: {e}")
         return False
 
 
 def verify_minio_signature(auth_token: str, expected_token: str) -> bool:
     """
-    验证MinIO webhook签名
-    
+    Validate the MinIO webhook token.
+
     Args:
-        auth_token: 请求中的认证token
-        expected_token: 期望的token
-        
+        auth_token: Token supplied by the request.
+        expected_token: Token configured on the server.
+
     Returns:
-        bool: 验证是否通过
+        bool: Whether validation succeeded.
     """
     if not expected_token:
-        return True  # 如果没有配置token，跳过验证
-    
+        return True  # Skip verification when no token is configured.
+
     return auth_token == expected_token
 
 
 def verify_oss_signature(request_body: bytes, headers: Dict[str, str]) -> bool:
     """
-    验证OSS事件回调签名
-    
+    Validate an OSS callback signature.
+
     Args:
-        request_body: 请求体
-        headers: 请求头
-        
+        request_body: Request body.
+        headers: Request headers.
+
     Returns:
-        bool: 验证是否通过
+        bool: Whether validation succeeded.
     """
     try:
         from shared.core.config import settings
 
-        # 如果禁用签名验证，直接返回True
-        if not getattr(settings, 'OSS_EVENT_VERIFY_SIGNATURE', True):
+        # Allow an opt-out for local development and controlled environments.
+        if not getattr(settings, "OSS_EVENT_VERIFY_SIGNATURE", True):
             return True
-        
-        # OSS回调签名验证
-        # 实际实现需要根据OSS文档验证签名
-        # 这里简化处理，生产环境需要完整实现
-        callback_key = getattr(settings, 'OSS_EVENT_CALLBACK_KEY', '')
+
+        # OSS callback verification is simplified here. Production code should
+        # follow the official OSS callback verification flow.
+        callback_key = getattr(settings, "OSS_EVENT_CALLBACK_KEY", "")
         if not callback_key:
-            logger.warning("OSS_EVENT_CALLBACK_KEY未配置，跳过签名验证")
+            logger.warning(
+                "OSS_EVENT_CALLBACK_KEY is not configured; skipping signature verification"
+            )
             return True
-        
-        # TODO: 实现OSS签名验证逻辑
-        # OSS RBCallback签名验证需要：
-        # 1. 从headers中获取签名信息
-        # 2. 使用callback_key计算签名
-        # 3. 对比签名是否一致
-        
+
+        # TODO: Implement OSS callback signature verification.
+        # Expected steps:
+        # 1. Read the signature metadata from the headers.
+        # 2. Compute the signature with callback_key.
+        # 3. Compare the computed and provided signatures.
+
         return True
     except Exception as e:
-        logger.error(f"OSS签名验证失败: {e}")
+        logger.error(f"OSS signature verification failed: {e}")
         return False
 
 
 def extract_job_id_from_s3_key(s3_key: str) -> str | None:
     """
-    从S3键中提取job_id
-    
+    Extract the job_id from an S3 object key.
+
     Args:
-        s3_key: S3键，格式为 uploads/{job_id}.ext
-        
+        s3_key: S3 key in the format uploads/{job_id}.ext.
+
     Returns:
-        str: job_id
+        str: Job identifier.
     """
     if not s3_key.startswith("uploads/"):
         return None
-    
-    # 移除前缀并提取文件名（不含扩展名）
-    filename = s3_key[8:]  # 移除 "uploads/" 前缀
+
+    # Strip the uploads/ prefix and remove the file extension.
+    filename = s3_key[8:]  # Remove the "uploads/" prefix.
     job_id = os.path.splitext(filename)[0]
-    
+
     return job_id
 
 
-@router.get("/s3-events", response_model=dict, summary="S3事件Webhook GET")
+@router.get("/s3-events", response_model=dict, summary="Handle S3 webhook GET requests")
 async def handle_s3_events_get(
     request: Request,
     x_amz_sns_message_type: str = Header(None, alias="x-amz-sns-message-type"),
     x_minio_auth_token: str = Header(None, alias="x-minio-auth-token"),
-    authorization: str = Header(None)
+    authorization: str = Header(None),
 ):
     """
-    处理S3事件通知GET请求 - 主要用于SNS订阅确认
+    Handle S3-event GET requests, primarily for SNS subscription confirmation.
     """
-    logger.info(f"======== S3事件GET请求 =========")
+    logger.info("======== S3 event GET request ========")
     logger.info(f"Headers: {dict(request.headers)}")
     if request.client:
         logger.info(f"Client IP: {request.client.host}")
 
-    # 检查是否是SNS订阅确认请求
+    # Handle SNS subscription confirmation requests.
     if x_amz_sns_message_type == "SubscriptionConfirmation":
-        logger.info("收到SNS订阅确认请求")
-        return {"message": "SNS订阅确认成功"}
-    
-    return {"message": "GET请求处理完成"}
+        logger.info("Received an SNS subscription confirmation request")
+        return {"message": "SNS subscription confirmed"}
+
+    return {"message": "GET request handled"}
 
 
-@router.post("/s3-events", response_model=dict, summary="S3事件Webhook POST")
+@router.post(
+    "/s3-events", response_model=dict, summary="Handle S3 webhook POST requests"
+)
 async def handle_s3_events(
     request: Request,
     x_amz_sns_message_type: str = Header(None, alias="x-amz-sns-message-type"),
     x_minio_auth_token: str = Header(None, alias="x-minio-auth-token"),
-    authorization: str = Header(None)
+    authorization: str = Header(None),
 ):
     """
-    处理S3事件通知POST请求 - 支持AWS SNS、MinIO和OSS
+    Handle S3-event POST requests from AWS SNS, MinIO, or OSS.
     """
-    logger.bind(event = LogEvent.S3_WEBHOOK_EVENT).info(f"S3 event Headers: {dict(request.headers)}")
+    logger.bind(event=LogEvent.S3_WEBHOOK_EVENT).info(
+        f"S3 event Headers: {dict(request.headers)}"
+    )
     if request.client:
         logger.info(f"Client IP: {request.client.host}")
     try:
-        # 获取请求体
+        # Read the request body.
         body = await request.body()
         headers = dict(request.headers)
-        
-        # 判断事件来源
+
+        # Determine the event source.
         if x_amz_sns_message_type:
-            # AWS SNS事件
+            # AWS SNS event.
             result = await handle_sns_event(body)
             if result:
                 return result
         elif _is_oss_event(headers):
-            # OSS事件（包含阿里云 MNS 通知代理场景）
+            # OSS event, including Aliyun MNS proxy notifications.
             await handle_oss_event(body, headers)
         elif x_minio_auth_token:
-            # MinIO事件（仅当提供专用的 x-minio-auth-token 时识别）
+            # MinIO event, identified by the dedicated x-minio-auth-token header.
             await handle_minio_event(body, x_minio_auth_token)
         else:
-            # 直接S3事件（用于测试）
+            # Direct S3 event payload used in tests.
             await handle_direct_s3_event(body)
-        
-        return {"message": "事件处理成功"}
-        
+
+        return {"message": "Event handled successfully"}
+
     except Exception as e:
-        logger.error(f"处理S3事件失败: {e}")
-        # 即使处理失败也返回200，避免S3重试
-        return {"message": "事件处理完成"}
+        logger.error(f"Failed to handle S3 event: {e}")
+        # Return 200 even on failure so the upstream storage service does not retry blindly.
+        return {"message": "Event handling completed"}
 
 
 async def handle_sns_event(body: bytes):
     """
-    处理AWS SNS事件
+    Handle an AWS SNS event payload.
     """
     try:
-        # 解析SNS消息
-        sns_message = json.loads(body.decode('utf-8'))
-        
-        # 检查消息类型
-        message_type = sns_message.get('Type')
-        logger.info(f"SNS消息类型: {message_type}")
-        
-        if message_type == 'SubscriptionConfirmation':
-            # 处理订阅确认
-            logger.info("收到SNS订阅确认请求")
-            subscribe_url = sns_message.get('SubscribeURL')
+        # Parse the SNS message envelope.
+        sns_message = json.loads(body.decode("utf-8"))
+
+        # Branch on the SNS message type.
+        message_type = sns_message.get("Type")
+        logger.info(f"SNS message type: {message_type}")
+
+        if message_type == "SubscriptionConfirmation":
+            # Handle subscription confirmation.
+            logger.info("Received an SNS subscription confirmation request")
+            subscribe_url = sns_message.get("SubscribeURL")
             if subscribe_url:
-                logger.info(f"SNS订阅确认URL: {subscribe_url}")
-                # 访问确认URL来确认订阅
+                logger.info(f"SNS subscription confirmation URL: {subscribe_url}")
+                # Visit the URL to confirm the subscription.
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(subscribe_url) as response:
                             if response.status == 200:
-                                logger.info("SNS订阅确认成功")
-                                return {"message": "SNS订阅确认成功"}
+                                logger.info("SNS subscription confirmed successfully")
+                                return {"message": "SNS subscription confirmed"}
                             else:
-                                logger.error(f"SNS订阅确认失败，状态码: {response.status}")
-                                return {"message": "SNS订阅确认失败"}
+                                logger.error(
+                                    f"SNS subscription confirmation failed, status={response.status}"
+                                )
+                                return {
+                                    "message": "SNS subscription confirmation failed"
+                                }
                 except Exception as e:
-                    logger.error(f"访问SNS订阅确认URL失败: {e}")
-                    return {"message": "SNS订阅确认失败"}
+                    logger.error(f"Failed to reach the SNS confirmation URL: {e}")
+                    return {"message": "SNS subscription confirmation failed"}
             else:
-                logger.warning("SNS订阅确认消息中没有SubscribeURL")
-                return {"message": "SNS订阅确认失败"}
-        
-        elif message_type == 'Notification':
-            # 处理通知消息
-            logger.info("收到SNS通知消息")
-            logger.info(f"SNS消息内容: {sns_message}")
-            
-            # 解析S3事件
+                logger.warning(
+                    "SNS subscription confirmation did not include SubscribeURL"
+                )
+                return {"message": "SNS subscription confirmation failed"}
+
+        elif message_type == "Notification":
+            # Handle notification messages.
+            logger.info("Received an SNS notification")
+            logger.info(f"SNS message payload: {sns_message}")
+
+            # Parse the embedded S3 event.
             try:
-                s3_event_data = json.loads(sns_message['Message'])
-                logger.info(f"S3事件数据: {s3_event_data}")
-                
+                s3_event_data = json.loads(sns_message["Message"])
+                logger.info(f"S3 event payload: {s3_event_data}")
+
                 # Skip S3 test events — AWS/LocalStack sends these when
                 # bucket notification configuration is first applied.
                 # They lack the standard Records[] structure.
-                if isinstance(s3_event_data, dict) and s3_event_data.get('Event') == 's3:TestEvent':
+                if (
+                    isinstance(s3_event_data, dict)
+                    and s3_event_data.get("Event") == "s3:TestEvent"
+                ):
                     logger.info("Skip S3 test event")
                     return {"message": "S3 test event confirmed and skipped"}
-                
+
                 s3_event = S3Event(**s3_event_data)
-                
-                # 处理上传事件
+
+                # Process the upload events.
                 await process_upload_events(s3_event)
             except Exception as e:
-                logger.error(f"解析S3事件数据失败: {e}")
-                logger.error(f"SNS消息: {sns_message}")
-                # 尝试直接处理SNS消息作为S3事件
+                logger.error(f"Failed to parse the S3 event payload: {e}")
+                logger.error(f"SNS payload: {sns_message}")
+                # Fall back to treating the SNS payload itself as an S3 event.
                 try:
                     s3_event = S3Event(**sns_message)
                     await process_upload_events(s3_event)
                 except Exception as e2:
-                    logger.error(f"直接解析SNS消息为S3事件也失败: {e2}")
+                    logger.error(
+                        f"Fallback parsing of the SNS payload as an S3 event also failed: {e2}"
+                    )
                     raise
         else:
-            logger.warning(f"未知的SNS消息类型: {message_type}")
-            return {"message": f"未知的SNS消息类型: {message_type}"}
-        
+            logger.warning(f"Unknown SNS message type: {message_type}")
+            return {"message": f"Unknown SNS message type: {message_type}"}
+
     except Exception as e:
-        logger.error(f"处理SNS事件失败: {e}")
+        logger.error(f"Failed to handle SNS event: {e}")
         raise
 
 
 async def handle_minio_event(body: bytes, auth_token: str):
     """
-    处理MinIO事件
+    Handle a MinIO webhook event.
     """
     try:
-        # 验证认证token
+        # Validate the webhook token.
         from shared.core.config import settings
-        expected_token = getattr(settings, 'S3_WEBHOOK_AUTH_TOKEN', '')
-        
+
+        expected_token = getattr(settings, "S3_WEBHOOK_AUTH_TOKEN", "")
+
         if not verify_minio_signature(auth_token, expected_token):
-            logger.warning("MinIO webhook认证失败")
+            logger.warning("MinIO webhook authentication failed")
             return
-        
-        # 解析S3事件
-        s3_event_data = json.loads(body.decode('utf-8'))
+
+        # Parse the S3 event payload.
+        s3_event_data = json.loads(body.decode("utf-8"))
         s3_event = S3Event(**s3_event_data)
-        
-        # 处理上传事件
+
+        # Process the upload events.
         await process_upload_events(s3_event)
-        
+
     except Exception as e:
-        logger.error(f"处理MinIO事件失败: {e}")
+        logger.error(f"Failed to handle MinIO event: {e}")
 
 
 async def handle_direct_s3_event(body: bytes):
     """
-    处理直接S3事件（用于测试）
+    Handle a direct S3 event payload used in tests.
     """
     try:
-        # 解析S3事件
-        s3_event_data = json.loads(body.decode('utf-8'))
+        # Parse the S3 event payload.
+        s3_event_data = json.loads(body.decode("utf-8"))
         s3_event = S3Event(**s3_event_data)
-        
-        # 处理上传事件
+
+        # Process the upload events.
         await process_upload_events(s3_event)
-        
+
     except Exception as e:
-        logger.error(f"处理直接S3事件失败: {e}")
+        logger.error(f"Failed to handle direct S3 event: {e}")
 
 
 def _is_oss_event(headers: Dict[str, str]) -> bool:
     """
-    判断是否为OSS事件
-    
+    Return whether the incoming request looks like an OSS event.
+
     Args:
-        headers: 请求头
-        
+        headers: Request headers.
+
     Returns:
-        bool: 是否为OSS事件
+        bool: Whether the request matches OSS event heuristics.
     """
-    # OSS事件的特征标识
-    # 可以通过以下方式识别：
-    # 1. 检查S3_TYPE环境变量
-    # 2. 检查特定的请求头（如果有）
-    # 3. 检查请求体格式
-    
-    storage_type = os.getenv('S3_TYPE', 's3').lower()
-    if storage_type == 'oss':
+    # Identify OSS events by storage type, known headers, or request shape.
+
+    storage_type = os.getenv("S3_TYPE", "s3").lower()
+    if storage_type == "oss":
         return True
-    
-    # 也可以检查请求头中是否有OSS特有的标识
-    # 例如：'x-oss-pub-key-url' 或其他OSS特定的header
-    if 'x-oss-pub-key-url' in headers:
+
+    # Also look for OSS-specific headers such as x-oss-pub-key-url.
+    if "x-oss-pub-key-url" in headers:
         return True
-    
-    # 识别阿里云 MNS 通知代理头/UA
-    if 'x-mns-version' in headers or 'x-mns-signing-cert-url' in headers:
+
+    # Recognize Aliyun MNS proxy headers and user agents.
+    if "x-mns-version" in headers or "x-mns-signing-cert-url" in headers:
         return True
-    user_agent = headers.get('user-agent') or headers.get('User-Agent')
-    if user_agent and 'Aliyun Notification Service Agent' in user_agent:
+    user_agent = headers.get("user-agent") or headers.get("User-Agent")
+    if user_agent and "Aliyun Notification Service Agent" in user_agent:
         return True
-    
+
     return False
 
 
 async def handle_oss_event(body: bytes, headers: Dict[str, str]):
     """
-    处理OSS事件
+    Handle an OSS event payload.
     """
     try:
-        # 验证签名
+        # Verify the callback signature.
         if not verify_oss_signature(body, headers):
-            logger.warning("OSS事件签名验证失败")
+            logger.warning("OSS event signature verification failed")
             return
-        
-        # 解析OSS事件（兼容 MNS 外层 envelope）
-        event_data = json.loads(body.decode('utf-8'))
-        logger.info(f"OSS事件数据: {event_data}")
-        # 如果是 MNS 推送，实际事件位于 Message 字段中（可能是 Base64 编码的 JSON）
-        if isinstance(event_data, dict) and 'Message' in event_data:
-            inner = event_data.get('Message')
+
+        # Parse the OSS payload, including MNS wrapper envelopes.
+        event_data = json.loads(body.decode("utf-8"))
+        logger.info(f"OSS event payload: {event_data}")
+        # MNS may place the real event inside Message as base64 or raw JSON.
+        if isinstance(event_data, dict) and "Message" in event_data:
+            inner = event_data.get("Message")
             if isinstance(inner, str):
                 decoded = None
-                # 优先尝试 Base64 解码
+                # Prefer base64 decoding first.
                 try:
                     decoded_bytes = base64.b64decode(inner, validate=True)
-                    decoded_str = decoded_bytes.decode('utf-8')
+                    decoded_str = decoded_bytes.decode("utf-8")
                     decoded = json.loads(decoded_str)
                 except Exception:
                     decoded = None
-                
+
                 if decoded is None:
-                    # 回退：直接按 JSON 字符串解析
+                    # Fall back to parsing the raw JSON string directly.
                     try:
                         decoded = json.loads(inner)
                     except Exception:
                         decoded = None
-                
+
                 if decoded is not None:
                     event_data = decoded
-                    logger.info(f"解包MNS Message后的事件数据: {event_data}")
+                    logger.info(f"Decoded MNS Message payload: {event_data}")
             elif isinstance(inner, dict):
                 event_data = inner
-        
-        # 判断事件格式
-        if 'events' in event_data:
-            # 标准OSS事件格式
+
+        # Detect the payload shape.
+        if "events" in event_data:
+            # Standard OSS event format.
             oss_event = OSSEvent(**event_data)
-        elif 'Records' in event_data:
-            # 兼容S3事件格式（OSS可能使用类似的格式）
-            # 尝试转换为OSS事件格式
+        elif "Records" in event_data:
+            # Compatibility path for S3-like payloads emitted by OSS.
             oss_event = _convert_s3_format_to_oss(event_data)
         else:
-            logger.error(f"未知的OSS事件格式: {event_data}")
+            logger.error(f"Unknown OSS event format: {event_data}")
             return
-        
-        # 转换为S3Event格式，复用现有处理逻辑
+
+        # Convert to S3Event so the existing upload flow can be reused.
         s3_event = oss_event.to_s3_event()
-        
-        # 处理上传事件
+
+        # Process the upload events.
         await process_upload_events(s3_event)
-        
+
     except Exception as e:
-        logger.error(f"处理OSS事件失败: {e}")
+        logger.error(f"Failed to handle OSS event: {e}")
         raise
 
 
 def _convert_s3_format_to_oss(event_data: Dict[str, Any]) -> OSSEvent:
     """
-    将S3格式的事件转换为OSS事件格式
-    
+    Convert an S3-style event payload into an OSS event payload.
+
     Args:
-        event_data: S3格式的事件数据
-        
+        event_data: S3-format event data.
+
     Returns:
-        OSSEvent: OSS事件对象
+        OSSEvent: OSS event object.
     """
     from shared.models.schemas.oss_event import OSSEventRecord
 
-    # 如果事件已经是S3格式，尝试转换为OSS格式
-    records = event_data.get('Records', [])
+    # Convert each S3-style record into the OSS schema.
+    records = event_data.get("Records", [])
     oss_records = []
-    
+
     for record in records:
         oss_record = OSSEventRecord(
-            eventName=record.get('eventName', '').replace('s3:', ''),
-            eventSource='acs:oss',
-            eventTime=record.get('eventTime', ''),
-            region=record.get('awsRegion', ''),
+            eventName=record.get("eventName", "").replace("s3:", ""),
+            eventSource="acs:oss",
+            eventTime=record.get("eventTime", ""),
+            region=record.get("awsRegion", ""),
             oss={
-                'bucket': record.get('s3', {}).get('bucket', {}),
-                'object': record.get('s3', {}).get('object', {})
-            }
+                "bucket": record.get("s3", {}).get("bucket", {}),
+                "object": record.get("s3", {}).get("object", {}),
+            },
         )
         oss_records.append(oss_record)
-    
+
     return OSSEvent(events=oss_records)
 
 
 async def process_upload_events(s3_event: S3Event):
     """
-    处理文件上传事件
+    Process upload events delivered by S3-compatible storage.
 
     Args:
-        s3_event: S3事件对象
+        s3_event: S3 event object.
     """
     try:
-        # 获取上传事件
+        # Gather only upload-related records.
         upload_events = s3_event.get_upload_events()
 
         # Instantiate services once outside the loop
         job_repo = JobRepository()
 
         for event in upload_events:
-            # 从S3事件记录中获取对象键
-            s3_key = event.object_key or event.s3.get('object', {}).get('key')
+            # Read the object key from the event record.
+            s3_key = event.object_key or event.s3.get("object", {}).get("key")
             if not s3_key:
                 continue
 
-            # 提取job_id
+            # Extract the job_id from the object key.
             job_id = extract_job_id_from_s3_key(s3_key)
             if not job_id:
-                logger.warning(f"无法从S3键提取job_id: {s3_key}")
+                logger.warning(f"Could not extract job_id from S3 key: {s3_key}")
                 continue
 
-            logger.info(f"处理S3上传事件: {s3_key} -> job_id: {job_id}")
+            logger.info(f"Processing S3 upload event: {s3_key} -> job_id={job_id}")
 
-            # 查找对应的job
+            # Load the matching job.
             async with get_db_context() as db:
                 job = await job_repo.get_job_by_id(db, job_id)
 
                 if not job:
-                    logger.warning(f"未找到对应的job: {job_id}")
+                    logger.warning(f"No job found for upload event: {job_id}")
                     continue
 
-                # 检查job状态
+                # Only react while the job is still waiting for file upload.
                 if job.status != "waiting-file":
-                    logger.info(f"Job {job_id} 状态不是waiting-file: {job.status}")
+                    logger.info(
+                        f"Job {job_id} is not in waiting-file status: {job.status}"
+                    )
                     continue
 
                 # Check if upload window has expired (race-condition safe via optimistic lock)
                 from shared.core.config import settings
                 from shared.core.state_machine.states import is_job_expired
+
                 if is_job_expired(job.updated_at, settings.JOB_WAITING_EXPIRE_SECONDS):
                     logger.warning(f"Job {job_id} upload expired, marking failed")
                     state_machine = JobStateMachine()
                     await state_machine.mark_failed(
-                        db, job_id,
+                        db,
+                        job_id,
                         "Upload expired: file was not uploaded within the allowed time window",
                         error_code="UPLOAD_EXPIRED",
                     )
@@ -483,16 +499,20 @@ async def process_upload_events(s3_event: S3Event):
                 # Skip S3 file verification — we are processing the upload
                 # notification itself, so the file is guaranteed to exist.
 
-                # 更新job状态
+                # Advance the job state.
                 state_machine = JobStateMachine()
 
-                # 文件上传完成后，转换到pending状态
+                # Once upload is complete, move the job to pending.
                 await state_machine.transition(
-                    db, job_id, JobStatus.PENDING.value,
-                    "s3_upload_completed", None, "system"
+                    db,
+                    job_id,
+                    JobStatus.PENDING.value,
+                    "s3_upload_completed",
+                    None,
+                    "system",
                 )
 
-                # 触发任务处理
+                # Start job processing.
                 if job.job_type == "kb_management":
                     orchestrator = KBOrchestrator()
                     await orchestrator.start_workflow(
@@ -501,13 +521,15 @@ async def process_upload_events(s3_event: S3Event):
                         source_type="file",
                         file_path=None,
                         file_url=None,
-                        user_id=str(job.user_id)
+                        user_id=str(job.user_id),
                     )
                 else:
-                    logger.warning(f"不支持的任务类型: {job.job_type}, job_id: {job_id}")
+                    logger.warning(
+                        f"Unsupported job type for upload event: {job.job_type}, job_id={job_id}"
+                    )
 
-                logger.info(f"Job {job_id} 已触发处理流程")
+                logger.info(f"Triggered processing for job {job_id}")
 
     except Exception as e:
-        logger.error(f"处理上传事件失败: {e}")
+        logger.error(f"Failed to process upload events: {e}")
         raise

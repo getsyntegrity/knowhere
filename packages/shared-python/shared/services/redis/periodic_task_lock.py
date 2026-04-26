@@ -28,6 +28,7 @@ Usage::
             # ... actual task body ...
             return {"status": "success"}
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -102,9 +103,7 @@ def periodic_task_lock(
         return
 
     if acquired:
-        logger.debug(
-            f"periodic_task_lock: acquired for task='{task_name}', ttl={ttl}s"
-        )
+        logger.debug(f"periodic_task_lock: acquired for task='{task_name}', ttl={ttl}s")
     else:
         logger.info(
             f"periodic_task_lock: task='{task_name}' already running in this "
@@ -112,4 +111,3 @@ def periodic_task_lock(
         )
 
     yield acquired
-

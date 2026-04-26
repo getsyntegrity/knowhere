@@ -1,0 +1,73 @@
+[project]
+name = "knowhere-api"
+version = "0.1.0"
+description = "Knowhere API publication workspace"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+
+[dependency-groups]
+lint = [
+    "ruff>=0.11.13",
+]
+typecheck = [
+    "pyright>=1.1.396",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+    "apps/api",
+    "apps/worker",
+    "packages/shared-python",
+]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+include = [
+    "apps/api/app",
+    "apps/api/main.py",
+    "apps/api/tests",
+    "apps/worker/app",
+    "apps/worker/worker.py",
+    "packages/shared-python/shared",
+]
+exclude = [
+    "**/__tests__",
+    "**/__pycache__",
+    "**/node_modules",
+    "**/.*",
+    "**/venv",
+    "apps/worker/tests",
+    "apps/worker/logs",
+    "packages/shared-python/build",
+    "packages/shared-python/dist",
+    "packages/shared-python/shared/tests",
+]
+executionEnvironments = [
+    { root = "apps/api", extraPaths = ["packages/shared-python"] },
+    { root = "apps/worker", extraPaths = ["apps/worker", "packages/shared-python"] },
+    { root = "packages/shared-python" },
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = [
+    "apps/api",
+    "apps/worker",
+    "packages/shared-python",
+]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+"apps/worker/tests/**/*.py" = ["E402"]
+"packages/shared-python/shared/tests/**/*.py" = ["E402"]

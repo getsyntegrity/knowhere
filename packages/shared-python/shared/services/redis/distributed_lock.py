@@ -7,6 +7,7 @@ tasks while ``task_acks_late=True`` is enabled.
 Uses ``SET NX EX`` for atomic acquisition, a Lua script for owner-only
 release, and a gevent greenlet for periodic TTL renewal.
 """
+
 import uuid
 from typing import Optional
 
@@ -92,8 +93,7 @@ class RedisJobLock:
             logger.debug(f"Lock acquired: {self._lock_key}")
             return True
         logger.info(
-            f"Lock already held for job {self._job_id}, "
-            f"another worker is processing"
+            f"Lock already held for job {self._job_id}, another worker is processing"
         )
         return False
 
@@ -112,9 +112,7 @@ class RedisJobLock:
             if released:
                 logger.debug(f"Lock released: {self._lock_key}")
             else:
-                logger.warning(
-                    f"Lock already expired or stolen: {self._lock_key}"
-                )
+                logger.warning(f"Lock already expired or stolen: {self._lock_key}")
             self._acquired = False
             return released
         except Exception as exc:
@@ -172,6 +170,4 @@ class RedisJobLock:
                     self._acquired = False
                     break
             except Exception as exc:
-                logger.warning(
-                    f"Lock renewal failed for {self._lock_key}: {exc}"
-                )
+                logger.warning(f"Lock renewal failed for {self._lock_key}: {exc}")

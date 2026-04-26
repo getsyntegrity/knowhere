@@ -21,14 +21,18 @@ import multiprocessing
 import queue as queue_module
 import time
 from dataclasses import dataclass
-from multiprocessing.queues import Queue as MultiprocessingQueue
 from multiprocessing.process import BaseProcess
+from multiprocessing.queues import Queue as MultiprocessingQueue
 from threading import RLock
 from typing import TYPE_CHECKING
 
 from app.core.runtime_limits import read_pymupdf_max_concurrent
 from loguru import logger
-from shared.core.exceptions.domain_exceptions import PDFParsingException, TimeoutException
+
+from shared.core.exceptions.domain_exceptions import (
+    PDFParsingException,
+    TimeoutException,
+)
 
 if TYPE_CHECKING:
     from gevent.threadpool import ThreadPool as GeventThreadPool
@@ -74,7 +78,9 @@ def _wait_for_child_result(
             return _ChildWaitResult(status="timeout")
 
         try:
-            result = result_queue.get(timeout=min(remaining, QUEUE_POLL_INTERVAL_SECONDS))
+            result = result_queue.get(
+                timeout=min(remaining, QUEUE_POLL_INTERVAL_SECONDS)
+            )
             return _ChildWaitResult(
                 status="result",
                 result=result,
@@ -137,9 +143,7 @@ def _run_worker_in_spawned_process(
     t0 = time.monotonic()
     proc.start()
     child_pid = proc.pid
-    logger.info(
-        f"[pymupdf-subprocess] started pid={child_pid} fn={worker_fn.__name__}"
-    )
+    logger.info(f"[pymupdf-subprocess] started pid={child_pid} fn={worker_fn.__name__}")
 
     wait_result = _wait_for_child_result(proc, result_queue, timeout)
 
@@ -245,6 +249,7 @@ def worker(fn):
     exception, the error is serialized to the queue as a plain dict
     so the parent can raise a clean RuntimeError.
     """
+
     @functools.wraps(fn)
     def wrapped(queue, *args):
         try:
@@ -253,12 +258,16 @@ def worker(fn):
             # Log in child before serializing — child stderr may be the only
             # trace if the parent loses the queue result.
             import traceback
+
             traceback.print_exc()
-            queue.put({
-                "ok": False,
-                "error_type": type(exc).__name__,
-                "error_msg": str(exc),
-            })
+            queue.put(
+                {
+                    "ok": False,
+                    "error_type": type(exc).__name__,
+                    "error_msg": str(exc),
+                }
+            )
+
     return wrapped
 
 

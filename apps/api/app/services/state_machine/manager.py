@@ -4,6 +4,7 @@ API-side state machine facade.
 Core transition logic lives in ``shared.core.state_machine.service``. This
 module keeps the ``JobStateMachine`` entry point that API code already uses.
 """
+
 from typing import Any, Dict, Optional
 
 from loguru import logger

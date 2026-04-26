@@ -9,9 +9,9 @@ rejection with appropriate retry headers.
 import time
 from typing import Any
 
+from app.services.rate_limit.config import RateLimitConfig
 from loguru import logger
 
-from app.services.rate_limit.config import RateLimitConfig
 from shared.core.exceptions.domain_exceptions import RateLimitException
 
 MAX_DAILY_QUOTA_RETRY_AFTER_SECONDS: int = 3600
@@ -55,9 +55,7 @@ class RateLimiter:
         )
         namespace = self._config.namespaced_namespace(namespace_suffix)
         rate_limit_key = (
-            identifier
-            if use_global_key
-            else f"{identifier}:{matched_pattern}"
+            identifier if use_global_key else f"{identifier}:{matched_pattern}"
         )
         window = (
             self._config.fixed_window
@@ -66,9 +64,7 @@ class RateLimiter:
         )
         strategy = "fixed" if period == "day" else "sliding"
 
-        is_allowed: bool = await window.hit(
-            rate_item, namespace, rate_limit_key
-        )
+        is_allowed: bool = await window.hit(rate_item, namespace, rate_limit_key)
         if not is_allowed:
             headers = await self._build_rejection_headers(
                 rate_item,
@@ -94,8 +90,7 @@ class RateLimiter:
                 limit=limit,
                 period=period,
                 internal_message=(
-                    f"System limit exceeded for {target}, "
-                    f"limit={limit}/{period}"
+                    f"System limit exceeded for {target}, limit={limit}/{period}"
                 ),
             )
             exc.details.update(
@@ -134,16 +129,13 @@ class RateLimiter:
             headers = await self._build_rejection_headers(
                 rate_item, namespace, identifier, rpm, "minute", strategy="sliding"
             )
-            logger.warning(
-                f"Billing RPM exceeded: user={user_id}, limit={rpm}/min"
-            )
+            logger.warning(f"Billing RPM exceeded: user={user_id}, limit={rpm}/min")
             exc = RateLimitException(
                 retry_after=headers["retry_after"],
                 limit=rpm,
                 period="minute",
                 internal_message=(
-                    f"Billing RPM exceeded for user={user_id}, "
-                    f"limit={rpm}/min"
+                    f"Billing RPM exceeded for user={user_id}, limit={rpm}/min"
                 ),
             )
             exc.details.update(
@@ -183,9 +175,7 @@ class RateLimiter:
             headers = await self._build_rejection_headers(
                 rate_item, namespace, identifier, quota, "day", strategy="fixed"
             )
-            logger.warning(
-                f"Daily quota exceeded: user={user_id}, limit={quota}/day"
-            )
+            logger.warning(f"Daily quota exceeded: user={user_id}, limit={quota}/day")
             exc = RateLimitException(
                 retry_after=min(
                     headers["retry_after"],
@@ -194,8 +184,7 @@ class RateLimiter:
                 limit=quota,
                 period="day",
                 internal_message=(
-                    f"Daily quota exceeded for user={user_id}, "
-                    f"limit={quota}/day"
+                    f"Daily quota exceeded for user={user_id}, limit={quota}/day"
                 ),
             )
             exc.details.update(

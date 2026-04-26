@@ -1,25 +1,25 @@
 """Exceptions module for shared exception classes."""
 
-from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.exceptions.domain_exceptions import (
-    ValidationException,
     AuthException,
-    PermissionDeniedException,
-    NotFoundException,
     ConflictException,
-    RateLimitException,
-    QuotaExceededException,
-    UnavailableException,
-    TimeoutException,
-    UnknownException,
     FileSystemException,
     LibreOfficeServiceException,
+    NotFoundException,
+    PermissionDeniedException,
+    QuotaExceededException,
+    RateLimitException,
+    TimeoutException,
+    UnavailableException,
+    UnknownException,
+    ValidationException,
 )
+from shared.core.exceptions.knowhere_exception import KnowhereException
 from shared.core.exceptions.retryable_exceptions import RETRYABLE_EXCEPTIONS
 from shared.core.exceptions.webhook_exceptions import (
-    WebhookException,
     WebhookConfigException,
     WebhookDeliveryException,
+    WebhookException,
 )
 
 __all__ = [

@@ -8,11 +8,10 @@ Supports atomic rule updates via GIL-safe reference swaps.
 import os
 from typing import Optional
 
+from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from loguru import logger
 
-from app.services.rate_limit.data_structures import SystemLimitRule, TierLimits
 from shared.core.exceptions.redis_exceptions import RedisConfigurationError
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -42,9 +41,7 @@ class RateLimitConfig:
 
     _instance: Optional["RateLimitConfig"] = None
 
-    def __init__(
-        self, redis_url: str, key_prefix: str = REDIS_KEY_PREFIX
-    ) -> None:
+    def __init__(self, redis_url: str, key_prefix: str = REDIS_KEY_PREFIX) -> None:
         from limits import parse as parse_rate
         from limits.aio.storage import RedisStorage
         from limits.aio.strategies import (
@@ -61,7 +58,9 @@ class RateLimitConfig:
         if not async_redis_url.startswith("async+"):
             async_redis_url = f"async+{redis_url}"
 
-        self._storage: RedisStorage = RedisStorage(async_redis_url, implementation="redispy")
+        self._storage: RedisStorage = RedisStorage(
+            async_redis_url, implementation="redispy"
+        )
         self._sliding_window = MovingWindowRateLimiter(self._storage)
         self._fixed_window = FixedWindowRateLimiter(self._storage)
 
@@ -87,8 +86,7 @@ class RateLimitConfig:
         if cls._instance is None:
             if redis_url is None:
                 raise RedisConfigurationError(
-                    "RateLimitConfig.get_instance() requires redis_url "
-                    "on first call."
+                    "RateLimitConfig.get_instance() requires redis_url on first call."
                 )
             cls._instance = cls(redis_url, key_prefix)
         return cls._instance
@@ -154,10 +152,7 @@ class RateLimitConfig:
         sorted_rules = sorted(system_rules, key=lambda r: r.priority)
 
         # Check if there are actual changes
-        has_changes = (
-            self._tier_map != tier_map
-            or self._system_rules != sorted_rules
-        )
+        has_changes = self._tier_map != tier_map or self._system_rules != sorted_rules
 
         if has_changes:
             self._tier_map = tier_map
