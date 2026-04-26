@@ -9,15 +9,11 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from pytest_alembic.tests import (
-    test_model_definitions_match_ddl,
-    test_single_head_revision,
-    test_up_down_consistency,
-    test_upgrade,
-)
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
+
+from tests.support.sync_contract_database import insert_contract_user
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _API_ROOT: Path = _REPO_ROOT / "apps" / "api"
@@ -38,22 +34,6 @@ def _upgrade_to_heads(*, engine: Engine) -> None:
     with engine.begin() as connection:
         config.attributes["connection"] = connection
         command.upgrade(config, "heads")
-
-
-def _insert_user(connection: Connection, *, user_id: str) -> None:
-    connection.execute(
-        text(
-            """
-            INSERT INTO "user" (id, name, email)
-            VALUES (:user_id, :name, :email)
-            """
-        ),
-        {
-            "user_id": user_id,
-            "name": f"Migration Contract User {user_id}",
-            "email": f"{user_id}@migration.knowhere.local",
-        },
-    )
 
 
 def _insert_job(
@@ -135,7 +115,7 @@ def test_should_enforce_one_active_document_ingestion_job_per_user(
     document_id = f"doc_migration_{uuid4().hex[:12]}"
 
     with migrated_head_engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         _insert_job(
             connection,
             job_id=f"job_migration_{uuid4().hex[:12]}",
@@ -164,7 +144,7 @@ def test_should_allow_a_new_active_document_job_after_a_terminal_job(
     document_id = f"doc_migration_{uuid4().hex[:12]}"
 
     with migrated_head_engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         _insert_job(
             connection,
             job_id=f"job_migration_{uuid4().hex[:12]}",

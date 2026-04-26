@@ -1,108 +1,12 @@
-import hashlib
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime, timezone
 from typing import cast
 from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from tests.support.runtime import get_contract_database_url
-
-
-async def _create_contract_engine() -> AsyncEngine:
-    return create_async_engine(get_contract_database_url(), future=True)
-
-
-async def _insert_authenticated_user(
-    *,
-    user_id: str,
-    api_key: str,
-    user_tier: str = "free",
-) -> None:
-    engine = await _create_contract_engine()
-    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
-    api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    api_key_id = f"key_{uuid4().hex[:12]}"
-
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO "user" (id, name, email)
-                    VALUES (:user_id, :name, :email)
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "name": f"Contract User {user_id}",
-                    "email": f"{user_id}@contract.knowhere.local",
-                },
-            )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO user_balances (
-                        user_id,
-                        credits_balance,
-                        user_tier,
-                        created_at,
-                        updated_at
-                    ) VALUES (
-                        :user_id,
-                        :credits_balance,
-                        :user_tier,
-                        :created_at,
-                        :updated_at
-                    )
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "credits_balance": 0,
-                    "user_tier": user_tier,
-                    "created_at": timestamp,
-                    "updated_at": timestamp,
-                },
-            )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO api_keys (
-                        id,
-                        user_id,
-                        key_hash,
-                        key_mask,
-                        name,
-                        is_active,
-                        created_at
-                    ) VALUES (
-                        :id,
-                        :user_id,
-                        :key_hash,
-                        :key_mask,
-                        :name,
-                        :is_active,
-                        :created_at
-                    )
-                    """
-                ),
-                {
-                    "id": api_key_id,
-                    "user_id": user_id,
-                    "key_hash": api_key_hash,
-                    "key_mask": f"{api_key[:8]}...{api_key[-4:]}",
-                    "name": f"Contract API Key {user_id}",
-                    "is_active": True,
-                    "created_at": timestamp,
-                },
-            )
-    finally:
-        await engine.dispose()
+from tests.support.contract_database import ContractDatabase
 
 
 async def _create_waiting_file_job(api_client: AsyncClient) -> dict[str, object]:
@@ -234,7 +138,7 @@ async def test_should_forbid_access_to_a_job_owned_by_another_user(
     other_api_key = f"sk_contract_{uuid4().hex[:24]}"
 
     async with developer_api_client_factory() as api_client:
-        await _insert_authenticated_user(
+        await ContractDatabase.insert_authenticated_user(
             user_id=f"contract-user-{uuid4().hex[:12]}",
             api_key=other_api_key,
         )

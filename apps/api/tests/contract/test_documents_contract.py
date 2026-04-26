@@ -9,32 +9,12 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from tests.support.contract_database import ContractDatabase
 from tests.support.runtime import get_contract_database_url
 
 
 async def _create_contract_engine() -> AsyncEngine:
     return create_async_engine(get_contract_database_url(), future=True)
-
-
-async def _insert_user(user_id: str) -> None:
-    engine = await _create_contract_engine()
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO "user" (id, name, email)
-                    VALUES (:user_id, :name, :email)
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "name": f"Contract User {user_id}",
-                    "email": f"{user_id}@contract.knowhere.local",
-                },
-            )
-    finally:
-        await engine.dispose()
 
 
 async def _insert_document(
@@ -132,7 +112,7 @@ async def test_should_list_only_the_authenticated_users_documents_for_the_effect
 ) -> None:
     async with developer_api_client_factory() as api_client:
         other_user_id = f"contract-user-{uuid4().hex[:12]}"
-        await _insert_user(other_user_id)
+        await ContractDatabase.insert_user(user_id=other_user_id)
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         owned_first_document_id = f"doc_{uuid4().hex[:12]}"

@@ -14,25 +14,11 @@ from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
+from support.contract_database import insert_contract_user
+
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _FIXTURES_ROOT: Path = _REPO_ROOT / "apps" / "worker" / "tests" / "fixtures"
 _SAMPLE_PDF_PATH: Path = _FIXTURES_ROOT / "sample_3pages.pdf"
-
-
-def _insert_user(connection: Connection, *, user_id: str) -> None:
-    connection.execute(
-        text(
-            """
-            INSERT INTO "user" (id, name, email)
-            VALUES (:user_id, :name, :email)
-            """
-        ),
-        {
-            "user_id": user_id,
-            "name": f"Worker Contract User {user_id}",
-            "email": f"{user_id}@worker-contract.knowhere.local",
-        },
-    )
 
 
 def _insert_pending_file_job(
@@ -200,7 +186,7 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     captured_artifacts: dict[str, Any] = {}
 
     with engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         job_metadata = _insert_pending_file_job(
             connection,
             job_id=job_id,
@@ -578,7 +564,7 @@ def test_should_skip_parse_task_when_the_job_is_already_terminal(
     s3_key: str = f"uploads/{job_id}.pdf"
 
     with engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         job_metadata = _insert_pending_file_job(
             connection,
             job_id=job_id,
@@ -676,7 +662,7 @@ def test_should_mark_the_job_failed_and_cleanup_the_workspace_when_parse_executi
     s3_key: str = f"uploads/{job_id}.pdf"
 
     with engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         job_metadata = _insert_pending_file_job(
             connection,
             job_id=job_id,

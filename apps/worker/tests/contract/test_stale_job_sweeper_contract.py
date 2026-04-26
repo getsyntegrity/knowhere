@@ -8,20 +8,7 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
-def _insert_user(connection: Connection, *, user_id: str) -> None:
-    connection.execute(
-        text(
-            """
-            INSERT INTO "user" (id, name, email)
-            VALUES (:user_id, :name, :email)
-            """
-        ),
-        {
-            "user_id": user_id,
-            "name": f"Worker Contract User {user_id}",
-            "email": f"{user_id}@worker-contract.knowhere.local",
-        },
-    )
+from support.contract_database import insert_contract_user
 
 
 def _insert_job(
@@ -108,7 +95,7 @@ def test_should_expire_stale_jobs_and_persist_failure_state(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     with engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         _insert_job(
             connection,
             job_id=stale_job_id,

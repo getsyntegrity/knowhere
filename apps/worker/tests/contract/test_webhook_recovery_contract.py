@@ -10,25 +10,11 @@ from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
+from support.contract_database import insert_contract_user
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _insert_user(connection: Connection, *, user_id: str) -> None:
-    connection.execute(
-        text(
-            """
-            INSERT INTO "user" (id, name, email)
-            VALUES (:user_id, :name, :email)
-            """
-        ),
-        {
-            "user_id": user_id,
-            "name": f"Worker Contract User {user_id}",
-            "email": f"{user_id}@worker-contract.knowhere.local",
-        },
-    )
 
 
 def _insert_job(
@@ -209,7 +195,7 @@ def test_should_republish_only_orphaned_pending_webhook_events_and_persist_qstas
 
     now = _utc_now()
     with engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         for job_id in (
             orphaned_job_id,
             recent_job_id,

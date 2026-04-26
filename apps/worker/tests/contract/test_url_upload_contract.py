@@ -11,21 +11,7 @@ from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
-
-def _insert_user(connection: Connection, *, user_id: str) -> None:
-    connection.execute(
-        text(
-            """
-            INSERT INTO "user" (id, name, email)
-            VALUES (:user_id, :name, :email)
-            """
-        ),
-        {
-            "user_id": user_id,
-            "name": f"Worker Contract User {user_id}",
-            "email": f"{user_id}@worker-contract.knowhere.local",
-        },
-    )
+from support.contract_database import insert_contract_user
 
 
 def _insert_waiting_url_job(
@@ -146,7 +132,7 @@ def test_should_upload_a_url_job_to_the_expected_storage_key_and_publish_progres
     downloaded_path.write_bytes(b"pdf")
 
     with engine.begin() as connection:
-        _insert_user(connection, user_id=user_id)
+        insert_contract_user(connection, user_id=user_id)
         _insert_waiting_url_job(
             connection,
             job_id=job_id,
