@@ -126,7 +126,3 @@ make check
 
 - External dependency guide:
   [docs/external-services.md](docs/external-services.md)
-- Self-hosting and local verification guide:
-  [docs/self-hosting.md](docs/self-hosting.md)
-- Release distribution policy:
-  [docs/release-distribution.md](docs/release-distribution.md)
