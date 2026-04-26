@@ -14,7 +14,12 @@ from pytest import MonkeyPatch
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine, URL, make_url
 
-from tests.support.runtime import clear_application_modules, configure_contract_environment
+from tests.support.runtime import (
+    PostgreSQLProcess,
+    clear_application_modules,
+    cleanup_contract_runtime,
+    configure_contract_environment,
+)
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _API_ROOT: Path = _REPO_ROOT / "apps" / "api"
@@ -23,10 +28,14 @@ _ALEMBIC_INI_PATH: Path = _API_ROOT / "alembic.ini"
 
 
 def _resolve_base_database_url() -> URL:
-    configured_url: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://root:root123@127.0.0.1:5432/Knowhere",
-    )
+    configured_url: str | None = os.getenv("DATABASE_URL")
+
+    if configured_url is None:
+        raise RuntimeError(
+            "Migration tests require configure_contract_environment() to set "
+            "DATABASE_URL from pytest-postgresql before resolving database URLs."
+        )
+
     return make_url(configured_url)
 
 
@@ -120,8 +129,11 @@ def alembic_config() -> dict[str, str]:
 
 
 @pytest.fixture
-def alembic_engine(monkeypatch: MonkeyPatch) -> Iterator[Engine]:
-    configure_contract_environment(monkeypatch)
+def alembic_engine(
+    monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
+) -> Iterator[Engine]:
+    configure_contract_environment(monkeypatch, postgresql_proc)
 
     database_name = f"knowhere_migration_{uuid4().hex[:12]}"
     async_database_url, sync_database_url = _build_database_urls(database_name)
@@ -144,6 +156,7 @@ def alembic_engine(monkeypatch: MonkeyPatch) -> Iterator[Engine]:
         yield engine
     finally:
         engine.dispose()
+        cleanup_contract_runtime(remove_test_directories=True)
         clear_application_modules()
         _clear_model_modules()
         _drop_database(

@@ -18,14 +18,16 @@ This directory is the new home for API tests.
 
 ## Commands
 
+- `uv run python apps/api/scripts/ensure_test_environment.py --install`: install and verify local test prerequisites
+- `uv run python apps/api/scripts/ensure_test_environment.py`: verify local test prerequisites only
 - `uv run pytest apps/api/tests/contract -q`: fast API HTTP contract checks
 - `uv run pytest apps/api/tests/migrations -q`: migration and schema guarantees
 - `uv run pytest apps/api/tests -q`: full API test tree under the new taxonomy
 
 ## Local Prerequisites
 
-- PostgreSQL reachable at `127.0.0.1:5432`
-- Redis reachable at `127.0.0.1:6379`
-- The shared contract bootstrap will create or reuse `Knowhere_contract_test`
-- The shared contract bootstrap uses Redis DB `14`
-- Do not run this suite in parallel with other contract suites that reuse the same database and Redis DB
+- PostgreSQL server binaries available to `pytest-postgresql`
+- PostgreSQL contrib extension files for `uuid-ossp` and `pg_trgm`
+- No running local PostgreSQL service is required; `pytest-postgresql` starts an isolated process
+- No running local Redis service is required; contract tests use `fakeredis`
+- Set `PYTEST_POSTGRESQL_EXECUTABLE` to the `pg_ctl` path if discovery cannot find it

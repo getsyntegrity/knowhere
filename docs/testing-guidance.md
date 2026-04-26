@@ -37,9 +37,9 @@ Do not add a standalone shared-package test tree for behavior that belongs to th
 - A contract test must call the project surface, not an internal helper.
 - A contract test must assert an externally visible result or durable side effect.
 - API contract tests should use the real FastAPI lifespan.
-- Contract tests should use real PostgreSQL and real Redis where system behavior depends on them.
+- Contract tests should use real PostgreSQL where SQL behavior depends on it.
+- API and worker contract tests use `fakeredis` for Redis behavior while keeping the same Redis service interfaces.
 - Mock only hard-to-control external boundaries such as third-party HTTP, storage providers, time, or filesystem edges.
-- `fakeredis` is acceptable only for narrow component tests, not for the main contract suites.
 
 ## Naming Rules
 
@@ -61,14 +61,14 @@ Do not add a standalone shared-package test tree for behavior that belongs to th
 
 ## Local Environment
 
-- PostgreSQL must be reachable at `127.0.0.1:5432`.
-- Redis must be reachable at `127.0.0.1:6379`.
-- The contract harness uses database `Knowhere_contract_test`.
-- The contract harness uses Redis DB `14`.
-- Do not run API contract, worker contract, or migration suites in parallel today because they share the same contract database and Redis DB.
+- API and worker contract tests require PostgreSQL server binaries and contrib extensions for `pytest-postgresql`.
+- API and worker contract tests do not require a running local PostgreSQL or Redis service.
+- API and worker contract tests use isolated `pytest-postgresql` processes and `fakeredis`.
 
 ## Commands
 
+- `uv run python apps/api/scripts/ensure_test_environment.py --install`
+- `uv run python apps/api/scripts/ensure_test_environment.py`
 - `uv run pytest apps/api/tests/contract -q`
 - `uv run pytest apps/api/tests/migrations -q`
 - `uv run pytest apps/api/tests -q`
@@ -78,5 +78,5 @@ Do not add a standalone shared-package test tree for behavior that belongs to th
 ## Failure Triage
 
 - Re-run the smallest affected suite first.
-- Inspect persisted rows in `Knowhere_contract_test` and keys in Redis DB `14` before re-running when the failure depends on side effects.
+- Re-run from a clean `pytest-postgresql` process when the failure depends on database side effects.
 - Prefer fixing the harness or production behavior over adding more mocks.

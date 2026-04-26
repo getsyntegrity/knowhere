@@ -1343,6 +1343,7 @@ dev = [
     { name = "pytest-alembic" },
     { name = "pytest-asyncio" },
     { name = "pytest-mock" },
+    { name = "pytest-postgresql" },
 ]
 
 [package.metadata]
@@ -1376,6 +1377,7 @@ dev = [
     { name = "pytest-alembic", specifier = "==0.12.1" },
     { name = "pytest-asyncio", specifier = "==0.24.0" },
     { name = "pytest-mock", specifier = "==3.14.0" },
+    { name = "pytest-postgresql", specifier = ">=7.0.2" },
 ]
 
 [[package]]
@@ -1507,6 +1509,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-mock" },
+    { name = "pytest-postgresql" },
 ]
 
 [package.metadata]
@@ -1542,6 +1545,7 @@ dev = [
     { name = "pytest", specifier = "==8.3.4" },
     { name = "pytest-asyncio", specifier = "==0.24.0" },
     { name = "pytest-mock", specifier = "==3.14.0" },
+    { name = "pytest-postgresql", specifier = ">=7.0.2" },
 ]
 
 [[package]]
@@ -1921,6 +1925,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "mirakuru"
+version = "3.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "psutil", marker = "sys_platform != 'cygwin'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/53/23/db9034ba28c7d89a540ffb8ca789f70dc12079108ece1cd1762295d5c807/mirakuru-3.0.2.tar.gz", hash = "sha256:21192186a8680ea7567ca68170261df3785768b12962dd19fe8cccab15ad3441", size = 29338, upload-time = "2026-02-11T19:41:15.42Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/5f/a3f1a7f1f6e55de9285b03ae7e0d3c2a15e044b6e3f9b53bef5609ca05f2/mirakuru-3.0.2-py3-none-any.whl", hash = "sha256:10e5dac4a8f26872c63e9cdfdc01b775aaa2beb3ced98abc497279d2dc525b8f", size = 27583, upload-time = "2026-02-11T19:41:13.578Z" },
 ]
 
 [[package]]
@@ -2517,6 +2533,15 @@ wheels = [
 ]
 
 [[package]]
+name = "port-for"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/a0/80a64e8cc096c7a9d0f546a28994af849b4775afc5e4ee44bf2739a55115/port_for-1.0.0.tar.gz", hash = "sha256:404d161b1b2c82e2f6b31d8646396b4847d02bf5ee10068c92b7263657a14582", size = 21681, upload-time = "2025-09-30T10:22:51.149Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/2c/b1faca65b9728b4ac43f0bee4bb9e7294bd0a62cc2ee59fd59403bf575f6/port_for-1.0.0-py3-none-any.whl", hash = "sha256:35a848b98cf4cc075fe80dc49ae5c3a78e3ca345a23bd39bf5252277b4eef5c2", size = 17544, upload-time = "2025-09-30T10:22:49.878Z" },
+]
+
+[[package]]
 name = "pptx2md"
 version = "2.0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2679,6 +2704,19 @@ name = "psycogreen"
 version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/eb/72/4a7965cf54e341006ad74cdc72cd6572c789bc4f4e3fadc78672f1fbcfbd/psycogreen-1.0.2.tar.gz", hash = "sha256:c429845a8a49cf2f76b71265008760bcd7c7c77d80b806db4dc81116dbcd130d", size = 5411, upload-time = "2020-02-22T19:55:22.02Z" }
+
+[[package]]
+name = "psycopg"
+version = "3.3.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/b6/379d0a960f8f435ec78720462fd94c4863e7a31237cf81bf76d0af5883bf/psycopg-3.3.3.tar.gz", hash = "sha256:5e9a47458b3c1583326513b2556a2a9473a1001a56c9efe9e587245b43148dd9", size = 165624, upload-time = "2026-02-18T16:52:16.546Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c8/5b/181e2e3becb7672b502f0ed7f16ed7352aca7c109cfb94cf3878a9186db9/psycopg-3.3.3-py3-none-any.whl", hash = "sha256:f96525a72bcfade6584ab17e89de415ff360748c766f0106959144dcbb38c698", size = 212768, upload-time = "2026-02-18T16:46:27.365Z" },
+]
 
 [[package]]
 name = "psycopg2-binary"
@@ -3011,6 +3049,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c6/90/a955c3ab35ccd41ad4de556596fa86685bf4fc5ffcc62d22d856cfd4e29a/pytest-mock-3.14.0.tar.gz", hash = "sha256:2719255a1efeceadbc056d6bf3df3d1c5015530fb40cf347c0f9afac88410bd0", size = 32814, upload-time = "2024-03-21T22:14:04.964Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f2/3b/b26f90f74e2986a82df6e7ac7e319b8ea7ccece1caec9f8ab6104dc70603/pytest_mock-3.14.0-py3-none-any.whl", hash = "sha256:0b72c38033392a5f4621342fe11e9219ac11ec9d375f8e2a0c164539e0d70f6f", size = 9863, upload-time = "2024-03-21T22:14:02.694Z" },
+]
+
+[[package]]
+name = "pytest-postgresql"
+version = "8.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mirakuru" },
+    { name = "packaging" },
+    { name = "port-for" },
+    { name = "psycopg" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/c8/b9607675904b3e4004c76109741aac6479daecfe6fb38ad89f330c6c5adc/pytest_postgresql-8.0.0.tar.gz", hash = "sha256:26cbd44a0adef76cf4a82a3a2263f0e029bc54b5863556a9bd86ca3edfa91cce", size = 49737, upload-time = "2026-01-23T21:14:34.554Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7b/cf/2c962ce63904e2b051b644a0036bdeeae8ae05d91e11e829b220c3db9935/pytest_postgresql-8.0.0-py3-none-any.whl", hash = "sha256:125b63b16d630c2dea19807062ed4c96e6123f06058ce65b82b4b14174d6c4b8", size = 40228, upload-time = "2026-01-23T21:14:33.08Z" },
 ]
 
 [[package]]

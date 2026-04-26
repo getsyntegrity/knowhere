@@ -57,7 +57,7 @@ def expire_stale_jobs() -> dict:
             return {"status": "skipped", "reason": "Expiration config <= 0"}
 
         # Timeouts: 4 hours (default) for processing, 2 hours (default) for waiting
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         long_cutoff = now - timedelta(seconds=processing_max_age)
         default_cutoff = now - timedelta(seconds=waiting_max_age)
 

@@ -44,7 +44,9 @@ def recover_orphaned_webhooks() -> dict:
         logger.debug("Starting orphaned webhook recovery job")
 
         age_minutes = 5
-        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
+        cutoff_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            minutes=age_minutes
+        )
         recovered = 0
         publisher = get_qstash_webhook_publisher()
 

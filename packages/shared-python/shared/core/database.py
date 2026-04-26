@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import NullPool
 
 from shared.core.config import settings
 from shared.core.constants import ProcessingConstants
@@ -21,31 +23,40 @@ logger = logging.getLogger(__name__)
 
 # Get SSL connection parameters.
 ssl_connect_args = settings.get_async_ssl_connect_args()
-
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    # echo=True,  # Uncomment to print SQL statements for debugging.
-    # Connection-pool configuration.
-    pool_size=ProcessingConstants.DB_POOL_SIZE,
-    max_overflow=ProcessingConstants.DB_MAX_OVERFLOW,
-    pool_recycle=ProcessingConstants.DB_POOL_RECYCLE,
-    pool_timeout=ProcessingConstants.DB_POOL_TIMEOUT,
-    pool_pre_ping=ProcessingConstants.DB_POOL_PRE_PING,
-    pool_reset_on_return=ProcessingConstants.DB_POOL_RESET_ON_RETURN,
-    # PostgreSQL-specific configuration.
-    connect_args={
+is_async_database_pool_disabled: bool = (
+    os.getenv("DB_USE_NULL_POOL", "false").lower() == "true"
+)
+engine_options: dict[str, Any] = {
+    "pool_recycle": ProcessingConstants.DB_POOL_RECYCLE,
+    "pool_pre_ping": ProcessingConstants.DB_POOL_PRE_PING,
+    "pool_reset_on_return": ProcessingConstants.DB_POOL_RESET_ON_RETURN,
+    "connect_args": {
         "server_settings": {
             "application_name": "knowhere_api",
             "timezone": "UTC",
-            "statement_timeout": "30000",  # 30-second statement timeout.
-            "idle_in_transaction_session_timeout": "60000",  # 60-second idle transaction timeout.
+            "statement_timeout": "30000",
+            "idle_in_transaction_session_timeout": "60000",
         },
         "command_timeout": 30,
-        # Merge in SSL config.
         **ssl_connect_args,
     },
-    # Connection-pool event hooks.
-    pool_events=[],
+    "pool_events": [],
+}
+
+if is_async_database_pool_disabled:
+    engine_options["poolclass"] = NullPool
+else:
+    engine_options.update(
+        {
+            "pool_size": ProcessingConstants.DB_POOL_SIZE,
+            "max_overflow": ProcessingConstants.DB_MAX_OVERFLOW,
+            "pool_timeout": ProcessingConstants.DB_POOL_TIMEOUT,
+        }
+    )
+
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    **engine_options,
 )
 # Create the async session factory.
 AsyncSessionFactory = async_sessionmaker(

@@ -1,15 +1,21 @@
 import importlib
+import os
 import sys
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pytest_postgresql import factories
 from pytest import MonkeyPatch
+from scripts.ensure_test_environment import find_executable
 from tests.support.runtime import (
+    PostgreSQLProcess,
     clear_application_modules,
+    cleanup_contract_runtime,
+    cleanup_contract_runtime_async,
     configure_contract_environment,
     prepare_contract_storage,
     seed_contract_developer,
@@ -18,6 +24,22 @@ from tests.support.runtime import (
 _REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 _API_ROOT: Path = _REPO_ROOT / "apps" / "api"
 _SHARED_ROOT: Path = _REPO_ROOT / "packages" / "shared-python"
+
+
+def _resolve_postgresql_executable() -> str | None:
+    configured_executable: str | None = os.getenv("PYTEST_POSTGRESQL_EXECUTABLE")
+
+    if configured_executable:
+        return configured_executable
+
+    executable_path: Path | None = find_executable("pg_ctl")
+    return str(executable_path) if executable_path is not None else None
+
+
+postgresql_proc = factories.postgresql_proc(
+    executable=_resolve_postgresql_executable(),
+    port=None,
+)
 
 
 def _ensure_import_paths() -> None:
@@ -31,8 +53,11 @@ def _ensure_import_paths() -> None:
         sys.path.insert(0, shared_root_value)
 
 
-async def _load_api_module(monkeypatch: MonkeyPatch) -> ModuleType:
-    configure_contract_environment(monkeypatch)
+async def _load_api_module(
+    monkeypatch: MonkeyPatch,
+    postgresql_process: PostgreSQLProcess,
+) -> ModuleType:
+    configure_contract_environment(monkeypatch, postgresql_process)
     await prepare_contract_storage()
     _ensure_import_paths()
     clear_application_modules()
@@ -42,24 +67,35 @@ async def _load_api_module(monkeypatch: MonkeyPatch) -> ModuleType:
 @asynccontextmanager
 async def _create_api_client(
     monkeypatch: MonkeyPatch,
+    postgresql_process: PostgreSQLProcess,
 ) -> AsyncGenerator[AsyncClient, None]:
-    api_module: ModuleType = await _load_api_module(monkeypatch)
-    app = api_module.app
+    try:
+        api_module: ModuleType = await _load_api_module(monkeypatch, postgresql_process)
+        app = api_module.app
 
-    async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            yield client
+        async with app.router.lifespan_context(app):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                yield client
+    finally:
+        await cleanup_contract_runtime_async(remove_test_directories=True)
 
 
 @pytest.fixture
 def api_client_factory(
     monkeypatch: MonkeyPatch,
-) -> Callable[[], AbstractAsyncContextManager[AsyncClient]]:
+    postgresql_proc: PostgreSQLProcess,
+) -> Generator[Callable[[], AbstractAsyncContextManager[AsyncClient]], None, None]:
     def create_api_client() -> AbstractAsyncContextManager[AsyncClient]:
-        return _create_api_client(monkeypatch)
+        return _create_api_client(monkeypatch, postgresql_proc)
 
-    return create_api_client
+    try:
+        yield create_api_client
+    finally:
+        cleanup_contract_runtime(remove_test_directories=True)
 
 
 @asynccontextmanager

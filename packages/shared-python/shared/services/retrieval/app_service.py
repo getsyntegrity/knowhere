@@ -28,6 +28,7 @@ _CHANNEL_WEIGHT_PATH = 1.0
 _CHANNEL_WEIGHT_CONTENT = 2.0
 _CHANNEL_WEIGHT_TERM = 1.5
 _INTERNAL_RECALL_K_MULTIPLIER = 2
+_pending_retrieval_hit_stat_tasks: set[asyncio.Task[None]] = set()
 
 _DATA_TYPE_ALLOWED_CHUNK_TYPES: dict[int, set[str] | None] = {
     1: None,
@@ -423,9 +424,20 @@ async def list_graph_routed_chunks(
     )
 
 
+def _finalize_retrieval_hit_stats_task(task: asyncio.Task[None]) -> None:
+    _pending_retrieval_hit_stat_tasks.discard(task)
+
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning(f'Failed to record retrieval hit stats (ignored): {e}')
+
+
 def schedule_retrieval_hit_stats_update(*, user_id: str, namespace: str, results: list[dict[str, Any]]) -> None:
     try:
-        asyncio.create_task(
+        task = asyncio.create_task(
             _record_retrieval_hit_stats_best_effort(
                 user_id=user_id,
                 namespace=namespace,
@@ -433,8 +445,29 @@ def schedule_retrieval_hit_stats_update(*, user_id: str, namespace: str, results
             ),
             name=f'retrieval_hit_stats:{user_id}:{namespace}',
         )
+        _pending_retrieval_hit_stat_tasks.add(task)
+        task.add_done_callback(_finalize_retrieval_hit_stats_task)
     except Exception as e:
         logger.warning(f'Failed to schedule retrieval hit stats update (ignored): {e}')
+
+
+async def drain_retrieval_hit_stats_updates(timeout_seconds: float = 2.0) -> None:
+    if not _pending_retrieval_hit_stat_tasks:
+        return
+
+    pending_tasks = tuple(_pending_retrieval_hit_stat_tasks)
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*pending_tasks, return_exceptions=True),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        for task in pending_tasks:
+            if not task.done():
+                task.cancel()
+
+        await asyncio.gather(*pending_tasks, return_exceptions=True)
 
 
 async def _record_retrieval_hit_stats_best_effort(*, user_id: str, namespace: str, results: list[dict[str, Any]]) -> None:

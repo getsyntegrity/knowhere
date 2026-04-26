@@ -13,7 +13,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from tests.support.runtime import (
+    PostgreSQLProcess,
     clear_application_modules,
+    cleanup_contract_runtime_async,
     configure_contract_environment,
     get_contract_database_url,
     prepare_contract_storage,
@@ -114,6 +116,7 @@ async def _set_default_system_limit(
 @asynccontextmanager
 async def _create_rate_limited_developer_api_client(
     monkeypatch: MonkeyPatch,
+    postgresql_process: PostgreSQLProcess,
     *,
     max_concurrent_jobs: int = -1,
     rpm_limit: int = -1,
@@ -121,7 +124,7 @@ async def _create_rate_limited_developer_api_client(
     default_system_rpm: int = 1000,
     default_system_period: str = "minute",
 ) -> AsyncGenerator[AsyncClient, None]:
-    configure_contract_environment(monkeypatch)
+    configure_contract_environment(monkeypatch, postgresql_process)
     await prepare_contract_storage()
     await _set_local_developer_tier_limits(
         max_concurrent_jobs=max_concurrent_jobs,
@@ -138,14 +141,20 @@ async def _create_rate_limited_developer_api_client(
     api_module: ModuleType = importlib.import_module("main")
     app = api_module.app
 
-    async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            developer_profile = await seed_contract_developer()
-            client.headers.update(
-                {"Authorization": f"Bearer {str(developer_profile['api_key'])}"}
-            )
-            yield client
+    try:
+        async with app.router.lifespan_context(app):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                developer_profile = await seed_contract_developer()
+                client.headers.update(
+                    {"Authorization": f"Bearer {str(developer_profile['api_key'])}"}
+                )
+                yield client
+    finally:
+        await cleanup_contract_runtime_async(remove_test_directories=True)
 
 
 def _assert_retryable_rate_limit_response(
@@ -182,6 +191,7 @@ def _assert_retryable_rate_limit_response(
 @pytest.mark.asyncio
 async def test_should_return_too_many_requests_when_the_authenticated_user_exceeds_their_concurrent_job_limit(
     monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
 ) -> None:
     first_payload: dict[str, str] = {
         "namespace": "contract-jobs",
@@ -198,6 +208,7 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
 
     async with _create_rate_limited_developer_api_client(
         monkeypatch,
+        postgresql_proc,
         max_concurrent_jobs=1,
         rpm_limit=60,
     ) as api_client:
@@ -235,6 +246,7 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
 @pytest.mark.asyncio
 async def test_should_return_too_many_requests_when_the_jobs_route_exceeds_the_system_limit(
     monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
 ) -> None:
     first_payload: dict[str, str] = {
         "namespace": "contract-jobs",
@@ -251,6 +263,7 @@ async def test_should_return_too_many_requests_when_the_jobs_route_exceeds_the_s
 
     async with _create_rate_limited_developer_api_client(
         monkeypatch,
+        postgresql_proc,
         default_system_rpm=1,
     ) as api_client:
         first_response = await api_client.post("/api/v1/jobs", json=first_payload)
@@ -270,6 +283,7 @@ async def test_should_return_too_many_requests_when_the_jobs_route_exceeds_the_s
 @pytest.mark.asyncio
 async def test_should_return_too_many_requests_when_the_authenticated_user_exceeds_their_billing_rpm(
     monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
 ) -> None:
     first_payload: dict[str, str] = {
         "namespace": "contract-jobs",
@@ -286,6 +300,7 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
 
     async with _create_rate_limited_developer_api_client(
         monkeypatch,
+        postgresql_proc,
         rpm_limit=1,
     ) as api_client:
         first_response = await api_client.post("/api/v1/jobs", json=first_payload)
@@ -305,6 +320,7 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
 @pytest.mark.asyncio
 async def test_should_return_too_many_requests_when_the_authenticated_user_exceeds_their_daily_quota(
     monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
 ) -> None:
     first_payload: dict[str, str] = {
         "namespace": "contract-jobs",
@@ -321,6 +337,7 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
 
     async with _create_rate_limited_developer_api_client(
         monkeypatch,
+        postgresql_proc,
         daily_quota=1,
     ) as api_client:
         first_response = await api_client.post("/api/v1/jobs", json=first_payload)

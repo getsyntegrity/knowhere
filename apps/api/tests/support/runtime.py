@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Protocol, cast
 
+import fakeredis
+import fakeredis.aioredis
 import psycopg2
+import redis as redis_sync
 import redis.asyncio as redis_asyncio
 from psycopg2 import sql
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
@@ -38,12 +45,40 @@ _MODULE_NAMES_TO_CLEAR: tuple[str, ...] = (
     "shared.core.config",
     "shared.core.config.app",
     "shared.core.config.base",
+    "shared.core.config.celery",
     "shared.core.config.database",
+    "shared.core.config.job",
+    "shared.core.config.qstash",
     "shared.core.config.redis",
+    "shared.core.config.storage",
     "shared.core.database",
+    "shared.core.database_sync",
+    "shared.core.state_machine.service_sync",
+    "shared.services.billing.credits_sync_service",
+    "shared.services.job_lifecycle_sync",
+    "shared.services.retrieval.app_service",
+    "shared.services.retrieval.publication_service",
+    "shared.services.webhook",
+    "shared.services.webhook.qstash_publisher",
     "scripts.local_dev_bootstrap_service",
 )
 _contract_storage_prepared: bool = False
+_contract_storage_database_url: str | None = None
+_contract_fake_redis_server: fakeredis.FakeServer = fakeredis.FakeServer()
+
+
+class PostgreSQLProcess(Protocol):
+    @property
+    def host(self) -> str: ...
+
+    @property
+    def port(self) -> int: ...
+
+    @property
+    def user(self) -> str: ...
+
+    @property
+    def password(self) -> str | None: ...
 
 
 def _ensure_import_paths() -> None:
@@ -66,16 +101,46 @@ def _ensure_test_directories() -> None:
     chromedriver_path.touch(exist_ok=True)
 
 
-def _resolve_base_database_url() -> URL:
-    configured_url: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://root:root123@127.0.0.1:5432/Knowhere",
-    )
+def _reset_contract_storage_state(database_url: str) -> None:
+    global _contract_storage_database_url
+    global _contract_storage_prepared
+
+    if _contract_storage_database_url == database_url:
+        return
+
+    _contract_storage_database_url = database_url
+    _contract_storage_prepared = False
+
+
+def _resolve_base_database_url(
+    postgresql_process: PostgreSQLProcess | None = None,
+) -> URL:
+    if postgresql_process is not None:
+        return URL.create(
+            "postgresql+asyncpg",
+            username=postgresql_process.user,
+            password=postgresql_process.password,
+            host=postgresql_process.host,
+            port=postgresql_process.port,
+            database="postgres",
+        )
+
+    configured_url: str | None = os.getenv("DATABASE_URL")
+
+    if configured_url is None:
+        raise RuntimeError(
+            "API tests require a pytest-postgresql process or an explicit "
+            "DATABASE_URL. Use the postgresql_proc fixture for tests, or set "
+            "DATABASE_URL before calling configure_contract_environment()."
+        )
+
     return make_url(configured_url)
 
 
-def get_contract_database_url() -> str:
-    contract_database_url: URL = _resolve_base_database_url().set(
+def get_contract_database_url(
+    postgresql_process: PostgreSQLProcess | None = None,
+) -> str:
+    contract_database_url: URL = _resolve_base_database_url(postgresql_process).set(
         database=CONTRACT_DATABASE_NAME
     )
     return contract_database_url.render_as_string(hide_password=False)
@@ -95,16 +160,125 @@ def _get_admin_sync_database_url() -> str:
     return admin_database_url.render_as_string(hide_password=False)
 
 
-def configure_contract_environment(monkeypatch: MonkeyPatch) -> None:
+def _reset_redis_service_factory() -> None:
+    redis_factory_module = sys.modules.get("shared.services.redis.redis_service_factory")
+    redis_package_module = sys.modules.get("shared.services.redis")
+    redis_service_factory = None
+
+    if redis_factory_module is not None:
+        redis_service_factory = getattr(redis_factory_module, "RedisServiceFactory", None)
+    elif redis_package_module is not None:
+        redis_service_factory = getattr(redis_package_module, "RedisServiceFactory", None)
+
+    redis_reset = getattr(redis_service_factory, "reset", None)
+    if callable(redis_reset):
+        redis_reset()
+
+    sync_redis_module = sys.modules.get("shared.services.redis.redis_sync_service")
+    if sync_redis_module is None:
+        return
+
+    sync_redis_service_factory = getattr(
+        sync_redis_module,
+        "SyncRedisServiceFactory",
+        None,
+    )
+    sync_redis_reset = getattr(sync_redis_service_factory, "reset", None)
+
+    if callable(sync_redis_reset):
+        sync_redis_reset()
+
+
+class ContractFakeAsyncRedis(fakeredis.aioredis.FakeRedis):
+    def __init__(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        kwargs.setdefault("decode_responses", True)
+        redis_kwargs: dict[str, Any] = cast(dict[str, Any], kwargs)
+        super().__init__(
+            *args,
+            server=_contract_fake_redis_server,
+            **redis_kwargs,
+        )
+
+    @classmethod
+    def from_url(
+        cls,
+        url: str,
+        *args: object,
+        **kwargs: object,
+    ) -> fakeredis.aioredis.FakeRedis:
+        kwargs.setdefault("decode_responses", True)
+        redis_kwargs: dict[str, Any] = cast(dict[str, Any], kwargs)
+        return fakeredis.aioredis.FakeRedis.from_url(
+            url,
+            *args,
+            server=_contract_fake_redis_server,
+            **redis_kwargs,
+        )
+
+
+class ContractFakeSyncRedis(fakeredis.FakeRedis):
+    def __init__(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        kwargs.pop("connection_pool", None)
+        kwargs.setdefault("decode_responses", True)
+        redis_kwargs: dict[str, Any] = cast(dict[str, Any], kwargs)
+        super().__init__(
+            *args,
+            server=_contract_fake_redis_server,
+            **redis_kwargs,
+        )
+
+    @classmethod
+    def from_url(
+        cls,
+        url: str,
+        *args: object,
+        **kwargs: object,
+    ) -> fakeredis.FakeRedis:
+        kwargs.setdefault("decode_responses", True)
+        redis_kwargs: dict[str, Any] = cast(dict[str, Any], kwargs)
+        return fakeredis.FakeRedis.from_url(
+            url,
+            *args,
+            server=_contract_fake_redis_server,
+            **redis_kwargs,
+        )
+
+
+def _configure_contract_redis(monkeypatch: MonkeyPatch) -> None:
+    global _contract_fake_redis_server
+
+    _contract_fake_redis_server = fakeredis.FakeServer()
+    monkeypatch.setattr(redis_asyncio, "Redis", ContractFakeAsyncRedis)
+    monkeypatch.setattr(redis_asyncio, "from_url", ContractFakeAsyncRedis.from_url)
+    monkeypatch.setattr(redis_sync, "Redis", ContractFakeSyncRedis)
+    monkeypatch.setattr(redis_sync, "from_url", ContractFakeSyncRedis.from_url)
+    _reset_redis_service_factory()
+
+
+def configure_contract_environment(
+    monkeypatch: MonkeyPatch,
+    postgresql_process: PostgreSQLProcess | None = None,
+) -> None:
     _ensure_test_directories()
+    database_url: str = get_contract_database_url(postgresql_process)
+    _reset_contract_storage_state(database_url)
 
     environment: dict[str, str] = {
         "ENVIRONMENT": "development",
         "DEBUG": "true",
         "SECRET_KEY": "test-secret-key",
         "WEBHOOK_MASTER_KEY": "contract-test-webhook-master-key",
-        "DATABASE_URL": get_contract_database_url(),
+        "DATABASE_URL": database_url,
         "DB_SSL_MODE": "disable",
+        "DB_USE_NULL_POOL": "true",
         "REDIS_HOST": CONTRACT_REDIS_HOST,
         "REDIS_PORT": str(CONTRACT_REDIS_PORT),
         "REDIS_DATABASE": str(CONTRACT_REDIS_DATABASE),
@@ -139,6 +313,9 @@ def configure_contract_environment(monkeypatch: MonkeyPatch) -> None:
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
 
+    clear_application_modules()
+    _configure_contract_redis(monkeypatch)
+
 
 def clear_application_modules() -> None:
     cached_module_names: list[str] = list(sys.modules)
@@ -148,8 +325,136 @@ def clear_application_modules() -> None:
             sys.modules.pop(module_name, None)
             continue
 
+        if module_name == "shared.services.redis" or module_name.startswith(
+            "shared.services.redis."
+        ):
+            sys.modules.pop(module_name, None)
+            continue
+
         if module_name == "app" or module_name.startswith("app."):
             sys.modules.pop(module_name, None)
+
+
+def _dispose_sync_database_engine() -> None:
+    database_sync_module = sys.modules.get("shared.core.database_sync")
+
+    if database_sync_module is None:
+        return
+
+    sync_engine = getattr(database_sync_module, "_sync_engine", None)
+    if sync_engine is not None:
+        sync_engine.dispose()
+
+    setattr(database_sync_module, "_sync_engine", None)
+    setattr(database_sync_module, "_sync_session_factory", None)
+
+
+async def _dispose_async_database_engine() -> None:
+    database_module = sys.modules.get("shared.core.database")
+
+    if database_module is None:
+        return
+
+    async_engine = cast(AsyncEngine | None, getattr(database_module, "engine", None))
+
+    if async_engine is not None:
+        await async_engine.dispose()
+
+
+async def _close_async_redis_service_factory() -> None:
+    redis_factory_module = sys.modules.get("shared.services.redis.redis_service_factory")
+    redis_package_module = sys.modules.get("shared.services.redis")
+    redis_service_factory = None
+
+    if redis_factory_module is not None:
+        redis_service_factory = getattr(redis_factory_module, "RedisServiceFactory", None)
+    elif redis_package_module is not None:
+        redis_service_factory = getattr(redis_package_module, "RedisServiceFactory", None)
+
+    close_current_service = cast(
+        Callable[[], Awaitable[None]] | None,
+        getattr(
+            redis_service_factory,
+            "close_current_service",
+            None,
+        ),
+    )
+
+    if close_current_service is not None:
+        await close_current_service()
+
+
+async def _close_redis_pool_manager() -> None:
+    config_module = sys.modules.get("shared.core.config")
+    config_app_module = sys.modules.get("shared.core.config.app")
+    redis_pool_manager = None
+
+    if config_module is not None:
+        redis_pool_manager = getattr(config_module, "redis_pool_manager", None)
+    elif config_app_module is not None:
+        redis_pool_manager = getattr(config_app_module, "redis_pool_manager", None)
+
+    close_pool = cast(
+        Callable[[], Awaitable[None]] | None,
+        getattr(redis_pool_manager, "close_pool", None),
+    )
+
+    if close_pool is not None:
+        await close_pool()
+
+
+def _reset_rate_limit_config() -> None:
+    rate_limit_module = sys.modules.get("app.services.rate_limit.config")
+
+    if rate_limit_module is None:
+        return
+
+    rate_limit_config = getattr(rate_limit_module, "RateLimitConfig", None)
+    reset_instance = getattr(rate_limit_config, "reset_instance", None)
+
+    if callable(reset_instance):
+        reset_instance()
+
+
+def _reset_fake_redis_server() -> None:
+    global _contract_fake_redis_server
+
+    _contract_fake_redis_server = fakeredis.FakeServer()
+
+
+def _cleanup_contract_runtime_sync(*, remove_test_directories: bool) -> None:
+    _reset_rate_limit_config()
+    _reset_redis_service_factory()
+    _dispose_sync_database_engine()
+    _reset_fake_redis_server()
+    clear_application_modules()
+
+    if remove_test_directories:
+        shutil.rmtree(_TEST_TMP_ROOT, ignore_errors=True)
+
+
+async def cleanup_contract_runtime_async(
+    *,
+    remove_test_directories: bool = False,
+) -> None:
+    await _close_redis_pool_manager()
+    await _close_async_redis_service_factory()
+    await _dispose_async_database_engine()
+    _cleanup_contract_runtime_sync(remove_test_directories=remove_test_directories)
+
+
+def cleanup_contract_runtime(*, remove_test_directories: bool = False) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(
+            cleanup_contract_runtime_async(
+                remove_test_directories=remove_test_directories,
+            )
+        )
+        return
+
+    _cleanup_contract_runtime_sync(remove_test_directories=remove_test_directories)
 
 
 def _ensure_contract_database_exists() -> None:
@@ -208,11 +513,15 @@ async def _ensure_contract_user_table() -> None:
     _ensure_import_paths()
     clear_application_modules()
 
-    bootstrap_module: ModuleType = importlib.import_module(
-        "scripts.local_dev_bootstrap_service"
-    )
-    bootstrap_service = bootstrap_module.LocalDevelopmentBootstrapService()
-    await bootstrap_service.ensure_user_table_exists()
+    try:
+        bootstrap_module: ModuleType = importlib.import_module(
+            "scripts.local_dev_bootstrap_service"
+        )
+        bootstrap_service = bootstrap_module.LocalDevelopmentBootstrapService()
+        await bootstrap_service.ensure_user_table_exists()
+    finally:
+        await _dispose_async_database_engine()
+        clear_application_modules()
 
 
 def _run_contract_migrations() -> None:

@@ -83,6 +83,15 @@ async def lifespan(app: FastAPI):
         yield
 
     try:
+        from shared.services.retrieval.app_service import (
+            drain_retrieval_hit_stats_updates,
+        )
+
+        await drain_retrieval_hit_stats_updates()
+    except Exception as e:
+        logger.error(f"retrieval hit stats drain failed: {e}")
+
+    try:
         from shared.utils.http_clients import close_async_client
 
         await close_async_client()

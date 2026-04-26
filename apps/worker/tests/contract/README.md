@@ -27,11 +27,14 @@ These tests should avoid:
 
 ## Command
 
+- `uv run python apps/api/scripts/ensure_test_environment.py --install`
+- `uv run python apps/api/scripts/ensure_test_environment.py`
 - `uv run pytest apps/worker/tests/contract -q`
 
 ## Local Prerequisites
 
-- PostgreSQL reachable at `127.0.0.1:5432`
-- Redis reachable at `127.0.0.1:6379`
-- The current worker contract slice reuses the API contract database bootstrap and Redis DB `14`
-- Do not run this suite in parallel with the API contract or migration suites
+- PostgreSQL server binaries available to `pytest-postgresql`
+- PostgreSQL contrib extension files for `uuid-ossp` and `pg_trgm`
+- No running local PostgreSQL service is required; `pytest-postgresql` starts an isolated process
+- No running local Redis service is required; contract tests use `fakeredis`
+- Set `PYTEST_POSTGRESQL_EXECUTABLE` to the `pg_ctl` path if discovery cannot find it

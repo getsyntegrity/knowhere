@@ -587,7 +587,16 @@ class RedisService:
     async def close(self):
         """Close the Redis connection."""
         if self._client:
-            await self._client.close()
+            close_client = cast(
+                Callable[[], Awaitable[None]] | None,
+                getattr(self._client, "aclose", None),
+            )
+
+            if close_client is not None:
+                await close_client()
+            else:
+                await self._client.close()
+
             self._client = None
             self._health_checker = None
             logger.info("Redis connection closed")

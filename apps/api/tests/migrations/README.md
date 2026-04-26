@@ -16,5 +16,5 @@ Prefer runtime-backed checks over tests that only inspect migration file text.
 
 ## Notes
 
-- The migration suite uses `pytest-alembic` against a fresh throwaway local Postgres database per test.
+- The migration suite uses `pytest-alembic` against a fresh throwaway database inside the `pytest-postgresql` process.
 - The suite bootstraps only the external `user` table that application tables reference via foreign keys.
