@@ -24,6 +24,8 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 CONTRACT_DATABASE_NAME: str = "Knowhere_contract_test"
+DEFAULT_POSTGRESQL_PORT: int = 5432
+CONTRACT_POSTGRESQL_PORT_RANGE: tuple[int, int] = (15432, 25432)
 CONTRACT_REDIS_DATABASE: int = 14
 CONTRACT_REDIS_HOST: str = "127.0.0.1"
 CONTRACT_REDIS_PORT: int = 6379
@@ -112,11 +114,21 @@ def _reset_contract_storage_state(database_url: str) -> None:
     _contract_storage_prepared = False
 
 
+def _ensure_contract_postgresql_port(database_url: URL) -> None:
+    effective_port = database_url.port or DEFAULT_POSTGRESQL_PORT
+
+    if effective_port == DEFAULT_POSTGRESQL_PORT:
+        raise RuntimeError(
+            "Contract tests must not use port 5432. Use the pytest-postgresql "
+            "process fixture on CONTRACT_POSTGRESQL_PORT_RANGE instead."
+        )
+
+
 def _resolve_base_database_url(
     postgresql_process: PostgreSQLProcess | None = None,
 ) -> URL:
     if postgresql_process is not None:
-        return URL.create(
+        database_url = URL.create(
             "postgresql+asyncpg",
             username=postgresql_process.user,
             password=postgresql_process.password,
@@ -124,6 +136,8 @@ def _resolve_base_database_url(
             port=postgresql_process.port,
             database="postgres",
         )
+        _ensure_contract_postgresql_port(database_url)
+        return database_url
 
     configured_url: str | None = os.getenv("DATABASE_URL")
 
@@ -134,7 +148,9 @@ def _resolve_base_database_url(
             "DATABASE_URL before calling configure_contract_environment()."
         )
 
-    return make_url(configured_url)
+    database_url = make_url(configured_url)
+    _ensure_contract_postgresql_port(database_url)
+    return database_url
 
 
 def get_contract_database_url(
@@ -157,6 +173,12 @@ def _get_admin_sync_database_url() -> str:
     admin_database_url: URL = make_url(_get_contract_sync_database_url()).set(
         database="postgres"
     )
+    return admin_database_url.render_as_string(hide_password=False)
+
+
+def _build_admin_sync_database_url(contract_database_url: str) -> str:
+    sync_database_url = make_url(contract_database_url).set(drivername="postgresql")
+    admin_database_url = sync_database_url.set(database="postgres")
     return admin_database_url.render_as_string(hide_password=False)
 
 
@@ -507,6 +529,52 @@ def _initialize_contract_database() -> None:
             cursor.execute("SET timezone = 'UTC'")
     finally:
         contract_connection.close()
+
+
+def _drop_database(*, database_name: str, admin_database_url: str) -> None:
+    connection = psycopg2.connect(admin_database_url)
+    connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = %s
+                  AND pid <> pg_backend_pid()
+                """,
+                (database_name,),
+            )
+            cursor.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {}").format(
+                    sql.Identifier(database_name)
+                )
+            )
+    finally:
+        connection.close()
+
+
+def drop_contract_database(
+    postgresql_process: PostgreSQLProcess | None = None,
+) -> None:
+    global _contract_storage_database_url
+    global _contract_storage_prepared
+
+    contract_database_url = get_contract_database_url(postgresql_process)
+    contract_database_name = make_url(contract_database_url).database
+
+    if contract_database_name is None:
+        raise RuntimeError("Contract database URL does not include a database name.")
+
+    _drop_database(
+        database_name=contract_database_name,
+        admin_database_url=_build_admin_sync_database_url(contract_database_url),
+    )
+
+    if _contract_storage_database_url == contract_database_url:
+        _contract_storage_database_url = None
+        _contract_storage_prepared = False
 
 
 async def _ensure_contract_user_table() -> None:

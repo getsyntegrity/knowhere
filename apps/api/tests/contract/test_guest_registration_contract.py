@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from tests.support.runtime import get_contract_database_url
+from shared.testing.contract_runtime import get_contract_database_url
 
 
 async def _create_contract_engine() -> AsyncEngine:

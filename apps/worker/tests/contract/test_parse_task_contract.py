@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import shutil
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,83 +11,22 @@ from uuid import uuid4
 import pandas as pd
 from pytest import MonkeyPatch
 from sqlalchemy import text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Engine
 
-from support.contract_database import insert_contract_user
+from support.contract_database import insert_contract_job, insert_contract_user
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _FIXTURES_ROOT: Path = _REPO_ROOT / "apps" / "worker" / "tests" / "fixtures"
 _SAMPLE_PDF_PATH: Path = _FIXTURES_ROOT / "sample_3pages.pdf"
 
 
-def _insert_pending_file_job(
-    connection: Connection,
-    *,
-    job_id: str,
-    user_id: str,
-    source_file_name: str,
-    s3_key: str,
-    status: str = "pending",
-    billing_status: str = "pending",
-) -> dict[str, Any]:
-    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
+def _build_pending_file_job_metadata(source_file_name: str) -> dict[str, Any]:
     job_metadata: dict[str, Any] = {
         "namespace": "worker-contract",
         "source_type": "file",
         "source_file_name": source_file_name,
         "kb_dir": "Default_Root",
     }
-
-    connection.execute(
-        text(
-            """
-            INSERT INTO jobs (
-                job_id,
-                user_id,
-                job_type,
-                status,
-                source_type,
-                s3_key,
-                webhook_enabled,
-                job_metadata,
-                version,
-                created_at,
-                updated_at,
-                credits_charged,
-                billing_status
-            ) VALUES (
-                :job_id,
-                :user_id,
-                :job_type,
-                :status,
-                :source_type,
-                :s3_key,
-                :webhook_enabled,
-                CAST(:job_metadata AS JSON),
-                :version,
-                :created_at,
-                :updated_at,
-                :credits_charged,
-                :billing_status
-            )
-            """
-        ),
-        {
-            "job_id": job_id,
-            "user_id": user_id,
-            "job_type": "kb_management",
-            "status": status,
-            "source_type": "file",
-            "s3_key": s3_key,
-            "webhook_enabled": False,
-            "job_metadata": json.dumps(job_metadata),
-            "version": 0,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "credits_charged": 0,
-            "billing_status": billing_status,
-        },
-    )
     return job_metadata
 
 
@@ -187,12 +125,17 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
 
     with engine.begin() as connection:
         insert_contract_user(connection, user_id=user_id)
-        job_metadata = _insert_pending_file_job(
+        job_metadata = _build_pending_file_job_metadata(source_file_name)
+        insert_contract_job(
             connection,
             job_id=job_id,
             user_id=user_id,
-            source_file_name=source_file_name,
+            status="pending",
+            source_type="file",
             s3_key=s3_key,
+            webhook_enabled=False,
+            job_metadata=job_metadata,
+            billing_status="pending",
         )
 
     redis_service = _save_worker_task_cache(
@@ -565,13 +508,16 @@ def test_should_skip_parse_task_when_the_job_is_already_terminal(
 
     with engine.begin() as connection:
         insert_contract_user(connection, user_id=user_id)
-        job_metadata = _insert_pending_file_job(
+        job_metadata = _build_pending_file_job_metadata(source_file_name)
+        insert_contract_job(
             connection,
             job_id=job_id,
             user_id=user_id,
-            source_file_name=source_file_name,
             s3_key=s3_key,
             status="done",
+            source_type="file",
+            webhook_enabled=False,
+            job_metadata=job_metadata,
             billing_status="charged",
         )
 
@@ -663,12 +609,17 @@ def test_should_mark_the_job_failed_and_cleanup_the_workspace_when_parse_executi
 
     with engine.begin() as connection:
         insert_contract_user(connection, user_id=user_id)
-        job_metadata = _insert_pending_file_job(
+        job_metadata = _build_pending_file_job_metadata(source_file_name)
+        insert_contract_job(
             connection,
             job_id=job_id,
             user_id=user_id,
-            source_file_name=source_file_name,
+            status="pending",
+            source_type="file",
             s3_key=s3_key,
+            webhook_enabled=False,
+            job_metadata=job_metadata,
+            billing_status="pending",
         )
 
     _save_worker_task_cache(

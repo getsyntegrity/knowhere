@@ -14,7 +14,7 @@ from pytest import MonkeyPatch
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine, URL, make_url
 
-from tests.support.runtime import (
+from shared.testing.contract_runtime import (
     PostgreSQLProcess,
     clear_application_modules,
     cleanup_contract_runtime,

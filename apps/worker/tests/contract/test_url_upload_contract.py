@@ -1,87 +1,15 @@
 from __future__ import annotations
 
-import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from pytest import MonkeyPatch
 from sqlalchemy import text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Engine
 
-from support.contract_database import insert_contract_user
-
-
-def _insert_waiting_url_job(
-    connection: Connection,
-    *,
-    job_id: str,
-    user_id: str,
-    s3_key: str,
-    source_url: str,
-) -> None:
-    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
-    job_metadata = json.dumps(
-        {
-            "namespace": "worker-contract",
-            "source_type": "url",
-            "source_url": source_url,
-            "source_file_name": "contract-source.pdf",
-        }
-    )
-
-    connection.execute(
-        text(
-            """
-            INSERT INTO jobs (
-                job_id,
-                user_id,
-                job_type,
-                status,
-                source_type,
-                s3_key,
-                webhook_enabled,
-                job_metadata,
-                version,
-                created_at,
-                updated_at,
-                credits_charged,
-                billing_status
-            ) VALUES (
-                :job_id,
-                :user_id,
-                :job_type,
-                :status,
-                :source_type,
-                :s3_key,
-                :webhook_enabled,
-                CAST(:job_metadata AS JSON),
-                :version,
-                :created_at,
-                :updated_at,
-                :credits_charged,
-                :billing_status
-            )
-            """
-        ),
-        {
-            "job_id": job_id,
-            "user_id": user_id,
-            "job_type": "kb_management",
-            "status": "waiting-file",
-            "source_type": "url",
-            "s3_key": s3_key,
-            "webhook_enabled": False,
-            "job_metadata": job_metadata,
-            "version": 0,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "credits_charged": 0,
-            "billing_status": "pending",
-        },
-    )
+from support.contract_database import insert_contract_job, insert_contract_user
 
 
 def _load_upload_task_modules() -> tuple[Any, Engine, Any, Any]:
@@ -133,12 +61,19 @@ def test_should_upload_a_url_job_to_the_expected_storage_key_and_publish_progres
 
     with engine.begin() as connection:
         insert_contract_user(connection, user_id=user_id)
-        _insert_waiting_url_job(
+        insert_contract_job(
             connection,
             job_id=job_id,
             user_id=user_id,
+            status="waiting-file",
+            source_type="url",
             s3_key=s3_key,
-            source_url=source_url,
+            job_metadata={
+                "namespace": "worker-contract",
+                "source_type": "url",
+                "source_url": source_url,
+                "source_file_name": "contract-source.pdf",
+            },
         )
 
     redis_service = sync_redis_service_factory.get_service()

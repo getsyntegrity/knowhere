@@ -10,16 +10,18 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pytest_postgresql import factories
 from pytest import MonkeyPatch
-from scripts.ensure_test_environment import find_executable
-from tests.support.runtime import (
+from shared.testing.contract_runtime import (
+    CONTRACT_POSTGRESQL_PORT_RANGE,
     PostgreSQLProcess,
     clear_application_modules,
     cleanup_contract_runtime,
     cleanup_contract_runtime_async,
     configure_contract_environment,
+    drop_contract_database,
     prepare_contract_storage,
     seed_contract_developer,
 )
+from shared.testing.postgresql_environment import find_executable
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 _API_ROOT: Path = _REPO_ROOT / "apps" / "api"
@@ -36,10 +38,21 @@ def _resolve_postgresql_executable() -> str | None:
     return str(executable_path) if executable_path is not None else None
 
 
-postgresql_proc = factories.postgresql_proc(
+_contract_postgresql_proc = factories.postgresql_proc(
     executable=_resolve_postgresql_executable(),
-    port=None,
+    port=CONTRACT_POSTGRESQL_PORT_RANGE,
 )
+
+
+@pytest.fixture(scope="session")
+def postgresql_proc(
+    _contract_postgresql_proc: PostgreSQLProcess,
+) -> Generator[PostgreSQLProcess, None, None]:
+    try:
+        yield _contract_postgresql_proc
+    finally:
+        cleanup_contract_runtime(remove_test_directories=True)
+        drop_contract_database(_contract_postgresql_proc)
 
 
 def _ensure_import_paths() -> None:

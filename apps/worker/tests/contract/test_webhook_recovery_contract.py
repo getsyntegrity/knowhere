@@ -10,79 +10,19 @@ from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
-from support.contract_database import insert_contract_user
+from support.contract_database import insert_contract_job, insert_contract_user
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _insert_job(
-    connection: Connection,
-    *,
-    job_id: str,
-    user_id: str,
-    webhook_url: str,
-) -> None:
-    timestamp = _utc_now()
-    job_metadata = json.dumps(
-        {
-            "document_id": f"doc_{uuid4().hex[:12]}",
-            "namespace": "worker-contract",
-            "source_type": "file",
-        }
-    )
-
-    connection.execute(
-        text(
-            """
-            INSERT INTO jobs (
-                job_id,
-                user_id,
-                job_type,
-                status,
-                source_type,
-                webhook_url,
-                webhook_enabled,
-                job_metadata,
-                version,
-                created_at,
-                updated_at,
-                credits_charged,
-                billing_status
-            ) VALUES (
-                :job_id,
-                :user_id,
-                :job_type,
-                :status,
-                :source_type,
-                :webhook_url,
-                :webhook_enabled,
-                CAST(:job_metadata AS JSON),
-                :version,
-                :created_at,
-                :updated_at,
-                :credits_charged,
-                :billing_status
-            )
-            """
-        ),
-        {
-            "job_id": job_id,
-            "user_id": user_id,
-            "job_type": "kb_management",
-            "status": "done",
-            "source_type": "file",
-            "webhook_url": webhook_url,
-            "webhook_enabled": True,
-            "job_metadata": job_metadata,
-            "version": 0,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "credits_charged": 0,
-            "billing_status": "charged",
-        },
-    )
+def _build_file_job_metadata() -> dict[str, str]:
+    return {
+        "document_id": f"doc_{uuid4().hex[:12]}",
+        "namespace": "worker-contract",
+        "source_type": "file",
+    }
 
 
 def _insert_webhook_event(
@@ -202,11 +142,16 @@ def test_should_republish_only_orphaned_pending_webhook_events_and_persist_qstas
             retried_job_id,
             terminal_job_id,
         ):
-            _insert_job(
+            insert_contract_job(
                 connection,
                 job_id=job_id,
                 user_id=user_id,
+                status="done",
+                source_type="file",
                 webhook_url=target_url,
+                webhook_enabled=True,
+                job_metadata=_build_file_job_metadata(),
+                billing_status="charged",
             )
 
         _insert_webhook_event(

@@ -1,80 +1,21 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Engine
 
-from support.contract_database import insert_contract_user
+from support.contract_database import insert_contract_job, insert_contract_user
 
 
-def _insert_job(
-    connection: Connection,
-    *,
-    job_id: str,
-    user_id: str,
-    status: str,
-    updated_at: datetime,
-) -> None:
-    created_at = updated_at - timedelta(minutes=5)
-    job_metadata = json.dumps(
-        {
-            "document_id": f"doc_{uuid4().hex[:12]}",
-            "namespace": "worker-contract",
-            "source_type": "file",
-        }
-    )
-
-    connection.execute(
-        text(
-            """
-            INSERT INTO jobs (
-                job_id,
-                user_id,
-                job_type,
-                status,
-                source_type,
-                webhook_enabled,
-                job_metadata,
-                version,
-                created_at,
-                updated_at,
-                credits_charged,
-                billing_status
-            ) VALUES (
-                :job_id,
-                :user_id,
-                :job_type,
-                :status,
-                :source_type,
-                :webhook_enabled,
-                CAST(:job_metadata AS JSON),
-                :version,
-                :created_at,
-                :updated_at,
-                :credits_charged,
-                :billing_status
-            )
-            """
-        ),
-        {
-            "job_id": job_id,
-            "user_id": user_id,
-            "job_type": "kb_management",
-            "status": status,
-            "source_type": "file",
-            "webhook_enabled": False,
-            "job_metadata": job_metadata,
-            "version": 0,
-            "created_at": created_at,
-            "updated_at": updated_at,
-            "credits_charged": 0,
-            "billing_status": "pending",
-        },
-    )
+def _build_file_job_metadata() -> dict[str, str]:
+    return {
+        "document_id": f"doc_{uuid4().hex[:12]}",
+        "namespace": "worker-contract",
+        "source_type": "file",
+    }
 
 
 def _load_worker_modules() -> tuple[Any, Engine]:
@@ -93,21 +34,30 @@ def test_should_expire_stale_jobs_and_persist_failure_state(
 
     stale_job_sweeper, engine = _load_worker_modules()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    stale_updated_at = now - timedelta(days=1)
 
     with engine.begin() as connection:
         insert_contract_user(connection, user_id=user_id)
-        _insert_job(
+        insert_contract_job(
             connection,
             job_id=stale_job_id,
             user_id=user_id,
             status="running",
-            updated_at=now - timedelta(days=1),
+            source_type="file",
+            webhook_enabled=False,
+            job_metadata=_build_file_job_metadata(),
+            created_at=stale_updated_at - timedelta(minutes=5),
+            updated_at=stale_updated_at,
         )
-        _insert_job(
+        insert_contract_job(
             connection,
             job_id=fresh_job_id,
             user_id=user_id,
             status="waiting-file",
+            source_type="file",
+            webhook_enabled=False,
+            job_metadata=_build_file_job_metadata(),
+            created_at=now - timedelta(minutes=5),
             updated_at=now,
         )
 
