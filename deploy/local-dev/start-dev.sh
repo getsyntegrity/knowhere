@@ -7,10 +7,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 API_DIR="${REPO_ROOT}/apps/api"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.dev.yml"
 
-LOCAL_DEV_USER_ID="local-dev-user"
-LOCAL_DEV_USER_EMAIL="local-dev-user@knowhere.local"
-LOCAL_DEV_USER_TIER="tier_5"
-LOCAL_DEV_API_KEY="local_dev_demo_key_tier5_full_access"
 LOCAL_DEV_DATABASE_URL="postgresql+asyncpg://root:root123@localhost:5432/Knowhere"
 LOCAL_DEV_DB_SSL_MODE="disable"
 RUN_USER_INIT=0
@@ -160,26 +156,6 @@ print_summary() {
         cat <<EOF
 
 Local development services are ready.
-
-Service endpoints:
-  - LocalStack: http://localhost:4566
-  - PostgreSQL: localhost:5432 (root/root123)
-  - Redis: localhost:6379
-
-Next steps:
-  1. Start the API: cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
-  2. Start the worker: cd apps/worker && uv run python worker.py
-
-Deterministic local developer account:
-  - user_id: ${LOCAL_DEV_USER_ID}
-  - email: ${LOCAL_DEV_USER_EMAIL}
-  - tier: ${LOCAL_DEV_USER_TIER}
-  - api_key: ${LOCAL_DEV_API_KEY}
-
-The helper is idempotent:
-  - rerunning this script will safely re-check the local user table
-  - rerunning this script will reapply local API migrations safely
-  - rerunning this script will refresh the same dev account instead of creating duplicates
 
 Stop services:
   ${SCRIPT_DIR}/stop-dev.sh
