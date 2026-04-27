@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Literal
 
 from app.services.document_service import DocumentService
 from app.services.rate_limit.dependencies import CurrentUser, with_current_user
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import NotFoundException
 
 router = APIRouter(tags=["Documents"])
 
 _document_service = DocumentService()
+DocumentChunkType = Literal["text", "image", "table"]
 
 
 async def _archive_document_response(
@@ -71,6 +74,58 @@ async def get_document(
             internal_message="Document not found",
         )
     return document
+
+
+@router.get("/{document_id}/chunks")
+async def list_document_chunks(
+    document_id: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+    chunk_type: DocumentChunkType | None = Query(None, description="Chunk type filter"),
+    include_asset_urls: bool = Query(False, description="Include generated asset URLs"),
+    current_user: CurrentUser = Depends(with_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    response = await _document_service.list_document_chunks(
+        db,
+        user_id=current_user.user_id,
+        document_id=document_id,
+        page=page,
+        page_size=page_size,
+        chunk_type=chunk_type,
+        include_asset_urls=include_asset_urls,
+    )
+    if response is None:
+        raise NotFoundException(
+            resource="Document",
+            resource_id=document_id,
+            internal_message="Document not found",
+        )
+    return response
+
+
+@router.get("/{document_id}/chunks/{document_chunk_id}")
+async def get_document_chunk(
+    document_id: str,
+    document_chunk_id: str,
+    include_asset_urls: bool = Query(False, description="Include generated asset URLs"),
+    current_user: CurrentUser = Depends(with_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    response = await _document_service.get_document_chunk(
+        db,
+        user_id=current_user.user_id,
+        document_id=document_id,
+        document_chunk_id=document_chunk_id,
+        include_asset_urls=include_asset_urls,
+    )
+    if response is None:
+        raise NotFoundException(
+            resource="Document chunk",
+            resource_id=document_chunk_id,
+            internal_message="Document chunk not found",
+        )
+    return response
 
 
 @router.post("/{document_id}/archive")

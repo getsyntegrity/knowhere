@@ -5,12 +5,13 @@ Mirror of ``AsyncStateMachineService`` using synchronous SQLAlchemy
 ``Session`` and ``SyncRedisService``.  Every public method signature matches
 the async variant minus ``await``.
 """
+
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import cast, literal, select, update
 from sqlalchemy.orm import Session, load_only
 
 from shared.core.state_machine.states import (
@@ -67,15 +68,23 @@ class SyncStateMachineService:
                 old_version = job.version
 
                 self._record_audit_log(
-                    db, job_id, old_state, to_state,
-                    transition_reason, operator_id, operator_type, metadata,
+                    db,
+                    job_id,
+                    old_state,
+                    to_state,
+                    transition_reason,
+                    operator_id,
+                    operator_type,
+                    metadata,
                 )
 
                 success = self._cas_update_state(db, job_id, to_state, old_version)
                 if success:
                     self._update_redis_cache(job_id, to_state, metadata)
                     db.flush()
-                    logger.info(f"Job {job_id} state transition: {old_state} → {to_state}")
+                    logger.info(
+                        f"Job {job_id} state transition: {old_state} → {to_state}"
+                    )
                     return True
 
                 if attempt < max_retries - 1:
@@ -83,7 +92,8 @@ class SyncStateMachineService:
                         f"Job {job_id} CAS conflict, retry {attempt + 1}/{max_retries}"
                     )
                     import gevent
-                    gevent.sleep(0.1 * (2 ** attempt))
+
+                    gevent.sleep(0.1 * (2**attempt))
                     continue
                 else:
                     logger.error(f"Job {job_id} CAS retries exhausted")
@@ -114,7 +124,11 @@ class SyncStateMachineService:
         try:
             normalized_details = normalize_error_details(error_details)
             self._update_job_error(
-                db, job_id, error_message, error_code, normalized_details,
+                db,
+                job_id,
+                error_message,
+                error_code,
+                normalized_details,
             )
 
             transition_metadata = (metadata or {}).copy()
@@ -124,8 +138,13 @@ class SyncStateMachineService:
                 transition_metadata["error_details"] = normalized_details
 
             return self.transition(
-                db, job_id, JobStatus.FAILED.value,
-                "mark_failed", operator_id, "system", transition_metadata,
+                db,
+                job_id,
+                JobStatus.FAILED.value,
+                "mark_failed",
+                operator_id,
+                "system",
+                transition_metadata,
             )
         except Exception as e:
             logger.error(f"Failed to mark Job {job_id} as failed: {e}")
@@ -141,8 +160,13 @@ class SyncStateMachineService:
         """Mark a job as completed."""
         try:
             return self.transition(
-                db, job_id, JobStatus.DONE.value,
-                "mark_completed", operator_id, "system", result_metadata,
+                db,
+                job_id,
+                JobStatus.DONE.value,
+                "mark_completed",
+                operator_id,
+                "system",
+                result_metadata,
             )
         except Exception as e:
             logger.error(f"Failed to mark Job {job_id} as completed: {e}")
@@ -199,15 +223,17 @@ class SyncStateMachineService:
                 logger.warning(f"Metadata serialization failed: {e}")
                 serialized = {"error": "metadata_serialization_failed"}
 
-        db.add(JobStateAuditLog(
-            job_id=job_id,
-            from_state=from_state,
-            to_state=to_state,
-            transition_reason=transition_reason,
-            operator_id=operator_id,
-            operator_type=operator_type,
-            transition_metadata=serialized,
-        ))
+        db.add(
+            JobStateAuditLog(
+                job_id=job_id,
+                from_state=from_state,
+                to_state=to_state,
+                transition_reason=transition_reason,
+                operator_id=operator_id,
+                operator_type=operator_type,
+                transition_metadata=serialized,
+            )
+        )
 
     def _update_job_error(
         self,
@@ -224,29 +250,33 @@ class SyncStateMachineService:
             }
 
             if error_details:
-                from sqlalchemy import func
-                from sqlalchemy.dialects.postgresql import JSONB, array as pg_array
                 import json as _json
 
+                from sqlalchemy import func
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy.dialects.postgresql import array as pg_array
+
                 update_values["job_metadata"] = func.jsonb_set(
-                    func.coalesce(Job.job_metadata.cast(JSONB), func.cast("{}", JSONB)),
+                    func.coalesce(Job.job_metadata.cast(JSONB), cast(literal("{}"), JSONB)),
                     pg_array(["error_details"]),
-                    func.cast(_json.dumps(error_details), JSONB),
+                    cast(literal(_json.dumps(error_details)), JSONB),
                 )
 
-            db.execute(
-                update(Job).where(Job.job_id == job_id).values(**update_values)
-            )
+            db.execute(update(Job).where(Job.job_id == job_id).values(**update_values))
         except Exception as e:
             logger.error(f"Failed to update Job {job_id} error info: {e}")
 
     def _update_redis_cache(
-        self, job_id: str, status: str, metadata: Optional[Dict[str, Any]],
+        self,
+        job_id: str,
+        status: str,
+        metadata: Optional[Dict[str, Any]],
     ) -> None:
         try:
             status_key = redis_key_builder.task_status(job_id)
             self.redis.set(
-                status_key, status,
+                status_key,
+                status,
                 ttl=redis_key_builder.get_key_ttl(RedisKeyType.TASK),
             )
 
@@ -263,9 +293,8 @@ class SyncStateMachineService:
 
             self.redis.hset(progress_key, mapping=progress_data)
             self.redis.expire(
-                progress_key, redis_key_builder.get_key_ttl(RedisKeyType.TASK),
+                progress_key,
+                redis_key_builder.get_key_ttl(RedisKeyType.TASK),
             )
         except Exception as e:
             logger.error(f"Redis cache update failed for Job {job_id}: {e}")
-
-

@@ -6,72 +6,115 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, relationship
 
 from shared.core.database import Base
-from datetime import datetime
-
-def utc_now():
-    return datetime.utcnow()
+from shared.utils.utc_now import utc_now_naive
 
 
 class ContentBase(Base):
-    """
-    知识库内容主表
-    """
+    """Primary table for knowledge-base content."""
+
     __tablename__ = "knowledge_base"
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="内容顺序标识符")
-    content = Column(Text, nullable=True, comment="内容的具体文本")
-    path = Column(Text, nullable=True, comment="文件路径或来源")
-    type = Column(String(2000), nullable=True, comment="内容类型（如PTXT, SUMMARY等）")
-    length = Column(Integer, nullable=True, comment="内容的长度或大小")
-    keywords = Column(String(511), nullable=True, comment="内容的关键词")
-    summary = Column(Text, nullable=True, comment="内容的摘要")
-    know_id = Column(String(128), nullable=True, comment="知识ID，可能关联到外部知识库")
-    tokens = Column(Text, nullable=True, comment="内容分词后的token")
-    embedding = Column(Text, nullable=True, comment="内容的语义向量，用于相似度搜索等")
+    id = Column(
+        String(36),
+        primary_key=True,
+        index=True,
+        default=lambda: str(uuid4()),
+        comment="Content row identifier",
+    )
+    content = Column(Text, nullable=True, comment="Raw content text")
+    path = Column(Text, nullable=True, comment="File path or source")
+    type = Column(
+        String(2000),
+        nullable=True,
+        comment="Content type, for example PTXT or SUMMARY",
+    )
+    length = Column(Integer, nullable=True, comment="Content length or size")
+    keywords = Column(String(511), nullable=True, comment="Content keywords")
+    summary = Column(Text, nullable=True, comment="Content summary")
+    know_id = Column(
+        String(128),
+        nullable=True,
+        comment="Knowledge record ID that may refer to an external knowledge base",
+    )
+    tokens = Column(Text, nullable=True, comment="Tokenized content")
+    embedding = Column(
+        Text,
+        nullable=True,
+        comment="Semantic vector used for similarity search",
+    )
+
 
 class PathBase(Base):
     __tablename__ = "path_base"
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="路径顺序标识符")
-    path = Column(Text, nullable=True, comment="文件路径或来源")
-    embedding = Column(Text, nullable=True, comment="内容的语义向量，用于相似度搜索等")
+    id = Column(
+        String(36),
+        primary_key=True,
+        index=True,
+        default=lambda: str(uuid4()),
+        comment="Path row identifier",
+    )
+    path = Column(Text, nullable=True, comment="File path or source")
+    embedding = Column(
+        Text,
+        nullable=True,
+        comment="Semantic vector used for similarity search",
+    )
+
 
 class KBPydantic(BaseModel):
-    content:Optional[str] = None
-    path:Optional[str] = None
-    type:Optional[str] = None
-    length:Optional[int] = None
-    keywords:Optional[str] = None
-    summary:Optional[str] = None
-    know_id:Optional[str] = None
-    tokens:Optional[str] = None
-    embedding:Optional[str] = None
+    content: Optional[str] = None
+    path: Optional[str] = None
+    type: Optional[str] = None
+    length: Optional[int] = None
+    keywords: Optional[str] = None
+    summary: Optional[str] = None
+    know_id: Optional[str] = None
+    tokens: Optional[str] = None
+    embedding: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
 class PathPydantic(BaseModel):
-    path:Optional[str] = None
-    embedding:Optional[bytes] = None
+    path: Optional[str] = None
+    embedding: Optional[bytes] = None
     model_config = ConfigDict(from_attributes=True)
 
 
 class FileDirectory(Base):
-    """
-    用户文件目录结构表
-    """
-    __tablename__ = "file_directory"
-    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()), comment="目录唯一标识符")
-    title = Column(String(255), nullable=False, comment="目录标题")
-    parent_id = Column(String(36), ForeignKey('file_directory.id'),nullable=True, comment="父级目录ID，NULL表示根目录")
-    user_id = Column(String(36), nullable=False, comment="所属用户ID")
-    create_time = Column(DateTime, nullable=True, default=utc_now, comment="创建时间")
-    update_time = Column(DateTime, nullable=True, default=utc_now, onupdate=utc_now, comment="更新时间")
+    """Directory tree table for user files."""
 
-    # 通过parent_id实现自引用关系
+    __tablename__ = "file_directory"
+    id = Column(
+        String(36),
+        primary_key=True,
+        index=True,
+        default=lambda: str(uuid4()),
+        comment="Directory record identifier",
+    )
+    title = Column(String(255), nullable=False, comment="Directory title")
+    parent_id = Column(
+        String(36),
+        ForeignKey("file_directory.id"),
+        nullable=True,
+        comment="Parent directory ID; NULL means root directory",
+    )
+    user_id = Column(String(36), nullable=False, comment="Owning user ID")
+    create_time = Column(
+        DateTime, nullable=True, default=utc_now_naive, comment="Created time"
+    )
+    update_time = Column(
+        DateTime,
+        nullable=True,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
+        comment="Updated time",
+    )
+
+    # Self-referential relationship implemented through parent_id.
     parent: Mapped["FileDirectory"] = relationship(
-        "FileDirectory",
-        remote_side=[id],
-        back_populates="children"
+        "FileDirectory", remote_side=[id], back_populates="children"
     )
     children: Mapped[List["FileDirectory"]] = relationship(
-        "FileDirectory",
-        back_populates="parent"
+        "FileDirectory", back_populates="parent"
     )
 
     def __repr__(self):

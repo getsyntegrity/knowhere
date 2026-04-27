@@ -14,9 +14,10 @@ Key patterns (all prefixed with REDIS_KEY_PREFIX from config):
 import json
 from typing import Optional
 
-from loguru import logger
-from shared.services.redis.redis_service import RedisService
 from app.services.rate_limit.config import REDIS_KEY_PREFIX
+from loguru import logger
+
+from shared.services.redis.redis_service import RedisService
 
 # Default TTL for JWT identity cache entries (1 hour).
 _JWT_TTL_SECONDS: int = 3600

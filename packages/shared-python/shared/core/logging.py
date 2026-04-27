@@ -14,9 +14,8 @@ _log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
 _DEFAULT_CONSOLE_FORMAT = (
     "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {extra[event]} | {message}"
 )
-_DEVELOPMENT_CONSOLE_FORMAT = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level> <cyan>{extra}</cyan>"
-)
+_DEVELOPMENT_CONSOLE_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level> <cyan>{extra}</cyan>"
+
 
 class LogEvent(Enum):
     """
@@ -27,6 +26,7 @@ class LogEvent(Enum):
     - Add new events to this registry in the same PR
     - Event names are stable; message text can evolve
     """
+
     # HTTP events
     HTTP_REQUEST_START = "http.request.start"
     HTTP_REQUEST_COMPLETE = "http.request.complete"
@@ -57,6 +57,7 @@ class LogEvent(Enum):
     ILOVEAPI_FALLBACK = "iloveapi.fallback"
     ILOVEAPI_RATE_LIMITED = "iloveapi.rate_limited"
     ILOVEAPI_CONCURRENCY_EXCEEDED = "iloveapi.concurrency_exceeded"
+
 
 @contextmanager
 def log_context(**kwargs):
@@ -91,10 +92,13 @@ def _is_expected_client_exception(exception: BaseException) -> bool:
     except ImportError:
         return False
 
-    return isinstance(
-        exception,
-        (FastAPIHTTPException, StarletteHTTPException),
-    ) and 400 <= exception.status_code < 500
+    return (
+        isinstance(
+            exception,
+            (FastAPIHTTPException, StarletteHTTPException),
+        )
+        and 400 <= exception.status_code < 500
+    )
 
 
 def _downgrade_expected_logfire_exception(
@@ -108,10 +112,7 @@ def _downgrade_expected_logfire_exception(
     helper.no_record_exception()
 
 
-
-def setup_logging(
-    service_name: str
-):
+def setup_logging(service_name: str):
     """
     Setup structured logging with optional Logfire integration.
 
@@ -156,11 +157,13 @@ def setup_logging(
     logger.remove()
 
     # Set base context BEFORE any log emission so every line has base fields
-    logger.configure(extra={
-        "schema_version": "1.0",
-        "environment": settings.APP_ENV,
-        "event": LogEvent.APP_LOG.value,
-    })
+    logger.configure(
+        extra={
+            "schema_version": "1.0",
+            "environment": settings.APP_ENV,
+            "event": LogEvent.APP_LOG.value,
+        }
+    )
 
     # Console handler - respects LOG_LEVEL
     log_level = settings.LOG_LEVEL
@@ -175,9 +178,7 @@ def setup_logging(
         level=log_level,
         enqueue=use_enqueue,
         format=(
-            _DEVELOPMENT_CONSOLE_FORMAT
-            if show_bind_data
-            else _DEFAULT_CONSOLE_FORMAT
+            _DEVELOPMENT_CONSOLE_FORMAT if show_bind_data else _DEFAULT_CONSOLE_FORMAT
         ),
     )
 
@@ -210,12 +211,14 @@ def setup_logging(
 
                 # Instrument database
                 from shared.core.database import engine
+
                 logfire.instrument_sqlalchemy(engine=engine)
 
                 # Redis instrumentation disabled to reduce production noise/cost.
 
             elif service_name == "knowhere-worker":
                 from shared.core.otel_gevent_compat import patch_otel_context_for_gevent
+
                 patch_otel_context_for_gevent()
                 logfire.instrument_celery()
                 logfire.instrument_httpx()
@@ -223,6 +226,7 @@ def setup_logging(
                 # Instrument sync database engine (worker uses psycopg2 via gevent)
                 try:
                     from shared.core.database_sync import get_sync_engine
+
                     logfire.instrument_sqlalchemy(engine=get_sync_engine())
                 except ImportError:
                     logger.bind(event=LogEvent.LOGGING_CONFIGURED.value).warning(
@@ -276,4 +280,6 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )

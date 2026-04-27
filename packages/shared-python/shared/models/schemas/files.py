@@ -5,24 +5,22 @@ from pydantic import BaseModel, ConfigDict
 
 
 class FileDirectoryDto(BaseModel):
-    """
-    文件目录DTO，用于向前端传输目录结构数据
-    """
+    """Directory DTO used to return the directory tree to clients."""
+
     id: str
     title: str
     parent_id: Optional[str] = None
     user_id: str
     create_time: Optional[datetime] = None
     update_time: Optional[datetime] = None
-    children: List['FileDirectoryDto'] = []
+    children: List["FileDirectoryDto"] = []
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class FileDirectoryCreateDto(BaseModel):
-    """
-    创建文件目录的DTO
-    """
+    """DTO for creating a directory."""
+
     title: str
     parent_id: Optional[str] = None
     user_id: str
@@ -31,9 +29,8 @@ class FileDirectoryCreateDto(BaseModel):
 
 
 class FileDirectoryUpdateDto(BaseModel):
-    """
-    更新文件目录的DTO
-    """
+    """DTO for updating a directory."""
+
     id: Optional[str] = None
     title: Optional[str] = None
     parent_id: Optional[str] = None
@@ -43,13 +40,12 @@ class FileDirectoryUpdateDto(BaseModel):
 
 
 class FileDirectoryListDto(BaseModel):
-    """
-    获取目录内容的DTO，只需要目录ID
-    """
+    """DTO for listing directory contents; only the directory ID is required."""
+
     id: str
 
     model_config = ConfigDict(from_attributes=True)
 
 
-# 解决循环引用
+# Resolve the self-referential FileDirectoryDto annotation.
 FileDirectoryDto.model_rebuild()

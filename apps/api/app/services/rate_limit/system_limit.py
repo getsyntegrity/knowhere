@@ -13,8 +13,8 @@ def find_system_rule(
 ) -> SystemLimitRule:
     """Find the first matching system rate-limit rule."""
     for rule in rules:
-        is_method_match = (
-            rule.method == "*" or fnmatch.fnmatch(method.upper(), rule.method.upper())
+        is_method_match = rule.method == "*" or fnmatch.fnmatch(
+            method.upper(), rule.method.upper()
         )
         if not is_method_match:
             continue

@@ -1,15 +1,15 @@
--- PostgreSQL 数据库初始化脚本
--- 使用root用户，数据库名为Knowhere
+-- PostgreSQL database initialization script.
+-- Uses the root user and the Knowhere database.
 
--- 创建扩展（如果需要）
+-- Create extensions if they are needed.
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
--- 设置数据库编码
+-- Set the database encoding.
 SET client_encoding = 'UTF8';
 
--- 设置时区
+-- Set the timezone.
 SET timezone = 'UTC';
 
--- 设置搜索路径
+-- Set the search path.
 ALTER DATABASE "Knowhere" SET search_path TO public;

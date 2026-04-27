@@ -50,12 +50,16 @@ class ErrorCode(str, Enum):
     FAILED_PRECONDITION = "FAILED_PRECONDITION"  # 400 - System state prevents operation
     OUT_OF_RANGE = "OUT_OF_RANGE"  # 400 - Value outside valid range
     UNAUTHENTICATED = "UNAUTHENTICATED"  # 401 - Missing/invalid credentials
-    PAYMENT_REQUIRED = "PAYMENT_REQUIRED"  # 402 - Payment required / Insufficient credits
+    PAYMENT_REQUIRED = (
+        "PAYMENT_REQUIRED"  # 402 - Payment required / Insufficient credits
+    )
     PERMISSION_DENIED = "PERMISSION_DENIED"  # 403 - Caller lacks permission
     NOT_FOUND = "NOT_FOUND"  # 404 - Resource does not exist
     ABORTED = "ABORTED"  # 409 - Concurrency conflict
     ALREADY_EXISTS = "ALREADY_EXISTS"  # 409 - Resource already exists
-    RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"  # 429 - Rate limit OR quota (see Retry Semantics)
+    RESOURCE_EXHAUSTED = (
+        "RESOURCE_EXHAUSTED"  # 429 - Rate limit OR quota (see Retry Semantics)
+    )
     CANCELLED = "CANCELLED"  # 499 - Client cancelled request
 
     # Server Errors (5xx)
@@ -70,12 +74,12 @@ class ErrorCode(str, Enum):
 class ErrorCodeMapper:
     """
     Bidirectional mapping between ErrorCode and HTTP status codes.
-    
+
     Usage:
         ErrorCodeMapper.get_http_status_from_error_code(ErrorCode.NOT_FOUND)  # 404
         ErrorCodeMapper.get_error_code_from_http_status(401)  # ErrorCode.UNAUTHENTICATED
     """
-    
+
     _error_code_to_http_status = {
         ErrorCode.OK: 200,
         ErrorCode.INVALID_ARGUMENT: 400,
@@ -96,7 +100,7 @@ class ErrorCodeMapper:
         ErrorCode.UNAVAILABLE: 503,
         ErrorCode.DEADLINE_EXCEEDED: 504,
     }
-    
+
     # Reverse mapping: HTTP Status -> ErrorCode
     # Note: Some statuses map to multiple codes; we pick the most common one.
     _http_status_to_error_code = {
@@ -116,14 +120,14 @@ class ErrorCodeMapper:
         503: ErrorCode.UNAVAILABLE,
         504: ErrorCode.DEADLINE_EXCEEDED,
     }
-    
+
     @classmethod
     def get_http_status_from_error_code(
         cls, code: ErrorCode, default: int = 500
     ) -> int:
         """Get HTTP status code from ErrorCode."""
         return cls._error_code_to_http_status.get(code, default)
-    
+
     @classmethod
     def get_error_code_from_http_status(
         cls, status: int, default: ErrorCode = ErrorCode.UNKNOWN

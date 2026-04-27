@@ -1,4 +1,5 @@
 """Bootstrap the full Celery worker runtime only in the main worker process."""
+
 import os
 import socket
 import subprocess
@@ -14,9 +15,9 @@ from shared.services.worker_health import start_worker_heartbeat, stop_worker_he
 
 def _register_task_modules() -> None:
     """Import task modules for Celery side-effect registration."""
-    import app.core.tasks.kb_tasks
-    import app.core.tasks.stale_job_sweeper
-    import app.core.tasks.webhook_tasks
+    import app.core.tasks.kb_tasks  # noqa: F401
+    import app.core.tasks.stale_job_sweeper  # noqa: F401
+    import app.core.tasks.webhook_tasks  # noqa: F401
 
 
 @worker_init.connect
@@ -30,16 +31,21 @@ def init_worker(**kwargs) -> None:
         from celery.concurrency.gevent import TaskPool as GeventTaskPool
 
         if not hasattr(GeventTaskPool, "_original_terminate_job"):
+
             def _graceful_terminate_job(self, pid, signal=None):
                 logger.warning(
                     f"gevent pool cannot kill greenlet (pid={pid}), "
                     f"relying on RedisJobLock for dedup on redelivery"
                 )
 
-            GeventTaskPool._original_terminate_job = getattr(
+            setattr(
                 GeventTaskPool,
-                "terminate_job",
-                None,
+                "_original_terminate_job",
+                getattr(
+                    GeventTaskPool,
+                    "terminate_job",
+                    None,
+                ),
             )
             GeventTaskPool.terminate_job = _graceful_terminate_job
             logger.info("Patched gevent TaskPool.terminate_job for graceful recovery")

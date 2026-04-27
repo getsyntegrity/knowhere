@@ -19,8 +19,4 @@ def mask_api_key(api_key: Optional[str]) -> str:
         suffix_length = 4
 
     masked_length = max(1, len(api_key) - prefix_length - suffix_length)
-    return (
-        f"{api_key[:prefix_length]}"
-        f"{'*' * masked_length}"
-        f"{api_key[-suffix_length:]}"
-    )
+    return f"{api_key[:prefix_length]}{'*' * masked_length}{api_key[-suffix_length:]}"

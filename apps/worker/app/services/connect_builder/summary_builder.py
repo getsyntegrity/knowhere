@@ -67,7 +67,7 @@ def _llm_summarize(snippets_text: str, node_name: str) -> str:
                 "lang": detected_lang,
             },
         )
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": "you are a helpful assistant"},
             {"role": "user", "content": prompt},
         ]

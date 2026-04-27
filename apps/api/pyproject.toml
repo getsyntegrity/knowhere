@@ -29,13 +29,15 @@ dependencies = [
 dev = [
     "pytest==8.3.4",
     "pytest-asyncio==0.24.0",
+    "pytest-alembic==0.12.1",
     "pytest-mock==3.14.0",
+    "pytest-postgresql>=7.0.2",
     "fakeredis[lua]>=2.31.0",
     "pyright>=1.1.396",
 ]
 
 [tool.uv.sources]
-knowhere-shared = { path = "../../packages/shared-python", editable = true }
+knowhere-shared = { workspace = true }
 
 [tool.uv]
 package = false

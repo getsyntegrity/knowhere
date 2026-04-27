@@ -45,7 +45,18 @@ Deterministic local developer account:
 - `user_id`: `local-dev-user`
 - `email`: `local-dev-user@knowhere.local`
 - `tier`: `tier_5`
-- `api_key`: `sk_local_dev_tier5_full_access`
+- `api_key`: `local_dev_demo_key_tier5_full_access`
+
+## Verify the Local API
+
+After you start the API process locally, confirm the service is reachable:
+
+```bash
+curl http://localhost:5005/health
+```
+
+You can also open the local OpenAPI docs at
+`http://localhost:5005/docs`.
 
 ## Stop the Stack
 

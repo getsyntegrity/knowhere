@@ -1,20 +1,22 @@
 """
-版本信息API端点
+Version information API endpoints.
 """
+
 import os
-from datetime import datetime
+
 from fastapi import APIRouter
+
 from shared.core.config import app_config
 
 router = APIRouter()
 
 
-@router.get("/version", summary="获取应用版本信息")
+@router.get("/version", summary="Get application version information")
 async def get_version():
     """
-    获取当前部署的版本信息
-    
-    返回格式：
+    Return version information for the current deployment.
+
+    Response shape:
     {
         "version": "v1.0.0",
         "commit": "abc1234",
@@ -22,23 +24,22 @@ async def get_version():
         "environment": "production"
     }
     """
-    # 从环境变量获取版本信息
+    # Read version metadata from the environment when available.
     version = os.getenv("APP_VERSION", app_config.APP_VERSION)
     commit = os.getenv("GIT_COMMIT", "")
     build_time = os.getenv("BUILD_TIME", "")
     environment = os.getenv("ENVIRONMENT", "development")
-    
+
     return {
         "version": version,
         "commit": commit,
         "build_time": build_time,
         "environment": environment,
-        "service": "knowhere-api"
+        "service": "knowhere-api",
     }
 
 
-@router.get("/", summary="根路径版本信息")
+@router.get("/", summary="Root version information")
 async def root_version():
-    """根路径返回版本信息"""
+    """Return version information from the root path."""
     return await get_version()
-

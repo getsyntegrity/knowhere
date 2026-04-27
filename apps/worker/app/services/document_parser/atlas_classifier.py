@@ -17,9 +17,14 @@ import os
 import tempfile
 from typing import Optional
 
-from loguru import logger
-
 from app.services.document_parser.pymupdf_subprocess import run_in_child_process, worker
+from loguru import logger
+from openai.types.chat import (
+    ChatCompletionContentPartImageParam,
+    ChatCompletionContentPartParam,
+    ChatCompletionContentPartTextParam,
+    ChatCompletionMessageParam,
+)
 
 # ── Prompt ──────────────────────────────────────────────────────────────────
 _ATLAS_JUDGE_PROMPT = """You are a document classification expert. Please observe the following PDF page screenshots and determine whether the document is an engineering atlas (drawing collection).
@@ -39,8 +44,11 @@ You must reply ONLY with "yes" or "no", do not say anything else."""
 
 # ── Child-process renderer ───────────────────────────────────────────────────
 
+
 @worker
-def _render_pages_worker(queue, pdf_path: str, page_indices: list, dpi: int, out_dir: str) -> None:
+def _render_pages_worker(
+    queue, pdf_path: str, page_indices: list, dpi: int, out_dir: str
+) -> None:
     """Child process: render given PDF pages to PNG files in out_dir."""
     import pymupdf
 
@@ -93,17 +101,29 @@ def _png_to_data_url(path: str) -> Optional[str]:
 
 def _call_vlm(image_data_urls: list[str]) -> bool:
     """Call VLM with preview images. Returns True if atlas, False otherwise."""
-    from shared.utils.OpenAICompatibleClientSync import get_openai_client
     from shared.core.config import settings
+    from shared.utils.OpenAICompatibleClientSync import get_openai_client
 
     model = settings.IMAGE_MODEL or "qwen-vl-plus"
     client = get_openai_client(model=model)
 
-    content: list[dict] = [{"type": "text", "text": _ATLAS_JUDGE_PROMPT}]
+    content: list[ChatCompletionContentPartParam] = [
+        ChatCompletionContentPartTextParam(
+            type="text",
+            text=_ATLAS_JUDGE_PROMPT,
+        )
+    ]
     for url in image_data_urls:
-        content.append({"type": "image_url", "image_url": {"url": url}})
+        content.append(
+            ChatCompletionContentPartImageParam(
+                type="image_url",
+                image_url={"url": url},
+            )
+        )
 
-    messages = [{"role": "user", "content": content}]
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "user", "content": content}
+    ]
     resp: str = client.chat_completion(
         messages=messages,
         model=model,
@@ -116,6 +136,7 @@ def _call_vlm(image_data_urls: list[str]) -> bool:
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
+
 
 def classify_atlas_with_vlm(pdf_path: str, n_pages: int = 3) -> bool:
     """
@@ -131,15 +152,21 @@ def classify_atlas_with_vlm(pdf_path: str, n_pages: int = 3) -> bool:
         try:
             png_paths = _render_preview_pages(pdf_path, page_indices, tmp_dir)
             if not png_paths:
-                logger.warning("[atlas_classifier] No pages rendered, defaulting to non-atlas")
+                logger.warning(
+                    "[atlas_classifier] No pages rendered, defaulting to non-atlas"
+                )
                 return False
 
             data_urls = [u for p in png_paths if (u := _png_to_data_url(p)) is not None]
             if not data_urls:
-                logger.warning("[atlas_classifier] No images encoded, defaulting to non-atlas")
+                logger.warning(
+                    "[atlas_classifier] No images encoded, defaulting to non-atlas"
+                )
                 return False
 
-            logger.info(f"[atlas_classifier] Sending {len(data_urls)} page(s) to VLM for atlas check")
+            logger.info(
+                f"[atlas_classifier] Sending {len(data_urls)} page(s) to VLM for atlas check"
+            )
             is_atlas = _call_vlm(data_urls)
             logger.info(f"[atlas_classifier] VLM result: is_atlas={is_atlas}")
             return is_atlas

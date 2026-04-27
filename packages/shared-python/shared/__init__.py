@@ -1,7 +1,3 @@
-"""
-Knowhere Shared Python Package
-共享代码包，包含API和Worker服务共同使用的代码
-"""
+"""Shared Python package used by both the API and worker services."""
 
 __version__ = "0.1.0"
-

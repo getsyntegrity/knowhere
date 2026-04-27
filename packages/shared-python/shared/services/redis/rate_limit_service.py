@@ -1,6 +1,5 @@
-"""
-速率限制服务
-"""
+"""Redis-backed rate-limiting service."""
+
 import os
 import time
 from typing import Any, Dict
@@ -12,39 +11,43 @@ from shared.utils.redis_key_builder import redis_key_builder
 
 
 class RateLimitService:
-    """速率限制服务"""
-    
-    # 默认值，可通过环境变量覆盖
-    RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # 60秒窗口
-    RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "1000"))  # 最大请求数
-    RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"  # 是否启用
-    
+    """Redis-backed rate-limit service."""
+
+    # Default values, overridable through environment variables.
+    RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # 60-second window.
+    RATE_LIMIT_MAX_REQUESTS = int(
+        os.getenv("RATE_LIMIT_MAX_REQUESTS", "1000")
+    )  # Maximum request count.
+    RATE_LIMIT_ENABLED = (
+        os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+    )  # Whether rate limiting is enabled.
+
     def __init__(self, redis_service: RedisService):
         self.redis = redis_service
         logger.info(
-            f"速率限制服务初始化: "
-            f"启用={self.RATE_LIMIT_ENABLED}, "
-            f"窗口={self.RATE_LIMIT_WINDOW}秒, "
-            f"最大请求数={self.RATE_LIMIT_MAX_REQUESTS}"
+            f"Rate limit service initialized: "
+            f"enabled={self.RATE_LIMIT_ENABLED}, "
+            f"window={self.RATE_LIMIT_WINDOW}s, "
+            f"max_requests={self.RATE_LIMIT_MAX_REQUESTS}"
         )
-    
+
     async def check_rate_limit(self, user_id: str, api_name: str) -> Dict[str, Any]:
         """
-        检查并更新速率限制
-        
+        Check and update the rate limit state.
+
         Args:
-            user_id: 用户ID
-            api_name: API名称
-            
+            user_id: User ID.
+            api_name: API name.
+
         Returns:
             {
-                "allowed": bool,  # 是否允许请求
-                "limit": int,  # 限制数量
-                "remaining": int,  # 剩余次数
-                "reset": int,  # 重置时间戳
+                "allowed": bool,  # Whether the request is allowed.
+                "limit": int,  # Request limit.
+                "remaining": int,  # Remaining request count.
+                "reset": int,  # Reset timestamp.
             }
         """
-        # 如果速率限制未启用，直接允许所有请求
+        # Allow everything when rate limiting is disabled.
         if not self.RATE_LIMIT_ENABLED:
             return {
                 "allowed": True,
@@ -52,101 +55,103 @@ class RateLimitService:
                 "remaining": self.RATE_LIMIT_MAX_REQUESTS,
                 "reset": int(time.time()) + self.RATE_LIMIT_WINDOW,
             }
-        
+
         try:
-            # 构建速率限制键
+            # Build the rate-limit key.
             rate_limit_key = redis_key_builder.rate_limit_api(user_id, api_name)
-            
-            # 使用管道确保原子性操作
+
+            # Use a pipeline to keep the operations atomic.
             client = await self.redis._get_client()
             async with client.pipeline() as pipe:
-                # 增加计数
+                # Increment the counter.
                 await pipe.incr(rate_limit_key)
-                
-                # 如果是第一次（计数=1），设置TTL
+
+                # Set TTL on the first increment.
                 await pipe.expire(rate_limit_key, self.RATE_LIMIT_WINDOW)
-                
-                # 获取当前计数和TTL
+
+                # Read back the current count and TTL.
                 await pipe.get(rate_limit_key)
                 await pipe.ttl(rate_limit_key)
-                
-                # 执行管道操作
+
+                # Execute the pipeline.
                 results = await pipe.execute()
-            
-            current_count = int(results[0])  # INCR结果
-            ttl_seconds = int(results[2])    # TTL结果
-            
-            # 计算剩余次数
+
+            current_count = int(results[0])  # INCR result.
+            ttl_seconds = int(results[2])  # TTL result.
+
+            # Compute remaining requests.
             remaining = max(0, self.RATE_LIMIT_MAX_REQUESTS - current_count)
-            
-            # 计算重置时间戳
+
+            # Compute the reset timestamp.
             reset_timestamp = int(time.time()) + ttl_seconds
-            
-            # 判断是否允许请求
+
+            # Decide whether the request is still allowed.
             allowed = current_count <= self.RATE_LIMIT_MAX_REQUESTS
-            
+
             rate_limit_info = {
                 "allowed": allowed,
                 "limit": self.RATE_LIMIT_MAX_REQUESTS,
                 "remaining": remaining,
                 "reset": reset_timestamp,
             }
-            
-            logger.debug(f"速率限制检查: user_id={user_id}, api={api_name}, count={current_count}, remaining={remaining}")
-            
+
+            logger.debug(
+                f"Rate limit check: user_id={user_id}, api={api_name}, count={current_count}, remaining={remaining}"
+            )
+
             return rate_limit_info
-            
+
         except Exception as e:
-            logger.error(f"速率限制检查失败: {e}")
-            # 发生错误时，允许请求通过，但记录错误
+            logger.error(f"Rate limit check failed: {e}")
+            # Fail open on errors, but keep the error in logs.
             return {
                 "allowed": True,
                 "limit": self.RATE_LIMIT_MAX_REQUESTS,
                 "remaining": self.RATE_LIMIT_MAX_REQUESTS,
                 "reset": int(time.time()) + self.RATE_LIMIT_WINDOW,
             }
-    
+
     async def get_rate_limit_info(self, user_id: str, api_name: str) -> Dict[str, Any]:
         """
-        获取当前速率限制信息（不增加计数）
-        
+        Get the current rate-limit state without incrementing it.
+
         Args:
-            user_id: 用户ID
-            api_name: API名称
-            
+            user_id: User ID.
+            api_name: API name.
+
         Returns:
-            速率限制信息
+            Rate-limit information.
         """
         try:
             rate_limit_key = redis_key_builder.rate_limit_api(user_id, api_name)
-            
-            # 获取当前计数和TTL
+
+            # Load the current counter and TTL.
             current_count = await self.redis.get(rate_limit_key, 0)
             client = await self.redis._get_client()
             ttl_seconds = await client.ttl(rate_limit_key)
-            
+
             if ttl_seconds == -1:
-                # 键存在但没有TTL，设置默认TTL
+                # The key exists without a TTL; restore the default TTL.
                 await self.redis.expire(rate_limit_key, self.RATE_LIMIT_WINDOW)
                 ttl_seconds = self.RATE_LIMIT_WINDOW
             elif ttl_seconds == -2:
-                # 键不存在
+                # The key does not exist yet.
                 current_count = 0
                 ttl_seconds = self.RATE_LIMIT_WINDOW
-            
+
             current_count = int(current_count)
             remaining = max(0, self.RATE_LIMIT_MAX_REQUESTS - current_count)
             reset_timestamp = int(time.time()) + ttl_seconds
-            
+
             return {
                 "allowed": current_count < self.RATE_LIMIT_MAX_REQUESTS,
                 "limit": self.RATE_LIMIT_MAX_REQUESTS,
                 "remaining": remaining,
                 "reset": reset_timestamp,
             }
-            
+
         except Exception as e:
-            logger.error(f"获取速率限制信息失败: {e}")
+            logger.error(f"Failed to get rate limit info: {e}")
             return {
                 "allowed": True,
                 "limit": self.RATE_LIMIT_MAX_REQUESTS,

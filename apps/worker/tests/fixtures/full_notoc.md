@@ -3995,7 +3995,7 @@ hidden dangers investigation control
 
 本标准共分为6章，主要内容包括：总则、术语、基本规定、风险辨识与分级管控、隐患排查与治理、档案资料管理。
 
-本标准由陕西建工第十一建设集团有限公司安全管理部负责日常管理及具体内容的解释。各二级单位在执行本标准过程中注意总结经验，随时将有关意见和建议反馈给陕西建工第十一建设集团有限公司安全管理部（通讯地址：咸阳市文兴路117号，邮政编码：712000，电子邮箱：764796421@qq.c0m），以便今后修订时参考。
+本标准由陕西建工第十一建设集团有限公司安全管理部负责日常管理及具体内容的解释。各二级单位在执行本标准过程中注意总结经验，随时将有关意见和建议反馈给陕西建工第十一建设集团有限公司安全管理部（通讯地址：咸阳市文兴路117号，邮政编码：712000，电子邮箱：contact@example.test），以便今后修订时参考。
 
 Appendix A Risk Classification Control Schedule Appendix BInvestigation and Treatment of Hidden Dangers Schedule. Appendix CSuggestive List of Safety Risks on Construction Site Appendix DList of Serious Accident Hidden Dangers on Construction Site
 

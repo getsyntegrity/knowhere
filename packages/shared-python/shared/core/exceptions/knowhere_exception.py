@@ -63,7 +63,6 @@ from typing import Any, Dict, Optional
 
 from shared.core.response.ErrorCode import ErrorCode, ErrorCodeMapper
 
-
 # Default messages for auto-sanitization
 DEFAULT_5XX_USER_MESSAGE = "An internal system error occurred. Please contact support."
 DEFAULT_4XX_USER_MESSAGE = "Invalid request. Please check your input."
@@ -78,12 +77,12 @@ class KnowhereException(Exception):
     ==========================================================================
 
     This class enforces a strict separation between:
-    
+
     1. `internal_message` - Technical details for DEBUGGING (logs only)
        - Contains specific error info (paths, IDs, stack traces)
        - NEVER exposed to the client (security risk)
        - Used by developers/ops to diagnose issues
-    
+
     2. `user_message` - Safe message for the CLIENT
        - Contains user-friendly, actionable information
        - ALWAYS returned in API response
@@ -140,8 +139,8 @@ class KnowhereException(Exception):
         self.code = code
         self.internal_message = internal_message
         self.details = details or {}
-        self.http_status_code = http_status_code or ErrorCodeMapper.get_http_status_from_error_code(
-            code
+        self.http_status_code = (
+            http_status_code or ErrorCodeMapper.get_http_status_from_error_code(code)
         )
         self.original_exception = original_exception
 
@@ -159,7 +158,7 @@ class KnowhereException(Exception):
     def to_client(self, request_id: str) -> Dict[str, Any]:
         """
         Returns a machine-readable JSON representation for API responses.
-        
+
         SECURITY: This method returns `user_message`, NEVER `internal_message`.
         This is the ONLY data that gets sent to the client.
         """
@@ -179,7 +178,7 @@ class KnowhereException(Exception):
     def __repr__(self) -> str:
         """
         Human-readable string for terminal logs (tail -f server.log).
-        
+
         Use this in logger calls: logger.error(f"Error: {exc}")
         """
         parts = [
@@ -192,7 +191,9 @@ class KnowhereException(Exception):
         if self.details:
             parts.append(f"details={self.details!r}")
         if self.original_exception:
-            parts.append(f"original={type(self.original_exception).__name__}: {self.original_exception}")
+            parts.append(
+                f"original={type(self.original_exception).__name__}: {self.original_exception}"
+            )
         return ", ".join(parts) + ")"
 
     def to_log(self) -> Dict[str, Any]:
@@ -260,7 +261,8 @@ class KnowhereException(Exception):
             **extra_context: Additional context fields to include in log
         """
         from loguru import logger
-        from shared.core.logging import get_log_context, LogEvent
+
+        from shared.core.logging import LogEvent, get_log_context
 
         # Get current context (request_id, task_id, job_id, etc.)
         context = get_log_context()
@@ -287,10 +289,10 @@ class KnowhereException(Exception):
     def __reduce__(self):
         """
         Enable pickle serialization for Celery task exception handling.
-        
+
         Celery uses pickle to serialize exceptions for retries and results.
         Without this method, exceptions get wrapped in UnpickleableExceptionWrapper.
-        
+
         Uses factory function to bypass subclass __init__ signature differences.
         Note: original_exception is NOT serialized (it may contain unpickleable objects).
         """
@@ -316,7 +318,7 @@ class KnowhereException(Exception):
 def _reconstruct_knowhere_exception(cls, state):
     """
     Factory function for unpickling KnowhereException subclasses.
-    
+
     Bypasses __init__ to handle subclasses with different signatures.
     """
     obj = cls.__new__(cls)

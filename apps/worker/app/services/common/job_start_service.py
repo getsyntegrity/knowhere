@@ -5,6 +5,7 @@ Keeps the worker-specific policy for when a parse task is allowed to move a
 job into ``running`` while delegating the actual state transition to the
 shared sync state machine service.
 """
+
 from typing import Any
 
 from loguru import logger
@@ -47,7 +48,9 @@ def mark_job_running(job_id: str, redis_service: Any) -> bool:
             # Likely a broker redelivery while the original worker is still
             # processing. Let the caller proceed to RedisJobLock, which gates
             # actual execution.
-            logger.info(f"Job already running (likely redelivery), deferring to lock: {job_id}")
+            logger.info(
+                f"Job already running (likely redelivery), deferring to lock: {job_id}"
+            )
             return True
 
         if current_state == JobStatus.WAITING_FILE.value:

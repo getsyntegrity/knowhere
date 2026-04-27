@@ -1,7 +1,8 @@
 """
 Sync credits service for worker-side billing operations.
 """
-from datetime import datetime
+
+from datetime import timedelta
 from typing import Any, Dict, Optional
 
 from sqlalchemy import func, select
@@ -16,6 +17,7 @@ from shared.models.database.credits_transaction import CreditsTransaction
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user_balance import UserBalance
 from shared.repositories.credits_sync_repository import SyncCreditsRepository
+from shared.utils.utc_now import utc_now_naive
 
 NON_EXPIRING_CREDIT_TRANSACTION_TYPES: tuple[str, ...] = ("refund",)
 
@@ -41,7 +43,9 @@ class SyncCreditsService:
 
         try:
             with session.begin_nested():
-                balance_entry = UserBalance(user_id=user_id, credits_balance=initial_amount)
+                balance_entry = UserBalance(
+                    user_id=user_id, credits_balance=initial_amount
+                )
                 session.add(balance_entry)
 
                 transaction = CreditsTransaction(
@@ -60,14 +64,16 @@ class SyncCreditsService:
                     status="succeeded",
                     credits_amount=initial_amount,
                     extra_metadata={"reason": "initial_grant"},
-                    processed_at=datetime.utcnow(),
+                    processed_at=utc_now_naive(),
                 )
                 session.add(payment)
                 session.flush()
         except IntegrityError:
             existing_balance = self.repository.get_user_balance(session, user_id)
             if existing_balance:
-                logger.info(f"User already initialized by concurrent session: user_id={user_id}")
+                logger.info(
+                    f"User already initialized by concurrent session: user_id={user_id}"
+                )
                 return
             raise
 
@@ -118,10 +124,12 @@ class SyncCreditsService:
         recent_credits = self.repository.get_recent_payment_credits(
             session, user_id, valid_days
         )
-        non_expiring_credits = self.repository.get_positive_credit_total_by_transaction_types(
-            session,
-            user_id,
-            NON_EXPIRING_CREDIT_TRANSACTION_TYPES,
+        non_expiring_credits = (
+            self.repository.get_positive_credit_total_by_transaction_types(
+                session,
+                user_id,
+                NON_EXPIRING_CREDIT_TRANSACTION_TYPES,
+            )
         )
         expirable_balance = max(current_balance - non_expiring_credits, 0)
 
@@ -256,13 +264,12 @@ class SyncCreditsService:
         period: str = "month",
     ) -> Dict[str, Any]:
         """Return aggregate usage statistics for the user."""
-        from datetime import timedelta
 
         start_time = None
         if period == "month":
-            start_time = datetime.utcnow() - timedelta(days=30)
+            start_time = utc_now_naive() - timedelta(days=30)
         elif period == "week":
-            start_time = datetime.utcnow() - timedelta(days=7)
+            start_time = utc_now_naive() - timedelta(days=7)
 
         query = select(
             func.coalesce(func.sum(CreditsTransaction.credits_amount), 0).label(
@@ -277,6 +284,13 @@ class SyncCreditsService:
 
         result = session.execute(query)
         stats = result.first()
+        if stats is None:
+            return {
+                "period": period,
+                "total_used": 0,
+                "transaction_count": 0,
+                "avg_response_time": 0.0,
+            }
 
         return {
             "period": period,

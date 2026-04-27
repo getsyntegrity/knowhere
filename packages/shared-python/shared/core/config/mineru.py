@@ -1,6 +1,7 @@
 """
 MinerU service configuration
 """
+
 from pydantic import BaseModel, Field
 
 

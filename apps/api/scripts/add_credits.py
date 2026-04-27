@@ -1,8 +1,8 @@
 """Admin utility to add credits and optionally set a user's tier."""
+# ruff: noqa: E402
 
 import argparse
 import asyncio
-import datetime
 import os
 import sys
 from typing import cast
@@ -35,6 +35,7 @@ from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.models.database.webhook import WebhookEvent  # noqa: F401
 from shared.services.billing import CreditsService
+from shared.utils.utc_now import utc_now_naive
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -65,7 +66,9 @@ async def _load_user(session: AsyncSession, user_identifier: str) -> User | None
     users = result.scalars().all()
 
     if not users:
-        print(f"Error: user '{user_identifier}' not found (checked by email or user_id).")
+        print(
+            f"Error: user '{user_identifier}' not found (checked by email or user_id)."
+        )
         return None
 
     if len(users) > 1:
@@ -77,9 +80,7 @@ async def _load_user(session: AsyncSession, user_identifier: str) -> User | None
     return users[0]
 
 
-async def _load_user_balance(
-    session: AsyncSession, user_id: str
-) -> UserBalance | None:
+async def _load_user_balance(session: AsyncSession, user_id: str) -> UserBalance | None:
     result = await session.execute(
         select(UserBalance).where(UserBalance.user_id == user_id)
     )
@@ -103,9 +104,7 @@ def _resolve_tier_name(requested_tier: str, available_tiers: list[str]) -> str |
     return normalized_tiers.get(requested_tier.lower())
 
 
-async def _set_user_tier(
-    session: AsyncSession, user_id: str, tier_name: str
-) -> None:
+async def _set_user_tier(session: AsyncSession, user_id: str, tier_name: str) -> None:
     await session.execute(
         update(UserBalance)
         .where(UserBalance.user_id == user_id)
@@ -123,7 +122,7 @@ def _create_manual_payment_record(user_id: str, micro_amount: int) -> PaymentRec
         status="succeeded",
         credits_amount=micro_amount,
         payment_type="manual_grant",
-        processed_at=datetime.datetime.utcnow(),
+        processed_at=utc_now_naive(),
         extra_metadata={"reason": "Manual dev top-up via script"},
     )
 
@@ -155,9 +154,7 @@ async def main() -> int:
     if requested_tier_input is not None:
         actions.append(f"set tier to {requested_tier_input}")
 
-    print(
-        f"Connecting to database to {' and '.join(actions)} for {user_identifier}..."
-    )
+    print(f"Connecting to database to {' and '.join(actions)} for {user_identifier}...")
 
     async with get_db_context() as db_session:
         db = cast(AsyncSession, db_session)
@@ -214,13 +211,19 @@ async def main() -> int:
 
         final_balance = await _load_user_balance(db, user_id)
         if final_balance is None:
-            print(f"Error: user balance row for '{user_id}' was not found after update.")
+            print(
+                f"Error: user balance row for '{user_id}' was not found after update."
+            )
             return 1
 
         balance_label = "New Balance" if amount is not None else "Current Balance"
-        print(f"{balance_label}: {MicroDollar(final_balance.credits_balance).to_credit()}")
+        print(
+            f"{balance_label}: {MicroDollar(final_balance.credits_balance).to_credit()}"
+        )
 
-        tier_label = "Updated Tier" if requested_tier_name is not None else "Current Tier"
+        tier_label = (
+            "Updated Tier" if requested_tier_name is not None else "Current Tier"
+        )
         print(f"{tier_label}: {final_balance.user_tier}")
 
     return 0

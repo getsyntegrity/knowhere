@@ -1,40 +1,50 @@
-from typing import List, Optional
+from typing import List, Optional, cast
 
-from shared.core.database import get_db_context
-from shared.models.database.knowledge_base import (ContentBase, FileDirectory,
-                                                KBPydantic, PathBase,
-                                                PathPydantic)
-from shared.models.schemas.files import (FileDirectoryCreateDto, FileDirectoryUpdateDto)
 from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.core.database import get_db_context
+from shared.models.database.knowledge_base import (
+    ContentBase,
+    FileDirectory,
+    KBPydantic,
+    PathBase,
+    PathPydantic,
+)
+from shared.models.schemas.files import FileDirectoryCreateDto, FileDirectoryUpdateDto
 
-async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bool:
+
+async def create_update_kb(
+    kbs: list[KBPydantic], db: Optional[AsyncSession] = None
+) -> bool:
     """
-    创建或更新知识库
+    Create or update knowledge-base content.
+
     :param kbs: Vector Objects
     :param db: Optional external database session. If provided, transaction is NOT committed here.
     :return: Success boolean
     """
     if not kbs:
         return True
-    
+
     # Object mapping
     object_mappings = []
     for kb in kbs:
         data_dict = kb.model_dump()
         processed_dict = {
-            key: (value if value is not None else '')
+            key: (value if value is not None else "")
             for key, value in data_dict.items()
         }
         object_mappings.append(processed_dict)
-        
+
     try:
-        if db:
+        if db is not None:
             # Use provided session, do not commit
             await db.run_sync(
-                lambda session: session.bulk_insert_mappings(ContentBase, object_mappings)
+                lambda session: session.bulk_insert_mappings(
+                    ContentBase.__mapper__, object_mappings
+                )
             )
             # Flush to ensure constraints are checked, but don't commit
             await db.flush()
@@ -44,25 +54,29 @@ async def create_update_kb(kbs: list[KBPydantic], db: AsyncSession = None) -> bo
             # Use internal session management
             async with get_db_context() as session:
                 await session.run_sync(
-                    lambda s: s.bulk_insert_mappings(ContentBase, object_mappings)
+                    lambda s: s.bulk_insert_mappings(
+                        ContentBase.__mapper__, object_mappings
+                    )
                 )
                 await session.commit()
                 logger.info(f"Bulk inserted {len(object_mappings)} records (Committed)")
                 return True
-                
+
     except Exception as e:
         logger.error(f"Error bulk inserting records: {e}")
-        if not db: # Only catch/rollback if we own the session
-             # Context manager handles rollback for critical errors, but safe to log
-             pass
+        if db is None:  # Only catch/rollback if we own the session
+            # Context manager handles rollback for critical errors, but safe to log
+            pass
         # Propagate error if external session (let caller handle rollback)
-        if db:
+        if db is not None:
             raise e
         return False
 
-async def create_update_path(paths:list[PathPydantic]) -> bool:
+
+async def create_update_path(paths: list[PathPydantic]) -> bool:
     """
-    创建或更新知识库路径
+    Create or update knowledge-base paths.
+
     :param paths:
     :return:
     """
@@ -73,54 +87,62 @@ async def create_update_path(paths:list[PathPydantic]) -> bool:
         data_dict = path.model_dump()
 
         processed_dict = {
-            key: (value if value is not None else '')
+            key: (value if value is not None else "")
             for key, value in data_dict.items()
         }
         path_mappings.append(processed_dict)
     async with get_db_context() as db:
         try:
             await db.run_sync(
-                lambda session: session.bulk_insert_mappings(PathBase, path_mappings)
+                lambda session: session.bulk_insert_mappings(
+                    PathBase.__mapper__, path_mappings
+                )
             )
             await db.commit()
-            logger.info(f"批量插入{len(path_mappings)}条记录成功")
+            logger.info(f"Bulk inserted {len(path_mappings)} records successfully")
             return True
         except Exception as e:
             await db.rollback()
-            logger.error(f"批量插入记录时发生错误: {e}")
+            logger.error(f"Error while bulk inserting records: {e}")
             return False
 
-async def get_kb_by_id(kb_id:str) -> KBPydantic|None:
+
+async def get_kb_by_id(kb_id: str) -> KBPydantic | None:
     """
-    根据id获取知识库
+    Get a knowledge base by ID.
+
     :param kb_id:
     :return:
     """
 
+
 async def get_directories(db: AsyncSession, user_id: str) -> List[dict]:
     """
-    获取用户的目录树结构
-    :param db: 数据库会话
-    :param user_id: 用户ID
-    :return: 目录树结构列表
+    Get the directory-tree structure for a user.
+
+    :param db: Database session.
+    :param user_id: User ID.
+    :return: Directory-tree structure list.
     """
     return await build_directory_tree(db, user_id)
 
+
 async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[dict]:
     """
-    根据目录ID获取该目录下的知识库内容
-    :param db: 数据库会话
-    :param directory_id: 目录ID
-    :return: 知识库内容列表
+    Get knowledge-base content under a directory ID.
+
+    :param db: Database session.
+    :param directory_id: Directory ID.
+    :return: Knowledge-base content list.
     """
     try:
-        # 首先获取目录信息
+        # Load the directory first.
         directory = await get_directory_by_id(db, directory_id)
         if not directory:
             return []
-        
-        # 根据目录title在ContentBase的path字段中查找相关内容
-        # 使用 ; 分隔符进行前缀匹配，格式：{kb_dir};{document_name};{section}
+
+        # Match related content by the directory title in the ContentBase path.
+        # Prefix format: {kb_dir};{document_name};{section}
         split_char = ";"
         directory_prefix = directory.title + split_char
         result = await db.execute(
@@ -129,8 +151,8 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
             .order_by(ContentBase.id)
         )
         contents = result.scalars().all()
-        
-        # 转换为字典格式
+
+        # Convert ORM rows to dictionaries.
         content_list = []
         for content in contents:
             content_dict = {
@@ -143,48 +165,52 @@ async def get_directory_contents(db: AsyncSession, directory_id: str) -> List[di
                 "summary": content.summary,
                 "know_id": content.know_id,
                 "tokens": content.tokens,
-                "embedding": content.embedding
+                "embedding": content.embedding,
             }
             content_list.append(content_dict)
-        
+
         return content_list
     except Exception as e:
-        logger.error(f"获取目录内容失败: {e}")
+        logger.error(f"Failed to get directory contents: {e}")
         return []
+
 
 async def delete_kb_content(db: AsyncSession, content_id: str) -> bool:
     """
-    根据内容ID删除知识库内容
-    :param db: 数据库会话
-    :param content_id: 内容ID
-    :return: 是否删除成功
+    Delete knowledge-base content by content ID.
+
+    :param db: Database session.
+    :param content_id: Content ID.
+    :return: Whether deletion succeeded.
     """
     try:
-        result = await db.execute(select(ContentBase).filter(ContentBase.id == content_id))
+        result = await db.execute(
+            select(ContentBase).filter(ContentBase.id == content_id)
+        )
         content = result.scalars().first()
-        
+
         if content:
             await db.delete(content)
             await db.commit()
-            logger.info(f"删除知识库内容成功: {content_id}")
+            logger.info(f"Deleted knowledge base content successfully: {content_id}")
             return True
         return False
     except Exception as e:
         await db.rollback()
-        logger.error(f"删除知识库内容失败: {e}")
+        logger.error(f"Failed to delete knowledge base content: {e}")
         return False
 
-async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:
+
+async def create_directory(db: AsyncSession, kbf: FileDirectoryCreateDto) -> bool:
     """
-    创建用户目录
+    Create a user directory.
+
     :param db:
-    :param kbf:知识库路径构造
+    :param kbf: Knowledge-base path payload.
     :return:
     """
     db_directory = FileDirectory(
-        title=kbf.title,
-        parent_id=kbf.parent_id,
-        user_id=kbf.user_id
+        title=kbf.title, parent_id=kbf.parent_id, user_id=kbf.user_id
     )
     db.add(db_directory)
     await db.commit()
@@ -193,73 +219,96 @@ async def create_directory(db: AsyncSession,kbf:FileDirectoryCreateDto) -> bool:
         return True
     return False
 
-async def get_directory_by_id(db: AsyncSession, directory_id: str) -> Optional[FileDirectory]:
+
+async def get_directory_by_id(
+    db: AsyncSession, directory_id: str
+) -> Optional[FileDirectory]:
     """
-    根据ID获取目录
+    Get a directory by ID.
     """
-    result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
+    result = await db.execute(
+        select(FileDirectory).filter(FileDirectory.id == directory_id)
+    )
     return result.scalars().first()
 
-async def get_root_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDirectory]:
+
+async def get_root_directories_by_user(
+    db: AsyncSession, user_id: str
+) -> List[FileDirectory]:
     """
-    获取用户的所有根目录（没有父级的目录）
+    Get all root directories for a user.
     """
     result = await db.execute(
         select(FileDirectory)
-        .filter(and_(FileDirectory.user_id == user_id, FileDirectory.parent_id.is_(None)))
+        .filter(
+            and_(FileDirectory.user_id == user_id, FileDirectory.parent_id.is_(None))
+        )
         .order_by(FileDirectory.create_time)
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
-async def get_directories_by_parent(db: AsyncSession, parent_id: str) -> List[FileDirectory]:
+
+async def get_directories_by_parent(
+    db: AsyncSession, parent_id: str
+) -> List[FileDirectory]:
     """
-    根据父级ID获取所有子目录
+    Get all child directories by parent ID.
     """
     result = await db.execute(
         select(FileDirectory)
         .filter(FileDirectory.parent_id == parent_id)
         .order_by(FileDirectory.create_time)
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
-async def get_directories_by_user(db: AsyncSession, user_id: str) -> List[FileDirectory]:
+
+async def get_directories_by_user(
+    db: AsyncSession, user_id: str
+) -> List[FileDirectory]:
     """
-    获取用户的所有目录
+    Get all directories for a user.
     """
     result = await db.execute(
         select(FileDirectory)
         .filter(FileDirectory.user_id == user_id)
         .order_by(FileDirectory.create_time)
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
-async def update_directory(db: AsyncSession, directory_id: str,
-                           directory_data: FileDirectoryUpdateDto) -> bool:
+
+async def update_directory(
+    db: AsyncSession, directory_id: str, directory_data: FileDirectoryUpdateDto
+) -> bool:
     """
-    更新目录
+    Update a directory.
     """
     try:
-        result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
+        result = await db.execute(
+            select(FileDirectory).filter(FileDirectory.id == directory_id)
+        )
         db_directory = result.scalars().first()
         if db_directory:
             if directory_data.title is not None:
-                db_directory.title = directory_data.title
+                setattr(db_directory, "title", directory_data.title)
             if directory_data.parent_id is not None:
-                db_directory.parent_id = directory_data.parent_id
+                setattr(db_directory, "parent_id", directory_data.parent_id)
 
             await db.commit()
             await db.refresh(db_directory)
             return True
         return False
-    except Exception as e:
+    except Exception:
         await db.rollback()
         return False
 
+
 async def delete_directory(db: AsyncSession, directory_id: str) -> bool:
     """
-    删除目录
+    Delete a directory.
     """
-    result = await db.execute(select(FileDirectory).filter(FileDirectory.id == directory_id))
+    result = await db.execute(
+        select(FileDirectory).filter(FileDirectory.id == directory_id)
+    )
     db_directory = result.scalars().first()
 
     if db_directory:
@@ -268,31 +317,30 @@ async def delete_directory(db: AsyncSession, directory_id: str) -> bool:
         return True
     return False
 
+
 async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
     """
-    构建用户的完整目录树结构
+    Build the full directory tree for a user.
     """
-    # 获取用户的所有目录
+    # Load all directories for the user.
     all_directories = await get_directories_by_user(db, user_id)
 
-    # 创建一个字典，以目录ID为键，目录对象为值
-    directory_dict = {directory.id: directory for directory in all_directories}
-
-    # 创建一个字典，用于存储每个目录的子目录
-    children_dict = {}
+    # Build a dictionary that stores children for each directory.
+    children_dict: dict[str, list[FileDirectory]] = {}
     for directory in all_directories:
-        if directory.parent_id:
-            if directory.parent_id not in children_dict:
-                children_dict[directory.parent_id] = []
-            children_dict[directory.parent_id].append(directory)
+        parent_id = cast(Optional[str], getattr(directory, "parent_id", None))
+        if parent_id is not None:
+            if parent_id not in children_dict:
+                children_dict[parent_id] = []
+            children_dict[parent_id].append(directory)
         else:
-            if 'root' not in children_dict:
-                children_dict['root'] = []
-            children_dict['root'].append(directory)
+            if "root" not in children_dict:
+                children_dict["root"] = []
+            children_dict["root"].append(directory)
 
     def build_tree(directory):
         """
-        递归构建目录树
+        Recursively build the directory tree.
         """
         node = {
             "id": directory.id,
@@ -301,20 +349,20 @@ async def build_directory_tree(db: AsyncSession, user_id: str) -> List[dict]:
             "user_id": directory.user_id,
             "create_time": directory.create_time,
             "update_time": directory.update_time,
-            "children": []
+            "children": [],
         }
 
-        # 添加子目录
+        # Attach child directories.
         if directory.id in children_dict:
             for child in children_dict[directory.id]:
                 node["children"].append(build_tree(child))
 
         return node
 
-    # 构建根目录树
+    # Build the root directory tree.
     tree = []
-    if 'root' in children_dict:
-        for root_directory in children_dict['root']:
+    if "root" in children_dict:
+        for root_directory in children_dict["root"]:
             tree.append(build_tree(root_directory))
 
     return tree

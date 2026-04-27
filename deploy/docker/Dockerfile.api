@@ -1,47 +1,51 @@
-# API服务Dockerfile - 多阶段构建优化
-# 使用官方 Python 镜像
+# API Dockerfile with a multi-stage build
+# Use the official Python base image
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# 安装构建依赖
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装uv
+# Install uv
 RUN python -m pip install --no-cache-dir uv
 
-# 复制共享包代码（用于可编辑安装）
+# Copy workspace metadata so uv can resolve workspace dependencies
+COPY pyproject.toml uv.lock /app/
+
+# Copy shared package code for editable installation
 COPY packages/shared-python /app/packages/shared-python
 
-# 复制API项目依赖定义
+# Copy workspace member dependency definitions
 COPY apps/api/pyproject.toml /app/apps/api/pyproject.toml
+COPY apps/worker/pyproject.toml /app/apps/worker/pyproject.toml
 
-# 使用uv同步依赖到固定虚拟环境路径
+# Sync dependencies into the fixed virtualenv path
 RUN cd /app/apps/api && \
-    UV_PROJECT_ENVIRONMENT=/app/venv uv sync --no-dev
+    UV_PROJECT_ENVIRONMENT=/app/venv uv sync --locked --no-dev
 
-# 运行阶段
-# 使用官方 Python 镜像
+# Runtime stage
+# Use the official Python base image
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# 只安装运行时依赖
+# Install runtime dependencies only
 RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 从构建阶段复制虚拟环境
+# Copy the virtualenv from the builder stage
 COPY --from=builder /app/venv /app/venv
 
-# 复制共享包代码
+# Copy shared package code
 COPY packages/shared-python /app/packages/shared-python
 
-# 复制API服务代码（只复制必要的文件，排除venv、logs等）
+# Copy the API service code
 COPY apps/api/custom_openapi.py /app/
 COPY apps/api/main.py /app/
 COPY apps/api/alembic.ini /app/
@@ -49,15 +53,15 @@ COPY apps/api/pyproject.toml /app/
 COPY apps/api/app /app/app
 COPY apps/api/alembic /app/alembic
 COPY apps/api/scripts /app/scripts
-# 排除不需要的文件：venv, logs, tests, __pycache__, .pytest_cache等
+# Unneeded files stay excluded by the Docker build context
 
-# 构建参数 - 版本信息
+# Build metadata arguments
 ARG ENVIRONMENT=dev
 ARG APP_VERSION=dev
 ARG BUILD_TIME=""
 ARG GIT_COMMIT=""
 
-# 设置环境变量
+# Runtime environment
 ENV PATH="/app/venv/bin:$PATH"
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
@@ -66,42 +70,42 @@ ENV APP_VERSION=${APP_VERSION}
 ENV BUILD_TIME=${BUILD_TIME}
 ENV GIT_COMMIT=${GIT_COMMIT}
 
-# 创建非root用户
+# Create a non-root runtime user
 RUN useradd --create-home --shell /bin/bash appuser && \
     chown -R appuser:appuser /app
 
-# 创建必要的目录并设置权限（在切换到appuser之前）
+# Prepare writable directories before dropping privileges
 RUN mkdir -p /tmp/users /tmp/aismart_bid && \
     chmod -R 777 /tmp/users /tmp/aismart_bid
 
-# 创建启动脚本（内联创建，避免.dockerignore问题）
-# 使用su命令切换用户（Debian自带）
+# Create the entrypoint inline so it cannot drift behind dockerignore rules
+# Use `su` to drop privileges on Debian
 RUN echo '#!/bin/sh\n\
-# API服务启动脚本 - 处理volume权限并启动服务\n\
+# API entrypoint: normalize writable volumes and start the service\n\
 \n\
-# 确保目录存在（volume挂载后）\n\
+# Ensure mounted directories exist\n\
 mkdir -p /tmp/users /tmp/aismart_bid\n\
 \n\
-# 尝试设置权限（如果以root运行）\n\
+# Try to fix ownership when the container starts as root\n\
 if [ "$(id -u)" = "0" ]; then\n\
     chown -R appuser:appuser /tmp/users /tmp/aismart_bid 2>/dev/null || true\n\
     chmod -R 777 /tmp/users /tmp/aismart_bid 2>/dev/null || true\n\
-    # 切换到appuser并运行\n\
+    # Drop to the unprivileged runtime user\n\
     exec su -s /bin/sh appuser -c "python main.py"\n\
 else\n\
-    # 已经是appuser，直接运行\n\
+    # Already unprivileged\n\
     exec python main.py\n\
 fi' > /entrypoint.sh && chmod +x /entrypoint.sh
 
-# 注意：不在这里切换用户，让entrypoint.sh处理
+# Keep user switching in the entrypoint
 # USER appuser
 
-# 健康检查
+# Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5005/health || exit 1
 
-# 暴露端口
+# Expose the API port
 EXPOSE 5005
 
-# 使用启动脚本
+# Use the generated entrypoint
 ENTRYPOINT ["/entrypoint.sh"]

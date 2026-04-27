@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Knowhere Shared Python Package - Core Infrastructure: Models, Config, Database, Redis Services, Storage Adapters, and Utils"
 requires-python = ">=3.11"
 dependencies = [
-    # 数据库相关
+    # Database
     "sqlalchemy==2.0.42",
     "sqlalchemy[asyncio]",
     "asyncpg==0.29.0",
@@ -16,53 +16,67 @@ dependencies = [
     "alembic==1.13.1",
     "sqlalchemy-utils==0.41.1",
     "pgvector==0.2.4",
-    # Redis缓存相关
+    
+    # Redis
     "redis==5.3.1",
-    # Celery任务队列
+    
+    # Celery task queue
     "celery==5.4.0",
     "kombu==5.4.0",
     "billiard==4.2.0",
     "vine==5.1.0",
     "celery-redbeat==2.2.0",
-    # 数据验证
+
+    # Data validation
     "pydantic==2.11.7",
     "pydantic-settings==2.10.1",
     "python-dotenv==1.1.1",
     "pydantic[email]==2.11.7",
-    # 认证相关（User模型依赖）
+    
+    # Auth and user model support
     "fastapi-users[sqlalchemy]==14.0.1",
     "authlib==1.6.5",
     "email-validator==2.2.0",
-    # HTTP客户端
+    
+    # HTTP clients
     "httpx==0.28.1",
     "requests==2.32.4",
     "aiohttp==3.12.15",
     "qstash==3.2.0",
+
     # OpenAI SDK
     "openai>=1.0.0",
-    # 云存储
+    
+    # Cloud storage
     "boto3==1.38.46",
     "botocore==1.38.46",
-    # 日志
+    
+    # Logging
     "loguru==0.7.3",
     "psutil==5.9.8",
-    # 工具库
+    
+    # Utilities
     "pytz==2025.2",
     "PyYAML==6.0.2",
     "typing-extensions==4.14.1",
     "jieba==0.42.1",
     "rank-bm25>=0.2.2",
-    # 图像处理（ZipResultService需要）
+
+    # Text processing
+    "blingfire>=0.1.8",
+    "syntok>=1.4.4",
+
+    # Image processing (used by ZipResultService)
     "pillow==11.2.1",
-    # Gevent协程池支持
+
+    # Gevent coroutine pool support
     "gevent>=24.11.1",
     "psycogreen>=1.0.2",
-    # 测试相关
+
+    # Test support
     "pytest==8.3.4",
     "pytest-asyncio==0.24.0",
     "pytest-mock==3.14.0",
-    "blingfire>=0.1.8",
-    "syntok>=1.4.4",
 ]
 
 [tool.setuptools.packages.find]

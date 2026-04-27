@@ -1,6 +1,7 @@
 """
 System Limit data model
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -13,6 +14,7 @@ from shared.core.database import Base
 
 class SystemLimit(Base):
     """System limit model - defines per-endpoint rate limits."""
+
     __tablename__ = "system_limits"
 
     method: Mapped[str] = mapped_column(String(10), primary_key=True)

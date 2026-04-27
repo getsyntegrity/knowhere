@@ -4,6 +4,7 @@ Resolve file extension from a URL.
 Tries the URL path first, then falls back to a HEAD request to read Content-Type.
 Provides both async (for API) and sync (for worker) variants.
 """
+
 import os
 from urllib.parse import urlparse
 
@@ -73,10 +74,14 @@ async def resolve_file_extension_async(url: str) -> str | None:
         content_type = response.headers.get("content-type")
         ext = _extension_from_content_type(content_type)
         if ext:
-            logger.info(f"Resolved file extension from Content-Type header: {ext} (url={url})")
+            logger.info(
+                f"Resolved file extension from Content-Type header: {ext} (url={url})"
+            )
             return ext
     except Exception as exc:
-        logger.warning(f"HEAD request failed for URL file type detection: {exc} (url={url})")
+        logger.warning(
+            f"HEAD request failed for URL file type detection: {exc} (url={url})"
+        )
 
     return None
 
@@ -99,9 +104,13 @@ def resolve_file_extension_sync(url: str) -> str | None:
         content_type = response.headers.get("content-type")
         ext = _extension_from_content_type(content_type)
         if ext:
-            logger.info(f"Resolved file extension from Content-Type header: {ext} (url={url})")
+            logger.info(
+                f"Resolved file extension from Content-Type header: {ext} (url={url})"
+            )
             return ext
     except Exception as exc:
-        logger.warning(f"HEAD request failed for URL file type detection: {exc} (url={url})")
+        logger.warning(
+            f"HEAD request failed for URL file type detection: {exc} (url={url})"
+        )
 
     return None

@@ -1,7 +1,6 @@
 import re
 from typing import List
 
-
 RESOURCE_PATH_REF_PATTERN = r"\[(?:images|tables)/[^\]\n]+\]"
 CHUNK_REF_PATTERN = RESOURCE_PATH_REF_PATTERN
 REFERENCE_LABEL_PATTERN = r"^\s*(?:image|table)-\d+\s*$"
@@ -51,7 +50,8 @@ def strip_chunk_refs(content: str, *, remove_labels: bool = False) -> str:
         return cleaned
 
     lines = [
-        line for line in cleaned.splitlines()
+        line
+        for line in cleaned.splitlines()
         if not REFERENCE_LABEL_RE.fullmatch(line.strip())
     ]
     return "\n".join(lines)

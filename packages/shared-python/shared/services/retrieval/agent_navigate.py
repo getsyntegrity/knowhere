@@ -26,7 +26,6 @@ from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database.document import Document, DocumentChunk, DocumentSection, GraphNode, GraphEdge
-from shared.models.database.job_result import JobResult
 from shared.services.retrieval.llm_adapter import LLMFn
 from shared.utils.text_utils import tokenize_for_retrieval
 
@@ -521,7 +520,7 @@ async def agent_navigate(
     logger.info(f'  {"─" * 60}')
 
     # ── Step 1: LLM selects files ──
-    logger.info(f'\n  📄 STEP 1: LLM File Selection')
+    logger.info('\n  📄 STEP 1: LLM File Selection')
     file_prompt = _FILE_SELECT_PROMPT.format(
         overview=overview_text, query=query,
     )
@@ -551,7 +550,7 @@ async def agent_navigate(
         logger.info(f'     → [{did}] {doc_id_to_name.get(did, "?")}')
 
     # ── GREP discovery: include parent documents of term-hit chunks ──
-    logger.info(f'\n  🔎 STEP 1b: GREP Discovery')
+    logger.info('\n  🔎 STEP 1b: GREP Discovery')
     try:
         grep_doc_ids = await _grep_discover_document_ids(
             db, user_id=user_id, namespace=namespace, query=query,
@@ -569,12 +568,12 @@ async def agent_navigate(
             else:
                 logger.info(f'  ℹ️  GREP found {len(grep_doc_ids)} docs but all already selected')
         else:
-            logger.info(f'  ℹ️  GREP found no matching documents')
+            logger.info('  ℹ️  GREP found no matching documents')
     except Exception as exc:
         logger.warning(f'  ⚠️  GREP discovery failed (ignored): {exc}')
 
     # ── Edge expansion: include neighbor documents ──
-    logger.info(f'\n  🔗 STEP 1c: Edge Expansion')
+    logger.info('\n  🔗 STEP 1c: Edge Expansion')
     logger.info(f'  Input documents: {valid_ids}')
     try:
         expanded_ids = await _expand_by_edges(
@@ -587,7 +586,7 @@ async def agent_navigate(
                 logger.info(f'     → added neighbor: [{did}] {doc_id_to_name.get(did, "?")}')
             valid_ids = expanded_ids
         else:
-            logger.info(f'  ℹ️  No new neighbors found via edges')
+            logger.info('  ℹ️  No new neighbors found via edges')
     except Exception as exc:
         logger.warning(f'  ⚠️  Edge expansion failed (ignored): {exc}')
 
@@ -596,7 +595,7 @@ async def agent_navigate(
         logger.info(f'     [{did}] {doc_id_to_name.get(did, "?")}')
 
     # ── Step 2: For each file, LLM selects chunk paths ──
-    logger.info(f'\n  📑 STEP 2: LLM Chunk Path Selection')
+    logger.info('\n  📑 STEP 2: LLM Chunk Path Selection')
     doc_job_map: dict[str, str] = {}
     doc_stmt = (
         select(Document.document_id, Document.current_job_result_id)
@@ -624,7 +623,7 @@ async def agent_navigate(
             db, document_id=doc_id, job_result_id=job_result_id,
         )
         if not chunks_slim:
-            logger.info(f'  ⚠️  No chunks found for this document')
+            logger.info('  ⚠️  No chunks found for this document')
             continue
 
         logger.info(f'  chunks_slim: {len(chunks_slim)} entries')
