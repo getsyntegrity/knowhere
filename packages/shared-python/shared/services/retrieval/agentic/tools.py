@@ -613,10 +613,14 @@ async def nav_section_select(
             chunk_count = section.get('chunk_count', 0)
             has_children = section.get('children_count', 0) > 0
 
+            # Convert chunk path (kb/file/Section) → section_path (Section)
+            from shared.services.retrieval.lexical_text import section_path_from_chunk_path
+            db_section_path = section_path_from_chunk_path(path) or path
+
             if action == 'drill' and has_children and chunk_count > CHUNK_COUNT_THRESHOLD:
                 drill_entries.append({
                     'document_id': document_id,
-                    'section_path': path,
+                    'section_path': db_section_path,
                     'depth': section.get('level', 1),
                 })
             else:
@@ -625,7 +629,7 @@ async def nav_section_select(
                     db,
                     document_id=document_id,
                     job_result_id=job_result_id,
-                    section_path=path,
+                    section_path=db_section_path,
                 )
                 selected_paths.extend(leaf_paths)
 

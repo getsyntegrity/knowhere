@@ -294,17 +294,11 @@ class RetrievalAgent:
             if all_candidates:
                 importance_map = await _load_chunk_importance_scores(
                     db, user_id=user_id, namespace=namespace,
+                    rows=all_candidates,
                 )
                 for row in all_candidates:
-                    doc_id = row.get('document_id', '')
                     chunk_id = row.get('chunk_id', '')
-                    imp = importance_map.get(('document', doc_id), {})
-                    row['importance_raw_score'] = imp.get('score', 0.0)
-                    chunk_imp = importance_map.get(('chunk', chunk_id), {})
-                    row['importance_raw_score'] = max(
-                        row.get('importance_raw_score', 0.0),
-                        chunk_imp.get('score', 0.0),
-                    )
+                    row['importance_raw_score'] = importance_map.get(chunk_id, 0.0)
 
                 _normalize_row_scores(
                     all_candidates,
