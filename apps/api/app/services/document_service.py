@@ -4,16 +4,22 @@ Application service for document lifecycle routes.
 
 from __future__ import annotations
 
+import math
+from datetime import datetime
 from typing import Any
 
 from app.repositories.document_repository import DocumentRepository
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.models.database.document import DocumentChunk, DocumentSection
 from shared.services.retrieval.cache_service import (
     invalidate_retrieval_cache_namespaces,
 )
 from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
+from shared.services.storage.result_storage import get_result_storage
+
+_MEDIA_CHUNK_TYPES = {"image", "table"}
 
 
 def document_payload(document) -> dict[str, Any]:
@@ -29,6 +35,10 @@ def document_payload(document) -> dict[str, Any]:
             document.archived_at.isoformat() if document.archived_at else None
         ),
     }
+
+
+def _datetime_payload(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
 
 
 class DocumentService:
@@ -55,6 +65,129 @@ class DocumentService:
         )
         return [document_payload(document) for document in documents]
 
+    async def list_document_chunks(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: str,
+        document_id: str,
+        page: int,
+        page_size: int,
+        chunk_type: str | None,
+        include_content: bool,
+        include_metadata: bool,
+        include_asset_urls: bool,
+    ) -> dict[str, Any] | None:
+        document = await self._repository.get_document(
+            db,
+            user_id=user_id,
+            document_id=document_id,
+        )
+        if document is None:
+            return None
+
+        job_result_id = document.current_job_result_id
+        if not job_result_id:
+            return {
+                "document_id": document.document_id,
+                "namespace": document.namespace,
+                "job_result_id": None,
+                "job_id": None,
+                "chunks": [],
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": 0,
+                    "total_pages": 0,
+                },
+            }
+
+        normalized_chunk_type = _normalize_chunk_type_filter(chunk_type)
+        total = await self._repository.count_current_document_chunks(
+            db,
+            document_id=document_id,
+            job_result_id=job_result_id,
+            chunk_type=normalized_chunk_type,
+        )
+        rows = await self._repository.list_current_document_chunks(
+            db,
+            document_id=document_id,
+            job_result_id=job_result_id,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+            chunk_type=normalized_chunk_type,
+        )
+        chunks = [
+            self._chunk_payload(
+                chunk=chunk,
+                section=section,
+                job_id=job_result.job_id,
+                include_content=include_content,
+                include_metadata=include_metadata,
+                include_asset_urls=include_asset_urls,
+            )
+            for chunk, section, job_result in rows
+        ]
+        job_id = rows[0][2].job_id if rows else None
+
+        return {
+            "document_id": document.document_id,
+            "namespace": document.namespace,
+            "job_result_id": job_result_id,
+            "job_id": job_id,
+            "chunks": chunks,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": math.ceil(total / page_size) if total else 0,
+            },
+        }
+
+    async def get_document_chunk(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: str,
+        document_id: str,
+        document_chunk_id: str,
+        include_content: bool,
+        include_metadata: bool,
+        include_asset_urls: bool,
+    ) -> dict[str, Any] | None:
+        document = await self._repository.get_document(
+            db,
+            user_id=user_id,
+            document_id=document_id,
+        )
+        if document is None or not document.current_job_result_id:
+            return None
+
+        row = await self._repository.get_current_document_chunk(
+            db,
+            document_id=document_id,
+            job_result_id=document.current_job_result_id,
+            document_chunk_id=document_chunk_id,
+        )
+        if row is None:
+            return None
+
+        chunk, section, job_result = row
+        return {
+            "document_id": document.document_id,
+            "namespace": document.namespace,
+            "job_result_id": document.current_job_result_id,
+            "job_id": job_result.job_id,
+            "chunk": self._chunk_payload(
+                chunk=chunk,
+                section=section,
+                job_id=job_result.job_id,
+                include_content=include_content,
+                include_metadata=include_metadata,
+                include_asset_urls=include_asset_urls,
+            ),
+        }
+
     async def get_document(
         self,
         db: AsyncSession,
@@ -70,6 +203,63 @@ class DocumentService:
         if document is None:
             return None
         return document_payload(document)
+
+    def _chunk_payload(
+        self,
+        *,
+        chunk: DocumentChunk,
+        section: DocumentSection | None,
+        job_id: str,
+        include_content: bool,
+        include_metadata: bool,
+        include_asset_urls: bool,
+    ) -> dict[str, Any]:
+        chunk_type = _normalize_chunk_type(chunk.chunk_type)
+        file_path = chunk.file_path
+        return {
+            "id": chunk.id,
+            "chunk_id": chunk.chunk_id,
+            "chunk_type": chunk_type,
+            "content": chunk.content if include_content else None,
+            "section_id": chunk.section_id,
+            "section_path": section.section_path if section else None,
+            "source_chunk_path": chunk.source_chunk_path,
+            "file_path": file_path,
+            "sort_order": chunk.sort_order,
+            "metadata": chunk.chunk_metadata if include_metadata else None,
+            "asset_url": self._asset_url(
+                chunk_type=chunk_type,
+                file_path=file_path,
+                job_id=job_id,
+                include_asset_urls=include_asset_urls,
+            ),
+            "created_at": _datetime_payload(chunk.created_at),
+        }
+
+    def _asset_url(
+        self,
+        *,
+        chunk_type: str,
+        file_path: str | None,
+        job_id: str,
+        include_asset_urls: bool,
+    ) -> str | None:
+        if (
+            not include_asset_urls
+            or chunk_type not in _MEDIA_CHUNK_TYPES
+            or not file_path
+        ):
+            return None
+
+        try:
+            result_storage = get_result_storage()
+            return result_storage.generate_artifact_url(
+                job_id=job_id,
+                artifact_ref=file_path,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to generate document chunk asset URL: {e}")
+            return None
 
     async def archive_document(
         self,
@@ -109,3 +299,14 @@ class DocumentService:
                 f"Cache invalidation failed after archiving document {document_id}: {e}"
             )
         return document_payload(document)
+
+
+def _normalize_chunk_type(raw: str | None) -> str:
+    return str(raw or "").strip().split("\n", 1)[0].lower()
+
+
+def _normalize_chunk_type_filter(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    normalized = _normalize_chunk_type(raw)
+    return normalized or None
