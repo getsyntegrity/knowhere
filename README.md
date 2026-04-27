@@ -53,8 +53,8 @@ uv sync --all-packages
 2. Copy the environment examples:
 
 ```bash
-cp apps/api/env.example apps/api/.env
-cp apps/worker/env.example apps/worker/.env
+cp apps/api/.env.example apps/api/.env
+cp apps/worker/.env.example apps/worker/.env
 ```
 
 3. Update the copied `.env` files with the values you need for local work:
@@ -65,6 +65,26 @@ cp apps/worker/env.example apps/worker/.env
 - `USERS_DATA_PATH`
 - `DS_KEY`
 - any optional LLM, billing, or webhook providers you want to enable
+
+The example files default to the open-source/self-hosted behavior:
+
+- `API_STANDALONE_MODE=false` for the combined dashboard + API flow, where
+  the dashboard initializes Better Auth tables before API migrations.
+- `BILLING_ENABLED=false`, so Stripe and credit deduction are not required.
+- `RATE_LIMIT_BYPASSED=true` for local/self-hosted convenience; set it to
+  `false` when you want API rate limits enforced.
+
+For API-only development without the dashboard, set `API_STANDALONE_MODE=true`,
+run API migrations, then create an API-only user/key:
+
+```bash
+cd apps/api
+uv run --python 3.11 python -m alembic upgrade heads
+uv run --python 3.11 python scripts/init_user.py --email you@example.com
+```
+
+If you plan to use the dashboard, start the combined self-hosted stack and
+register through the dashboard instead of using `scripts/init_user.py`.
 
 4. Start the local infrastructure stack:
 

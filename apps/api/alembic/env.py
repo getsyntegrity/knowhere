@@ -9,6 +9,7 @@ from alembic import context
 from shared.core.config import settings
 from shared.core.database import Base
 from shared.models import database as shared_database_models  # noqa: F401
+from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
 
 # Build a synchronous database URL by replacing asyncpg with psycopg2.
 sync_database_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
@@ -118,6 +119,9 @@ def run_migrations_online() -> None:
     configured_connection = config.attributes.get("connection")
 
     def run_with_connection(connection: Connection) -> None:
+        if settings.API_STANDALONE_MODE:
+            ensure_better_auth_user_table(connection)
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

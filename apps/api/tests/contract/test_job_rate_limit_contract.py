@@ -118,6 +118,7 @@ async def _create_rate_limited_developer_api_client(
     monkeypatch: MonkeyPatch,
     postgresql_process: PostgreSQLProcess,
     *,
+    billing_enabled: bool = True,
     max_concurrent_jobs: int = -1,
     rpm_limit: int = -1,
     daily_quota: int = -1,
@@ -125,6 +126,7 @@ async def _create_rate_limited_developer_api_client(
     default_system_period: str = "minute",
 ) -> AsyncGenerator[AsyncClient, None]:
     configure_contract_environment(monkeypatch, postgresql_process)
+    monkeypatch.setenv("BILLING_ENABLED", "true" if billing_enabled else "false")
     await prepare_contract_storage()
     await _set_local_developer_tier_limits(
         max_concurrent_jobs=max_concurrent_jobs,
@@ -315,6 +317,40 @@ async def test_should_return_too_many_requests_when_the_authenticated_user_excee
 
     assert cast(int, details["retry_after"]) >= 1
     assert await _count_jobs() == 1
+
+
+@pytest.mark.asyncio
+async def test_should_skip_billing_rate_limits_when_billing_is_disabled(
+    monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
+) -> None:
+    first_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-billing-disabled-first.pdf",
+        "data_id": "contract-job-billing-disabled-first",
+    }
+    second_payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-billing-disabled-second.pdf",
+        "data_id": "contract-job-billing-disabled-second",
+    }
+
+    async with _create_rate_limited_developer_api_client(
+        monkeypatch,
+        postgresql_proc,
+        billing_enabled=False,
+        max_concurrent_jobs=1,
+        rpm_limit=1,
+        daily_quota=1,
+    ) as api_client:
+        first_response = await api_client.post("/api/v1/jobs", json=first_payload)
+        second_response = await api_client.post("/api/v1/jobs", json=second_payload)
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert await _count_jobs() == 2
 
 
 @pytest.mark.asyncio

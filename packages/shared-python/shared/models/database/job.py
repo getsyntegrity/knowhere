@@ -107,7 +107,7 @@ class Job(Base):
         String(50),
         default="pending",
         nullable=False,
-        comment="pending, charged, billing_failed, refunded",
+        comment="pending, charged, billing_failed, refunded, skipped",
     )
 
     # Relationships — default to noload to prevent implicit SELECTs.

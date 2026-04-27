@@ -9,6 +9,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class BillingConfig(BaseSettings):
     """Billing configuration."""
 
+    BILLING_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Enable Stripe/credits billing. Disable for OSS self-hosted and "
+            "API-only development flows."
+        ),
+    )
+
     # Stripe configuration.
     STRIPE_SECRET_KEY: Optional[str] = Field(
         default=None, description="Stripe secret key"

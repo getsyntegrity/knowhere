@@ -8,9 +8,10 @@ Dependency chain (outermost -> innermost):
 ``with_current_user`` resolves identity (user_id + user_tier), caches it in
 Redis, and enforces the matched system limit (Layer 0).
 
-``require_billing_limits`` enforces billing RPM (Layer 1) and yields control
-to the route handler. Concurrency (Layer 2) and daily quota (Layer 3) are
-enforced just before insert in the create-job route.
+``require_billing_limits`` enforces billing RPM (Layer 1) when billing is
+enabled and yields control to the route handler. Concurrency (Layer 2) and
+daily quota (Layer 3) are enforced just before insert in the create-job route
+only when billing is enabled.
 """
 
 import hashlib
@@ -32,7 +33,7 @@ from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.core.config import redis_pool_manager
+from shared.core.config import redis_pool_manager, settings
 from shared.core.database import get_db, get_db_context
 from shared.core.exceptions.domain_exceptions import (
     RateLimitException,
@@ -293,9 +294,14 @@ async def require_billing_limits(
         2. Non-terminal jobs concurrency -- max pending/running jobs
         3. Daily quota (free tier only) -- hard daily cap
 
-    On any Redis failure the dependency raises 503 (fail-close) because
-    billing enforcement must not be silently skipped.
+    When ``BILLING_ENABLED=false``, this yields after identity and system
+    route limiting. Otherwise, Redis failures raise 503 because billing
+    enforcement must not be silently skipped.
     """
+    if not settings.BILLING_ENABLED:
+        yield current_user
+        return
+
     config = RateLimitConfig.get_instance()
     tier_limits: TierLimits | None = config.tier_map.get(current_user.user_tier)
     if tier_limits is None:
@@ -369,6 +375,9 @@ async def enforce_job_creation_capacity(
     current_user: CurrentUser,
 ) -> None:
     """Enforce Layers 2-3 immediately before job insert."""
+    if not settings.BILLING_ENABLED:
+        return
+
     config = RateLimitConfig.get_instance()
     if config.is_bypassed:
         return

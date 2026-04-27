@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import pandas as pd
+import pytest
 from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -102,11 +103,22 @@ def _bind_parse_task_to_current_module(
     monkeypatch.setattr(kb_tasks.parse_task, "__trace__", None, raising=False)
 
 
+@pytest.mark.parametrize(
+    ("billing_enabled", "expected_billing_status", "expected_transaction_types"),
+    [
+        (True, "charged", ["initial_grant", "usage"]),
+        (False, "skipped", []),
+    ],
+)
 def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     worker_contract_environment: None,
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
+    billing_enabled: bool,
+    expected_billing_status: str,
+    expected_transaction_types: list[str],
 ) -> None:
+    monkeypatch.setenv("BILLING_ENABLED", "true" if billing_enabled else "false")
     (
         kb_tasks,
         parse_service,
@@ -150,6 +162,7 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
 
     _bind_parse_task_to_current_module(monkeypatch, kb_tasks=kb_tasks)
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
+    monkeypatch.setattr(kb_tasks.settings, "BILLING_ENABLED", billing_enabled)
     def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
         return {
             "exists": storage_key == s3_key,
@@ -323,9 +336,13 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     metadata = sync_job_metadata_service_cls(redis_service).get_metadata(job_id)
     assert metadata is not None
     assert metadata["page_count"] == 3
-    assert metadata["billing_status"] == "charged"
-    assert metadata["billing_amount_micro_dollars"] == expected_credits_charged
-    assert metadata["billing_credits"] == expected_credits_charged / 1_000_000
+    assert metadata["billing_status"] == expected_billing_status
+    if billing_enabled:
+        assert metadata["billing_amount_micro_dollars"] == expected_credits_charged
+        assert metadata["billing_credits"] == expected_credits_charged / 1_000_000
+    else:
+        assert metadata["billing_amount_micro_dollars"] == 0
+        assert metadata["billing_credits"] == 0.0
     assert metadata["processing_started_at"]
     assert metadata["processing_completed_at"]
     assert metadata["processing_duration_ms"] >= 0
@@ -420,7 +437,7 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
                 {"user_id": user_id},
             )
             .mappings()
-            .one()
+            .one_or_none()
         )
         transaction_types = list(
             connection.execute(
@@ -456,9 +473,12 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     graph_properties = dict(graph_node_row["properties"])
 
     assert job_row["status"] == "done"
-    assert job_row["billing_status"] == "charged"
+    assert job_row["billing_status"] == expected_billing_status
     assert job_row["page_count"] == 3
-    assert job_row["credits_charged"] == expected_credits_charged
+    if billing_enabled:
+        assert job_row["credits_charged"] == expected_credits_charged
+    else:
+        assert job_row["credits_charged"] == 0
     assert job_row["error_code"] is None
     assert job_row["error_message"] is None
     assert job_result_row["delivery_mode"] == "url"
@@ -478,8 +498,15 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     assert document_chunks[3]["file_path"] == "tables/table-1.html"
     assert graph_properties["chunks_count"] == 4
     assert graph_properties["top_summary"] == expected_summary
-    assert balance_row["credits_balance"] == expected_initial_balance - expected_credits_charged
-    assert transaction_types == ["initial_grant", "usage"]
+    if billing_enabled:
+        assert balance_row is not None
+        assert (
+            balance_row["credits_balance"]
+            == expected_initial_balance - expected_credits_charged
+        )
+    else:
+        assert balance_row is None
+    assert transaction_types == expected_transaction_types
     assert [(row["transition_reason"], row["to_state"]) for row in audit_transitions] == [
         ("start_processing", "running"),
         ("mark_completed", "done"),
