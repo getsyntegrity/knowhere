@@ -74,8 +74,6 @@ class DocumentService:
         page: int,
         page_size: int,
         chunk_type: str | None,
-        include_content: bool,
-        include_metadata: bool,
         include_asset_urls: bool,
     ) -> dict[str, Any] | None:
         document = await self._repository.get_document(
@@ -122,8 +120,6 @@ class DocumentService:
                 chunk=chunk,
                 section=section,
                 job_id=job_result.job_id,
-                include_content=include_content,
-                include_metadata=include_metadata,
                 include_asset_urls=include_asset_urls,
             )
             for chunk, section, job_result in rows
@@ -151,8 +147,6 @@ class DocumentService:
         user_id: str,
         document_id: str,
         document_chunk_id: str,
-        include_content: bool,
-        include_metadata: bool,
         include_asset_urls: bool,
     ) -> dict[str, Any] | None:
         document = await self._repository.get_document(
@@ -182,8 +176,6 @@ class DocumentService:
                 chunk=chunk,
                 section=section,
                 job_id=job_result.job_id,
-                include_content=include_content,
-                include_metadata=include_metadata,
                 include_asset_urls=include_asset_urls,
             ),
         }
@@ -210,8 +202,6 @@ class DocumentService:
         chunk: DocumentChunk,
         section: DocumentSection | None,
         job_id: str,
-        include_content: bool,
-        include_metadata: bool,
         include_asset_urls: bool,
     ) -> dict[str, Any]:
         chunk_type = _normalize_chunk_type(chunk.chunk_type)
@@ -220,13 +210,13 @@ class DocumentService:
             "id": chunk.id,
             "chunk_id": chunk.chunk_id,
             "chunk_type": chunk_type,
-            "content": chunk.content if include_content else None,
+            "content": chunk.content,
             "section_id": chunk.section_id,
             "section_path": section.section_path if section else None,
             "source_chunk_path": chunk.source_chunk_path,
             "file_path": file_path,
             "sort_order": chunk.sort_order,
-            "metadata": chunk.chunk_metadata if include_metadata else None,
+            "metadata": chunk.chunk_metadata,
             "asset_url": self._asset_url(
                 chunk_type=chunk_type,
                 file_path=file_path,

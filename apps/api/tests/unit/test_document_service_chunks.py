@@ -24,6 +24,7 @@ os.environ.setdefault("FONT_PATH", "/tmp/font.ttf")
 os.environ.setdefault("CHROMEDRIVER_PATH", "/tmp/chromedriver")
 
 from app.repositories.document_repository import DocumentRepository  # noqa: E402
+import app.services.document_service as document_service_module  # noqa: E402
 from app.services.document_service import DocumentService  # noqa: E402
 
 
@@ -121,8 +122,6 @@ async def test_list_document_chunks_returns_the_current_revision_page() -> None:
         page=2,
         page_size=1,
         chunk_type="text",
-        include_content=True,
-        include_metadata=True,
         include_asset_urls=False,
     )
 
@@ -173,8 +172,6 @@ async def test_get_document_chunk_returns_one_current_revision_chunk() -> None:
         user_id="user_123",
         document_id="doc_123",
         document_chunk_id="dchk_1",
-        include_content=False,
-        include_metadata=False,
         include_asset_urls=False,
     )
 
@@ -187,14 +184,50 @@ async def test_get_document_chunk_returns_one_current_revision_chunk() -> None:
             "id": "dchk_1",
             "chunk_id": "parser-1",
             "chunk_type": "text",
-            "content": None,
+            "content": "First chunk",
             "section_id": "sec_1",
             "section_path": "Chapter 1",
             "source_chunk_path": "Chapter 1/Intro",
             "file_path": None,
             "sort_order": 0,
-            "metadata": None,
+            "metadata": {"summary": "Intro"},
             "asset_url": None,
             "created_at": "2026-04-27T03:00:00",
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_get_document_chunk_generates_asset_url_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _FakeDocumentRepository()
+    chunk, section, job_result = repository.chunk
+    chunk.chunk_type = "image"
+    chunk.file_path = "images/figure-1.png"
+    service = DocumentService(repository=cast(DocumentRepository, repository))
+
+    class _FakeResultStorage:
+        def generate_artifact_url(self, *, job_id: str, artifact_ref: str) -> str:
+            assert job_id == job_result.job_id
+            assert artifact_ref == "images/figure-1.png"
+            return "https://assets.example.com/figure-1.png"
+
+    monkeypatch.setattr(
+        document_service_module,
+        "get_result_storage",
+        lambda: _FakeResultStorage(),
+    )
+
+    result = await service.get_document_chunk(
+        cast(AsyncSession, None),
+        user_id="user_123",
+        document_id="doc_123",
+        document_chunk_id="dchk_1",
+        include_asset_urls=True,
+    )
+
+    assert result is not None
+    response_chunk = cast(dict[str, object], result["chunk"])
+    assert response_chunk["section_path"] == section.section_path
+    assert response_chunk["asset_url"] == "https://assets.example.com/figure-1.png"
