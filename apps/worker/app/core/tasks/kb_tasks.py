@@ -61,8 +61,8 @@ from shared.services.storage.result_storage import get_result_storage
 from shared.services.storage.zip_result_service import ZipResultService
 from app.services.common.job_start_service import mark_job_running
 from app.services.connect_builder.summary_builder import (
-    ensure_hierarchy_json,
-    load_navigation_top_summary,
+    ensure_doc_nav_json,
+    load_nav_top_summary,
 )
 from app.services.document_parser.stage_profiler import stage_timer
 from app.services.workload.page_estimator import PageEstimator
@@ -77,6 +77,35 @@ from app.core.tasks.task_utils import (
     create_task_workspace,
     download_s3_file_to_temp,
 )
+
+
+def _extract_nav_sections_for_publish(add_dir: str) -> list:
+    """Extract top-level nav sections from doc_nav.json for chunk metadata injection.
+
+    These sections will be read by graph_service.py when creating GraphNode,
+    enabling hierarchical navigation at query time.
+    """
+    nav_path = os.path.join(add_dir, "doc_nav.json")
+    if not os.path.exists(nav_path):
+        return []
+    try:
+        with open(nav_path, "r", encoding="utf-8") as f:
+            doc_nav = json.load(f)
+        sections = []
+        for section in doc_nav.get("sections", []):
+            title = section.get("title", "")
+            if title.lower() in ("root", "__root__"):
+                continue
+            sections.append({
+                "title": title,
+                "path": section.get("path", ""),
+                "summary": (section.get("summary") or "")[:200],
+                "chunk_count": section.get("chunk_count", 0),
+                "children_count": len(section.get("children", [])),
+            })
+        return sections
+    except Exception:
+        return []
 
 @celery_app.task(
     bind=True,
@@ -487,20 +516,27 @@ def _parse(job_id: str, user_id: str | None):
                 source_file_name = os.path.basename(source_file_name)
 
             document_top_summary = ""
+            document_nav_sections = []
             if add_dir and source_file_name:
                 if add_contents_df is not None and "path" in add_contents_df.columns:
-                    ensure_hierarchy_json(
+                    ensure_doc_nav_json(
                         str(add_dir),
-                        add_contents_df["path"].dropna().astype(str).tolist(),
+                        chunks,
+                        source_file_name=str(source_file_name),
                     )
-                document_top_summary = load_navigation_top_summary(str(add_dir), str(source_file_name))
-            if document_top_summary:
+                document_top_summary = load_nav_top_summary(str(add_dir), str(source_file_name))
+                # Extract nav_sections from doc_nav.json for GraphNode persistence
+                document_nav_sections = _extract_nav_sections_for_publish(str(add_dir))
+            if document_top_summary or document_nav_sections:
                 for chunk in chunks:
                     metadata = chunk.get("metadata")
                     if not isinstance(metadata, dict):
                         metadata = {}
                         chunk["metadata"] = metadata
-                    metadata["document_top_summary"] = document_top_summary
+                    if document_top_summary:
+                        metadata["document_top_summary"] = document_top_summary
+                    if document_nav_sections:
+                        metadata["document_nav_sections"] = document_nav_sections
 
             data_id = JobMetadataHelper.get_field(job_metadata, "data_id")
 

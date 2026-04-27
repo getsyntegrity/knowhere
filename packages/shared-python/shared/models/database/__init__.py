@@ -9,7 +9,7 @@ from .guest_device import GuestDevice
 from .credits_transaction import CreditsTransaction
 from .job import Job
 from .job_result import JobChunk, JobResult
-from .document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode, RetrievalHitStat
+from .document import Document, DocumentChunk, DocumentSection, GraphEdge, GraphNode, RetrievalHitStat, RetrievalRun, RetrievalStep
 
 from .user_balance import UserBalance 
 from .stripe_price_config import StripePriceConfig
@@ -48,6 +48,8 @@ __all__ = [
     "GraphNode",
     "GraphEdge",
     "RetrievalHitStat",
+    "RetrievalRun",
+    "RetrievalStep",
     "StripePriceConfig",
     "PaymentRecord",
     "JobStateAuditLog",

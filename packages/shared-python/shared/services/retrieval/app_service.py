@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 from typing import Any
@@ -959,159 +960,195 @@ async def run_retrieval_query(
         logger.info(f'  ✅ Small KB: {len(results)} results in {elapsed_total}ms')
         return await _to_public_response(response)
 
-    # ── Channel execution ──
-    active_channels = set(channels) if channels else {'path', 'content', 'term'}
-    logger.info(f'\n  📡 PHASE 1: Bottom-Layer Discovery (channels={sorted(active_channels)})')
-    logger.info(f'  effective_recall_k={effective_recall_k}')
+    # ══ Route: agentic vs legacy ══
+    _agentic_enabled = os.environ.get('RETRIEVAL_AGENTIC_ENABLED', 'false') == 'true'
+    if _agentic_enabled:
+        # ── AGENTIC path (all errors self-contained, no fallback to legacy) ──
+        from shared.services.retrieval.agentic.orchestrator import RetrievalAgent
+        from shared.services.retrieval.llm_adapter import create_retrieval_llm_fn as _create_llm
 
-    path_rows: list[dict[str, Any]] = []
-    content_rows: list[dict[str, Any]] = []
-    term_rows: list[dict[str, Any]] = []
-
-    if 'path' in active_channels:
-        t_ch = time.monotonic()
-        path_rows = await path_channel(
-            db, user_id=user_id, namespace=namespace, query=query,
-            top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
-            signal_paths=signal_paths, filter_mode=filter_mode,
+        llm_fn = _create_llm()
+        agent = RetrievalAgent()
+        ranked_rows, router_used = await agent.run(
+            db,
+            user_id=user_id,
+            namespace=namespace,
+            query=query,
+            top_k=top_k,
+            llm_fn=llm_fn,
+            exclude_document_ids=exclude_document_ids,
+            exclude_sections=exclude_sections,
+            data_type=data_type,
+            signal_paths=signal_paths,
+            filter_mode=filter_mode,
+            channels=channels,
+            channel_weights=channel_weights,
         )
-        elapsed_ch = round((time.monotonic() - t_ch) * 1000)
-        logger.info(f'\n  📡 path_channel: {len(path_rows)} rows in {elapsed_ch}ms')
-        for i, r in enumerate(path_rows[:5]):
-            logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  type={r.get("chunk_type","?")}')
-        if len(path_rows) > 5:
-            logger.info(f'    ... and {len(path_rows) - 5} more')
+    else:
+        # ── LEGACY path (existing code, unchanged) ──
 
-    if 'content' in active_channels:
-        t_ch = time.monotonic()
-        content_rows = await content_channel(
-            db, user_id=user_id, namespace=namespace, query=query,
-            top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
-            signal_paths=signal_paths, filter_mode=filter_mode,
-        )
-        elapsed_ch = round((time.monotonic() - t_ch) * 1000)
-        logger.info(f'\n  📡 content_channel: {len(content_rows)} rows in {elapsed_ch}ms')
-        for i, r in enumerate(content_rows[:5]):
-            logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  content={str(r.get("content",""))[:80]}')
-        if len(content_rows) > 5:
-            logger.info(f'    ... and {len(content_rows) - 5} more')
+        # ── Channel execution ──
+        active_channels = set(channels) if channels else {'path', 'content', 'term'}
+        logger.info(f'\n  📡 PHASE 1: Bottom-Layer Discovery (channels={sorted(active_channels)})')
+        logger.info(f'  effective_recall_k={effective_recall_k}')
 
-    if 'term' in active_channels:
-        t_ch = time.monotonic()
-        term_rows = await term_channel(
-            db, user_id=user_id, namespace=namespace, query=query,
-            top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
-            exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
-            signal_paths=signal_paths, filter_mode=filter_mode,
-        )
-        elapsed_ch = round((time.monotonic() - t_ch) * 1000)
-        logger.info(f'\n  📡 term_channel: {len(term_rows)} rows in {elapsed_ch}ms')
-        for i, r in enumerate(term_rows[:5]):
-            logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  type={r.get("chunk_type","?")}')
-        if len(term_rows) > 5:
-            logger.info(f'    ... and {len(term_rows) - 5} more')
+        path_rows: list[dict[str, Any]] = []
+        content_rows: list[dict[str, Any]] = []
+        term_rows: list[dict[str, Any]] = []
 
-    # ── RRF fusion with configurable weights ──
-    default_weights = {
-        'path': _CHANNEL_WEIGHT_PATH,
-        'content': _CHANNEL_WEIGHT_CONTENT,
-        'term': _CHANNEL_WEIGHT_TERM,
-    }
-    effective_weights = {**default_weights, **(channel_weights or {})}
-
-    channel_lists: list[list[dict[str, Any]]] = []
-    weight_list: list[float] = []
-
-    if path_rows:
-        channel_lists.append(path_rows)
-        weight_list.append(effective_weights.get('path', _CHANNEL_WEIGHT_PATH))
-    if content_rows:
-        channel_lists.append(content_rows)
-        weight_list.append(effective_weights.get('content', _CHANNEL_WEIGHT_CONTENT))
-    if term_rows:
-        channel_lists.append(term_rows)
-        weight_list.append(effective_weights.get('term', _CHANNEL_WEIGHT_TERM))
-
-    fused_rows = merge_channels_rrf(channel_lists, weight_list, top_k) if channel_lists else []
-    logger.info(f'\n  🔀 RRF Fusion: {len(fused_rows)} rows from {len(channel_lists)} channels (weights={dict(zip(["path","content","term"][:len(weight_list)], weight_list))})')
-    for i, r in enumerate(fused_rows[:5]):
-        logger.info(f'    [{i}] rrf_score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}')
-    if len(fused_rows) > 5:
-        logger.info(f'    ... and {len(fused_rows) - 5} more')
-
-    # ── Section merging ──
-    pre_merge = len(fused_rows)
-    fused_rows = _merge_same_section_rows(fused_rows)
-    if len(fused_rows) != pre_merge:
-        logger.info(f'retrieval: section_merge={pre_merge}->{len(fused_rows)}')
-
-    # ── Threshold filtering ──
-    if threshold > 0.0 and fused_rows:
-        pre_count = len(fused_rows)
-        fused_rows = [row for row in fused_rows if row.get('score', 0.0) >= threshold]
-        logger.info(f'retrieval: threshold_filter={pre_count}->{len(fused_rows)} (threshold={threshold})')
-
-    if fused_rows:
-        _normalize_row_scores(
-            fused_rows,
-            source_field='score',
-            target_field='discovery_score',
-            default=0.5,
-        )
-
-    # ── Agent navigation or lexical graph fallback ──
-    # Aligned with KB: agent_navigate returns chunk paths with confidence.
-    logger.info(f'\n  🧭 PHASE 2: Agent Navigation')
-    router_used = 'discovery_only'
-    llm_fn = create_retrieval_llm_fn()
-    agent_rows: list[dict[str, Any]] = []
-    agent_paths: list[dict[str, Any]] = []
-
-    if llm_fn is not None:
-        logger.info(f'  LLM configured, running agent_navigate...')
-        t_agent = time.monotonic()
-        try:
-            agent_paths = await agent_navigate(
-                db,
-                user_id=user_id,
-                namespace=namespace,
-                query=query,
-                llm_fn=llm_fn,
-                exclude_document_ids=exclude_document_ids,
+        if 'path' in active_channels:
+            t_ch = time.monotonic()
+            path_rows = await path_channel(
+                db, user_id=user_id, namespace=namespace, query=query,
+                top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
+                exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
+                signal_paths=signal_paths, filter_mode=filter_mode,
             )
-            if agent_paths:
-                discovery_paths = {_get_row_path(r) for r in fused_rows}
-                selected_paths = [str(item.get('path') or '') for item in agent_paths if item.get('path')]
-                new_paths = [path for path in selected_paths if path not in discovery_paths]
-                overlap_paths = [path for path in selected_paths if path in discovery_paths]
-                logger.info(f'\n  🔗 Agent→Discovery union:')
-                logger.info(
-                    f'    agent_paths={len(selected_paths)}, discovery_paths={len(discovery_paths)}, '
-                    f'overlap_paths={len(overlap_paths)}, new_paths={len(new_paths)}'
-                )
-                if new_paths:
-                    logger.info(f'    New paths from agent:')
-                    for p in new_paths[:10]:
-                        logger.info(f'      → {p}')
-                if overlap_paths:
-                    logger.info(f'    Overlap paths reinforced by agent:')
-                    for p in overlap_paths[:10]:
-                        logger.info(f'      → {p}')
-                agent_rows = await _hydrate_paths_to_rows(
+            elapsed_ch = round((time.monotonic() - t_ch) * 1000)
+            logger.info(f'\n  📡 path_channel: {len(path_rows)} rows in {elapsed_ch}ms')
+            for i, r in enumerate(path_rows[:5]):
+                logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  type={r.get("chunk_type","?")}')
+            if len(path_rows) > 5:
+                logger.info(f'    ... and {len(path_rows) - 5} more')
+
+        if 'content' in active_channels:
+            t_ch = time.monotonic()
+            content_rows = await content_channel(
+                db, user_id=user_id, namespace=namespace, query=query,
+                top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
+                exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
+                signal_paths=signal_paths, filter_mode=filter_mode,
+            )
+            elapsed_ch = round((time.monotonic() - t_ch) * 1000)
+            logger.info(f'\n  📡 content_channel: {len(content_rows)} rows in {elapsed_ch}ms')
+            for i, r in enumerate(content_rows[:5]):
+                logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  content={str(r.get("content",""))[:80]}')
+            if len(content_rows) > 5:
+                logger.info(f'    ... and {len(content_rows) - 5} more')
+
+        if 'term' in active_channels:
+            t_ch = time.monotonic()
+            term_rows = await term_channel(
+                db, user_id=user_id, namespace=namespace, query=query,
+                top_k=effective_recall_k, exclude_document_ids=exclude_document_ids,
+                exclude_sections=exclude_sections, allowed_chunk_types=allowed_chunk_types,
+                signal_paths=signal_paths, filter_mode=filter_mode,
+            )
+            elapsed_ch = round((time.monotonic() - t_ch) * 1000)
+            logger.info(f'\n  📡 term_channel: {len(term_rows)} rows in {elapsed_ch}ms')
+            for i, r in enumerate(term_rows[:5]):
+                logger.info(f'    [{i}] score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}  type={r.get("chunk_type","?")}')
+            if len(term_rows) > 5:
+                logger.info(f'    ... and {len(term_rows) - 5} more')
+
+        # ── RRF fusion with configurable weights ──
+        default_weights = {
+            'path': _CHANNEL_WEIGHT_PATH,
+            'content': _CHANNEL_WEIGHT_CONTENT,
+            'term': _CHANNEL_WEIGHT_TERM,
+        }
+        effective_weights = {**default_weights, **(channel_weights or {})}
+
+        channel_lists: list[list[dict[str, Any]]] = []
+        weight_list: list[float] = []
+
+        if path_rows:
+            channel_lists.append(path_rows)
+            weight_list.append(effective_weights.get('path', _CHANNEL_WEIGHT_PATH))
+        if content_rows:
+            channel_lists.append(content_rows)
+            weight_list.append(effective_weights.get('content', _CHANNEL_WEIGHT_CONTENT))
+        if term_rows:
+            channel_lists.append(term_rows)
+            weight_list.append(effective_weights.get('term', _CHANNEL_WEIGHT_TERM))
+
+        fused_rows = merge_channels_rrf(channel_lists, weight_list, top_k) if channel_lists else []
+        logger.info(f'\n  🔀 RRF Fusion: {len(fused_rows)} rows from {len(channel_lists)} channels (weights={dict(zip(["path","content","term"][:len(weight_list)], weight_list))})')
+        for i, r in enumerate(fused_rows[:5]):
+            logger.info(f'    [{i}] rrf_score={r.get("score",0):.4f}  path={r.get("section_path","") or r.get("source_chunk_path","")}')
+        if len(fused_rows) > 5:
+            logger.info(f'    ... and {len(fused_rows) - 5} more')
+
+        # ── Section merging ──
+        pre_merge = len(fused_rows)
+        fused_rows = _merge_same_section_rows(fused_rows)
+        if len(fused_rows) != pre_merge:
+            logger.info(f'retrieval: section_merge={pre_merge}->{len(fused_rows)}')
+
+        # ── Threshold filtering ──
+        if threshold > 0.0 and fused_rows:
+            pre_count = len(fused_rows)
+            fused_rows = [row for row in fused_rows if row.get('score', 0.0) >= threshold]
+            logger.info(f'retrieval: threshold_filter={pre_count}->{len(fused_rows)} (threshold={threshold})')
+
+        if fused_rows:
+            _normalize_row_scores(
+                fused_rows,
+                source_field='score',
+                target_field='discovery_score',
+                default=0.5,
+            )
+
+        # ── Agent navigation or lexical graph fallback ──
+        # Aligned with KB: agent_navigate returns chunk paths with confidence.
+        logger.info(f'\n  🧭 PHASE 2: Agent Navigation')
+        router_used = 'discovery_only'
+        llm_fn = create_retrieval_llm_fn()
+        agent_rows: list[dict[str, Any]] = []
+        agent_paths: list[dict[str, Any]] = []
+
+        if llm_fn is not None:
+            logger.info(f'  LLM configured, running agent_navigate...')
+            t_agent = time.monotonic()
+            try:
+                agent_paths = await agent_navigate(
                     db,
-                    path_selections=agent_paths,
                     user_id=user_id,
                     namespace=namespace,
+                    query=query,
+                    llm_fn=llm_fn,
+                    exclude_document_ids=exclude_document_ids,
                 )
-                logger.info(f'    Hydrated {len(agent_rows)} rows from {len(selected_paths)} agent-selected paths')
-                router_used = 'discovery+agent'
-                elapsed_agent = round((time.monotonic() - t_agent) * 1000)
-                logger.info(f'  ✅ Agent navigate: {len(agent_paths)} paths ({len(new_paths)} new) in {elapsed_agent}ms')
-            else:
-                elapsed_agent = round((time.monotonic() - t_agent) * 1000)
-                logger.info(f'  ⚠️  Agent returned 0 paths in {elapsed_agent}ms, falling back to lexical graph')
+                if agent_paths:
+                    discovery_paths = {_get_row_path(r) for r in fused_rows}
+                    selected_paths = [str(item.get('path') or '') for item in agent_paths if item.get('path')]
+                    new_paths = [path for path in selected_paths if path not in discovery_paths]
+                    overlap_paths = [path for path in selected_paths if path in discovery_paths]
+                    logger.info(f'\n  🔗 Agent→Discovery union:')
+                    logger.info(
+                        f'    agent_paths={len(selected_paths)}, discovery_paths={len(discovery_paths)}, '
+                        f'overlap_paths={len(overlap_paths)}, new_paths={len(new_paths)}'
+                    )
+                    if new_paths:
+                        logger.info(f'    New paths from agent:')
+                        for p in new_paths[:10]:
+                            logger.info(f'      → {p}')
+                    if overlap_paths:
+                        logger.info(f'    Overlap paths reinforced by agent:')
+                        for p in overlap_paths[:10]:
+                            logger.info(f'      → {p}')
+                    agent_rows = await _hydrate_paths_to_rows(
+                        db,
+                        path_selections=agent_paths,
+                        user_id=user_id,
+                        namespace=namespace,
+                    )
+                    logger.info(f'    Hydrated {len(agent_rows)} rows from {len(selected_paths)} agent-selected paths')
+                    router_used = 'discovery+agent'
+                    elapsed_agent = round((time.monotonic() - t_agent) * 1000)
+                    logger.info(f'  ✅ Agent navigate: {len(agent_paths)} paths ({len(new_paths)} new) in {elapsed_agent}ms')
+                else:
+                    elapsed_agent = round((time.monotonic() - t_agent) * 1000)
+                    logger.info(f'  ⚠️  Agent returned 0 paths in {elapsed_agent}ms, falling back to lexical graph')
+                    agent_rows = await list_graph_routed_chunks(
+                        db, user_id=user_id, namespace=namespace, query=query,
+                        top_k=top_k, exclude_document_ids=exclude_document_ids,
+                        exclude_sections=exclude_sections,
+                    )
+                    if agent_rows:
+                        logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
+            except Exception as exc:
+                logger.error(f'  ❌ Agent navigate failed: {exc}, falling back to lexical')
                 agent_rows = await list_graph_routed_chunks(
                     db, user_id=user_id, namespace=namespace, query=query,
                     top_k=top_k, exclude_document_ids=exclude_document_ids,
@@ -1119,76 +1156,67 @@ async def run_retrieval_query(
                 )
                 if agent_rows:
                     logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
-        except Exception as exc:
-            logger.error(f'  ❌ Agent navigate failed: {exc}, falling back to lexical')
-            agent_rows = await list_graph_routed_chunks(
-                db, user_id=user_id, namespace=namespace, query=query,
-                top_k=top_k, exclude_document_ids=exclude_document_ids,
-                exclude_sections=exclude_sections,
-            )
-            if agent_rows:
-                logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
-    else:
-        logger.info(f'  ⚠️  No LLM configured (DS_KEY missing?), using lexical graph routing')
-        try:
-            agent_rows = await list_graph_routed_chunks(
-                db, user_id=user_id, namespace=namespace, query=query,
-                top_k=top_k, exclude_document_ids=exclude_document_ids,
-                exclude_sections=exclude_sections,
-            )
-            if agent_rows:
-                logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
-        except Exception as exc:
-            logger.error(f'  ❌ Graph routing failed (ignored): {exc}')
-            agent_rows = []
+        else:
+            logger.info(f'  ⚠️  No LLM configured (DS_KEY missing?), using lexical graph routing')
+            try:
+                agent_rows = await list_graph_routed_chunks(
+                    db, user_id=user_id, namespace=namespace, query=query,
+                    top_k=top_k, exclude_document_ids=exclude_document_ids,
+                    exclude_sections=exclude_sections,
+                )
+                if agent_rows:
+                    logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
+            except Exception as exc:
+                logger.error(f'  ❌ Graph routing failed (ignored): {exc}')
+                agent_rows = []
 
-    if agent_rows and not agent_paths:
-        _normalize_row_scores(
-            agent_rows,
-            source_field='score',
-            target_field='agent_score',
-            default=0.5,
-        )
-
-    combined_rows = [*fused_rows, *agent_rows]
-    if combined_rows:
-        try:
-            chunk_importance_scores = await _load_chunk_importance_scores(
-                db,
-                user_id=user_id,
-                namespace=namespace,
-                rows=combined_rows,
-            )
-        except Exception as exc:
-            logger.warning(f'Failed to load chunk importance scores, continuing without importance: {exc}')
-            chunk_importance_scores = {}
-        for row in combined_rows:
-            row['importance_raw_score'] = float(chunk_importance_scores.get(str(row.get('chunk_id') or ''), 0.0) or 0.0)
-        positive_importance = [row['importance_raw_score'] for row in combined_rows if row['importance_raw_score'] > 0.0]
-        if positive_importance:
+        if agent_rows and not agent_paths:
             _normalize_row_scores(
-                combined_rows,
-                source_field='importance_raw_score',
-                target_field='importance_norm_score',
+                agent_rows,
+                source_field='score',
+                target_field='agent_score',
                 default=0.5,
             )
-        else:
-            for row in combined_rows:
-                row['importance_norm_score'] = 0.0
 
-    ranked_rows = _rank_candidates_by_path(fused_rows, agent_rows, top_k)
-    if ranked_rows:
-        logger.info(f'\n  🧮 Unified candidate ranking: {len(ranked_rows)} rows')
-        for i, row in enumerate(ranked_rows[:10]):
-            logger.info(
-                '    '
-                f'[{i}] evidence={row.get("evidence_score", 0.0):.4f} '
-                f'dual_hit={row.get("dual_hit_flag", 0)} '
-                f'importance={row.get("importance_norm_score", 0.0):.4f} '
-                f'discovery={row.get("discovery_score", 0.0):.4f} '
-                f'agent={row.get("agent_score", 0.0):.4f} '
-                f'path={_get_row_path(row)}'
-            )
+        combined_rows = [*fused_rows, *agent_rows]
+        if combined_rows:
+            try:
+                chunk_importance_scores = await _load_chunk_importance_scores(
+                    db,
+                    user_id=user_id,
+                    namespace=namespace,
+                    rows=combined_rows,
+                )
+            except Exception as exc:
+                logger.warning(f'Failed to load chunk importance scores, continuing without importance: {exc}')
+                chunk_importance_scores = {}
+            for row in combined_rows:
+                row['importance_raw_score'] = float(chunk_importance_scores.get(str(row.get('chunk_id') or ''), 0.0) or 0.0)
+            positive_importance = [row['importance_raw_score'] for row in combined_rows if row['importance_raw_score'] > 0.0]
+            if positive_importance:
+                _normalize_row_scores(
+                    combined_rows,
+                    source_field='importance_raw_score',
+                    target_field='importance_norm_score',
+                    default=0.5,
+                )
+            else:
+                for row in combined_rows:
+                    row['importance_norm_score'] = 0.0
+
+        ranked_rows = _rank_candidates_by_path(fused_rows, agent_rows, top_k)
+        if ranked_rows:
+            logger.info(f'\n  🧮 Unified candidate ranking: {len(ranked_rows)} rows')
+            for i, row in enumerate(ranked_rows[:10]):
+                logger.info(
+                    '    '
+                    f'[{i}] evidence={row.get("evidence_score", 0.0):.4f} '
+                    f'dual_hit={row.get("dual_hit_flag", 0)} '
+                    f'importance={row.get("importance_norm_score", 0.0):.4f} '
+                    f'discovery={row.get("discovery_score", 0.0):.4f} '
+                    f'agent={row.get("agent_score", 0.0):.4f} '
+                    f'path={_get_row_path(row)}'
+                )
 
     assembled_rows = await assemble_retrieval_results(
         db=db,

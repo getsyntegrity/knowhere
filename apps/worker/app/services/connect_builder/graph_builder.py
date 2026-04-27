@@ -48,7 +48,6 @@ from app.services.connect_builder.builder import (
 def _build_tree_from_paths(paths: List[str]) -> Dict[str, Any]:
     """
     Rebuild hierarchical tree from chunk path list.
-    Replicates ZipResultService._restore_graph_by_paths logic.
 
     Args:
         paths: List of chunk paths, e.g. ["Default_Root/报告.pdf/第1章/1.1", ...]
@@ -595,6 +594,7 @@ def build_knowledge_graph(
     kb_id: str = "",
     chunk_stats: Optional[Dict[str, Dict[str, Any]]] = None,
     file_summaries: Optional[Dict[str, str]] = None,
+    file_nav_sections: Optional[Dict[str, list]] = None,
 ) -> Dict[str, Any]:
     """Build a file-level knowledge graph (v2.0)."""
     if chunk_stats is None:
@@ -630,6 +630,7 @@ def build_knowledge_graph(
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
             "top_summary": (file_summaries or {}).get(fk, ""),
+            "nav_sections": (file_nav_sections or {}).get(fk, []),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -665,6 +666,7 @@ def update_knowledge_graph(
     chunk_stats: Optional[Dict[str, Dict[str, Any]]] = None,
     file_summaries: Optional[Dict[str, str]] = None,
     new_connections: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    file_nav_sections: Optional[Dict[str, list]] = None,
 ) -> Dict[str, Any]:
     """Incrementally update a file-level knowledge graph with new chunks."""
     if chunk_stats is None:
@@ -741,6 +743,7 @@ def update_knowledge_graph(
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
             "top_summary": (file_summaries or {}).get(fk, "") or existing_files.get(fk, {}).get("top_summary", ""),
+            "nav_sections": (file_nav_sections or {}).get(fk, []) or existing_files.get(fk, {}).get("nav_sections", []),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": created_at,
         }
@@ -1083,7 +1086,67 @@ def _auto_register_mcp() -> None:
         logger.debug("No Agent products detected for MCP auto-registration")
 
 
+# ─── doc_nav section extraction for GraphNode persistence ────────────────────
+
+
+def _extract_nav_sections_from_kb(
+    kb_dir: str,
+    source_file: Optional[str] = None,
+) -> Dict[str, list]:
+    """Extract top-level nav sections from doc_nav.json for GraphNode persistence.
+
+    Returns a dict mapping file_key → list of section summaries.
+    Each section summary has: title, path, summary (truncated), chunk_count, children_count.
+
+    If source_file is given, only processes that file. Otherwise processes all files.
+    """
+    result: Dict[str, list] = {}
+
+    if source_file:
+        file_dirs = [os.path.join(kb_dir, source_file)]
+    else:
+        file_dirs = [
+            os.path.join(kb_dir, d)
+            for d in os.listdir(kb_dir)
+            if os.path.isdir(os.path.join(kb_dir, d))
+        ]
+
+    for file_dir in file_dirs:
+        nav_path = os.path.join(file_dir, "doc_nav.json")
+        if not os.path.exists(nav_path):
+            continue
+
+        file_key = os.path.basename(file_dir)
+        try:
+            with open(nav_path, "r", encoding="utf-8") as f:
+                doc_nav = json.load(f)
+
+            sections = []
+            for section in doc_nav.get("sections", []):
+                title = section.get("title", "")
+                # Skip utility sections
+                if title.lower() in ("root", "__root__"):
+                    continue
+                sections.append({
+                    "title": title,
+                    "path": section.get("path", ""),
+                    "summary": (section.get("summary") or "")[:200],
+                    "chunk_count": section.get("chunk_count", 0),
+                    "children_count": len(section.get("children", [])),
+                })
+
+            if sections:
+                result[file_key] = sections
+                logger.info(f"  nav_sections extracted: {file_key} → {len(sections)} sections")
+
+        except Exception as e:
+            logger.warning(f"  nav_sections extraction failed for {file_key}: {e}")
+
+    return result
+
+
 # ─── One-Stop API ─────────────────────────────────────────────────────────────
+
 
 def build_and_deploy(
     chunks: List[Dict[str, Any]],
@@ -1185,16 +1248,23 @@ def build_and_deploy(
             chunk["_source_file"] = source_file
 
     # ── Generate hierarchical summaries ──
-    from app.services.connect_builder.summary_builder import enrich_hierarchy_summaries
+    from app.services.connect_builder.summary_builder import enrich_doc_nav_summaries
     try:
-        file_summaries = enrich_hierarchy_summaries(
+        file_summaries = enrich_doc_nav_summaries(
             kb_dir=kb_dir,
             source_file=source_file,
             use_llm=summary_use_llm,
         )
     except Exception as e:
-        logger.warning(f"Hierarchical summary generation failed: {e}")
+        logger.warning(f"doc_nav summary enrichment failed: {e}")
         file_summaries = {}
+
+    # ── Extract nav_sections from doc_nav.json for GraphNode persistence ──
+    file_nav_sections: Dict[str, list] = {}
+    try:
+        file_nav_sections = _extract_nav_sections_from_kb(kb_dir, source_file)
+    except Exception as e:
+        logger.warning(f"doc_nav nav_sections extraction failed: {e}")
 
     # Load chunk_stats for importance calculation
     stats = load_chunk_stats(kb_id)
@@ -1223,16 +1293,16 @@ def build_and_deploy(
                 ]
                 all_chunks = all_on_disk + extra
             # Full rebuild: generate summaries for ALL files, not just source_file
-            from app.services.connect_builder.summary_builder import enrich_hierarchy_summaries as _enrich
+            from app.services.connect_builder.summary_builder import enrich_doc_nav_summaries as _enrich_nav
             try:
-                all_file_summaries = _enrich(
+                all_nav_summaries = _enrich_nav(
                     kb_dir=kb_dir,
-                    source_file=None,  # process all files
+                    source_file=None,
                     use_llm=summary_use_llm,
                 )
-                file_summaries.update(all_file_summaries)
+                file_summaries.update(all_nav_summaries)
             except Exception as e:
-                logger.warning(f"Full rebuild enrich_hierarchy_summaries failed: {e}")
+                logger.warning(f"Full rebuild enrich_doc_nav_summaries failed: {e}")
             logger.info(
                 f"📊 rebuild Knowledge Graph "
                 f"(rebuild_all=True, {len(all_chunks)} chunks from KB dir) ..."
@@ -1251,6 +1321,7 @@ def build_and_deploy(
             kb_id=kb_id,
             chunk_stats=stats,
             file_summaries=file_summaries,
+            file_nav_sections=file_nav_sections,
         )
     else:
         # ── Incremental update ──
@@ -1286,6 +1357,7 @@ def build_and_deploy(
                 chunk_stats=stats,
                 file_summaries=file_summaries,
                 new_connections=related_connections,
+                file_nav_sections=file_nav_sections,
             )
 
     # Save graph
