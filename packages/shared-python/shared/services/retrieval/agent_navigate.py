@@ -45,7 +45,8 @@ their navigation summaries, chunk counts, and media counts.
 
 User query: {query}
 
-Based on the query, select the most relevant documents (return at most {max_files}).
+Based on the query, select all documents that may contain relevant information.
+Only skip documents that are clearly irrelevant to the query.
 Return ONLY a JSON array of document IDs, e.g.: ["doc_abc123", "doc_def456"]
 Do not include any explanation.
 """
@@ -521,7 +522,7 @@ async def agent_navigate(
     # ── Step 1: LLM selects files ──
     logger.info('\n  📄 STEP 1: LLM File Selection')
     file_prompt = _FILE_SELECT_PROMPT.format(
-        overview=overview_text, query=query, max_files=max_files,
+        overview=overview_text, query=query,
     )
     t1 = time.monotonic()
     try:
@@ -691,3 +692,215 @@ async def agent_navigate(
         logger.info(f'    [{i+1}] {item["path"]}  confidence={item["confidence"]:.4f}')
     logger.info(f'{"=" * 70}')
     return all_selected_paths
+
+
+# ------------------------------------------------------------------
+# doc_nav.json hierarchical navigation helpers
+# ------------------------------------------------------------------
+
+CHUNK_COUNT_THRESHOLD = 30
+
+_NAV_SECTION_PROMPT = """\
+You are a document section navigator.
+
+Document: "{doc_name}" (id: {doc_id})
+
+Below are the sections at the current navigation level.
+Each section shows its title, a content summary, and how many chunks it contains.
+
+=== Sections ===
+{sections_overview}
+=== End Sections ===
+
+User query: {query}
+
+For each relevant section, decide:
+- "drill": explore its sub-sections for more detail (use when chunk_count is large and the section has children)
+- "select": accept this section as relevant (use when chunk_count is small or the content clearly matches)
+
+Return a JSON array:
+[{{"path": "section/path", "action": "drill"|"select"}}, ...]
+Do not include any explanation.
+"""
+
+
+async def _load_nav_sections_from_graph(
+    db: AsyncSession,
+    document_id: str,
+) -> dict | None:
+    """Load nav_sections from GraphNode.properties for a document.
+
+    Returns dict with 'sections' list and 'total_chunks' count,
+    or None if not available.
+    """
+    stmt = (
+        select(GraphNode.properties)
+        .where(GraphNode.owner_document_id == document_id)
+        .where(GraphNode.node_kind == 'document')
+    )
+    result = await db.execute(stmt)
+    props = result.scalar_one_or_none()
+    if not props or not isinstance(props, dict):
+        return None
+    nav_sections = props.get('nav_sections')
+    if not nav_sections:
+        return None
+    return {
+        'sections': nav_sections,
+        'total_chunks': props.get('chunks_count', 0),
+    }
+
+
+async def _build_sub_sections_from_db(
+    db: AsyncSession,
+    *,
+    document_id: str,
+    job_result_id: str,
+    parent_path: str,
+) -> list[dict]:
+    """Build child section view from DocumentSection table.
+
+    Finds child sections of the given parent_path and computes chunk
+    counts via DocumentChunk aggregation.  Runs at query time in memory
+    — no files created.
+    """
+    # Find the parent section by path
+    parent_stmt = (
+        select(DocumentSection.section_id)
+        .where(DocumentSection.document_id == document_id)
+        .where(DocumentSection.job_result_id == job_result_id)
+        .where(DocumentSection.section_path == parent_path)
+    )
+    parent_result = await db.execute(parent_stmt)
+    parent_section_id = parent_result.scalar_one_or_none()
+    if parent_section_id is None:
+        return []
+
+    # Get child sections
+    children_stmt = (
+        select(
+            DocumentSection.section_id,
+            DocumentSection.section_title,
+            DocumentSection.section_path,
+            DocumentSection.section_level,
+            DocumentSection.summary,
+        )
+        .where(DocumentSection.document_id == document_id)
+        .where(DocumentSection.job_result_id == job_result_id)
+        .where(DocumentSection.parent_section_id == parent_section_id)
+        .order_by(DocumentSection.sort_order)
+    )
+    children_result = await db.execute(children_stmt)
+    children = children_result.all()
+
+    if not children:
+        return []
+
+    # Get chunk counts per section
+    section_ids = [row[0] for row in children]
+    chunk_count_stmt = (
+        select(
+            DocumentChunk.section_id,
+            func.count(DocumentChunk.id).label('count'),
+        )
+        .where(DocumentChunk.document_id == document_id)
+        .where(DocumentChunk.job_result_id == job_result_id)
+        .where(DocumentChunk.section_id.in_(section_ids))
+        .group_by(DocumentChunk.section_id)
+    )
+    chunk_count_result = await db.execute(chunk_count_stmt)
+    chunk_counts = {row[0]: row[1] for row in chunk_count_result.all()}
+
+    # Count grandchildren for each child
+    grandchild_stmt = (
+        select(
+            DocumentSection.parent_section_id,
+            func.count(DocumentSection.section_id).label('count'),
+        )
+        .where(DocumentSection.document_id == document_id)
+        .where(DocumentSection.job_result_id == job_result_id)
+        .where(DocumentSection.parent_section_id.in_(section_ids))
+        .group_by(DocumentSection.parent_section_id)
+    )
+    grandchild_result = await db.execute(grandchild_stmt)
+    grandchild_counts = {row[0]: row[1] for row in grandchild_result.all()}
+
+    result = []
+    for section_id, title, path, level, summary in children:
+        result.append({
+            'title': title or '',
+            'path': path or '',
+            'summary': summary or '',
+            'chunk_count': chunk_counts.get(section_id, 0),
+            'children_count': grandchild_counts.get(section_id, 0),
+            'level': level or 1,
+        })
+    return result
+
+
+async def _collect_leaf_paths(
+    db: AsyncSession,
+    *,
+    document_id: str,
+    job_result_id: str,
+    section_path: str,
+) -> list[dict[str, Any]]:
+    """Collect all chunk paths under a given section path.
+
+    Returns list of {"path": str, "confidence": float}.
+    Finds chunks whose section_path starts with the given prefix.
+    """
+    stmt = (
+        select(DocumentSection.section_path)
+        .join(DocumentChunk, DocumentChunk.section_id == DocumentSection.section_id)
+        .where(DocumentChunk.document_id == document_id)
+        .where(DocumentChunk.job_result_id == job_result_id)
+        .where(DocumentSection.section_path.like(f'{section_path}%'))
+        .order_by(DocumentChunk.sort_order)
+    )
+    result = await db.execute(stmt)
+    paths = []
+    seen: set[str] = set()
+    for (path,) in result.all():
+        if path and path not in seen:
+            seen.add(path)
+            paths.append({
+                'path': path,
+                'confidence': 0.8,
+            })
+    return paths
+
+
+def _format_sections_for_llm(sections: list[dict], max_chars: int = 4000) -> str:
+    """Format section entries for LLM prompt."""
+    if not sections:
+        return '(no sections available)'
+    lines: list[str] = []
+    for s in sections:
+        line = f'- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+        if s.get('children_count', 0) > 0:
+            line += f'  sub_sections={s["children_count"]}'
+        summary = s.get('summary', '')
+        if summary:
+            line += f'\n  summary: {summary[:200]}'
+        if len('\n'.join(lines + [line])) > max_chars:
+            break
+        lines.append(line)
+    return '\n'.join(lines) if lines else '(no sections available)'
+
+
+def _parse_section_selections(text: str) -> list[dict[str, str]]:
+    """Parse section selections from LLM output.
+
+    Expects JSON array of {path, action} objects.
+    """
+    payload = _extract_json_array_payload(text)
+    selections: list[dict[str, str]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get('path') or '').strip()
+        action = str(item.get('action') or 'select').strip().lower()
+        if path:
+            selections.append({'path': path, 'action': action})
+    return selections

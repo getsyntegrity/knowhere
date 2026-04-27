@@ -359,3 +359,59 @@ class RetrievalHitStat(Base):
         Index("idx_retrieval_hit_stats_document", "document_id"),
         Index("idx_retrieval_hit_stats_chunk", "chunk_id"),
     )
+
+
+class RetrievalRun(Base):
+    """One row per agentic retrieval query.  Append-only analytics."""
+
+    __tablename__ = 'retrieval_runs'
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'aret_{uuid4().hex[:12]}')
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    namespace: Mapped[str] = mapped_column(String(255), nullable=False, default='default')
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    query_hash: Mapped[str] = mapped_column(String(32), nullable=False, default='')
+    top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    data_type: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    filters: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    policy_name: Mapped[str] = mapped_column(String(64), nullable=False, default='rule_based_v1')
+    agentic_enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    cache_hit: Mapped[bool] = mapped_column(nullable=False, default=False)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    final_doc_ids: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    result_provenance: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('idx_retrieval_runs_user_namespace', 'user_id', 'namespace'),
+        Index('idx_retrieval_runs_created', 'created_at'),
+        Index('idx_retrieval_runs_query_hash', 'query_hash'),
+    )
+
+
+class RetrievalStep(Base):
+    """One row per agent step within a retrieval run.  Append-only analytics."""
+
+    __tablename__ = 'retrieval_steps'
+
+    step_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f'arst_{uuid4().hex[:12]}')
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    action_input: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    observation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    selected_doc_ids: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    selected_paths: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    model_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_retrieval_steps_run', 'run_id', 'step_index'),
+    )

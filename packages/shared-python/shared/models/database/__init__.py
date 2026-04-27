@@ -3,6 +3,10 @@ Database Models Package
 Ensure all models are correctly imported to avoid circular import issues
 """
 
+# Import models in dependency order
+# 1. First import base models (no foreign key dependencies)
+from .user import User
+
 # 2. Then import models that depend on User
 from .api_key import APIKey
 from .credits_transaction import CreditsTransaction
@@ -13,6 +17,8 @@ from .document import (
     GraphEdge,
     GraphNode,
     RetrievalHitStat,
+    RetrievalRun,
+    RetrievalStep,
 )
 from .guest_device import GuestDevice
 from .job import Job
@@ -28,10 +34,6 @@ from .system_limit import SystemLimit
 
 # 4. Rate limit configuration models
 from .tier_limit import TierLimit
-
-# Import models in dependency order
-# 1. First import base models (no foreign key dependencies)
-from .user import User
 from .user_balance import UserBalance
 from .webhook import WebhookEvent, WebhookEventStatus
 from .webhook_log import WebhookLog
@@ -58,6 +60,8 @@ __all__ = [
     "GraphNode",
     "GraphEdge",
     "RetrievalHitStat",
+    "RetrievalRun",
+    "RetrievalStep",
     "StripePriceConfig",
     "PaymentRecord",
     "JobStateAuditLog",

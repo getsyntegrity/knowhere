@@ -14,6 +14,7 @@ from loguru import logger
 from PIL import Image
 
 from shared.utils.chunk_refs import extract_chunk_refs
+from shared.utils.text_utils import truncate_content_preview
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -52,7 +53,7 @@ class ZipResultService:
             source_file_name: Source file name
             data_id: User-defined ID
             job_metadata: Job metadata
-            parsed_df: Optional, parsed DataFrame for building hierarchy.json (kb.csv / hierarchy_view.html are not added to the ZIP)
+            parsed_df: Optional, parsed DataFrame (legacy, unused after doc_nav.json migration)
             temp_dir: Optional directory for the generated ZIP file
 
         Returns:
@@ -92,24 +93,6 @@ class ZipResultService:
                 )
                 zip_file.writestr("chunks.json", chunks_json.encode("utf-8"))
 
-                # 1b. Generate chunks_slim.json for retrieval-time chunk routing.
-                slim_chunks = []
-                for fc in formatted_chunks:
-                    summary = " ".join(
-                        str((fc.get("metadata") or {}).get("summary", "") or "").split()
-                    )
-                    content = " ".join(str(fc.get("content", "") or "").split())
-                    slim = {
-                        "type": fc.get("type", "text"),
-                        "path": fc.get("path", ""),
-                        "content": summary or content[:300],
-                    }
-                    slim_chunks.append(slim)
-                slim_json = json.dumps(
-                    {"chunks": slim_chunks}, ensure_ascii=False, indent=2
-                )
-                zip_file.writestr("chunks_slim.json", slim_json.encode("utf-8"))
-
                 # 2. Try to add full.md (if exists)
                 full_md_path = os.path.join(add_dir, "full.md")
                 if os.path.exists(full_md_path):
@@ -143,32 +126,14 @@ class ZipResultService:
                     else:
                         logger.warning(f"Table file not found: {source_path}")
 
-                # 5. Generate hierarchy.json (if parsed_df is provided). kb.csv and hierarchy_view.html are omitted from the ZIP.
-                if parsed_df is not None and len(parsed_df) > 0:
-                    # 5a. Generate hierarchy.json from parsed_df path column
-                    if "path" in parsed_df.columns:
-                        path_list = parsed_df["path"].dropna().tolist()
-                        hierarchy_dict = self._restore_graph_by_paths(path_list)
-                        hierarchy_json = json.dumps(
-                            hierarchy_dict, ensure_ascii=False, indent=4
-                        )
-                        zip_file.writestr(
-                            "hierarchy.json", hierarchy_json.encode("utf-8")
-                        )
-                        logger.info("Added hierarchy.json")
-
-                        # 5b. Generate hierarchy_slim.json — clean structure tree, no _* metadata keys
-                        try:
-                            tree_dict = self._build_tree_json(hierarchy_dict)
-                            tree_json = json.dumps(
-                                tree_dict, ensure_ascii=False, indent=2
-                            )
-                            zip_file.writestr(
-                                "hierarchy_slim.json", tree_json.encode("utf-8")
-                            )
-                            logger.info("Added hierarchy_slim.json")
-                        except Exception as e:
-                            logger.warning(f"generate hierarchy_slim.json fail {e}")
+                # 5. Generate doc_nav.json — unified navigation file
+                try:
+                    doc_nav = self._build_doc_nav(formatted_chunks, source_file_name)
+                    doc_nav_json = json.dumps(doc_nav, ensure_ascii=False, indent=2)
+                    zip_file.writestr("doc_nav.json", doc_nav_json.encode("utf-8"))
+                    logger.info("Added doc_nav.json")
+                except Exception as e:
+                    logger.warning(f"generate doc_nav.json fail {e}")
 
                 # 6. Generate manifest.json (checksum not included, stored in database)
                 manifest = self._generate_manifest(
@@ -845,56 +810,167 @@ class ZipResultService:
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest().lower()
 
-    def _restore_graph_by_paths(self, paths: List[str]) -> Dict[str, Any]:
+    def _build_doc_nav(
+        self,
+        formatted_chunks: List[Dict[str, Any]],
+        source_file_name: str,
+    ) -> Dict[str, Any]:
+        """Build doc_nav.json — unified navigation file.
+
+        Structured file serving both human demo and LLM navigation.
+
+        The output contains:
+        - ``sections``: tree of text sections with summaries and chunk counts.
+        - ``resources``: flat lists of image/table chunks with summaries.
+        - ``stats``: chunk counts by type.
+
+        Each leaf section carries a ``summary`` derived from:
+          1. chunk.metadata.summary (LLM-generated, highest quality)
+          2. chunk.content[:300] (fallback truncation)
+
+        Non-leaf section summaries are left empty at this stage and are
+        populated later by ``summary_builder.enrich_doc_nav_summaries``.
         """
-        Rebuild hierarchical structure from path list
+        # ── Separate text chunks from resource chunks ──
+        text_chunks: List[Dict[str, Any]] = []
+        image_resources: List[Dict[str, Any]] = []
+        table_resources: List[Dict[str, Any]] = []
 
-        Args:
-            paths: Path list, e.g. ["dir/file.pdf/chapter1/section1", "dir/file.pdf/chapter2"]
+        stats = {"total_chunks": 0, "text_chunks": 0, "image_chunks": 0, "table_chunks": 0, "max_depth": 0}
 
-        Returns:
-            Nested dict structure, e.g. {"dir": {"file.pdf": {"chapter1": {"section1": {}}, "chapter2": {}}}}
+        for fc in formatted_chunks:
+            ctype = fc.get("type", "text")
+            path = fc.get("path", "")
+            meta = fc.get("metadata") or {}
+            summary_raw = (meta.get("summary") or "").strip()
+            content_raw = (fc.get("content") or "").strip()
+            # Normalize whitespace
+            summary = " ".join(summary_raw.split()) if summary_raw else ""
+            content_preview = truncate_content_preview(content_raw) if content_raw else ""
+
+            stats["total_chunks"] += 1
+
+            if ctype == "image":
+                stats["image_chunks"] += 1
+                image_resources.append({
+                    "path": path,
+                    "summary": summary or content_preview,
+                })
+            elif ctype == "table":
+                stats["table_chunks"] += 1
+                table_resources.append({
+                    "path": path,
+                    "summary": summary or content_preview,
+                })
+            else:
+                stats["text_chunks"] += 1
+                text_chunks.append({
+                    "path": path,
+                    "summary": summary or content_preview,
+                })
+
+        # ── Build section tree from text chunk paths ──
+        # Each text chunk path looks like: "kb_root/filename.pdf/Section/Subsection"
+        # We strip the kb_root and filename prefix to get relative section paths.
+        sections = self._build_section_tree(text_chunks)
+
+        # Compute max depth
+        def _max_depth(nodes: list, d: int = 1) -> int:
+            m = d if nodes else 0
+            for n in nodes:
+                m = max(m, _max_depth(n.get("children", []), d + 1))
+            return m
+
+        stats["max_depth"] = _max_depth(sections)
+
+        return {
+            "version": "1.0",
+            "file_name": source_file_name or "",
+            "stats": stats,
+            "sections": sections,
+            "resources": {
+                "images": image_resources,
+                "tables": table_resources,
+            },
+        }
+
+    def _build_section_tree(
+        self,
+        text_chunks: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Build a tree of sections from flat text chunk paths.
+
+        Each text chunk has a ``path`` like ``"kb/file.pdf/Sec1/Sub1"``.
+        We extract section parts (after kb_root + filename) and build a
+        tree using ``children`` arrays.
+
+        Returns a list of top-level section nodes.
         """
-        root_dict: Dict[str, Any] = {}
+        # Internal tree node: {title, summary, chunk_count, children: {title: node}}
+        root_children: Dict[str, dict] = {}  # ordered dict of top-level titles
 
-        # Support multiple separators
-        for path in paths:
-            if not path:
+        for chunk in text_chunks:
+            path = chunk.get("path", "")
+            parts = [p.strip() for p in path.split("/") if p.strip()]
+            # Skip kb_root + filename → section parts start at index 2
+            section_parts = parts[2:] if len(parts) > 2 else []
+
+            if not section_parts:
+                # Root-level chunk (no section hierarchy)
+                key = "__root__"
+                if key not in root_children:
+                    root_children[key] = {
+                        "title": "Root",
+                        "path": "/".join(parts[:2]) if len(parts) >= 2 else path,
+                        "summary": chunk.get("summary", ""),
+                        "chunk_count": 0,
+                        "_children_map": {},
+                    }
+                root_children[key]["chunk_count"] += 1
+                # Use the first chunk's summary for root
+                if not root_children[key]["summary"]:
+                    root_children[key]["summary"] = chunk.get("summary", "")
                 continue
 
-            # Only normalize '-->' legacy separator; do NOT replace '\' since
-            # heading text may contain LaTeX backslashes (e.g. \mathrm, \mathbf)
-            normalized_path = path.replace("-->", "/")
-            nodes = [n.strip() for n in normalized_path.split("/") if n.strip()]
+            # Walk the tree, creating nodes as needed
+            current_level = root_children
+            full_section_path_parts = parts[:2]  # start with kb_root/filename
+            for i, part in enumerate(section_parts):
+                full_section_path_parts.append(part)
+                if part not in current_level:
+                    current_level[part] = {
+                        "title": part,
+                        "path": "/".join(full_section_path_parts),
+                        "summary": "",
+                        "chunk_count": 0,
+                        "_children_map": {},
+                    }
+                node = current_level[part]
+                if i == len(section_parts) - 1:
+                    # Leaf — this is the chunk's actual section
+                    node["chunk_count"] += 1
+                    if not node["summary"]:
+                        node["summary"] = chunk.get("summary", "")
+                current_level = node["_children_map"]
 
-            current_dict = root_dict
-            for node in nodes:
-                if node not in current_dict:
-                    current_dict[node] = {}
-                current_dict = current_dict[node]
+        # Convert internal tree to output format
+        def _to_output(children_map: Dict[str, dict], level: int = 1) -> List[Dict[str, Any]]:
+            result = []
+            for node in children_map.values():
+                children = _to_output(node["_children_map"], level + 1)
+                # Compute total chunk_count including descendants
+                total_chunks = node["chunk_count"] + sum(
+                    c.get("chunk_count", 0) for c in children
+                )
+                out = {
+                    "title": node["title"],
+                    "path": node["path"],
+                    "level": level,
+                    "summary": node["summary"],
+                    "chunk_count": total_chunks,
+                    "children": children,
+                }
+                result.append(out)
+            return result
 
-        return root_dict
-
-    def _build_tree_json(self, node: Any) -> Any:
-        """
-        Build a clean hierarchy tree JSON by recursively stripping all keys that
-        start with '_' (e.g. _summary, _chunks).  Leaf nodes that contain only
-        metadata keys become an empty dict {}.
-
-        Args:
-            node: A nested dict produced by _restore_graph_by_paths (or
-                  hierarchy.json loaded from disk).
-
-        Returns:
-            A new nested dict with the same section-heading structure but
-            without any _* metadata entries — suitable for human debugging.
-        """
-        if not isinstance(node, dict):
-            return {}
-        result: Dict[str, Any] = {}
-        for key, value in node.items():
-            if str(key).startswith("_"):
-                # Skip all internal metadata keys (_summary, _chunks, etc.)
-                continue
-            result[key] = self._build_tree_json(value)
-        return result
+        return _to_output(root_children)
