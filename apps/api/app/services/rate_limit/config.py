@@ -22,12 +22,12 @@ CONCURRENCY_RETRY_AFTER_SECONDS: int = 30
 REDIS_KEY_PREFIX: str = "knowhere-api:"
 DEFAULT_SYSTEM_PERIOD: str = "minute"
 
-_RATE_LIMIT_BYPASSED_ENV: str = "RATE_LIMIT_BYPASSED"
+_RATE_LIMIT_ENABLED_ENV: str = "RATE_LIMIT_ENABLED"
 
 
-def _is_rate_limit_bypassed() -> bool:
-    """Check whether rate limiting is globally bypassed via env var."""
-    return os.getenv(_RATE_LIMIT_BYPASSED_ENV, "false").lower() == "true"
+def _is_rate_limit_enabled() -> bool:
+    """Check whether rate limiting is globally enabled via env var."""
+    return os.getenv(_RATE_LIMIT_ENABLED_ENV, "true").lower() == "true"
 
 
 class RateLimitConfig:
@@ -51,7 +51,7 @@ class RateLimitConfig:
 
         self._parse_rate = parse_rate
         self._key_prefix: str = key_prefix
-        self._is_bypassed: bool = _is_rate_limit_bypassed()
+        self._is_enabled: bool = _is_rate_limit_enabled()
 
         # Limits library instances
         async_redis_url = redis_url
@@ -70,7 +70,7 @@ class RateLimitConfig:
 
         logger.info(
             "RateLimitConfig initialised "
-            f"(bypassed={self._is_bypassed}, prefix={self._key_prefix})"
+            f"(enabled={self._is_enabled}, prefix={self._key_prefix})"
         )
 
     # ------------------------------------------------------------------
@@ -101,8 +101,8 @@ class RateLimitConfig:
     # ------------------------------------------------------------------
 
     @property
-    def is_bypassed(self) -> bool:
-        return self._is_bypassed
+    def is_enabled(self) -> bool:
+        return self._is_enabled
 
     @property
     def key_prefix(self) -> str:

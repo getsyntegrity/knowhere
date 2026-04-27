@@ -32,7 +32,6 @@ from app.services.workload.page_estimator import PageEstimator
 from loguru import logger
 from sqlalchemy import select
 
-from shared.core.billing import BillingCalculator
 from shared.core.celery_app import get_celery_app
 from shared.core.config import settings
 from shared.core.database_sync import get_sync_db_context
@@ -51,7 +50,7 @@ from shared.models.database.job import Job
 
 # Domain services
 from shared.models.schemas.job_metadata import JobMetadataHelper
-from shared.services.billing.credits_sync_service import SyncCreditsService
+from shared.services.billing.work_billing_service import WorkBillingService
 from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
 from shared.services.redis.distributed_lock import RedisJobLock
 
@@ -467,10 +466,6 @@ def _parse(job_id: str, user_id: str | None):
                 f"Workload estimation: job_id={job_id}, page_count={page_count}"
             )
 
-            billing_calculator = BillingCalculator()
-            credits_service = SyncCreditsService()
-            billing_amount = billing_calculator.calculate_page_cost(page_count)
-            billing_reason = billing_calculator.format_description(page_count, filename)
             processing_started_at = datetime.now(timezone.utc)
 
             if not job_user_id:
@@ -480,6 +475,10 @@ def _parse(job_id: str, user_id: str | None):
                     internal_message=f"Missing user_id in job info for job_id={job_id}",
                 )
 
+            billing_service = WorkBillingService()
+            billing_status = "skipped"
+            billing_amount_micro_dollars = 0
+            billing_credits = 0.0
             with get_sync_db_context() as db:
                 job_result = db.execute(
                     select(Job).where(Job.job_id == job_id).with_for_update()
@@ -488,21 +487,27 @@ def _parse(job_id: str, user_id: str | None):
 
                 if job and getattr(job, "billing_status", "") == "charged":
                     logger.info(f"Job already charged: {job_id}")
+                    billing_status = "charged"
+                    billing_amount_micro_dollars = int(job.credits_charged or 0)
+                    billing_credits = billing_amount_micro_dollars / 1_000_000
                 else:
                     try:
-                        credits_service.deduct_credits(
+                        billing_result = billing_service.charge_for_pages(
                             session=db,
                             user_id=job_user_id,
-                            amount=billing_amount.amount,
-                            reason=billing_reason,
+                            page_count=page_count,
+                            filename=filename,
                         )
                     except InsufficientCreditsException:
                         logger.error(
                             f"Billing failed: job_id={job_id}, user_id={job_user_id}"
                         )
+                        billing_amount = billing_service.estimate_page_charge(
+                            page_count=page_count
+                        )
                         if job:
                             job.page_count = page_count
-                            job.credits_charged = billing_amount.amount
+                            job.credits_charged = billing_amount.amount_micro_dollars
                             job.billing_status = "billing_failed"
                             db.commit()
 
@@ -510,26 +515,29 @@ def _parse(job_id: str, user_id: str | None):
                             user_message=(
                                 "Insufficient credits to process this document "
                                 f"({page_count} pages required, cost: "
-                                f"{billing_amount.to_credit()})."
+                                f"{billing_amount.credits})."
                             ),
-                            required_credits=billing_amount.to_credit(),
+                            required_credits=billing_amount.credits,
                             internal_message=(
                                 f"job_id={job_id}, user_id={job_user_id}, "
                                 f"page_count={page_count}"
                             ),
                         )
 
+                    billing_status = billing_result.billing_status
+                    billing_amount_micro_dollars = billing_result.amount_micro_dollars
+                    billing_credits = billing_result.credits
                     if job:
                         job.page_count = page_count
-                        job.credits_charged = billing_amount.amount
-                        job.billing_status = "charged"
+                        job.credits_charged = billing_amount_micro_dollars
+                        job.billing_status = billing_status
 
             # Store billing info in Redis
             metadata_updates = {
                 "page_count": page_count,
-                "billing_status": "charged",
-                "billing_amount_micro_dollars": billing_amount.amount,
-                "billing_credits": billing_amount.to_credit(),
+                "billing_status": billing_status,
+                "billing_amount_micro_dollars": billing_amount_micro_dollars,
+                "billing_credits": billing_credits,
                 "processing_started_at": processing_started_at.isoformat(),
             }
             metadata_service.update_metadata(job_id, metadata_updates)

@@ -47,6 +47,13 @@ class BaseConfig(BaseSettings):
     INTERNAL_DASHBOARD_ENDPOINT: str = Field(
         default="http://localhost:3000", description="Internal Dashboard endpoint"
     )
+    API_STANDALONE_MODE_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "API-only mode that creates a minimal Better Auth-compatible user table "
+            "before Alembic migrations when the dashboard is absent"
+        ),
+    )
 
     # Local path configuration.
     TMP_PATH: str = Field(..., description="Temporary-file path")

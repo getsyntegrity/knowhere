@@ -176,3 +176,60 @@ def test_should_allow_a_new_active_document_job_after_a_terminal_job(
         )
 
     assert int(result.scalar_one()) == 2
+
+
+def test_api_standalone_mode_should_create_auth_user_table_before_migrations(
+    standalone_alembic_engine: Engine,
+) -> None:
+    _upgrade_to_heads(engine=standalone_alembic_engine)
+
+    with standalone_alembic_engine.begin() as connection:
+        columns = set(
+            connection.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'user'
+                    """
+                )
+            )
+            .scalars()
+            .all()
+        )
+        email_unique_count = int(
+            connection.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM pg_constraint
+                    WHERE conrelid = '"user"'::regclass
+                      AND contype = 'u'
+                      AND conkey = ARRAY[
+                          (
+                              SELECT attnum::smallint
+                              FROM pg_attribute
+                              WHERE attrelid = '"user"'::regclass
+                                AND attname = 'email'
+                          )
+                      ]
+                    """
+                )
+            ).scalar_one()
+        )
+        insert_contract_user(
+            connection,
+            user_id=f"standalone-user-{uuid4().hex[:12]}",
+        )
+
+    assert {
+        "id",
+        "name",
+        "email",
+        "emailVerified",
+        "image",
+        "role",
+        "createdAt",
+        "updatedAt",
+    }.issubset(columns)
+    assert email_unique_count == 1

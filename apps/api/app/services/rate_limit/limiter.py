@@ -46,7 +46,7 @@ class RateLimiter:
         Raises RateLimitException if the per-endpoint system limit
         is exhausted for the resolved identifier.
         """
-        if self._config.is_bypassed or limit == -1:
+        if not self._config.is_enabled or limit == -1:
             return
 
         rate_item = self._config.parse_rate(f"{limit}/{period}")
@@ -115,7 +115,7 @@ class RateLimiter:
 
         Raises RateLimitException if the user's tier RPM is exhausted.
         """
-        if self._config.is_bypassed or rpm == -1:
+        if not self._config.is_enabled or rpm == -1:
             return
 
         rate_item = self._config.parse_rate(f"{rpm}/minute")
@@ -161,7 +161,7 @@ class RateLimiter:
         Raises RateLimitException if the user's daily request quota
         is exhausted.
         """
-        if self._config.is_bypassed or quota == -1:
+        if not self._config.is_enabled or quota == -1:
             return
 
         rate_item = self._config.parse_rate(f"{quota}/day")

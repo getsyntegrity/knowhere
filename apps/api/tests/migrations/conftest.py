@@ -92,7 +92,11 @@ def _drop_database(*, database_name: str, admin_database_url: str) -> None:
         connection.close()
 
 
-def _initialize_database(sync_database_url: str) -> None:
+def _initialize_database(
+    sync_database_url: str,
+    *,
+    create_user_table: bool,
+) -> None:
     connection = psycopg2.connect(sync_database_url)
     connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
 
@@ -100,15 +104,16 @@ def _initialize_database(sync_database_url: str) -> None:
         with connection.cursor() as cursor:
             cursor.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
             cursor.execute('CREATE EXTENSION IF NOT EXISTS "pg_trgm"')
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS "user" (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    name TEXT NOT NULL,
-                    email TEXT NOT NULL UNIQUE
+            if create_user_table:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS "user" (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        email TEXT NOT NULL UNIQUE
+                    )
+                    """
                 )
-                """
-            )
     finally:
         connection.close()
 
@@ -128,10 +133,11 @@ def alembic_config() -> dict[str, str]:
     }
 
 
-@pytest.fixture
-def alembic_engine(
+def _create_alembic_engine(
     monkeypatch: MonkeyPatch,
     postgresql_proc: PostgreSQLProcess,
+    *,
+    create_user_table: bool,
 ) -> Iterator[Engine]:
     configure_contract_environment(monkeypatch, postgresql_proc)
 
@@ -148,7 +154,10 @@ def alembic_engine(
         database_name=database_name,
         admin_database_url=admin_database_url,
     )
-    _initialize_database(sync_database_url)
+    _initialize_database(
+        sync_database_url,
+        create_user_table=create_user_table,
+    )
 
     engine = create_engine(sync_database_url, future=True)
 
@@ -163,3 +172,28 @@ def alembic_engine(
             database_name=database_name,
             admin_database_url=admin_database_url,
         )
+
+
+@pytest.fixture
+def alembic_engine(
+    monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
+) -> Iterator[Engine]:
+    yield from _create_alembic_engine(
+        monkeypatch,
+        postgresql_proc,
+        create_user_table=True,
+    )
+
+
+@pytest.fixture
+def standalone_alembic_engine(
+    monkeypatch: MonkeyPatch,
+    postgresql_proc: PostgreSQLProcess,
+) -> Iterator[Engine]:
+    monkeypatch.setenv("API_STANDALONE_MODE_ENABLED", "true")
+    yield from _create_alembic_engine(
+        monkeypatch,
+        postgresql_proc,
+        create_user_table=False,
+    )

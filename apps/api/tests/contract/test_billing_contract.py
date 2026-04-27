@@ -30,6 +30,19 @@ async def test_should_return_the_authenticated_users_initialized_credits_balance
 
 
 @pytest.mark.asyncio
+async def test_should_not_register_billing_routes_when_billing_is_disabled(
+    monkeypatch: MonkeyPatch,
+    api_client_factory: Callable[[], AbstractAsyncContextManager[AsyncClient]],
+) -> None:
+    monkeypatch.setenv("BILLING_ENABLED", "false")
+
+    async with api_client_factory() as api_client:
+        response = await api_client.get("/api/v1/billing/credits")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_should_return_usage_statistics_for_the_requested_period(
     developer_api_client_factory: Callable[
         [], AbstractAsyncContextManager[AsyncClient]
