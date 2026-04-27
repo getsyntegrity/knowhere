@@ -68,13 +68,13 @@ cp apps/worker/.env.example apps/worker/.env
 
 The example files default to the open-source/self-hosted behavior:
 
-- `API_STANDALONE_MODE=false` for the combined dashboard + API flow, where
+- `API_STANDALONE_MODE_ENABLED=false` for the combined dashboard + API flow, where
   the dashboard initializes Better Auth tables before API migrations.
 - `BILLING_ENABLED=false`, so Stripe and credit deduction are not required.
 - `RATE_LIMIT_BYPASSED=true` for local/self-hosted convenience; set it to
   `false` when you want API rate limits enforced.
 
-For API-only development without the dashboard, set `API_STANDALONE_MODE=true`,
+For API-only development without the dashboard, set `API_STANDALONE_MODE_ENABLED=true`,
 run API migrations, then create an API-only user/key:
 
 ```bash

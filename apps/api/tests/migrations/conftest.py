@@ -191,7 +191,7 @@ def standalone_alembic_engine(
     monkeypatch: MonkeyPatch,
     postgresql_proc: PostgreSQLProcess,
 ) -> Iterator[Engine]:
-    monkeypatch.setenv("API_STANDALONE_MODE", "true")
+    monkeypatch.setenv("API_STANDALONE_MODE_ENABLED", "true")
     yield from _create_alembic_engine(
         monkeypatch,
         postgresql_proc,

@@ -119,7 +119,7 @@ def run_migrations_online() -> None:
     configured_connection = config.attributes.get("connection")
 
     def run_with_connection(connection: Connection) -> None:
-        if settings.API_STANDALONE_MODE:
+        if settings.API_STANDALONE_MODE_ENABLED:
             ensure_better_auth_user_table(connection)
 
         context.configure(
