@@ -63,6 +63,8 @@ from app.services.common.job_start_service import mark_job_running
 from app.services.connect_builder.summary_builder import (
     ensure_doc_nav_json,
     load_nav_top_summary,
+    enrich_doc_nav_summaries,
+    build_section_summary_lookup,
 )
 from app.services.document_parser.stage_profiler import stage_timer
 from app.services.workload.page_estimator import PageEstimator
@@ -517,6 +519,7 @@ def _parse(job_id: str, user_id: str | None):
 
             document_top_summary = ""
             document_nav_sections = []
+            section_summaries: dict[str, str] = {}
             if add_dir and source_file_name:
                 if add_contents_df is not None and "path" in add_contents_df.columns:
                     ensure_doc_nav_json(
@@ -524,6 +527,19 @@ def _parse(job_id: str, user_id: str | None):
                         chunks,
                         source_file_name=str(source_file_name),
                     )
+                # Enrich non-leaf section summaries (bottom-up aggregation)
+                # Must run before _extract_nav_sections_for_publish so that
+                # GraphNode.nav_sections gets populated summaries, not empty strings.
+                try:
+                    kb_dir_for_enrich = os.path.dirname(str(add_dir))
+                    enrich_doc_nav_summaries(
+                        kb_dir_for_enrich,
+                        source_file=str(source_file_name),
+                        use_llm=False,
+                    )
+                    section_summaries = build_section_summary_lookup(str(add_dir))
+                except Exception as _e:
+                    logger.warning(f"doc_nav enrichment failed (non-fatal): {_e}")
                 document_top_summary = load_nav_top_summary(str(add_dir), str(source_file_name))
                 # Extract nav_sections from doc_nav.json for GraphNode persistence
                 document_nav_sections = _extract_nav_sections_for_publish(str(add_dir))
@@ -591,6 +607,7 @@ def _parse(job_id: str, user_id: str | None):
                 stored_count=stored_count,
                 kb_records=kb_records,
                 delivery_mode="url",
+                section_summaries=section_summaries,
             )
 
             logger.info(f"Worker processing complete: job_id={job_id}, result_s3_key={result_s3_key}")

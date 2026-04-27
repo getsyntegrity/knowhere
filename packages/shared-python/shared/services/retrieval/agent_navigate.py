@@ -784,6 +784,7 @@ async def _build_sub_sections_from_db(
             DocumentSection.section_title,
             DocumentSection.section_path,
             DocumentSection.section_level,
+            DocumentSection.summary,
         )
         .where(DocumentSection.document_id == document_id)
         .where(DocumentSection.job_result_id == job_result_id)
@@ -826,11 +827,11 @@ async def _build_sub_sections_from_db(
     grandchild_counts = {row[0]: row[1] for row in grandchild_result.all()}
 
     result = []
-    for section_id, title, path, level in children:
+    for section_id, title, path, level, summary in children:
         result.append({
             'title': title or '',
             'path': path or '',
-            'summary': '',  # Section table has no summary; LLM uses title
+            'summary': summary or '',
             'chunk_count': chunk_counts.get(section_id, 0),
             'children_count': grandchild_counts.get(section_id, 0),
             'level': level or 1,

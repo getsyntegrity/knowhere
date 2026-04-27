@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from loguru import logger
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from shared.core.database_sync import get_sync_db_context
@@ -22,6 +22,7 @@ from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobChunk, JobResult
+from shared.models.database.document import DocumentSection
 from shared.models.database.knowledge_base import ContentBase
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.services.billing.credits_sync_service import SyncCreditsService
@@ -59,6 +60,7 @@ class SyncJobLifecycleService:
         stored_count: int = 0,
         kb_records: Optional[List[Dict[str, Any]]] = None,
         delivery_mode: str = "url",
+        section_summaries: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Finalize a successful job in a single atomic transaction.
 
@@ -99,6 +101,14 @@ class SyncJobLifecycleService:
                     chunks=normalized_chunks,
                 )
                 if published_document_state is not None:
+                    # Backfill DocumentSection.summary from enriched doc_nav data
+                    if section_summaries:
+                        self._backfill_section_summaries(
+                            db,
+                            document_id=published_document_state.get("document_id", ""),
+                            job_result_id=job_result.id,
+                            section_summaries=section_summaries,
+                        )
                     self._retrieval_publication.publish_document_graph(
                         db,
                         job_id=job_id,
@@ -235,6 +245,41 @@ class SyncJobLifecycleService:
             return False
 
     # ── Private helpers ─────────────────────────────────────────────────
+
+    def _backfill_section_summaries(
+        self,
+        db: Session,
+        *,
+        document_id: str,
+        job_result_id: str,
+        section_summaries: Dict[str, str],
+    ) -> None:
+        """Populate DocumentSection.summary from enriched doc_nav data.
+
+        Runs UPDATE statements within the existing transaction so no extra
+        commit is needed.  Overwrites any existing summary value since the
+        enriched doc_nav data is the authoritative source.
+        """
+        if not document_id or not section_summaries:
+            return
+        try:
+            for path, summary in section_summaries.items():
+                if not path or not summary:
+                    continue
+                db.execute(
+                    update(DocumentSection)
+                    .where(DocumentSection.document_id == document_id)
+                    .where(DocumentSection.job_result_id == job_result_id)
+                    .where(DocumentSection.section_path == path)
+                    .values(summary=summary)
+                )
+            db.flush()
+            logger.debug(
+                f"Backfilled section summaries: document_id={document_id}, "
+                f"count={len(section_summaries)}"
+            )
+        except Exception as exc:
+            logger.warning(f"Section summary backfill failed (non-fatal): {exc}")
 
     def _upsert_job_result(
         self,

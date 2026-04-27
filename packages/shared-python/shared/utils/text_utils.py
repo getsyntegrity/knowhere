@@ -55,6 +55,46 @@ def count_cn_en(text: str) -> int:
     return len(_CN_EN_NUM_RE.findall(str(text)))
 
 
+def truncate_content_preview(
+    text: str,
+    head: int = 200,
+    tail: int = 20,
+) -> str:
+    """Token-aware content preview truncation.
+
+    Uses the same token definition as ``count_cn_en``:
+    - each Chinese character = 1 token
+    - each run of English letters = 1 token  (never split mid-word)
+    - each number group = 1 token
+
+    Produces: ``<head tokens>...<tail tokens>`` when the token count
+    exceeds ``head + tail``, otherwise returns text unchanged.
+
+    Args:
+        text: Source text (will be whitespace-normalized first).
+        head: Max tokens to keep from the start (default 200).
+        tail: Max tokens to keep from the end (default 20, 0 = no tail).
+
+    Returns:
+        Truncated preview string, or original text if within budget.
+    """
+    if not text:
+        return ""
+    # Normalize whitespace (collapse newlines / multiple spaces)
+    normalized = " ".join(str(text).split())
+    matches = list(_CN_EN_NUM_RE.finditer(normalized))
+    total = len(matches)
+    if total <= head + tail:
+        return normalized
+    # Cut after last head-th token (character boundary, never mid-word)
+    cut_start = matches[head - 1].end() if head > 0 else 0
+    # Tail starts at (total - tail)-th token
+    cut_end = matches[total - tail].start() if tail > 0 else len(normalized)
+    if cut_start >= cut_end:
+        return normalized
+    return normalized[:cut_start] + "..." + normalized[cut_end:]
+
+
 def _is_meaningful_token(token: str) -> bool:
     """Check if a token is worth keeping: has useful characters and isn't pure noise."""
     if not _CN_EN_NUM_RE.search(token):

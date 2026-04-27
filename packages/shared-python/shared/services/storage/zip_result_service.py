@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from loguru import logger
 from PIL import Image
 from shared.utils.chunk_refs import extract_chunk_refs
+from shared.utils.text_utils import truncate_content_preview
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -772,7 +773,7 @@ class ZipResultService:
             content_raw = (fc.get("content") or "").strip()
             # Normalize whitespace
             summary = " ".join(summary_raw.split()) if summary_raw else ""
-            content_preview = " ".join(content_raw.split())[:300] if content_raw else ""
+            content_preview = truncate_content_preview(content_raw) if content_raw else ""
 
             stats["total_chunks"] += 1
 

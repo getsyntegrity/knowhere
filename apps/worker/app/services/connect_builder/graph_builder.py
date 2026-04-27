@@ -1335,6 +1335,12 @@ def build_and_deploy(
             )
             stats_chunks = existing_chunks
             graph = existing_graph
+            # Still inject nav_sections and summaries even if chunks unchanged
+            for fk, fdata in graph.get("files", {}).items():
+                if file_nav_sections and fk in file_nav_sections:
+                    fdata["nav_sections"] = file_nav_sections[fk]
+                if file_summaries and fk in file_summaries and not fdata.get("top_summary"):
+                    fdata["top_summary"] = file_summaries[fk]
         else:
             logger.info(
                 f"📊 incremental update Knowledge Graph "

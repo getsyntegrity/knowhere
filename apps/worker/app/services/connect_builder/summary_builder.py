@@ -18,6 +18,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from shared.utils.text_utils import truncate_content_preview
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -339,13 +340,13 @@ def _recursive_summarize_nav(
     # Aggregate child summaries
     aggregated_parts = []
     for name, summary in child_summaries:
-        truncated = summary[:SUMMARY_MAX_LEN]
+        truncated = truncate_content_preview(summary, head=SUMMARY_MAX_LEN, tail=0)
         aggregated_parts.append(f"[{name}] {truncated}")
 
     aggregated_text = "\n".join(aggregated_parts)
 
     if len(child_summaries) <= 1:
-        result = child_summaries[0][1][:SUMMARY_MAX_LEN]
+        result = truncate_content_preview(child_summaries[0][1], head=SUMMARY_MAX_LEN, tail=0)
     else:
         titles = [name for name, _ in child_summaries]
         title_enum = "This section covers: " + ", ".join(titles)
@@ -366,11 +367,36 @@ def _recursive_summarize_nav(
 
 
 def _doc_nav_has_enriched_summaries(doc_nav: Dict[str, Any]) -> bool:
-    """Check if any non-leaf section already has a non-empty summary."""
-    for section in doc_nav.get("sections", []):
-        if section.get("children") and section.get("summary"):
-            return True
-    return False
+    """Check if enrichment has already been run on this doc_nav.
+
+    Aligned with old _has_summaries logic for hierarchy.json:
+    In doc_nav.json, leaf nodes already have summary from ZIP creation,
+    so only non-leaf (parent) summaries are set by enrichment.
+    We recursively check that ALL non-leaf nodes across all depths
+    have a non-empty summary — if any is missing, enrichment is incomplete.
+    """
+    def _check_sections(sections: List[Dict[str, Any]]) -> bool:
+        """Returns True if all non-leaf nodes in sections have summaries."""
+        for section in sections:
+            children = section.get("children", [])
+            if not children:
+                continue
+            # This is a non-leaf node — must have summary from enrichment
+            if not section.get("summary"):
+                return False
+            # Recurse into children to check deeper non-leaf nodes
+            if not _check_sections(children):
+                return False
+        return True
+
+    sections = doc_nav.get("sections", [])
+    if not sections:
+        return False
+    # Must have at least one non-leaf to be considered enriched
+    has_non_leaf = any(s.get("children") for s in sections)
+    if not has_non_leaf:
+        return False
+    return _check_sections(sections)
 
 
 def _build_nav_top_summary(doc_nav: Dict[str, Any]) -> str:
@@ -499,3 +525,44 @@ def load_nav_top_summary(file_dir: str, file_name: str = "") -> str:
     if doc_nav is not None:
         return _build_nav_top_summary(doc_nav)
     return ""
+
+
+def build_section_summary_lookup(file_dir: str) -> Dict[str, str]:
+    """Build a flat {section_path: summary} dict from all nodes in doc_nav.json.
+
+    Keys use the DocumentSection.section_path format produced by
+    ``section_path_from_chunk_path`` (strips kb_root + filename prefix,
+    joins remaining parts with ``" / "``).
+
+    Traverses the full section tree at all depths.  Used by the publication
+    pipeline to backfill DocumentSection.summary rows.
+
+    Args:
+        file_dir: Absolute path to the file-level directory
+                  (e.g. ~/.knowhere/{kb_id}/{source_file_name}/).
+
+    Returns:
+        Dict mapping section_path → summary string (empty dict on any error).
+    """
+    from shared.services.retrieval.lexical_text import section_path_from_chunk_path
+
+    doc_nav = _load_doc_nav(file_dir)
+    if doc_nav is None:
+        return {}
+
+    lookup: Dict[str, str] = {}
+
+    def _walk(node: Dict[str, Any]) -> None:
+        nav_path = node.get("path", "")
+        summary = node.get("summary", "")
+        if nav_path and summary:
+            section_path = section_path_from_chunk_path(nav_path)
+            if section_path and section_path != "Root":
+                lookup[section_path] = summary
+        for child in node.get("children", []):
+            _walk(child)
+
+    for section in doc_nav.get("sections", []):
+        _walk(section)
+
+    return lookup
