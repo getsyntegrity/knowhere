@@ -536,6 +536,34 @@ async def test_should_list_current_document_chunks_by_document_id(
 
 
 @pytest.mark.asyncio
+async def test_should_return_not_found_when_listing_chunks_for_missing_document(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    missing_document_id = f"doc_{uuid4().hex[:12]}"
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.get(
+            f"/api/v1/documents/{missing_document_id}/chunks"
+        )
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"]
+
+    response_json = cast(dict[str, object], response.json())
+    error = cast(dict[str, object], response_json["error"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "NOT_FOUND"
+    assert error["message"] == "Document not found"
+    assert error["details"] == {
+        "resource": "Document",
+        "id": missing_document_id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_should_return_one_document_chunk_by_document_chunk_id(
     developer_api_client_factory: Callable[
         [], AbstractAsyncContextManager[AsyncClient]
@@ -583,6 +611,48 @@ async def test_should_return_one_document_chunk_by_document_chunk_id(
     assert chunk["metadata"] == {"summary": "Figure", "page_nums": [3]}
     assert chunk["asset_url"] is None
     assert chunk["created_at"]
+
+
+@pytest.mark.asyncio
+async def test_should_return_not_found_when_requesting_a_missing_document_chunk(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    document_id = f"doc_{uuid4().hex[:12]}"
+    missing_chunk_id = f"dchk_{uuid4().hex[:12]}"
+
+    async with developer_api_client_factory() as api_client:
+        await _insert_document_revision_with_chunks(
+            document_id=document_id,
+            chunks=[
+                {
+                    "id": f"dchk_{uuid4().hex[:12]}",
+                    "chunk_id": "parser-chunk-1",
+                    "chunk_type": "text",
+                    "content": "First chunk content",
+                    "source_chunk_path": "Chapter 1/Intro",
+                    "metadata": {"summary": "Intro", "page_nums": [1]},
+                }
+            ],
+        )
+        response = await api_client.get(
+            f"/api/v1/documents/{document_id}/chunks/{missing_chunk_id}",
+        )
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"]
+
+    response_json = cast(dict[str, object], response.json())
+    error = cast(dict[str, object], response_json["error"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "NOT_FOUND"
+    assert error["message"] == "Document chunk not found"
+    assert error["details"] == {
+        "resource": "Document chunk",
+        "id": missing_chunk_id,
+    }
 
 
 @pytest.mark.asyncio
