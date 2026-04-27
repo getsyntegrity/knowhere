@@ -565,4 +565,12 @@ def build_section_summary_lookup(file_dir: str) -> Dict[str, str]:
     for section in doc_nav.get("sections", []):
         _walk(section)
 
+    # Populate Root with the document-level top_summary (tree preview).
+    # This mirrors GraphNode.properties.top_summary and ensures the
+    # DocumentSection Root row has a summary for data completeness.
+    if "Root" not in lookup:
+        top_summary = _build_nav_top_summary(doc_nav)
+        if top_summary:
+            lookup["Root"] = top_summary
+
     return lookup
