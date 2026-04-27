@@ -369,7 +369,7 @@ def _recursive_summarize_nav(
 def _doc_nav_has_enriched_summaries(doc_nav: Dict[str, Any]) -> bool:
     """Check if enrichment has already been run on this doc_nav.
 
-    Aligned with old _has_summaries logic for hierarchy.json:
+    Aligned with original enrichment logic:
     In doc_nav.json, leaf nodes already have summary from ZIP creation,
     so only non-leaf (parent) summaries are set by enrichment.
     We recursively check that ALL non-leaf nodes across all depths

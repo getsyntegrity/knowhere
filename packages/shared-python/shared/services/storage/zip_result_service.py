@@ -53,7 +53,7 @@ class ZipResultService:
             source_file_name: Source file name
             data_id: User-defined ID
             job_metadata: Job metadata
-            parsed_df: Optional, parsed DataFrame for building hierarchy.json (kb.csv / hierarchy_view.html are not added to the ZIP)
+            parsed_df: Optional, parsed DataFrame (legacy, unused after doc_nav.json migration)
             temp_dir: Optional directory for the generated ZIP file
 
         Returns:

@@ -1225,7 +1225,7 @@ def build_and_deploy(
         chunks: Parsed chunks from the current file.
         kb_id: Knowledge base identifier (e.g. dataset name).
         parsed_output_dir: Path to the parsed output directory (add_dir) containing
-            images, tables, hierarchy.json etc. If provided, its contents are
+            images, tables, doc_nav.json etc. If provided, its contents are
             copied to ~/.knowhere/{kb_id}/data/{dirname}/.
         connect_config: Optional config overrides for connect_builder.
         rebuild_all: When knowledge_graph.json is missing, whether to scan the
@@ -1235,7 +1235,7 @@ def build_and_deploy(
         summary_use_llm: If True, use LLM to generate coherent hierarchical
             summaries (slow, costs API tokens). If False (default), use
             lightweight title enumeration (e.g. "This section covers: Section 1,
-            Section 2"). Only affects `top_summary` and `_summary` fields.
+            Section 2"). Only affects `top_summary` and `summary` fields.
 
     Returns:
         The knowledge graph dict.
