@@ -18,6 +18,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from openai.types.chat import ChatCompletionMessageParam
 from shared.utils.text_utils import truncate_content_preview
 
 

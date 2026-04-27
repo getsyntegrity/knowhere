@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database.document import Document
-from shared.services.retrieval.agentic.types import AgentRunConfig, ToolResult
+from shared.services.retrieval.agentic.types import ToolResult
 from shared.services.retrieval.agent_navigate import (
     _build_chunks_slim,
     _build_knowledge_map_overview,

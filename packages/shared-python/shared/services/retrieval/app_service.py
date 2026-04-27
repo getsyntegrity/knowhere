@@ -1124,14 +1124,14 @@ async def run_retrieval_query(
 
         # ── Agent navigation or lexical graph fallback ──
         # Aligned with KB: agent_navigate returns chunk paths with confidence.
-        logger.info(f'\n  🧭 PHASE 2: Agent Navigation')
+        logger.info('\n  🧭 PHASE 2: Agent Navigation')
         router_used = 'discovery_only'
         llm_fn = create_retrieval_llm_fn()
         agent_rows: list[dict[str, Any]] = []
         agent_paths: list[dict[str, Any]] = []
 
         if llm_fn is not None:
-            logger.info(f'  LLM configured, running agent_navigate...')
+            logger.info('  LLM configured, running agent_navigate...')
             t_agent = time.monotonic()
             try:
                 agent_paths = await agent_navigate(
@@ -1147,17 +1147,17 @@ async def run_retrieval_query(
                     selected_paths = [str(item.get('path') or '') for item in agent_paths if item.get('path')]
                     new_paths = [path for path in selected_paths if path not in discovery_paths]
                     overlap_paths = [path for path in selected_paths if path in discovery_paths]
-                    logger.info(f'\n  🔗 Agent→Discovery union:')
+                    logger.info('\n  🔗 Agent→Discovery union:')
                     logger.info(
                         f'    agent_paths={len(selected_paths)}, discovery_paths={len(discovery_paths)}, '
                         f'overlap_paths={len(overlap_paths)}, new_paths={len(new_paths)}'
                     )
                     if new_paths:
-                        logger.info(f'    New paths from agent:')
+                        logger.info('    New paths from agent:')
                         for p in new_paths[:10]:
                             logger.info(f'      → {p}')
                     if overlap_paths:
-                        logger.info(f'    Overlap paths reinforced by agent:')
+                        logger.info('    Overlap paths reinforced by agent:')
                         for p in overlap_paths[:10]:
                             logger.info(f'      → {p}')
                     agent_rows = await _hydrate_paths_to_rows(
@@ -1190,7 +1190,7 @@ async def run_retrieval_query(
                 if agent_rows:
                     logger.info(f'  📊 Graph fallback: {len(agent_rows)} rows')
         else:
-            logger.info(f'  ⚠️  No LLM configured (DS_KEY missing?), using lexical graph routing')
+            logger.info('  ⚠️  No LLM configured (DS_KEY missing?), using lexical graph routing')
             try:
                 agent_rows = await list_graph_routed_chunks(
                     db, user_id=user_id, namespace=namespace, query=query,

@@ -5,6 +5,7 @@ Sync implementation for gevent worker pool.
 All I/O operations use sync services that yield cooperatively under gevent.
 """
 
+import json
 import os
 from datetime import datetime, timezone
 
@@ -64,22 +65,14 @@ from shared.services.redis.redis_sync_service import (
 from shared.services.storage.result_storage import get_result_storage
 from shared.services.storage.zip_result_service import ZipResultService
 from app.services.connect_builder.summary_builder import (
+    build_section_summary_lookup,
+    enrich_doc_nav_summaries,
     ensure_doc_nav_json,
     load_nav_top_summary,
-    enrich_doc_nav_summaries,
-    build_section_summary_lookup,
 )
 
 # Get Celery application
 celery_app = get_celery_app()
-
-
-from app.core.tasks.task_utils import (
-    cleanup_temp_file,
-    cleanup_task_workspace,
-    create_task_workspace,
-    download_s3_file_to_temp,
-)
 
 
 def _extract_nav_sections_for_publish(add_dir: str) -> list:

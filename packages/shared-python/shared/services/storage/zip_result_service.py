@@ -974,5 +974,3 @@ class ZipResultService:
             return result
 
         return _to_output(root_children)
-
-

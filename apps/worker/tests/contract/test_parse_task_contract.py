@@ -258,8 +258,13 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
             zip_path = Path(zip_file_path)
             captured_artifacts["result_dir"] = result_dir
             captured_artifacts["zip_file_path"] = zip_file_path
-            captured_artifacts["hierarchy"] = json.loads(
-                (result_dir_path / "hierarchy.json").read_text(encoding="utf-8")
+            captured_artifacts["raw_entries"] = sorted(
+                path.relative_to(result_dir_path).as_posix()
+                for path in result_dir_path.rglob("*")
+                if path.is_file()
+            )
+            captured_artifacts["doc_nav"] = json.loads(
+                (result_dir_path / "doc_nav.json").read_text(encoding="utf-8")
             )
 
             with zipfile.ZipFile(zip_path) as zip_file:
@@ -304,10 +309,17 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     assert captured_artifacts["parse_kwargs"]["internal_output_filename"] == source_file_name
     assert Path(str(captured_artifacts["parse_kwargs"]["file_full_path"])).name == source_file_name
     assert captured_artifacts["result_dir"].endswith("Default_Root/contract-parse.pdf")
-    assert "Default_Root" in captured_artifacts["hierarchy"]
+    assert captured_artifacts["doc_nav"]["file_name"] == source_file_name
+    assert captured_artifacts["doc_nav"]["sections"][0]["title"] == "公司研究"
+    assert "doc_nav.json" in captured_artifacts["raw_entries"]
+    assert "hierarchy.json" not in captured_artifacts["raw_entries"]
+    assert "hierarchy_slim.json" not in captured_artifacts["raw_entries"]
     assert "chunks.json" in captured_artifacts["zip_entries"]
     assert "full.md" in captured_artifacts["zip_entries"]
-    assert "hierarchy.json" in captured_artifacts["zip_entries"]
+    assert "doc_nav.json" in captured_artifacts["zip_entries"]
+    assert "chunks_slim.json" not in captured_artifacts["zip_entries"]
+    assert "hierarchy.json" not in captured_artifacts["zip_entries"]
+    assert "hierarchy_slim.json" not in captured_artifacts["zip_entries"]
     assert "images/page-1.png" in captured_artifacts["zip_entries"]
     assert "tables/table-1.html" in captured_artifacts["zip_entries"]
     assert captured_artifacts["zip_chunks"][0]["metadata"]["document_top_summary"] == expected_summary
