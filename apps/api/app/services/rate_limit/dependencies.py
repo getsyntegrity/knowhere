@@ -156,7 +156,7 @@ async def with_current_user(
            on failure).
         2. Resolve ``user_tier`` from the identity cache; fall back to DB on
            cache miss or Redis error.
-        3. If ``RATE_LIMIT_BYPASSED`` is set, return immediately.
+        3. If ``RATE_LIMIT_ENABLED=false`` is set, return immediately.
         4. Check the matched system limit via the rate limiter (fail-open on
            Redis error).
     """
@@ -238,9 +238,9 @@ async def with_current_user(
     current_user = CurrentUser(user_id=user_id, user_tier=user_tier)
 
     with log_context(user_id=user_id):
-        # -- Bypass switch --
+        # -- Global rate-limit switch --
         config = RateLimitConfig.get_instance()
-        if config.is_bypassed:
+        if not config.is_enabled:
             yield current_user
             return
 
@@ -303,6 +303,10 @@ async def require_billing_limits(
         return
 
     config = RateLimitConfig.get_instance()
+    if not config.is_enabled:
+        yield current_user
+        return
+
     tier_limits: TierLimits | None = config.tier_map.get(current_user.user_tier)
     if tier_limits is None:
         logger.error(
@@ -314,10 +318,6 @@ async def require_billing_limits(
             internal_message=(f"Missing tier config for tier={current_user.user_tier}"),
             retry_after=_RETRY_AFTER_SECONDS,
         )
-
-    if config.is_bypassed:
-        yield current_user
-        return
 
     # -- Layer 1: billing RPM --
     limiter = RateLimiter(config)
@@ -343,7 +343,7 @@ async def require_route_system_limit(request: Request) -> None:
     Fail closed when Redis or limiter state is unavailable.
     """
     config = RateLimitConfig.get_instance()
-    if config.is_bypassed:
+    if not config.is_enabled:
         return
 
     route_path = _get_route_path(request)
@@ -379,7 +379,7 @@ async def enforce_job_creation_capacity(
         return
 
     config = RateLimitConfig.get_instance()
-    if config.is_bypassed:
+    if not config.is_enabled:
         return
 
     tier_limits = config.tier_map.get(current_user.user_tier)
