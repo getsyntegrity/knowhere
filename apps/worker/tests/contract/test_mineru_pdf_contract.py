@@ -1,32 +1,59 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
+import pytest
+from pytest import MonkeyPatch
 
-_REQUIRED_CONFIG_ENVIRONMENT: dict[str, str] = {
-    "DS_KEY": "test-deepseek-key",
-    "DS_URL": "https://example.test/v1",
-    "S3_BUCKET_NAME": "knowhere-test-bucket",
-    "S3_ACCESS_KEY_ID": "test-access-key",
-    "S3_SECRET_ACCESS_KEY": "test-secret-key",
-    "S3_TEMP_PATH": "/tmp",
-    "USERS_DATA_PATH": "/tmp/users",
-    "DATABASE_URL": "postgresql+asyncpg://test:test@127.0.0.1:5432/knowhere_test",
-    "SECRET_KEY": "test-secret-key",
-    "TMP_PATH": "/tmp",
-    "FONT_PATH": "/tmp",
-    "CHROMEDRIVER_PATH": "/tmp/chromedriver",
-}
 
-for environmentName, environmentValue in _REQUIRED_CONFIG_ENVIRONMENT.items():
-    os.environ.setdefault(environmentName, environmentValue)
+@pytest.mark.parametrize(
+    ("environment", "s3_key", "expected"),
+    [
+        ("production", "uploads/source.pdf", True),
+        ("staging", "uploads/source.pdf", True),
+        ("development", "uploads/source.pdf", False),
+        ("production", None, False),
+    ],
+)
+def test_should_select_mineru_s3_url_mode_for_supported_worker_sources(
+    worker_contract_environment: None,
+    monkeypatch: MonkeyPatch,
+    environment: str,
+    s3_key: str | None,
+    expected: bool,
+) -> None:
+    from app.services.document_parser import mineru_pdf_service
 
-from app.services.document_parser import pdf_parser
-from shared.core.exceptions.domain_exceptions import MinerUServiceException
+    monkeypatch.setattr(
+        mineru_pdf_service.settings,
+        "FORCE_MINERU_UPLOAD_ENABLED",
+        False,
+    )
+    monkeypatch.setattr(mineru_pdf_service.settings, "ENVIRONMENT", environment)
+
+    assert mineru_pdf_service._should_use_mineru_s3_url_mode(s3_key) is expected
+
+
+def test_should_force_mineru_direct_upload_in_worker_contract(
+    worker_contract_environment: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from app.services.document_parser import mineru_pdf_service
+
+    monkeypatch.setattr(
+        mineru_pdf_service.settings,
+        "FORCE_MINERU_UPLOAD_ENABLED",
+        True,
+    )
+    monkeypatch.setattr(mineru_pdf_service.settings, "ENVIRONMENT", "production")
+
+    assert (
+        mineru_pdf_service._should_use_mineru_s3_url_mode("uploads/source.pdf")
+        is False
+    )
 
 
 def _build_profile() -> SimpleNamespace:
@@ -37,7 +64,8 @@ def _build_profile() -> SimpleNamespace:
 
 
 def _stub_pymupdf_parse(
-    monkeypatch: Any,
+    monkeypatch: MonkeyPatch,
+    pdf_parser: Any,
     captured_calls: list[str],
 ) -> None:
     def fake_parse_with_pymupdf(
@@ -59,9 +87,12 @@ def _stub_pymupdf_parse(
 
 
 def test_should_use_pymupdf_when_mineru_keys_are_missing(
-    monkeypatch: Any,
+    worker_contract_environment: None,
+    monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    from app.services.document_parser import pdf_parser
+
     captured_calls: list[str] = []
     monkeypatch.setattr(pdf_parser.settings, "MINERU_API_KEYS", "")
     monkeypatch.setattr(
@@ -69,7 +100,7 @@ def test_should_use_pymupdf_when_mineru_keys_are_missing(
         "upload_and_parse",
         lambda *_args, **_kwargs: captured_calls.append("mineru"),
     )
-    _stub_pymupdf_parse(monkeypatch, captured_calls)
+    _stub_pymupdf_parse(monkeypatch, pdf_parser, captured_calls)
 
     parsed_df = pdf_parser.parse_pdfs(
         str(tmp_path / "source.pdf"),
@@ -86,9 +117,13 @@ def test_should_use_pymupdf_when_mineru_keys_are_missing(
 
 
 def test_should_fallback_to_pymupdf_when_mineru_service_is_unavailable(
-    monkeypatch: Any,
+    worker_contract_environment: None,
+    monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    from app.services.document_parser import pdf_parser
+    from shared.core.exceptions.domain_exceptions import MinerUServiceException
+
     captured_calls: list[str] = []
     monkeypatch.setattr(pdf_parser.settings, "MINERU_API_KEYS", "token=test-key")
 
@@ -97,7 +132,7 @@ def test_should_fallback_to_pymupdf_when_mineru_service_is_unavailable(
         raise MinerUServiceException(internal_message="MinerU unavailable")
 
     monkeypatch.setattr(pdf_parser, "upload_and_parse", fake_upload_and_parse)
-    _stub_pymupdf_parse(monkeypatch, captured_calls)
+    _stub_pymupdf_parse(monkeypatch, pdf_parser, captured_calls)
 
     parsed_df = pdf_parser.parse_pdfs(
         str(tmp_path / "source.pdf"),
