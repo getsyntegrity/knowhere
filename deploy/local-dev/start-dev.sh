@@ -117,8 +117,8 @@ wait_for_localstack() {
 
 prepare_api_env() {
     if [[ ! -f "${API_DIR}/.env" ]]; then
-        cp "${API_DIR}/env.example" "${API_DIR}/.env"
-        warn "Created apps/api/.env from env.example for local development."
+        cp "${API_DIR}/.env.example" "${API_DIR}/.env"
+        warn "Created apps/api/.env from .env.example for local development."
     fi
 }
 

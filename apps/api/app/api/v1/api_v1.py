@@ -5,7 +5,6 @@ API v1 route registry.
 from app.api.v1 import health
 from app.api.v1.routes import (
     api_key,
-    billing,
     documents,
     guest,
     jobs,
@@ -19,6 +18,8 @@ from app.api.v1.routes import (
 )
 from fastapi import APIRouter
 
+from shared.core.config import settings
+
 api_router = APIRouter()
 
 
@@ -29,7 +30,10 @@ api_router.include_router(api_key.router, prefix="/auth", tags=["API Key Managem
 api_router.include_router(guest.router, prefix="/guest", tags=["Guest Registration"])
 
 # Billing
-api_router.include_router(billing.router, prefix="/billing", tags=["Billing"])
+if settings.BILLING_ENABLED:
+    from app.api.v1.routes import billing
+
+    api_router.include_router(billing.router, prefix="/billing", tags=["Billing"])
 
 # Knowledge base
 api_router.include_router(knowledge_base.router, prefix="/kb", tags=["Knowledge Base"])
