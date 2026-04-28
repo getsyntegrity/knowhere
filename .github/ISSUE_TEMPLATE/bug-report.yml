@@ -1,0 +1,82 @@
+name: Bug report
+description: Report a reproducible problem in the Knowhere API or worker.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve Knowhere. Please include enough detail for maintainers to reproduce the issue safely.
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Which API surface or runtime component is affected?
+      multiple: true
+      options:
+        - REST API
+        - Worker
+        - Authentication
+        - Billing or credits
+        - Document parsing
+        - Retrieval
+        - Object storage
+        - Queue or background jobs
+        - Local development
+        - Self-hosted deployment
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the deployed version, image tag, release tag, or commit SHA.
+      placeholder: 2026.04.28.1 / ghcr.io/ontos-ai/knowhere-api:... / 7ebc4a8
+    validations:
+      required: true
+  - type: input
+    id: deployment
+    attributes:
+      label: Deployment
+      description: Where did you see the problem?
+      placeholder: local-dev / staging / production / self-hosted Docker Compose
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the smallest set of requests, uploads, jobs, or commands that reproduce the issue.
+      placeholder: |
+        1. Start the API with ...
+        2. Send POST /...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: request
+    attributes:
+      label: Relevant request or job details
+      description: Include redacted URLs, headers, payload snippets, job IDs, document IDs, or API responses.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste redacted API, worker, queue, database, or storage logs.
+      render: text
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: Include Python version, database version, Redis version, object storage provider, or other relevant runtime details.
+      render: text

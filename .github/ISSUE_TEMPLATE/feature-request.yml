@@ -1,0 +1,55 @@
+name: Feature request
+description: Propose an improvement to the Knowhere API or worker.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user, developer, or operator problem should this solve?
+    validations:
+      required: true
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Which part of the API should change?
+      multiple: true
+      options:
+        - REST API
+        - Worker
+        - Authentication
+        - Billing or credits
+        - Document parsing
+        - Retrieval
+        - Object storage
+        - Queue or background jobs
+        - Local development
+        - Self-hosted deployment
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the API, background behavior, configuration, or operational workflow you want to add or improve.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or alternative designs you considered.
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and migration notes
+      description: Note any expected changes to API contracts, SDK behavior, environment variables, database migrations, or deployment workflows.
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add links, examples, screenshots, logs, or related issues.
