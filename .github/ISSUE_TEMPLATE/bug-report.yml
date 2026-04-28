@@ -66,7 +66,16 @@ body:
     id: request
     attributes:
       label: Relevant request or job details
-      description: Include redacted URLs, headers, payload snippets, job IDs, document IDs, or API responses.
+      description: Include redacted URLs, headers, payload snippets, document IDs, or API responses.
+      render: text
+  - type: textarea
+    id: saas-identifiers
+    attributes:
+      label: SaaS API request identifiers
+      description: If you used the hosted SaaS API, provide the request_id and/or job_id from the response or logs so maintainers can trace the issue.
+      placeholder: |
+        request_id: req_...
+        job_id: job_...
       render: text
   - type: textarea
     id: logs
