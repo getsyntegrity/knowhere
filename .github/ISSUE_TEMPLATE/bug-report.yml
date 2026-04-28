@@ -48,7 +48,7 @@ body:
     attributes:
       label: Deployment
       description: Where did you see the problem?
-      placeholder: local-dev / staging / production / self-hosted Docker Compose
+      placeholder: local-dev / production / self-hosted Docker Compose
     validations:
       required: true
   - type: textarea
