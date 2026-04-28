@@ -56,6 +56,13 @@ class MineruConfig(BaseModel):
         default=2,
         description="Backoff factor between upload retries.",
     )
+    FORCE_MINERU_UPLOAD_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Force MinerU direct-upload ingestion and disable S3 URL mode even when "
+            "a reusable source object is available."
+        ),
+    )
     MINERU_URL_MODE_PRESIGN_EXPIRY: int = Field(
         default=3600,
         description="Presigned URL TTL in seconds for S3 URL mode ingestion.",
