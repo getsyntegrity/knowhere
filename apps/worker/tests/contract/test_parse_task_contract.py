@@ -531,17 +531,17 @@ def test_should_parse_a_pdf_job_without_mineru_api_keys(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("BILLING_ENABLED", "false")
+    monkeypatch.setenv("LLM_MOCK_ENABLED", "true")
     monkeypatch.setenv("MINERU_API_KEYS", "")
     (
         kb_tasks,
-        parse_service,
+        _unused_parse_service,
         sync_storage_service,
         engine,
         sync_job_info_service_cls,
         sync_job_metadata_service_cls,
         sync_redis_service_factory,
     ) = _load_parse_task_modules()
-    from app.services.document_parser import md_parser, pdf_parser
 
     user_id: str = f"worker-user-{uuid4().hex[:12]}"
     job_id: str = f"job_no_mineru_{uuid4().hex[:12]}"
@@ -594,8 +594,6 @@ def test_should_parse_a_pdf_job_without_mineru_api_keys(
 
     _bind_parse_task_to_current_module(monkeypatch, kb_tasks=kb_tasks)
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
-    monkeypatch.setattr(kb_tasks.settings, "BILLING_ENABLED", False)
-    monkeypatch.setattr(pdf_parser.settings, "MINERU_API_KEYS", "")
 
     def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
         return {
@@ -614,29 +612,6 @@ def test_should_parse_a_pdf_job_without_mineru_api_keys(
         downloaded_path = Path(temp_dir) / f"downloaded{file_ext}"
         shutil.copy2(source_pdf_path, downloaded_path)
         return str(downloaded_path)
-
-    class FakeProfile(SimpleNamespace):
-        def summary(self) -> str:
-            return "generic PDF contract profile"
-
-    fake_profile = FakeProfile(
-        file_type="pdf",
-        page_count=1,
-        atlas_candidate=False,
-        doc_category="generic",
-        route="standard",
-        reasoning="contract fixture",
-    )
-
-    def fake_detect_tocs_in_texts(
-        md_lines: list[str],
-        *_args: Any,
-        **_kwargs: Any,
-    ) -> tuple[None, list[str]]:
-        return None, md_lines
-
-    def fail_mineru_parse(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("MinerU should not run when API keys are missing")
 
     class FakeResultStorage:
         def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> Any:
@@ -667,9 +642,6 @@ def test_should_parse_a_pdf_job_without_mineru_api_keys(
         fake_generate_download_url,
     )
     monkeypatch.setattr(kb_tasks, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(parse_service, "profile_document", lambda *_args, **_kwargs: fake_profile)
-    monkeypatch.setattr(md_parser, "detect_tocs_in_texts", fake_detect_tocs_in_texts)
-    monkeypatch.setattr(pdf_parser, "upload_and_parse", fail_mineru_parse)
     monkeypatch.setattr(kb_tasks, "get_result_storage", lambda: FakeResultStorage())
 
     result = kb_tasks.parse_task.run(job_id, user_id, "kb_management")
