@@ -11,7 +11,6 @@ from app.services.document_parser.stage_profiler import stage_timer
 from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import MinerUServiceException
 
 
 def _inject_page_markers(output_dir: str) -> None:
@@ -314,26 +313,14 @@ def parse_pdfs(
             relative_root=relative_root,
         )
 
-    try:
-        logger.info(
-            f"🛡️ Conservative mode: forcing MinerU (standard) for {filename} [route={route}]"
-        )
-        with stage_timer("pdf.extract.standard", filename=filename):
-            upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
+    logger.info(
+        f"🛡️ Conservative mode: forcing MinerU (standard) for {filename} [route={route}]"
+    )
+    with stage_timer("pdf.extract.standard", filename=filename):
+        upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
 
-            # Inject page markers from MinerU layout.json
-            _inject_page_markers(output_dir)
-    except MinerUServiceException as exc:
-        logger.warning(
-            f"MinerU parsing unavailable; falling back to PyMuPDF for {filename}: {exc}"
-        )
-        return _parse_with_pymupdf(
-            pdf_path,
-            filename,
-            output_dir,
-            base_llm_paras,
-            relative_root=relative_root,
-        )
+        # Inject page markers from MinerU layout.json
+        _inject_page_markers(output_dir)
 
     logger.info("✅ PDF parsing step 1 complete: text extracted")
 

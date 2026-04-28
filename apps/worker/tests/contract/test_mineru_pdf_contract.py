@@ -116,7 +116,7 @@ def test_should_use_pymupdf_when_mineru_keys_are_missing(
     assert parsed_df["content"].tolist() == ["fallback"]
 
 
-def test_should_fallback_to_pymupdf_when_mineru_service_is_unavailable(
+def test_should_raise_when_enabled_mineru_service_fails(
     worker_contract_environment: None,
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
@@ -134,15 +134,15 @@ def test_should_fallback_to_pymupdf_when_mineru_service_is_unavailable(
     monkeypatch.setattr(pdf_parser, "upload_and_parse", fake_upload_and_parse)
     _stub_pymupdf_parse(monkeypatch, pdf_parser, captured_calls)
 
-    parsed_df = pdf_parser.parse_pdfs(
-        str(tmp_path / "source.pdf"),
-        "source.pdf",
-        str(tmp_path / "out"),
-        {},
-        profile=_build_profile(),
-        relative_root="Default_Root/source.pdf",
-        s3_key="uploads/source.pdf",
-    )
+    with pytest.raises(MinerUServiceException):
+        pdf_parser.parse_pdfs(
+            str(tmp_path / "source.pdf"),
+            "source.pdf",
+            str(tmp_path / "out"),
+            {},
+            profile=_build_profile(),
+            relative_root="Default_Root/source.pdf",
+            s3_key="uploads/source.pdf",
+        )
 
-    assert captured_calls == ["mineru", "pymupdf"]
-    assert parsed_df["content"].tolist() == ["fallback"]
+    assert captured_calls == ["mineru"]
