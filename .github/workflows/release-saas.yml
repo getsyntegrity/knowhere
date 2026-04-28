@@ -3,7 +3,7 @@ name: Release SaaS deployment
 on:
   workflow_run:
     workflows:
-      - Build Docker Images
+      - Build and deploy API services
     branches:
       - main
     types:
