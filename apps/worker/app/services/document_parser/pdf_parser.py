@@ -5,9 +5,13 @@ import re
 
 from app.services.document_parser.md_parser import parse_md
 from app.services.document_parser.mineru_pdf_service import parse_via_full
+from app.services.document_parser.pymupdf_subprocess import run_in_child_process
 from app.services.document_parser.pymupdf_subprocess import worker
 from app.services.document_parser.stage_profiler import stage_timer
 from loguru import logger
+
+from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import MinerUServiceException
 
 
 def _inject_page_markers(output_dir: str) -> None:
@@ -215,6 +219,42 @@ def upload_and_parse(
     parse_via_full(pdf_url, filename, output_dir, s3_key=s3_key)
 
 
+def _is_mineru_available() -> bool:
+    return bool((settings.MINERU_API_KEYS or "").strip())
+
+
+def _parse_with_pymupdf(
+    pdf_path: str,
+    filename: str,
+    output_dir: str,
+    base_llm_paras: dict,
+    relative_root: str | None = None,
+):
+    logger.info(f"⚡ PyMuPDF fallback: extracting {filename}")
+    os.makedirs(output_dir, exist_ok=True)
+    image_dir = os.path.join(output_dir, "images")
+    os.makedirs(image_dir, exist_ok=True)
+
+    with stage_timer("pdf.extract.pymupdf_fallback", filename=filename):
+        result = run_in_child_process(
+            _fast_path_worker,
+            pdf_path,
+            output_dir,
+            image_dir,
+        )
+    logger.info(
+        f"⚡ PyMuPDF fallback done: {result['md_chars']} chars, "
+        f"{result['image_count']} images"
+    )
+    return parse_md(
+        output_dir,
+        source_type="md",
+        file_path=os.path.join(output_dir, "full.md"),
+        base_llm_paras=base_llm_paras,
+        relative_root=relative_root,
+    )
+
+
 def parse_pdfs(
     pdf_path,
     filename,
@@ -262,14 +302,38 @@ def parse_pdfs(
     #         upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
     #         _inject_page_markers(output_dir)
 
-    logger.info(
-        f"🛡️ Conservative mode: forcing MinerU (standard) for {filename} [route={route}]"
-    )
-    with stage_timer("pdf.extract.standard", filename=filename):
-        upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
+    if not _is_mineru_available():
+        logger.warning(
+            "MinerU is not configured; falling back to PyMuPDF extraction for PDF"
+        )
+        return _parse_with_pymupdf(
+            pdf_path,
+            filename,
+            output_dir,
+            base_llm_paras,
+            relative_root=relative_root,
+        )
 
-        # Inject page markers from MinerU layout.json
-        _inject_page_markers(output_dir)
+    try:
+        logger.info(
+            f"🛡️ Conservative mode: forcing MinerU (standard) for {filename} [route={route}]"
+        )
+        with stage_timer("pdf.extract.standard", filename=filename):
+            upload_and_parse(pdf_path, filename, output_dir, s3_key=s3_key)
+
+            # Inject page markers from MinerU layout.json
+            _inject_page_markers(output_dir)
+    except MinerUServiceException as exc:
+        logger.warning(
+            f"MinerU parsing unavailable; falling back to PyMuPDF for {filename}: {exc}"
+        )
+        return _parse_with_pymupdf(
+            pdf_path,
+            filename,
+            output_dir,
+            base_llm_paras,
+            relative_root=relative_root,
+        )
 
     logger.info("✅ PDF parsing step 1 complete: text extracted")
 
