@@ -782,20 +782,24 @@ async def _load_nav_sections_2level(
         kb_prefix = sample_chunk_path[: -len(sample_section_path)]
 
     async def _load_l2_by_path(l1_section_path: str) -> list[dict]:
-        """Path-based fallback: find direct L2 children via LIKE pattern.
+        """Path-based fallback: find direct L2 children when intermediate
+        DocumentSection nodes are absent (i.e. parent_section_id join returns
+        nothing but the section_path tree still contains descendants).
+
+        Uses 2 batched queries — one for all descendant sections, one for all
+        descendant chunks — then aggregates in Python.  No N+1 queries.
 
         Matches section_path entries of the form:
-          '{l1_section_path} / {child_name}'
-        but NOT deeper grandchildren:
-          '{l1_section_path} / {child_name} / {grandchild}'
+          '{l1_section_path} / {child_name}'        ← direct L2
+          '{l1_section_path} / {child_name} / ...'  ← deeper (aggregated up)
         """
         prefix = l1_section_path + ' / '
-        # Fetch all sections whose path starts with prefix
-        rows = (await db.execute(
+
+        # ── Query 1: all descendant sections under this L1 ──
+        desc_rows = (await db.execute(
             select(
+                DocumentSection.section_id,
                 DocumentSection.section_path,
-                DocumentSection.section_title,
-                DocumentSection.section_level,
                 DocumentSection.summary,
             )
             .where(DocumentSection.document_id == document_id)
@@ -803,40 +807,60 @@ async def _load_nav_sections_2level(
             .where(DocumentSection.section_path.like(prefix + '%'))
             .order_by(DocumentSection.sort_order)
         )).all()
-        # Keep only direct children: no further ' / ' after the prefix
-        suffix_sep = ' / '
-        direct: list[dict] = []
-        seen_child_paths: set[str] = set()
-        for path, title, level, summary in rows:
-            remainder = path[len(prefix):]  # everything after 'Parent / '
-            child_name = remainder.split(suffix_sep)[0]  # first segment only
+
+        if not desc_rows:
+            return []
+
+        # Extract unique direct-child names and their canonical paths
+        sep = ' / '
+        child_order: list[str] = []       # preserves first-seen order
+        child_sections: dict[str, dict] = {}  # child_path -> aggregated info
+        all_desc_section_ids: list = []
+
+        for sec_id, path, summary in desc_rows:
+            all_desc_section_ids.append(sec_id)
+            remainder = path[len(prefix):]
+            child_name = remainder.split(sep)[0]
             child_path = prefix + child_name
-            if child_path in seen_child_paths:
+            if child_path not in child_sections:
+                child_order.append(child_path)
+                child_sections[child_path] = {
+                    'path': child_path,
+                    'title': child_name,
+                    'chunk_count': 0,
+                    'children_count': 0,
+                    'summary': summary or '',
+                }
+            # Count grandchildren (paths with one more ' / ' after child_path)
+            if sep in path[len(child_path):].lstrip():
+                child_sections[child_path]['children_count'] += 1
+
+        # ── Query 2: chunk counts for all descendant section_ids in one shot ──
+        chunk_rows = (await db.execute(
+            select(
+                DocumentChunk.section_id,
+                func.count(DocumentChunk.id).label('cnt'),
+            )
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.job_result_id == job_result_id)
+            .where(DocumentChunk.section_id.in_(all_desc_section_ids))
+            .group_by(DocumentChunk.section_id)
+        )).all()
+
+        # Map section_id → section_path for lookup
+        sec_id_to_path: dict = {sec_id: path for sec_id, path, _ in desc_rows}
+        for sec_id, cnt in chunk_rows:
+            path = sec_id_to_path.get(sec_id, '')
+            if not path.startswith(prefix):
                 continue
-            seen_child_paths.add(child_path)
-            # Aggregate chunk count for all descendants under child_path
-            agg = (await db.execute(
-                select(func.count(DocumentChunk.id))
-                .join(DocumentSection, DocumentChunk.section_id == DocumentSection.section_id)
-                .where(DocumentChunk.document_id == document_id)
-                .where(DocumentChunk.job_result_id == job_result_id)
-                .where(DocumentSection.section_path.like(child_path + '%'))
-            )).scalar() or 0
-            # Count whether this child itself has children under it
-            child_count = (await db.execute(
-                select(func.count(DocumentSection.section_id))
-                .where(DocumentSection.document_id == document_id)
-                .where(DocumentSection.job_result_id == job_result_id)
-                .where(DocumentSection.section_path.like(child_path + suffix_sep + '%'))
-            )).scalar() or 0
-            direct.append({
-                'path': child_path,
-                'title': child_name,
-                'chunk_count': agg,
-                'children_count': child_count,
-                'summary': summary or '',
-            })
-        return direct
+            remainder = path[len(prefix):]
+            child_name = remainder.split(sep)[0]
+            child_path = prefix + child_name
+            if child_path in child_sections:
+                child_sections[child_path]['chunk_count'] += cnt
+
+        return [child_sections[cp] for cp in child_order]
+
 
     all_sections: list[dict] = []
     for s1 in l1_sections:
