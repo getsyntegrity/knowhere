@@ -30,6 +30,7 @@ from shared.services.retrieval.agent_navigate import (
     _format_sections_for_llm,
     _grep_discover_document_ids,
     _load_nav_sections_from_graph,
+    _load_nav_sections_2level,
     _parse_chunk_path_selections,
     _parse_json_array,
     _parse_section_selections,
@@ -528,16 +529,17 @@ async def nav_section_select(
     document_id: str,
     job_result_id: str,
     doc_name: str = '',
-    section_path: str | None = None,
+    section_path: str | None = None,  # kept for API compat, ignored in 2-level design
     **_kwargs: Any,
 ) -> ToolResult:
-    """Navigate doc_nav.json tree hierarchically.
+    """Navigate doc_nav sections with a single 2-level LLM call.
 
-    When section_path is None, show top-level sections (from GraphNode).
-    When section_path is given, show children of that section (from DB).
+    Shows L1 + L2 sections in one flat overview.  LLM picks relevant
+    sections at either level (no drill/select decision).  Each selected
+    section is immediately expanded to its leaf chunk paths via
+    _collect_leaf_paths — finest-granularity, deduplicated.
 
-    For small documents (≤ CHUNK_COUNT_THRESHOLD), falls back to
-    flat chunks_slim selection via the existing chunk selection prompt.
+    Falls back to flat chunks_slim selection when no nav sections exist.
     """
     t0 = time.monotonic()
     try:
@@ -549,27 +551,12 @@ async def nav_section_select(
                 latency_ms=latency,
             )
 
-        # Load section view at the appropriate level
-        sections: list[dict] = []
-        if section_path is None:
-            # Top-level: from GraphNode.properties.nav_sections
-            nav_data = await _load_nav_sections_from_graph(db, document_id)
-            if nav_data:
-                sections = nav_data.get('sections', [])
-        else:
-            # Sub-level: from DocumentSection table
-            sections = await _build_sub_sections_from_db(
-                db,
-                document_id=document_id,
-                job_result_id=job_result_id,
-                parent_path=section_path,
-            )
-
-        if not sections:
-            # No section data — fallback to chunks_slim direct selection
+        # Load L1 + L2 sections in a single pass
+        nav_data = await _load_nav_sections_2level(db, document_id, job_result_id)
+        if not nav_data or not nav_data.get('sections'):
             logger.info(
-                f'  agentic.nav_section_select: no sections for doc={document_id} '
-                f'section_path={section_path}, falling back to chunks_slim'
+                f'  agentic.nav_section_select: no 2-level sections for '
+                f'doc={document_id}, falling back to chunks_slim'
             )
             return await _nav_fallback_chunks_slim(
                 db,
@@ -578,10 +565,12 @@ async def nav_section_select(
                 query=query,
                 llm_fn=llm_fn,
                 doc_name=doc_name,
-                path_scope=section_path,
+                path_scope=None,
             )
 
-        # Format and prompt LLM
+        sections = nav_data['sections']
+
+        # Single LLM call: show 2-level overview, get {path, confidence} list
         sections_text = _format_sections_for_llm(sections)
         prompt = _NAV_SECTION_PROMPT.format(
             doc_name=doc_name or document_id,
@@ -589,85 +578,84 @@ async def nav_section_select(
             sections_overview=sections_text,
             query=query,
         )
-
         response = await llm_fn(prompt)
         logger.info(f'  agentic.nav_section_select LLM response: {response[:300]}')
-        selections = _parse_section_selections(response)
 
-        # Validate and categorize selections
+        # Parse with the same parser as chunk path selections ({path, confidence})
+        parsed_selections = _parse_chunk_path_selections(response)
+
+        # Validate against all known L1+L2 paths.
+        # LLM may normalise ' / ' separators to '/' — do a fuzzy fallback so we
+        # match the canonical path from valid_paths (preserving DB format).
         valid_paths = {s['path'] for s in sections if s.get('path')}
-        section_lookup = {s['path']: s for s in sections}
 
-        selected_paths: list[dict[str, Any]] = []
-        drill_entries: list[dict[str, Any]] = []
+        def _norm(p: str) -> str:
+            return p.replace(' / ', '/').replace(' /', '/').replace('/ ', '/')
 
-        for sel in selections:
-            path = sel['path']
-            action = sel.get('action', 'select')
+        norm_to_canonical: dict[str, str] = {_norm(vp): vp for vp in valid_paths}
 
-            if path not in valid_paths:
+        accepted: list[dict[str, Any]] = []
+        seen_accepted: set[str] = set()
+        for item in parsed_selections:
+            path = str(item.get('path') or '').strip()
+            canonical = path if path in valid_paths else norm_to_canonical.get(_norm(path))
+            if canonical is None:
                 logger.warning(f'  nav_section_select: rejected invalid path: {path}')
                 continue
-
-            section = section_lookup[path]
-            chunk_count = section.get('chunk_count', 0)
-            has_children = section.get('children_count', 0) > 0
-
-            # Convert chunk path (kb/file/Section) → section_path (Section)
-            from shared.services.retrieval.lexical_text import section_path_from_chunk_path
-            db_section_path = section_path_from_chunk_path(path) or path
-
-            if action == 'drill' and has_children and chunk_count > CHUNK_COUNT_THRESHOLD:
-                drill_entries.append({
-                    'document_id': document_id,
-                    'section_path': db_section_path,
-                    'depth': section.get('level', 1),
-                })
-            else:
-                # "select" or no children → collect leaf paths
-                leaf_paths = await _collect_leaf_paths(
-                    db,
-                    document_id=document_id,
-                    job_result_id=job_result_id,
-                    section_path=db_section_path,
-                )
-                selected_paths.extend(leaf_paths)
+            if canonical in seen_accepted:
+                continue
+            seen_accepted.add(canonical)
+            accepted.append({'path': canonical, 'confidence': item.get('confidence') or 0.8})
 
         latency = int((time.monotonic() - t0) * 1000)
 
-        if drill_entries and not selected_paths:
+        if not accepted:
             logger.info(
-                f'  agentic.nav_section_select: {len(drill_entries)} sections need deeper drill, {latency}ms'
+                f'  agentic.nav_section_select: no match for doc={document_id}, {latency}ms'
             )
-            return ToolResult(
-                status='need_deeper_drill',
-                payload={'drill_entries': drill_entries, 'document_id': document_id},
-                latency_ms=latency,
-            )
-        elif selected_paths:
-            # If we also have drill entries, add them back
-            # (mixed drill + select is fine)
-            logger.info(
-                f'  agentic.nav_section_select: {len(selected_paths)} paths selected'
-                + (f', {len(drill_entries)} pending drills' if drill_entries else '')
-                + f', {latency}ms'
-            )
-            result = ToolResult(
-                status='selected_paths',
-                payload={'document_id': document_id, 'selected_paths': selected_paths},
-                latency_ms=latency,
-            )
-            # If mixed, we need to push drill entries separately
-            if drill_entries:
-                result.payload['pending_drill_entries'] = drill_entries
-            return result
-        else:
-            logger.info(f'  agentic.nav_section_select: no match for doc={document_id}, {latency}ms')
             return ToolResult(
                 status='no_confident_match',
                 payload={'document_id': document_id, 'reason': 'no section matches query'},
                 latency_ms=latency,
             )
+
+        # Expand each selected section to its finest-granularity leaf paths.
+        # If both parent and child are selected, the child's leaves are a subset
+        # of the parent's leaves — _hydrate_paths_to_rows deduplicates by path.
+        from shared.services.retrieval.lexical_text import section_path_from_chunk_path
+
+        all_leaf_paths: list[dict[str, Any]] = []
+        seen_leaf: set[str] = set()
+        for item in accepted:
+            db_section_path = section_path_from_chunk_path(item['path']) or item['path']
+            leaf_paths = await _collect_leaf_paths(
+                db,
+                document_id=document_id,
+                job_result_id=job_result_id,
+                section_path=db_section_path,
+            )
+            for lp in leaf_paths:
+                if lp['path'] not in seen_leaf:
+                    seen_leaf.add(lp['path'])
+                    all_leaf_paths.append(lp)
+
+        logger.info(
+            f'  agentic.nav_section_select: {len(accepted)} sections → '
+            f'{len(all_leaf_paths)} unique leaf paths, {latency}ms'
+        )
+
+        if all_leaf_paths:
+            return ToolResult(
+                status='selected_paths',
+                payload={'document_id': document_id, 'selected_paths': all_leaf_paths},
+                latency_ms=latency,
+            )
+
+        return ToolResult(
+            status='no_confident_match',
+            payload={'document_id': document_id, 'reason': 'no leaf chunks under selected sections'},
+            latency_ms=latency,
+        )
 
     except Exception as e:
         latency = int((time.monotonic() - t0) * 1000)

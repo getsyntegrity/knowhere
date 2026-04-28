@@ -100,7 +100,10 @@ def _extract_nav_sections_for_publish(add_dir: str) -> list:
                 "children_count": len(section.get("children", [])),
             })
         return sections
-    except Exception:
+    except Exception as _e:
+        logger.warning(
+            f'doc_nav extraction failed (non-fatal): add_dir={add_dir!r}, error={_e}'
+        )
         return []
 
 @celery_app.task(

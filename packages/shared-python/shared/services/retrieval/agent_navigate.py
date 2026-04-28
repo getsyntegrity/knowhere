@@ -705,8 +705,8 @@ You are a document section navigator.
 
 Document: "{doc_name}" (id: {doc_id})
 
-Below are the sections at the current navigation level.
-Each section shows its title, a content summary, and how many chunks it contains.
+Below are the sections (up to 2 levels). Indented entries are sub-sections of the item above.
+Each entry shows its path, title, chunk count, and a content summary.
 
 === Sections ===
 {sections_overview}
@@ -714,12 +714,10 @@ Each section shows its title, a content summary, and how many chunks it contains
 
 User query: {query}
 
-For each relevant section, decide:
-- "drill": explore its sub-sections for more detail (use when chunk_count is large and the section has children)
-- "select": accept this section as relevant (use when chunk_count is small or the content clearly matches)
-
-Return a JSON array:
-[{{"path": "section/path", "action": "drill"|"select"}}, ...]
+Select only the sections most relevant to answering the query.
+Prefer more specific sub-sections over their parent when both are listed and the sub-section is sufficient.
+Return a JSON array with selected paths and confidence scores (0.0-1.0):
+[{{"path": "section/path", "confidence": 0.9}}, ...]
 Do not include any explanation.
 """
 
@@ -748,6 +746,129 @@ async def _load_nav_sections_from_graph(
     return {
         'sections': nav_sections,
         'total_chunks': props.get('chunks_count', 0),
+    }
+
+async def _load_nav_sections_2level(
+    db: AsyncSession,
+    document_id: str,
+    job_result_id: str,
+) -> dict | None:
+    """Load L1 sections from GraphNode + their L2 children from DocumentSection.
+
+    Returns dict with 'sections' (flat list, each entry has a 'level' field)
+    and 'total_chunks', or None if no nav_sections are available.
+    Each L2 entry is indented under its L1 parent in the returned list order.
+    """
+    from shared.services.retrieval.lexical_text import section_path_from_chunk_path
+    from sqlalchemy import select, func
+    from shared.models.database.document import DocumentSection, DocumentChunk
+
+    nav_data = await _load_nav_sections_from_graph(db, document_id)
+    if not nav_data:
+        return None
+
+    l1_sections = nav_data.get('sections', [])
+    if not l1_sections:
+        return None
+
+    # Extract the kb prefix from L1 chunk_paths so L2 paths can be normalised
+    # to the same format.  L1 path: "kb_id/filename/Section"
+    # L2 section_path from DB:      "Section / SubSection"
+    # Normalised L2 chunk_path:     "kb_id/filename/Section / SubSection"
+    kb_prefix = ''
+    sample_chunk_path = l1_sections[0].get('path', '')
+    sample_section_path = section_path_from_chunk_path(sample_chunk_path) or ''
+    if sample_section_path and sample_chunk_path.endswith(sample_section_path):
+        kb_prefix = sample_chunk_path[: -len(sample_section_path)]
+
+    async def _load_l2_by_path(l1_section_path: str) -> list[dict]:
+        """Path-based fallback: find direct L2 children via LIKE pattern.
+
+        Matches section_path entries of the form:
+          '{l1_section_path} / {child_name}'
+        but NOT deeper grandchildren:
+          '{l1_section_path} / {child_name} / {grandchild}'
+        """
+        prefix = l1_section_path + ' / '
+        # Fetch all sections whose path starts with prefix
+        rows = (await db.execute(
+            select(
+                DocumentSection.section_path,
+                DocumentSection.section_title,
+                DocumentSection.section_level,
+                DocumentSection.summary,
+            )
+            .where(DocumentSection.document_id == document_id)
+            .where(DocumentSection.job_result_id == job_result_id)
+            .where(DocumentSection.section_path.like(prefix + '%'))
+            .order_by(DocumentSection.sort_order)
+        )).all()
+        # Keep only direct children: no further ' / ' after the prefix
+        suffix_sep = ' / '
+        direct: list[dict] = []
+        seen_child_paths: set[str] = set()
+        for path, title, level, summary in rows:
+            remainder = path[len(prefix):]  # everything after 'Parent / '
+            child_name = remainder.split(suffix_sep)[0]  # first segment only
+            child_path = prefix + child_name
+            if child_path in seen_child_paths:
+                continue
+            seen_child_paths.add(child_path)
+            # Aggregate chunk count for all descendants under child_path
+            agg = (await db.execute(
+                select(func.count(DocumentChunk.id))
+                .join(DocumentSection, DocumentChunk.section_id == DocumentSection.section_id)
+                .where(DocumentChunk.document_id == document_id)
+                .where(DocumentChunk.job_result_id == job_result_id)
+                .where(DocumentSection.section_path.like(child_path + '%'))
+            )).scalar() or 0
+            # Count whether this child itself has children under it
+            child_count = (await db.execute(
+                select(func.count(DocumentSection.section_id))
+                .where(DocumentSection.document_id == document_id)
+                .where(DocumentSection.job_result_id == job_result_id)
+                .where(DocumentSection.section_path.like(child_path + suffix_sep + '%'))
+            )).scalar() or 0
+            direct.append({
+                'path': child_path,
+                'title': child_name,
+                'chunk_count': agg,
+                'children_count': child_count,
+                'summary': summary or '',
+            })
+        return direct
+
+    all_sections: list[dict] = []
+    for s1 in l1_sections:
+        entry = dict(s1, level=1)
+        all_sections.append(entry)
+        # Load L2 children for sections that have sub-sections
+        if s1.get('children_count', 0) > 0:
+            db_path = section_path_from_chunk_path(s1['path']) or s1['path']
+            # Try parent_section_id join first (fast, works when intermediate nodes exist)
+            l2 = await _build_sub_sections_from_db(
+                db,
+                document_id=document_id,
+                job_result_id=job_result_id,
+                parent_path=db_path,
+            )
+            if not l2:
+                # Fallback: path-pattern LIKE match (handles absent intermediate nodes)
+                l2 = await _load_l2_by_path(db_path)
+            for s2 in l2:
+                s2['level'] = 2
+                # Normalise path: prepend kb_prefix so L2 uses chunk_path format
+                raw_path = s2.get('path', '')
+                if kb_prefix and not raw_path.startswith(kb_prefix):
+                    s2['path'] = kb_prefix + raw_path
+                all_sections.append(s2)
+
+    if not all_sections:
+        return None
+
+    return {
+        'sections': all_sections,
+        'total_chunks': nav_data.get('total_chunks', 0),
     }
 
 
@@ -872,17 +993,19 @@ async def _collect_leaf_paths(
 
 
 def _format_sections_for_llm(sections: list[dict], max_chars: int = 4000) -> str:
-    """Format section entries for LLM prompt."""
+    """Format section entries for LLM prompt with 2-level visual indentation."""
     if not sections:
         return '(no sections available)'
     lines: list[str] = []
     for s in sections:
-        line = f'- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+        level = s.get('level', 1)
+        indent = '  ' if level == 2 else ''
+        line = f'{indent}- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
         if s.get('children_count', 0) > 0:
             line += f'  sub_sections={s["children_count"]}'
         summary = s.get('summary', '')
         if summary:
-            line += f'\n  summary: {summary[:200]}'
+            line += f'\n{indent}  summary: {summary[:200]}'
         if len('\n'.join(lines + [line])) > max_chars:
             break
         lines.append(line)

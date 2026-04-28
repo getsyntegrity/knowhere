@@ -152,20 +152,12 @@ class AgentState:
                 self.pending_doc_index += 1
 
         elif action_type == ActionType.NAV_SECTION_SELECT:
+            # Nav is a single 2-level call: always produces selected_paths or no_confident_match.
+            if self.nav_drill_stack:
+                self.nav_drill_stack.pop()
             if result.status == 'selected_paths':
                 new_paths = result.payload.get('selected_paths', [])
                 self.selected_paths.extend(new_paths)
-                if self.nav_drill_stack:
-                    self.nav_drill_stack.pop()
-            elif result.status == 'need_deeper_drill':
-                deeper_entries = result.payload.get('drill_entries', [])
-                if self.nav_drill_stack:
-                    self.nav_drill_stack.pop()
-                self.nav_drill_stack.extend(deeper_entries)
-                self.path_expansion_count += 1
-            elif result.status in ('no_confident_match', 'error'):
-                if self.nav_drill_stack:
-                    self.nav_drill_stack.pop()
 
         elif action_type == ActionType.GREP_DOCUMENT_DISCOVER:
             if result.status == 'discovered_docs':
