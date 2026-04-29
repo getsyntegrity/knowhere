@@ -120,7 +120,7 @@ Apply safe Ruff fixes:
 make lint-fix
 ```
 
-Run type checks across the API, worker, and shared package:
+Run type checks across the API, worker, and shared source code:
 
 ```bash
 make typecheck

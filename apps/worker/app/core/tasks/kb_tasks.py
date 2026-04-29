@@ -722,7 +722,6 @@ def _parse(job_id: str, user_id: str | None):
             result_s3_key = result_bundle.zip_key
 
             stored_count = 0
-            kb_records = []
 
             lifecycle_service.update_progress(
                 job_id, progress=100, message="Task complete!"
@@ -736,7 +735,6 @@ def _parse(job_id: str, user_id: str | None):
                 checksum=checksum_value,
                 zip_size=zip_size,
                 stored_count=stored_count,
-                kb_records=kb_records,
                 delivery_mode="url",
                 section_summaries=section_summaries,
             )

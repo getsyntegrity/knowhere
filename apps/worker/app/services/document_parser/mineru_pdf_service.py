@@ -73,6 +73,9 @@ def _mineru_logger(step: str, **fields: Any):
 
 
 def _should_use_mineru_s3_url_mode(s3_key: Optional[str]) -> bool:
+    if settings.FORCE_MINERU_UPLOAD_ENABLED:
+        return False
+
     return settings.ENVIRONMENT != "development" and s3_key is not None
 
 
