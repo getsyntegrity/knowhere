@@ -14,6 +14,13 @@ Thanks for contributing to Knowhere API.
 - Do not push directly to `main` or `staging`.
 - Start from the agreed source branch for the work.
 - Use a dedicated feature or fix branch for each change.
+- Name branches as `<type>/<user>/<description>`.
+- Use a lowercase `type`, preferably one of `feat`, `fix`, `refactor`,
+  `chore`, `docs`, `test`, `perf`, `ci`, `build`, or `revert`.
+- Use the human owner or contributor name for `user`; do not use a generic
+  tool name such as `codex`.
+- Keep `description` short, lowercase, and kebab-case, for example
+  `refactor/alice/extract-chunk-converter`.
 - If you are working on publication cleanup, keep migration-only changes on the
   dedicated migration branch instead of flowing them back into normal private
   development by default.
