@@ -94,6 +94,10 @@ class TraceRecorder:
             self._created = True
         except Exception as e:
             logger.debug(f'agentic trace: failed to create run {self._run_id}: {e}')
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass
 
     def record_step(self, action_type: ActionType, result: ToolResult) -> None:
         """Buffer a step record.  Flushed on complete()."""
@@ -180,3 +184,7 @@ class TraceRecorder:
 
         except Exception as e:
             logger.debug(f'agentic trace: failed to complete run {self._run_id}: {e}')
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass

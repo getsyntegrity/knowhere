@@ -705,8 +705,8 @@ You are a document section navigator.
 
 Document: "{doc_name}" (id: {doc_id})
 
-Below are the sections at the current navigation level.
-Each section shows its title, a content summary, and how many chunks it contains.
+Below are the sections (up to 2 levels). Indented entries are sub-sections of the item above.
+Each entry shows its path, title, chunk count, and a content summary.
 
 === Sections ===
 {sections_overview}
@@ -714,12 +714,10 @@ Each section shows its title, a content summary, and how many chunks it contains
 
 User query: {query}
 
-For each relevant section, decide:
-- "drill": explore its sub-sections for more detail (use when chunk_count is large and the section has children)
-- "select": accept this section as relevant (use when chunk_count is small or the content clearly matches)
-
-Return a JSON array:
-[{{"path": "section/path", "action": "drill"|"select"}}, ...]
+Select only the sections most relevant to answering the query.
+Prefer more specific sub-sections over their parent when both are listed and the sub-section is sufficient.
+Return a JSON array with selected paths and confidence scores (0.0-1.0):
+[{{"path": "section/path", "confidence": 0.9}}, ...]
 Do not include any explanation.
 """
 
@@ -748,6 +746,153 @@ async def _load_nav_sections_from_graph(
     return {
         'sections': nav_sections,
         'total_chunks': props.get('chunks_count', 0),
+    }
+
+async def _load_nav_sections_2level(
+    db: AsyncSession,
+    document_id: str,
+    job_result_id: str,
+) -> dict | None:
+    """Load L1 sections from GraphNode + their L2 children from DocumentSection.
+
+    Returns dict with 'sections' (flat list, each entry has a 'level' field)
+    and 'total_chunks', or None if no nav_sections are available.
+    Each L2 entry is indented under its L1 parent in the returned list order.
+    """
+    from shared.services.retrieval.lexical_text import section_path_from_chunk_path
+    from sqlalchemy import select, func
+    from shared.models.database.document import DocumentSection, DocumentChunk
+
+    nav_data = await _load_nav_sections_from_graph(db, document_id)
+    if not nav_data:
+        return None
+
+    l1_sections = nav_data.get('sections', [])
+    if not l1_sections:
+        return None
+
+    # Extract the kb prefix from L1 chunk_paths so L2 paths can be normalised
+    # to the same format.  L1 path: "kb_id/filename/Section"
+    # L2 section_path from DB:      "Section / SubSection"
+    # Normalised L2 chunk_path:     "kb_id/filename/Section / SubSection"
+    kb_prefix = ''
+    sample_chunk_path = l1_sections[0].get('path', '')
+    sample_section_path = section_path_from_chunk_path(sample_chunk_path) or ''
+    if sample_section_path and sample_chunk_path.endswith(sample_section_path):
+        kb_prefix = sample_chunk_path[: -len(sample_section_path)]
+
+    async def _load_l2_by_path(l1_section_path: str) -> list[dict]:
+        """Path-based fallback: find direct L2 children when intermediate
+        DocumentSection nodes are absent (i.e. parent_section_id join returns
+        nothing but the section_path tree still contains descendants).
+
+        Uses 2 batched queries — one for all descendant sections, one for all
+        descendant chunks — then aggregates in Python.  No N+1 queries.
+
+        Matches section_path entries of the form:
+          '{l1_section_path} / {child_name}'        ← direct L2
+          '{l1_section_path} / {child_name} / ...'  ← deeper (aggregated up)
+        """
+        prefix = l1_section_path + ' / '
+
+        # ── Query 1: all descendant sections under this L1 ──
+        desc_rows = (await db.execute(
+            select(
+                DocumentSection.section_id,
+                DocumentSection.section_path,
+                DocumentSection.summary,
+            )
+            .where(DocumentSection.document_id == document_id)
+            .where(DocumentSection.job_result_id == job_result_id)
+            .where(DocumentSection.section_path.like(prefix + '%'))
+            .order_by(DocumentSection.sort_order)
+        )).all()
+
+        if not desc_rows:
+            return []
+
+        # Extract unique direct-child names and their canonical paths
+        sep = ' / '
+        child_order: list[str] = []       # preserves first-seen order
+        child_sections: dict[str, dict] = {}  # child_path -> aggregated info
+        all_desc_section_ids: list = []
+
+        for sec_id, path, summary in desc_rows:
+            all_desc_section_ids.append(sec_id)
+            remainder = path[len(prefix):]
+            child_name = remainder.split(sep)[0]
+            child_path = prefix + child_name
+            if child_path not in child_sections:
+                child_order.append(child_path)
+                child_sections[child_path] = {
+                    'path': child_path,
+                    'title': child_name,
+                    'chunk_count': 0,
+                    'children_count': 0,
+                    'summary': summary or '',
+                }
+            # Count grandchildren (paths with one more ' / ' after child_path)
+            if sep in path[len(child_path):].lstrip():
+                child_sections[child_path]['children_count'] += 1
+
+        # ── Query 2: chunk counts for all descendant section_ids in one shot ──
+        chunk_rows = (await db.execute(
+            select(
+                DocumentChunk.section_id,
+                func.count(DocumentChunk.id).label('cnt'),
+            )
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.job_result_id == job_result_id)
+            .where(DocumentChunk.section_id.in_(all_desc_section_ids))
+            .group_by(DocumentChunk.section_id)
+        )).all()
+
+        # Map section_id → section_path for lookup
+        sec_id_to_path: dict = {sec_id: path for sec_id, path, _ in desc_rows}
+        for sec_id, cnt in chunk_rows:
+            path = sec_id_to_path.get(sec_id, '')
+            if not path.startswith(prefix):
+                continue
+            remainder = path[len(prefix):]
+            child_name = remainder.split(sep)[0]
+            child_path = prefix + child_name
+            if child_path in child_sections:
+                child_sections[child_path]['chunk_count'] += cnt
+
+        return [child_sections[cp] for cp in child_order]
+
+
+    all_sections: list[dict] = []
+    for s1 in l1_sections:
+        entry = dict(s1, level=1)
+        all_sections.append(entry)
+        # Load L2 children for sections that have sub-sections
+        if s1.get('children_count', 0) > 0:
+            db_path = section_path_from_chunk_path(s1['path']) or s1['path']
+            # Try parent_section_id join first (fast, works when intermediate nodes exist)
+            l2 = await _build_sub_sections_from_db(
+                db,
+                document_id=document_id,
+                job_result_id=job_result_id,
+                parent_path=db_path,
+            )
+            if not l2:
+                # Fallback: path-pattern LIKE match (handles absent intermediate nodes)
+                l2 = await _load_l2_by_path(db_path)
+            for s2 in l2:
+                s2['level'] = 2
+                # Normalise path: prepend kb_prefix so L2 uses chunk_path format
+                raw_path = s2.get('path', '')
+                if kb_prefix and not raw_path.startswith(kb_prefix):
+                    s2['path'] = kb_prefix + raw_path
+                all_sections.append(s2)
+
+    if not all_sections:
+        return None
+
+    return {
+        'sections': all_sections,
+        'total_chunks': nav_data.get('total_chunks', 0),
     }
 
 
@@ -871,22 +1016,133 @@ async def _collect_leaf_paths(
     return paths
 
 
-def _format_sections_for_llm(sections: list[dict], max_chars: int = 4000) -> str:
-    """Format section entries for LLM prompt."""
+def _format_sections_for_llm(
+    sections: list[dict],
+    max_chars: int = 20000,
+) -> tuple[str, bool]:
+    """Format section entries for LLM prompt with 2-level visual indentation.
+
+    Returns:
+        (text, overflowed)
+        - text:       formatted string to put in the LLM prompt
+        - overflowed: True when the full L1+L2+summary content did NOT fit in
+                      max_chars. In that case the caller should fall back to the
+                      two-step drill-down: first show L1-only, then show L2 for
+                      selected L1s in a second LLM call.
+
+    Rendering strategy:
+    - Pass 1: Render ALL L1 sections (path + title only). Guarantees LLM sees
+              the complete document skeleton even if budget is tight.
+    - Pass 2: Fill remaining budget with summaries + L2 detail (token-aware).
+              If the entire section list fits → overflowed=False.
+              If Pass 2 is cut short → overflowed=True (caller triggers drill-down).
+    """
+    from shared.utils.text_utils import truncate_content_preview
+
     if not sections:
-        return '(no sections available)'
+        return '(no sections available)', False
+
+    SUMMARY_HEAD_TOKENS = 80
+
+    # ── Pass 1: L1 skeleton (always included) ─────────────────────────────
+    l1_lines: list[str] = []
+    for s in sections:
+        if s.get('level', 1) != 1:
+            continue
+        line = f'- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+        if s.get('children_count', 0) > 0:
+            line += f'  sub_sections={s["children_count"]}'
+        l1_lines.append(line)
+
+    skeleton = '\n'.join(l1_lines)
+    if len(skeleton) >= max_chars:
+        return skeleton[:max_chars], True  # extremely large doc
+
+    remaining = max_chars - len(skeleton)
+
+    # ── Pass 2: enrich within remaining budget ─────────────────────────────
+    enriched_lines: list[str] = []
+    total_sections = len(sections)
+    included = 0
+    for s in sections:
+        level = s.get('level', 1)
+        indent = '  ' if level == 2 else ''
+        line = f'{indent}- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+        if s.get('children_count', 0) > 0:
+            line += f'  sub_sections={s["children_count"]}'
+        summary = s.get('summary', '')
+        if summary:
+            clipped = truncate_content_preview(summary, head=SUMMARY_HEAD_TOKENS, tail=0)
+            line += f'\n{indent}  summary: {clipped}'
+        candidate = '\n'.join(enriched_lines + [line])
+        if len(candidate) > remaining:
+            break
+        enriched_lines.append(line)
+        included += 1
+
+    overflowed = included < total_sections
+    result_text = '\n'.join(enriched_lines) if enriched_lines else skeleton
+    return result_text, overflowed
+
+
+def _format_l1_only_for_llm(sections: list[dict]) -> str:
+    """Format only L1 sections for the first step of the two-step drill-down.
+
+    Used when the full L1+L2 layout overflows the budget: show LLM just the
+    top-level chapters (with summaries) so it can pick which ones to drill into.
+    """
+    from shared.utils.text_utils import truncate_content_preview
+
     lines: list[str] = []
     for s in sections:
+        if s.get('level', 1) != 1:
+            continue
         line = f'- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
         if s.get('children_count', 0) > 0:
             line += f'  sub_sections={s["children_count"]}'
         summary = s.get('summary', '')
         if summary:
-            line += f'\n  summary: {summary[:200]}'
-        if len('\n'.join(lines + [line])) > max_chars:
-            break
+            clipped = truncate_content_preview(summary, head=80, tail=0)
+            line += f'\n  summary: {clipped}'
         lines.append(line)
     return '\n'.join(lines) if lines else '(no sections available)'
+
+
+def _format_l2_for_selected_l1s(sections: list[dict], selected_l1_paths: set[str]) -> str:
+    """Format L2 children of selected L1 paths for the second drill-down LLM call.
+
+    Shows each selected L1 as a header, followed by its L2 children (with summaries).
+    Used after the LLM has already picked which L1 chapters are relevant.
+    """
+    from shared.utils.text_utils import truncate_content_preview
+
+    lines: list[str] = []
+    for s in sections:
+        level = s.get('level', 1)
+        path = s.get('path', '')
+        if level == 1:
+            if path not in selected_l1_paths:
+                continue
+            # Show L1 as a context header (not selectable, just for readability)
+            line = f'## {s["title"]}  (path="{path}")'
+            lines.append(line)
+        elif level == 2:
+            # Check if parent L1 is in selected set
+            parent_match = any(
+                path.startswith(l1 + '/') or path.startswith(l1 + ' / ')
+                for l1 in selected_l1_paths
+            )
+            if not parent_match:
+                continue
+            line = f'  - path="{path}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+            summary = s.get('summary', '')
+            if summary:
+                clipped = truncate_content_preview(summary, head=80, tail=0)
+                line += f'\n    summary: {clipped}'
+            lines.append(line)
+
+    return '\n'.join(lines) if lines else '(no sub-sections found for selected chapters)'
+
 
 
 def _parse_section_selections(text: str) -> list[dict[str, str]]:

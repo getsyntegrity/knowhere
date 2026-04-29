@@ -24,10 +24,9 @@ class RuleBasedPolicy:
         if not state.kg_done and state.doc_retry_count < config.max_doc_retries:
             return ActionType.KG_DOCUMENT_SELECT
 
-        # ── Step 3: Pending doc_nav section drills (progressive expansion) ──
+        # ── Step 3: Pending doc_nav section navigation (one call per document) ──
         if state.nav_drill_stack:
-            if state.path_expansion_count < config.max_path_expansions:
-                return ActionType.NAV_SECTION_SELECT
+            return ActionType.NAV_SECTION_SELECT
 
         # ── Step 4: Process selected documents one by one ──
         if state.selected_docs and state.pending_doc_index < len(state.selected_docs):

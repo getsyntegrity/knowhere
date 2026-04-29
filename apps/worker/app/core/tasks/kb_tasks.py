@@ -84,6 +84,7 @@ def _extract_nav_sections_for_publish(add_dir: str) -> list:
     if not os.path.exists(nav_path):
         return []
     try:
+        from shared.utils.text_utils import truncate_content_preview
         with open(nav_path, "r", encoding="utf-8") as f:
             doc_nav = json.load(f)
         sections = []
@@ -94,12 +95,17 @@ def _extract_nav_sections_for_publish(add_dir: str) -> list:
             sections.append({
                 "title": title,
                 "path": section.get("path", ""),
-                "summary": (section.get("summary") or "")[:200],
+                "summary": truncate_content_preview(
+                    section.get("summary") or "", head=80, tail=0
+                ),
                 "chunk_count": section.get("chunk_count", 0),
                 "children_count": len(section.get("children", [])),
             })
         return sections
-    except Exception:
+    except Exception as _e:
+        logger.warning(
+            f'doc_nav extraction failed (non-fatal): add_dir={add_dir!r}, error={_e}'
+        )
         return []
 
 @celery_app.task(
@@ -637,10 +643,13 @@ def _parse(job_id: str, user_id: str | None):
                 # GraphNode.nav_sections gets populated summaries, not empty strings.
                 try:
                     kb_dir_for_enrich = os.path.dirname(str(add_dir))
+                    summary_use_llm = JobMetadataHelper.get_parsing_param(
+                        job_metadata, "summary_use_llm", False
+                    )
                     enrich_doc_nav_summaries(
                         kb_dir_for_enrich,
                         source_file=str(source_file_name),
-                        use_llm=False,
+                        use_llm=summary_use_llm,
                     )
                     section_summaries = build_section_summary_lookup(str(add_dir))
                 except Exception as _e:

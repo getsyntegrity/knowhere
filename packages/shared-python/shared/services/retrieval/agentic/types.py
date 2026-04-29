@@ -152,20 +152,20 @@ class AgentState:
                 self.pending_doc_index += 1
 
         elif action_type == ActionType.NAV_SECTION_SELECT:
+            # Concurrent batch nav: all stack entries consumed in one shot.
+            # The orchestrator embeds '_consumed_stack' listing processed doc IDs.
+            consumed_ids = set(result.payload.get('_consumed_stack', []))
+            if consumed_ids:
+                self.nav_drill_stack = [
+                    e for e in self.nav_drill_stack
+                    if e['document_id'] not in consumed_ids
+                ]
+            elif self.nav_drill_stack:
+                # Fallback: legacy single-entry pop (safety net)
+                self.nav_drill_stack.pop()
             if result.status == 'selected_paths':
                 new_paths = result.payload.get('selected_paths', [])
                 self.selected_paths.extend(new_paths)
-                if self.nav_drill_stack:
-                    self.nav_drill_stack.pop()
-            elif result.status == 'need_deeper_drill':
-                deeper_entries = result.payload.get('drill_entries', [])
-                if self.nav_drill_stack:
-                    self.nav_drill_stack.pop()
-                self.nav_drill_stack.extend(deeper_entries)
-                self.path_expansion_count += 1
-            elif result.status in ('no_confident_match', 'error'):
-                if self.nav_drill_stack:
-                    self.nav_drill_stack.pop()
 
         elif action_type == ActionType.GREP_DOCUMENT_DISCOVER:
             if result.status == 'discovered_docs':

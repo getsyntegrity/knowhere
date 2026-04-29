@@ -532,6 +532,8 @@ def parse_md(
                     )
                 img_count += 1
 
+            # TODO for large and dense tables, such as "Epstein flight logs",
+            # integrate tabula-py as an independent extraction path to solve VLM hallucinations and misplacement
             # b. handle lines containing tables
             tb_bool, form, _ = identify_tables(line)
             if tb_bool:
