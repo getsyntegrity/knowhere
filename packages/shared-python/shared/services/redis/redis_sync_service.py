@@ -5,7 +5,7 @@ API service continues using async RedisService.
 """
 
 import json
-from typing import Any, Dict, List, Optional, Sequence, cast
+from typing import Any, Dict, Optional, Sequence, cast
 
 from loguru import logger
 from redis import Redis as SyncRedisClient
@@ -375,55 +375,6 @@ class SyncJobMetadataService:
             return True
         except Exception as e:
             logger.error(f"Failed to delete metadata: {e}")
-            return False
-
-
-class SyncChunksRedisService:
-    """Sync Chunks Redis service."""
-
-    def __init__(self, redis_service: SyncRedisService):
-        self.redis = redis_service
-
-    def dataframe_to_chunks(self, df) -> List[Dict[str, Any]]:
-        """Delegate to the existing async version's logic."""
-        from shared.services.redis.chunks_redis_service import ChunksRedisService
-
-        # Reuse the static conversion logic
-        dummy = ChunksRedisService.__new__(ChunksRedisService)
-        return dummy._dataframe_to_chunks(df)
-
-    def save_dataframe_as_chunks(self, job_id: str, df) -> bool:
-        try:
-            chunks = self.dataframe_to_chunks(df)
-            return self.save_chunks(job_id, chunks)
-        except Exception as e:
-            logger.error(f"Failed to save dataframe as chunks: {e}")
-            return False
-
-    def save_chunks(self, job_id: str, chunks: List[Dict[str, Any]]) -> bool:
-        try:
-            chunks_key = f"job_chunks:{job_id}"
-            self.redis.set(chunks_key, chunks, ttl=3600)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save chunks: {e}")
-            return False
-
-    def get_chunks(self, job_id: str) -> Optional[List[Dict[str, Any]]]:
-        try:
-            chunks_key = f"job_chunks:{job_id}"
-            return self.redis.get(chunks_key)
-        except Exception as e:
-            logger.error(f"Failed to get chunks: {e}")
-            return None
-
-    def delete_chunks(self, job_id: str) -> bool:
-        try:
-            chunks_key = f"job_chunks:{job_id}"
-            self.redis.delete(chunks_key)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to delete chunks: {e}")
             return False
 
 

@@ -133,6 +133,9 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     job_id: str = f"job_parse_success_{uuid4().hex[:12]}"
     source_file_name: str = "contract-parse.pdf"
     s3_key: str = f"uploads/{job_id}.pdf"
+    text_content_with_refs: str = (
+        "chunk-1 embeds [images/page-1.png] and [tables/table-1.html]"
+    )
     captured_artifacts: dict[str, Any] = {}
 
     with engine.begin() as connection:
@@ -163,6 +166,7 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     _bind_parse_task_to_current_module(monkeypatch, kb_tasks=kb_tasks)
     monkeypatch.setattr(kb_tasks.settings, "TMP_PATH", str(tmp_path))
     monkeypatch.setattr(kb_tasks.settings, "BILLING_ENABLED", billing_enabled)
+
     def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
         return {
             "exists": storage_key == s3_key,
@@ -211,10 +215,10 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
         file_root = str(kwargs["internal_output_filename"])
         parsed_rows: list[dict[str, Any]] = [
             {
-                "content": "chunk-1",
+                "content": text_content_with_refs,
                 "path": f"Default_Root/{file_root}/公司研究/自主可控加强，寒武纪或迎来营收快速放量周期",
                 "type": "text",
-                "length": 7,
+                "length": len(text_content_with_refs),
                 "keywords": "",
                 "summary": "",
                 "know_id": "kid-1",
@@ -305,6 +309,28 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
         "- 相关研报\n"
         "  - 要点"
     )
+    expected_connect_to = [
+        {
+            "target": "image-1",
+            "relation": "embeds",
+            "ref": "[images/page-1.png]",
+            "position": {
+                "start": text_content_with_refs.index("[images/page-1.png]"),
+                "end": text_content_with_refs.index("[images/page-1.png]")
+                + len("[images/page-1.png]"),
+            },
+        },
+        {
+            "target": "table-1",
+            "relation": "embeds",
+            "ref": "[tables/table-1.html]",
+            "position": {
+                "start": text_content_with_refs.index("[tables/table-1.html]"),
+                "end": text_content_with_refs.index("[tables/table-1.html]")
+                + len("[tables/table-1.html]"),
+            },
+        },
+    ]
     expected_credits_charged = 3 * int(kb_tasks.settings.MICRO_DOLLARS_PER_PAGE)
     expected_initial_balance = int(kb_tasks.settings.FREE_PLAN_INITIAL_CREDITS) * 1_000_000
 
@@ -336,6 +362,7 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     assert "images/page-1.png" in captured_artifacts["zip_entries"]
     assert "tables/table-1.html" in captured_artifacts["zip_entries"]
     assert captured_artifacts["zip_chunks"][0]["metadata"]["document_top_summary"] == expected_summary
+    assert captured_artifacts["zip_chunks"][0]["metadata"]["connect_to"] == expected_connect_to
     assert captured_artifacts["zip_chunks"][2]["metadata"]["file_path"] == "images/page-1.png"
     assert captured_artifacts["zip_chunks"][3]["metadata"]["file_path"] == "tables/table-1.html"
     assert _find_task_workspaces(tmp_path, job_id) == []
@@ -504,6 +531,7 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
     assert len(document_chunks) == 4
     assert document_chunks[0]["chunk_type"] == "text"
     assert dict(document_chunks[0]["chunk_metadata"])["document_top_summary"] == expected_summary
+    assert dict(document_chunks[0]["chunk_metadata"])["connect_to"] == expected_connect_to
     assert document_chunks[2]["chunk_type"] == "image"
     assert document_chunks[2]["file_path"] == "images/page-1.png"
     assert document_chunks[3]["chunk_type"] == "table"

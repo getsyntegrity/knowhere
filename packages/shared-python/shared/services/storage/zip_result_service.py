@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from loguru import logger
 from PIL import Image
 
-from shared.utils.chunk_refs import extract_chunk_refs
+from shared.utils.chunk_refs import extract_chunk_ref_spans
 from shared.utils.text_utils import truncate_content_preview
 
 if TYPE_CHECKING:
@@ -279,6 +279,8 @@ class ZipResultService:
                         normalized_item["keywords"] = item.get("keywords", [])
                     if "ref" in item and item.get("ref"):
                         normalized_item["ref"] = item.get("ref")
+                    if "position" in item and isinstance(item.get("position"), dict):
+                        normalized_item["position"] = item.get("position")
                     normalized.append(normalized_item)
                     continue
 
@@ -298,12 +300,19 @@ class ZipResultService:
             return normalized
 
         def refs_to_embed_connections(
-            refs: List[str], target_map: Dict[str, str]
+            refs: List[Any], target_map: Dict[str, str]
         ) -> List[Dict[str, Any]]:
             """Convert resource refs to connect_to embeds entries."""
             normalized = []
             for ref in refs:
-                ref_str = str(ref or "").strip()
+                if isinstance(ref, dict):
+                    ref_str = str(ref.get("ref") or "").strip()
+                    start = ref.get("start")
+                    end = ref.get("end")
+                else:
+                    ref_str = str(ref or "").strip()
+                    start = None
+                    end = None
                 if not ref_str:
                     continue
                 target_id = target_map.get(ref_str)
@@ -311,13 +320,17 @@ class ZipResultService:
                     target_id = target_map.get(ref_str[1:-1].strip())
                 if not target_id:
                     continue
-                normalized.append(
-                    {
-                        "target": target_id,
-                        "relation": "embeds",
-                        "ref": ref_str,
+                connection: Dict[str, Any] = {
+                    "target": target_id,
+                    "relation": "embeds",
+                    "ref": ref_str,
+                }
+                if isinstance(start, int) and isinstance(end, int):
+                    connection["position"] = {
+                        "start": start,
+                        "end": end,
                     }
-                )
+                normalized.append(connection)
             return normalized
 
         def merge_connections(
@@ -330,10 +343,14 @@ class ZipResultService:
                 for item in connection_list or []:
                     if not isinstance(item, dict):
                         continue
+                    position = item.get("position")
+                    position_data = position if isinstance(position, dict) else {}
                     key = (
                         str(item.get("target") or ""),
                         str(item.get("relation") or "related"),
                         str(item.get("ref") or ""),
+                        str(position_data.get("start", "")),
+                        str(position_data.get("end", "")),
                     )
                     if key in seen:
                         continue
@@ -392,7 +409,7 @@ class ZipResultService:
                     chunk.get("type_raw") or chunk_type_str
                 )
                 if not relationship_refs:
-                    relationship_refs = extract_chunk_refs(content)
+                    relationship_refs = extract_chunk_ref_spans(content)
 
                 embed_connections = refs_to_embed_connections(
                     relationship_refs, resource_target_map
