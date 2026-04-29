@@ -2,6 +2,7 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 import json
+import socket
 from typing import cast
 from uuid import uuid4
 
@@ -649,6 +650,51 @@ async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the
                 "kwargs": {"job_type": "kb_management"},
             }
         ]
+
+
+@pytest.mark.asyncio
+async def test_should_reject_url_source_when_url_resolves_to_private_network(
+    monkeypatch: MonkeyPatch,
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "url",
+        "source_url": "https://files.example.test/contracts/private.pdf",
+        "data_id": "contract-job-url-private-host",
+    }
+
+    def resolve_private_address(
+        host: str,
+        port: int | None,
+    ) -> list[tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_private_address)
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 400
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    error = cast(dict[str, object], response_json["error"])
+    details = cast(dict[str, object], error["details"])
+    violations = cast(list[dict[str, object]], details["violations"])
+
+    assert response_json["success"] is False
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert error["message"] == "Invalid URL"
+    assert violations == [
+        {
+            "field": "source_url",
+            "description": "URL host is not allowed",
+        }
+    ]
+    assert await _count_jobs() == 0
 
 
 @pytest.mark.asyncio
