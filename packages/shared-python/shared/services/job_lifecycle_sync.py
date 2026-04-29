@@ -22,9 +22,8 @@ from shared.core.database_sync import get_sync_db_context
 from shared.core.response import build_standard_error_response
 from shared.core.state_machine.service_sync import SyncStateMachineService
 from shared.models.database.job import Job
-from shared.models.database.job_result import JobChunk, JobResult
 from shared.models.database.document import DocumentSection
-from shared.models.database.knowledge_base import ContentBase
+from shared.models.database.job_result import JobChunk, JobResult
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.services.billing.credits_sync_service import SyncCreditsService
 from shared.services.redis.redis_sync_service import (
@@ -59,30 +58,22 @@ class SyncJobLifecycleService:
         zip_size: int,
         chunks: Optional[List[Dict[str, Any]]] = None,
         stored_count: int = 0,
-        kb_records: Optional[List[Dict[str, Any]]] = None,
         delivery_mode: str = "url",
         section_summaries: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Finalize a successful job in a single atomic transaction.
 
         Steps (all within one DB transaction):
-            1. Save KB records (bulk insert)
-            2. Upsert JobResult + replace chunks
-            3. Mark job as DONE via state machine (CAS)
-            4. Create WebhookEvent if webhook_enabled
-            5. COMMIT
-            6. Post-commit: enqueue webhook
+            1. Upsert JobResult + replace chunks
+            2. Mark job as DONE via state machine (CAS)
+            3. Create WebhookEvent if webhook_enabled
+            4. COMMIT
+            5. Post-commit: enqueue webhook
         """
         logger.info(f"Finalizing job success: job_id={job_id}")
 
         with get_sync_db_context() as db:
             try:
-                if kb_records:
-                    self._bulk_insert_kb_records(db, kb_records)
-                    logger.info(
-                        f"Job {job_id} KB records inserted: count={len(kb_records)}"
-                    )
-
                 inline_payload = {"checksum": checksum}
                 job_result = self._upsert_job_result(
                     db,
@@ -411,28 +402,6 @@ class SyncJobLifecycleService:
             logger.warning(
                 f"Failed to invalidate retrieval cache after publication (ignored): job_id={cache_invalidation.get('job_id')}, error={exc}"
             )
-
-    def _bulk_insert_kb_records(
-        self,
-        db: Session,
-        kb_records: List[Dict[str, Any]],
-    ) -> None:
-        """Bulk insert knowledge base records."""
-        from shared.models.database.knowledge_base import KBPydantic
-
-        object_mappings = []
-        for rec in kb_records:
-            kb = KBPydantic(**rec)
-            data_dict = kb.model_dump()
-            processed = {
-                key: (value if value is not None else "")
-                for key, value in data_dict.items()
-            }
-            object_mappings.append(processed)
-
-        if object_mappings:
-            db.bulk_insert_mappings(ContentBase.__mapper__, object_mappings)
-            db.flush()
 
     def _maybe_create_webhook_event(
         self,

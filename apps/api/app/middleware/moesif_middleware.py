@@ -216,9 +216,7 @@ class MoesifMiddleware(BaseHTTPMiddleware):
 
         # Tag by feature area.
         uri = request_data.get("uri", "")
-        if "/kb" in uri:
-            tags["feature"] = "knowledge_base"
-        elif "/billing" in uri:
+        if "/billing" in uri:
             tags["feature"] = "billing"
         elif "/auth" in uri:
             tags["feature"] = "authentication"
