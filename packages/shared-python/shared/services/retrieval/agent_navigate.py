@@ -1016,11 +1016,54 @@ async def _collect_leaf_paths(
     return paths
 
 
-def _format_sections_for_llm(sections: list[dict], max_chars: int = 4000) -> str:
-    """Format section entries for LLM prompt with 2-level visual indentation."""
+def _format_sections_for_llm(
+    sections: list[dict],
+    max_chars: int = 20000,
+) -> tuple[str, bool]:
+    """Format section entries for LLM prompt with 2-level visual indentation.
+
+    Returns:
+        (text, overflowed)
+        - text:       formatted string to put in the LLM prompt
+        - overflowed: True when the full L1+L2+summary content did NOT fit in
+                      max_chars. In that case the caller should fall back to the
+                      two-step drill-down: first show L1-only, then show L2 for
+                      selected L1s in a second LLM call.
+
+    Rendering strategy:
+    - Pass 1: Render ALL L1 sections (path + title only). Guarantees LLM sees
+              the complete document skeleton even if budget is tight.
+    - Pass 2: Fill remaining budget with summaries + L2 detail (token-aware).
+              If the entire section list fits → overflowed=False.
+              If Pass 2 is cut short → overflowed=True (caller triggers drill-down).
+    """
+    from shared.utils.text_utils import truncate_content_preview
+
     if not sections:
-        return '(no sections available)'
-    lines: list[str] = []
+        return '(no sections available)', False
+
+    SUMMARY_HEAD_TOKENS = 80
+
+    # ── Pass 1: L1 skeleton (always included) ─────────────────────────────
+    l1_lines: list[str] = []
+    for s in sections:
+        if s.get('level', 1) != 1:
+            continue
+        line = f'- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+        if s.get('children_count', 0) > 0:
+            line += f'  sub_sections={s["children_count"]}'
+        l1_lines.append(line)
+
+    skeleton = '\n'.join(l1_lines)
+    if len(skeleton) >= max_chars:
+        return skeleton[:max_chars], True  # extremely large doc
+
+    remaining = max_chars - len(skeleton)
+
+    # ── Pass 2: enrich within remaining budget ─────────────────────────────
+    enriched_lines: list[str] = []
+    total_sections = len(sections)
+    included = 0
     for s in sections:
         level = s.get('level', 1)
         indent = '  ' if level == 2 else ''
@@ -1029,11 +1072,77 @@ def _format_sections_for_llm(sections: list[dict], max_chars: int = 4000) -> str
             line += f'  sub_sections={s["children_count"]}'
         summary = s.get('summary', '')
         if summary:
-            line += f'\n{indent}  summary: {summary[:200]}'
-        if len('\n'.join(lines + [line])) > max_chars:
+            clipped = truncate_content_preview(summary, head=SUMMARY_HEAD_TOKENS, tail=0)
+            line += f'\n{indent}  summary: {clipped}'
+        candidate = '\n'.join(enriched_lines + [line])
+        if len(candidate) > remaining:
             break
+        enriched_lines.append(line)
+        included += 1
+
+    overflowed = included < total_sections
+    result_text = '\n'.join(enriched_lines) if enriched_lines else skeleton
+    return result_text, overflowed
+
+
+def _format_l1_only_for_llm(sections: list[dict]) -> str:
+    """Format only L1 sections for the first step of the two-step drill-down.
+
+    Used when the full L1+L2 layout overflows the budget: show LLM just the
+    top-level chapters (with summaries) so it can pick which ones to drill into.
+    """
+    from shared.utils.text_utils import truncate_content_preview
+
+    lines: list[str] = []
+    for s in sections:
+        if s.get('level', 1) != 1:
+            continue
+        line = f'- path="{s["path"]}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+        if s.get('children_count', 0) > 0:
+            line += f'  sub_sections={s["children_count"]}'
+        summary = s.get('summary', '')
+        if summary:
+            clipped = truncate_content_preview(summary, head=80, tail=0)
+            line += f'\n  summary: {clipped}'
         lines.append(line)
     return '\n'.join(lines) if lines else '(no sections available)'
+
+
+def _format_l2_for_selected_l1s(sections: list[dict], selected_l1_paths: set[str]) -> str:
+    """Format L2 children of selected L1 paths for the second drill-down LLM call.
+
+    Shows each selected L1 as a header, followed by its L2 children (with summaries).
+    Used after the LLM has already picked which L1 chapters are relevant.
+    """
+    from shared.utils.text_utils import truncate_content_preview
+
+    lines: list[str] = []
+    for s in sections:
+        level = s.get('level', 1)
+        path = s.get('path', '')
+        if level == 1:
+            if path not in selected_l1_paths:
+                continue
+            # Show L1 as a context header (not selectable, just for readability)
+            line = f'## {s["title"]}  (path="{path}")'
+            lines.append(line)
+        elif level == 2:
+            # Check if parent L1 is in selected set
+            parent_match = any(
+                path.startswith(l1 + '/') or path.startswith(l1 + ' / ')
+                for l1 in selected_l1_paths
+            )
+            if not parent_match:
+                continue
+            line = f'  - path="{path}"  title="{s["title"]}"  chunks={s.get("chunk_count", 0)}'
+            summary = s.get('summary', '')
+            if summary:
+                clipped = truncate_content_preview(summary, head=80, tail=0)
+                line += f'\n    summary: {clipped}'
+            lines.append(line)
+
+    return '\n'.join(lines) if lines else '(no sub-sections found for selected chapters)'
+
 
 
 def _parse_section_selections(text: str) -> list[dict[str, str]]:

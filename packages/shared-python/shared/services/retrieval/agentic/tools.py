@@ -570,23 +570,13 @@ async def nav_section_select(
 
         sections = nav_data['sections']
 
-        # Single LLM call: show 2-level overview, get {path, confidence} list
-        sections_text = _format_sections_for_llm(sections)
-        prompt = _NAV_SECTION_PROMPT.format(
-            doc_name=doc_name or document_id,
-            doc_id=document_id,
-            sections_overview=sections_text,
-            query=query,
+        # ── Format sections for LLM; detect overflow ──────────────────────────
+        from shared.services.retrieval.agent_navigate import (
+            _format_sections_for_llm,
+            _format_l1_only_for_llm,
         )
-        response = await llm_fn(prompt)
-        logger.info(f'  agentic.nav_section_select LLM response: {response[:300]}')
 
-        # Parse with the same parser as chunk path selections ({path, confidence})
-        parsed_selections = _parse_chunk_path_selections(response)
-
-        # Validate against all known L1+L2 paths.
-        # LLM may normalise ' / ' separators to '/' — do a fuzzy fallback so we
-        # match the canonical path from valid_paths (preserving DB format).
+        sections_text, overflowed = _format_sections_for_llm(sections)
         valid_paths = {s['path'] for s in sections if s.get('path')}
 
         def _norm(p: str) -> str:
@@ -594,19 +584,110 @@ async def nav_section_select(
 
         norm_to_canonical: dict[str, str] = {_norm(vp): vp for vp in valid_paths}
 
-        accepted: list[dict[str, Any]] = []
-        seen_accepted: set[str] = set()
-        for item in parsed_selections:
-            path = str(item.get('path') or '').strip()
-            canonical = path if path in valid_paths else norm_to_canonical.get(_norm(path))
-            if canonical is None:
-                logger.warning(f'  nav_section_select: rejected invalid path: {path}')
-                continue
-            if canonical in seen_accepted:
-                continue
-            seen_accepted.add(canonical)
-            accepted.append({'path': canonical, 'confidence': item.get('confidence') or 0.8})
+        def _validate_selections(parsed: list[dict]) -> list[dict]:
+            """Map LLM path strings to canonical DB paths, drop invalid ones."""
+            accepted: list[dict] = []
+            seen: set[str] = set()
+            for item in parsed:
+                path = str(item.get('path') or '').strip()
+                canonical = path if path in valid_paths else norm_to_canonical.get(_norm(path))
+                if canonical is None:
+                    logger.warning(f'  nav_section_select: rejected invalid path: {path}')
+                    continue
+                if canonical in seen:
+                    continue
+                seen.add(canonical)
+                accepted.append({'path': canonical, 'confidence': item.get('confidence') or 0.8})
+            return accepted
 
+        accepted: list[dict[str, Any]] = []
+
+        if not overflowed:
+            # ── Fast path: everything fits → single LLM call ──────────────────
+            logger.info(f'  agentic.nav_section_select: full view (no overflow), single LLM call')
+            prompt = _NAV_SECTION_PROMPT.format(
+                doc_name=doc_name or document_id,
+                doc_id=document_id,
+                sections_overview=sections_text,
+                query=query,
+            )
+            response = await llm_fn(prompt)
+            logger.info(f'  agentic.nav_section_select LLM response: {response[:300]}')
+            accepted = _validate_selections(_parse_chunk_path_selections(response))
+
+        else:
+            # ── Overflow path: L1-only LLM selection → mechanical leaf expansion ──
+            # The document has too many sections to show in one prompt.
+            # LLM picks the relevant top-level chapters; we then expand every
+            # selected chapter to ALL its leaf chunk paths without a second LLM
+            # call — same as the non-overflow path's _collect_leaf_paths behavior.
+            logger.info(
+                f'  agentic.nav_section_select: overflow — '
+                f'L1-only LLM selection for doc={document_id}'
+            )
+            l1_text = _format_l1_only_for_llm(sections)
+            prompt_l1 = _NAV_SECTION_PROMPT.format(
+                doc_name=doc_name or document_id,
+                doc_id=document_id,
+                sections_overview=(
+                    '[Only top-level chapters are shown below — sub-sections are not listed.]\n'
+                    '[Select from the chapter paths in this list ONLY.]\n'
+                    '[Do NOT return sub-section paths; select at the chapter level.]\n\n'
+                    + l1_text
+                ),
+                query=query,
+            )
+            response_l1 = await llm_fn(prompt_l1)
+            logger.info(f'  nav_section_select (overflow) LLM response: {response_l1[:300]}')
+
+            # Validate against L1 paths only. If LLM returns a deeper path
+            # (e.g. "…/Information extraction/Entity extraction"), truncate it
+            # to its L1 ancestor ("…/Information extraction") rather than dropping.
+            l1_valid_paths = {s['path'] for s in sections if s.get('level', 1) == 1}
+            l1_norm_to_canon = {_norm(p): p for p in l1_valid_paths}
+            parsed = _parse_chunk_path_selections(response_l1)
+
+            seen_l1: set[str] = set()
+            for item in parsed:
+                path = str(item.get('path') or '').strip()
+                # Try exact L1 match first (with norm fallback)
+                canonical = (
+                    path if path in l1_valid_paths
+                    else l1_norm_to_canon.get(_norm(path))
+                )
+                # If not an exact L1, try truncating to find an L1 ancestor
+                if canonical is None:
+                    candidate = path
+                    for sep in (' / ', '/'):
+                        while sep in candidate:
+                            candidate = candidate[:candidate.rfind(sep)]
+                            hit = (
+                                candidate if candidate in l1_valid_paths
+                                else l1_norm_to_canon.get(_norm(candidate))
+                            )
+                            if hit:
+                                canonical = hit
+                                logger.info(
+                                    f'  nav_section_select (overflow): '
+                                    f'truncated "{path}" → L1 "{hit}"'
+                                )
+                                break
+                        if canonical:
+                            break
+                if canonical is None:
+                    logger.warning(
+                        f'  nav_section_select (overflow): '
+                        f'no L1 match for "{path}", skipped'
+                    )
+                    continue
+                if canonical not in seen_l1:
+                    seen_l1.add(canonical)
+                    accepted.append({
+                        'path': canonical,
+                        'confidence': item.get('confidence') or 0.8,
+                    })
+
+        # ── Collect latency ──────────────────────────────────────────────────
         latency = int((time.monotonic() - t0) * 1000)
 
         if not accepted:
@@ -619,9 +700,10 @@ async def nav_section_select(
                 latency_ms=latency,
             )
 
-        # Expand each selected section to its finest-granularity leaf paths.
-        # If both parent and child are selected, the child's leaves are a subset
-        # of the parent's leaves — _hydrate_paths_to_rows deduplicates by path.
+        # ── Expand each selected section to finest-granularity leaf paths ────
+        # _collect_leaf_paths uses LIKE-prefix matching, so selecting an L1
+        # path like "kb/doc.docx/Information extraction" returns ALL chunks
+        # under that chapter — L2, L3, leaf chunks — at any depth.
         from shared.services.retrieval.lexical_text import section_path_from_chunk_path
 
         all_leaf_paths: list[dict[str, Any]] = []
@@ -639,8 +721,9 @@ async def nav_section_select(
                     seen_leaf.add(lp['path'])
                     all_leaf_paths.append(lp)
 
+        mode = 'overflow-L1→all-leaves' if overflowed else 'full'
         logger.info(
-            f'  agentic.nav_section_select: {len(accepted)} sections → '
+            f'  agentic.nav_section_select [{mode}]: {len(accepted)} sections → '
             f'{len(all_leaf_paths)} unique leaf paths, {latency}ms'
         )
 

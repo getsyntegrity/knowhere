@@ -152,8 +152,16 @@ class AgentState:
                 self.pending_doc_index += 1
 
         elif action_type == ActionType.NAV_SECTION_SELECT:
-            # Nav is a single 2-level call: always produces selected_paths or no_confident_match.
-            if self.nav_drill_stack:
+            # Concurrent batch nav: all stack entries consumed in one shot.
+            # The orchestrator embeds '_consumed_stack' listing processed doc IDs.
+            consumed_ids = set(result.payload.get('_consumed_stack', []))
+            if consumed_ids:
+                self.nav_drill_stack = [
+                    e for e in self.nav_drill_stack
+                    if e['document_id'] not in consumed_ids
+                ]
+            elif self.nav_drill_stack:
+                # Fallback: legacy single-entry pop (safety net)
                 self.nav_drill_stack.pop()
             if result.status == 'selected_paths':
                 new_paths = result.payload.get('selected_paths', [])

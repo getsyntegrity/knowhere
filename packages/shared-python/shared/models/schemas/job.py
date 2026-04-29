@@ -30,6 +30,15 @@ class ParsingParams(BaseModel):
     add_frag_desc: Optional[str] = Field(
         "", description="Additional fragment description"
     )
+    summary_use_llm: bool = Field(
+        False,
+        description=(
+            "Use LLM to generate coherent hierarchical section summaries. "
+            "When True, intermediate (non-leaf) sections get a real semantic "
+            "summary instead of a plain title enumeration. "
+            "Increases parse time and API token cost."
+        ),
+    )
 
 
 class JobCreate(BaseModel):

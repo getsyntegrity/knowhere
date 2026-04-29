@@ -1176,10 +1176,13 @@ def _extract_nav_sections_from_kb(
                 # Skip utility sections
                 if title.lower() in ("root", "__root__"):
                     continue
+                from shared.utils.text_utils import truncate_content_preview
                 sections.append({
                     "title": title,
                     "path": section.get("path", ""),
-                    "summary": (section.get("summary") or "")[:200],
+                    "summary": truncate_content_preview(
+                        section.get("summary") or "", head=80, tail=0
+                    ),
                     "chunk_count": section.get("chunk_count", 0),
                     "children_count": len(section.get("children", [])),
                 })

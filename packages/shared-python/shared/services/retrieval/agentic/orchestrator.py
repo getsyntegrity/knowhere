@@ -243,18 +243,49 @@ class RetrievalAgent:
             elif action_type == ActionType.NAV_SECTION_SELECT:
                 if not state.nav_drill_stack:
                     return ToolResult(status='error', error='nav_drill_stack is empty')
-                drill_entry = state.nav_drill_stack[-1]  # peek — apply() pops
-                drill_doc_id = drill_entry['document_id']
-                return await tools.nav_section_select(
-                    db,
-                    user_id=kwargs['user_id'],
-                    namespace=kwargs['namespace'],
-                    query=kwargs['query'],
-                    llm_fn=kwargs.get('llm_fn'),
-                    document_id=drill_doc_id,
-                    job_result_id=state.doc_job_map.get(drill_doc_id, ''),
-                    doc_name=state.doc_id_to_name.get(drill_doc_id, ''),
-                    section_path=drill_entry.get('section_path'),
+
+                import asyncio as _asyncio
+
+                # Concurrently navigate ALL pending documents in nav_drill_stack
+                drill_entries = list(state.nav_drill_stack)  # snapshot
+                nav_tasks = [
+                    tools.nav_section_select(
+                        db,
+                        user_id=kwargs['user_id'],
+                        namespace=kwargs['namespace'],
+                        query=kwargs['query'],
+                        llm_fn=kwargs.get('llm_fn'),
+                        document_id=entry['document_id'],
+                        job_result_id=state.doc_job_map.get(entry['document_id'], ''),
+                        doc_name=state.doc_id_to_name.get(entry['document_id'], ''),
+                        section_path=entry.get('section_path'),
+                    )
+                    for entry in drill_entries
+                ]
+                nav_results: list[ToolResult] = await _asyncio.gather(*nav_tasks)
+
+                # Merge all results into a single batch ToolResult consumed by state.apply
+                all_paths: list[dict] = []
+                any_selected = False
+                total_latency = 0
+                for res in nav_results:
+                    total_latency = max(total_latency, res.latency_ms)
+                    if res.status == 'selected_paths':
+                        any_selected = True
+                        all_paths.extend(res.payload.get('selected_paths', []))
+
+                logger.info(
+                    f'  agentic.nav_section_select (concurrent): '
+                    f'{len(drill_entries)} docs → {len(all_paths)} total paths, '
+                    f'{total_latency}ms'
+                )
+                return ToolResult(
+                    status='selected_paths' if any_selected else 'no_confident_match',
+                    payload={
+                        'selected_paths': all_paths,
+                        '_consumed_stack': [e['document_id'] for e in drill_entries],
+                    },
+                    latency_ms=total_latency,
                 )
 
             else:
