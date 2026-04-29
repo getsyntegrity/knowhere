@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 os.environ['LOCAL_DEBUG'] = '1'
 
-from loguru import logger
+from loguru import logger  # noqa: E402
 
 KB_BASE = os.path.expanduser('~/.knowhere/chengke_kb')
 CLEAN_USER_IDS = ['debug_local_user', 'local-dev-user']

@@ -23,17 +23,14 @@ from shared.services.retrieval.agentic.types import ToolResult
 from shared.services.retrieval.agent_navigate import (
     _build_chunks_slim,
     _build_knowledge_map_overview,
-    _build_sub_sections_from_db,
     _collect_leaf_paths,
     _expand_by_edges,
     _format_chunks_for_llm,
-    _format_sections_for_llm,
     _grep_discover_document_ids,
     _load_nav_sections_from_graph,
     _load_nav_sections_2level,
     _parse_chunk_path_selections,
     _parse_json_array,
-    _parse_section_selections,
     _CHUNK_SELECT_PROMPT,
     _FILE_SELECT_PROMPT,
     _NAV_SECTION_PROMPT,
@@ -604,7 +601,7 @@ async def nav_section_select(
 
         if not overflowed:
             # ── Fast path: everything fits → single LLM call ──────────────────
-            logger.info(f'  agentic.nav_section_select: full view (no overflow), single LLM call')
+            logger.info('  agentic.nav_section_select: full view (no overflow), single LLM call')
             prompt = _NAV_SECTION_PROMPT.format(
                 doc_name=doc_name or document_id,
                 doc_id=document_id,
