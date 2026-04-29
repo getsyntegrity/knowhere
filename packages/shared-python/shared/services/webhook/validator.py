@@ -1,61 +1,15 @@
 """
 Webhook Validation Utilities
 
-SSRF protection via DNS resolution + is_global check + IP pinning.
+SSRF protection via shared DNS/IP validation + IP pinning.
 """
 
-import asyncio
-import ipaddress
-import socket
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
 from shared.core.config import app_config
-
-# ── Core SSRF checks ─────────────────────
-
-
-def is_public_ip(ip: str) -> bool:
-    try:
-        return ipaddress.ip_address(ip).is_global
-    except ValueError:
-        return False
-
-
-async def async_validate_url(hostname: str) -> str:
-    """Validate hostname resolves to a public IP. Returns pinned IP."""
-    try:
-        loop = asyncio.get_event_loop()
-        addrinfo = await loop.getaddrinfo(hostname, None)
-    except socket.gaierror as exc:
-        raise ValueError(f"Unable to resolve hostname {hostname}: {exc}") from exc
-
-    for family, _, _, _, sockaddr in addrinfo:
-        ip_address = sockaddr[0]
-        if not isinstance(ip_address, str):
-            continue
-        if family in (socket.AF_INET, socket.AF_INET6) and is_public_ip(ip_address):
-            return ip_address
-
-    raise ValueError(f"Hostname {hostname} failed validation")
-
-
-def validate_url(hostname: str) -> str:
-    """Sync hostname validation. Returns pinned public IP."""
-    try:
-        addrinfo = socket.getaddrinfo(hostname, None)
-    except socket.gaierror as exc:
-        raise ValueError(f"Unable to resolve hostname {hostname}: {exc}") from exc
-
-    for family, _, _, _, sockaddr in addrinfo:
-        ip_address = sockaddr[0]
-        if not isinstance(ip_address, str):
-            continue
-        if family in (socket.AF_INET, socket.AF_INET6) and is_public_ip(ip_address):
-            return ip_address
-
-    raise ValueError(f"Hostname {hostname} failed validation")
+from shared.utils.url_security import resolve_public_hostname, resolve_public_hostname_async
 
 
 # ── Integration wrapper for our dispatcher ────────────────────────────
@@ -92,7 +46,7 @@ async def validate_webhook_url_async(url: str) -> WebhookValidationResult:
             return WebhookValidationResult(
                 is_valid=False, error_message="URL must have a hostname"
             )
-        validated_ip: str = await async_validate_url(hostname)
+        validated_ip: str = await resolve_public_hostname_async(hostname)
         return WebhookValidationResult(
             is_valid=True,
             validated_ip=validated_ip,
@@ -125,7 +79,7 @@ def validate_webhook_url(url: str) -> WebhookValidationResult:
                 is_valid=False, error_message="URL must have a hostname"
             )
 
-        validated_ip: str = validate_url(hostname)
+        validated_ip: str = resolve_public_hostname(hostname)
         return WebhookValidationResult(
             is_valid=True,
             validated_ip=validated_ip,

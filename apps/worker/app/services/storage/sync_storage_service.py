@@ -15,6 +15,7 @@ from loguru import logger
 from shared.core.config import settings
 from shared.core.config.storage import get_cached_storage_adapter
 from shared.core.exceptions.domain_exceptions import StorageServiceException
+from shared.utils.url_security import validate_public_http_url
 
 
 def get_storage_adapter():
@@ -109,6 +110,8 @@ def upload_zip_result(job_id: str, zip_file_path: str) -> str:
 
 def download_file_from_url(file_url: str) -> str:
     """Download file from URL to temp directory using requests (sync, gevent-compatible)."""
+    validate_public_http_url(file_url, field="source_url")
+
     temp_dir = getattr(settings, "TMP_PATH", "/tmp")
     os.makedirs(temp_dir, exist_ok=True)
     temp_filename = f"temp_{_uuid.uuid4().hex}"

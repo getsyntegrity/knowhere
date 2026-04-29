@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -39,6 +40,12 @@ def test_should_upload_a_url_job_to_the_expected_storage_key_and_publish_progres
     downloaded_path = tmp_path / "downloaded-contract-source.pdf"
     uploaded_calls: list[tuple[str, str, str]] = []
 
+    def resolve_public_address(
+        host: str,
+        port: int | None,
+    ) -> list[tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
     monkeypatch.setattr(
         kb_tasks,
         "download_file_from_url",
@@ -56,6 +63,7 @@ def test_should_upload_a_url_job_to_the_expected_storage_key_and_publish_progres
         "verify_s3_file_exists",
         lambda storage_key: {"exists": storage_key == s3_key, "size": 3},
     )
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_public_address)
 
     downloaded_path.write_bytes(b"pdf")
 

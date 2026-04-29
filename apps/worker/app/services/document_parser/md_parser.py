@@ -484,7 +484,7 @@ def parse_md(
 
                 # Deterministic know_id: use image binary hash
                 with open(update_img_path, "rb") as img_f:
-                    img_binary_hash = hashlib.md5(img_f.read()).hexdigest()
+                    img_binary_hash = hashlib.sha256(img_f.read()).hexdigest()
                 temp_uid = gen_str_codes(img_binary_hash)
                 relative_img_path = f"images/{img_name}{img_suffix}"
                 img_ref = build_chunk_ref(relative_img_path)
