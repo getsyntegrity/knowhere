@@ -934,28 +934,6 @@ class APIKeyOperationException(KnowhereException):
         )
 
 
-class KnowledgeBaseOperationException(KnowhereException):
-    """
-    Knowledge Base directory/file operations failed.
-
-    5xx Error: Auto-defaults to safe user_message.
-    """
-
-    def __init__(
-        self,
-        internal_message: str,
-        user_message: Optional[str] = None,
-        original_exception: Optional[Exception] = None,
-    ):
-        super().__init__(
-            code=ErrorCode.INTERNAL_ERROR,
-            internal_message=internal_message,
-            user_message=user_message,
-            details={"component": "knowledge_base"},
-            original_exception=original_exception,
-        )
-
-
 class JobOperationException(KnowhereException):
     """
     Job management operations failed.

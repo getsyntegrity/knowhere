@@ -8,7 +8,6 @@ from app.api.v1.routes import (
     documents,
     guest,
     jobs,
-    knowledge_base,
     qstash_callbacks,
     retrieval,
     s3_events,
@@ -34,9 +33,6 @@ if settings.BILLING_ENABLED:
     from app.api.v1.routes import billing
 
     api_router.include_router(billing.router, prefix="/billing", tags=["Billing"])
-
-# Knowledge base
-api_router.include_router(knowledge_base.router, prefix="/kb", tags=["Knowledge Base"])
 
 # Unified Jobs routes
 api_router.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])

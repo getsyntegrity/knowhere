@@ -23,7 +23,6 @@ from .document import (
 from .guest_device import GuestDevice
 from .job import Job
 from .job_result import JobChunk, JobResult
-from .knowledge_base import ContentBase, FileDirectory, PathBase
 
 # 3. Job-related log models
 from .job_state_audit_log import JobStateAuditLog
@@ -51,9 +50,6 @@ __all__ = [
     "Job",
     "JobResult",
     "JobChunk",
-    "ContentBase",
-    "PathBase",
-    "FileDirectory",
     "Document",
     "DocumentSection",
     "DocumentChunk",
