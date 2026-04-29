@@ -43,7 +43,7 @@ IMG_MAX_SIDE = 1280  # max pixels on longest side for VLM input
 
 def _build_atlas_know_id(page_num: int, image_bytes: bytes) -> str:
     """Keep atlas chunk IDs deterministic while preserving per-page uniqueness."""
-    image_hash = hashlib.md5(image_bytes).hexdigest()
+    image_hash = hashlib.sha256(image_bytes).hexdigest()
     return gen_str_codes(f"{page_num}:{image_hash}")
 
 

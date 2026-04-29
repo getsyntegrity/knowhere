@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from loguru import logger
 
 from shared.core.config import settings
+from shared.utils.url_security import validate_public_http_url
 
 # Content-Type to file extension mapping
 CONTENT_TYPE_TO_EXTENSION: dict[str, str] = {
@@ -62,6 +63,8 @@ async def resolve_file_extension_async(url: str) -> str | None:
     2. If that fails, send a HEAD request and read Content-Type.
     3. Return None if neither method produces a supported extension.
     """
+    validate_public_http_url(url, field="source_url")
+
     ext = _extension_from_path(url)
     if ext:
         return ext
@@ -92,6 +95,8 @@ def resolve_file_extension_sync(url: str) -> str | None:
 
     Same logic as async variant but uses the shared sync httpx client.
     """
+    validate_public_http_url(url, field="source_url")
+
     ext = _extension_from_path(url)
     if ext:
         return ext

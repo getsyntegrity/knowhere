@@ -150,7 +150,7 @@ def handle_image(
     img_path = os.path.join(img_dir, f"{img_name}{img_ext}")
     os.rename(img_raw_path, img_path)  # if summary fails, renaming is not applied
 
-    temp_uid = gen_str_codes(hashlib.md5(img_file["data"]).hexdigest())
+    temp_uid = gen_str_codes(hashlib.sha256(img_file["data"]).hexdigest())
 
     # Build img_summary_field for df_list: image-n + optional summary
     if img_summary:
@@ -286,7 +286,7 @@ def handle_table(
                 descriptions.append(f"[{effective_desc}]")
 
                 # Also add as IMAGE entry in df_list for indexing
-                temp_uid = gen_str_codes(hashlib.md5(img_data["data"]).hexdigest())
+                temp_uid = gen_str_codes(hashlib.sha256(img_data["data"]).hexdigest())
                 img_summary_field = (
                     f"{image_index}\n{img_summary}" if img_summary else image_index
                 )

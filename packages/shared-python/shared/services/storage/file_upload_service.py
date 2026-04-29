@@ -14,6 +14,7 @@ from shared.core.exceptions.domain_exceptions import (
     KnowhereException,
     StorageServiceException,
 )
+from shared.utils.url_security import validate_public_http_url
 
 
 class FileUploadService:
@@ -426,6 +427,8 @@ class FileUploadService:
 
     async def _download_file_from_url(self, file_url: str) -> str:
         """Download a file from a URL into a temporary directory."""
+        validate_public_http_url(file_url, field="source_url")
+
         temp_dir = getattr(settings, "TMP_PATH", "/tmp")
         os.makedirs(temp_dir, exist_ok=True)
 

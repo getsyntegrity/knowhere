@@ -330,7 +330,7 @@ def parse_image(
         )
 
     # Deterministic know_id: use image binary hash
-    temp_uid = gen_str_codes(hashlib.md5(img_bytes).hexdigest())
+    temp_uid = gen_str_codes(hashlib.sha256(img_bytes).hexdigest())
     # Use relative path with relative_root prefix
     relative_img_path = (
         f"{relative_root}{split_char}{final_img_name}"
