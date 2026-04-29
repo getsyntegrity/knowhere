@@ -1,4 +1,4 @@
-.PHONY: lint lint-fix typecheck typecheck-api typecheck-worker typecheck-shared check
+.PHONY: lint lint-fix typecheck check
 
 UV := uv
 REPO_UV_CACHE_DIR := $(CURDIR)/.uv-cache
@@ -12,10 +12,12 @@ else
 UV_RUN_ENV := UV_CACHE_DIR=$(UV_CACHE_DIR)
 endif
 
-RUN_LINT := $(UV_RUN_ENV) $(UV) run --group lint
-RUN_TYPECHECK := $(UV_RUN_ENV) $(UV) run --group typecheck
+UV_RUN := $(UV_RUN_ENV) $(UV) run --all-packages
+RUN_LINT := $(UV_RUN) --group lint
+RUN_TYPECHECK := $(UV_RUN) --group typecheck
 RUFF := $(RUN_LINT) ruff
 PYRIGHT := $(RUN_TYPECHECK) pyright
+PYRIGHT_PATHS := apps/api/app apps/api/main.py apps/worker/app apps/worker/worker.py packages/shared-python/shared
 
 lint:
 	$(RUFF) check apps packages
@@ -23,15 +25,7 @@ lint:
 lint-fix:
 	$(RUFF) check --fix apps packages
 
-typecheck: typecheck-api typecheck-worker typecheck-shared
-
-typecheck-api:
-	$(PYRIGHT) --project pyproject.toml apps/api/app apps/api/main.py
-
-typecheck-worker:
-	$(PYRIGHT) --project pyproject.toml apps/worker/app apps/worker/worker.py
-
-typecheck-shared:
-	$(PYRIGHT) --project pyproject.toml packages/shared-python/shared
+typecheck:
+	$(PYRIGHT) --project pyproject.toml $(PYRIGHT_PATHS)
 
 check: lint typecheck
