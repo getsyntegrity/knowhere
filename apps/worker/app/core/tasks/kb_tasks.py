@@ -51,12 +51,12 @@ from shared.models.database.job import Job
 # Domain services
 from shared.models.schemas.job_metadata import JobMetadataHelper
 from shared.services.billing.work_billing_service import WorkBillingService
+from shared.services.chunks.dataframe_chunk_converter import dataframe_to_chunks
 from shared.services.job_lifecycle_sync import get_sync_job_lifecycle_service
 from shared.services.redis.distributed_lock import RedisJobLock
 
 # Sync services for gevent worker
 from shared.services.redis.redis_sync_service import (
-    SyncChunksRedisService,
     SyncJobInfoRedisService,
     SyncJobMetadataService,
     SyncRedisServiceFactory,
@@ -605,10 +605,7 @@ def _parse(job_id: str, user_id: str | None):
                 job_id, progress=30, message="Parse completed, preparing chunks..."
             )
 
-            chunks = []
-
-            chunks_redis_service = SyncChunksRedisService(redis_service)
-            chunks = chunks_redis_service.dataframe_to_chunks(parsed_contents_df)
+            chunks = dataframe_to_chunks(parsed_contents_df)
 
             lifecycle_service.update_progress(
                 job_id, progress=70, message="Chunks ready, generating zip..."

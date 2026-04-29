@@ -96,7 +96,7 @@ def _chunks_to_nodes(
     Extract node metadata from chunks for the knowledge graph.
 
     Args:
-        chunks: List of chunk dicts (from ChunksRedisService format).
+        chunks: List of normalized chunk dicts.
         content_preview_len: Max characters for content_preview.
 
     Returns:

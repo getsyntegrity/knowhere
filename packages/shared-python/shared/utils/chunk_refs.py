@@ -1,5 +1,5 @@
 import re
-from typing import List
+from typing import List, TypedDict
 
 RESOURCE_PATH_REF_PATTERN = r"\[(?:images|tables)/[^\]\n]+\]"
 CHUNK_REF_PATTERN = RESOURCE_PATH_REF_PATTERN
@@ -8,6 +8,12 @@ REFERENCE_LABEL_PATTERN = r"^\s*(?:image|table)-\d+\s*$"
 RESOURCE_PATH_REF_RE = re.compile(RESOURCE_PATH_REF_PATTERN, re.IGNORECASE)
 CHUNK_REF_RE = re.compile(CHUNK_REF_PATTERN, re.IGNORECASE)
 REFERENCE_LABEL_RE = re.compile(REFERENCE_LABEL_PATTERN, re.IGNORECASE)
+
+
+class ChunkRefSpan(TypedDict):
+    ref: str
+    start: int
+    end: int
 
 
 def build_chunk_ref(resource_path: str) -> str:
@@ -28,6 +34,21 @@ def extract_chunk_refs(content: str) -> List[str]:
             refs.append(ref)
             seen.add(ref)
     return refs
+
+
+def extract_chunk_ref_spans(content: str) -> List[ChunkRefSpan]:
+    """Extract chunk references with zero-based character offsets."""
+    if not content:
+        return []
+
+    return [
+        {
+            "ref": match.group(0),
+            "start": match.start(),
+            "end": match.end(),
+        }
+        for match in CHUNK_REF_RE.finditer(str(content))
+    ]
 
 
 def has_chunk_ref(content: str) -> bool:
