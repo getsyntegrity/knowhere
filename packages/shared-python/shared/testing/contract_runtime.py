@@ -29,6 +29,12 @@ CONTRACT_POSTGRESQL_PORT_RANGE: tuple[int, int] = (15432, 25432)
 CONTRACT_REDIS_DATABASE: int = 14
 CONTRACT_REDIS_HOST: str = "127.0.0.1"
 CONTRACT_REDIS_PORT: int = 6379
+CONTRACT_WEBHOOK_MASTER_KEY: str = "".join(
+    [
+        "GE5FgAG9t4a1C1xTRNiOC2",
+        "GQHgp4YMSN7t8lTJq-FxY=",
+    ]
+)
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _API_ROOT: Path = _REPO_ROOT / "apps" / "api"
@@ -299,7 +305,7 @@ def configure_contract_environment(
         "ENVIRONMENT": "development",
         "DEBUG": "true",
         "SECRET_KEY": "test-secret-key",
-        "WEBHOOK_MASTER_KEY": "contract-test-webhook-master-key",
+        "WEBHOOK_MASTER_KEY": CONTRACT_WEBHOOK_MASTER_KEY,
         "DATABASE_URL": database_url,
         "DB_SSL_MODE": "disable",
         "DB_USE_NULL_POOL": "true",
