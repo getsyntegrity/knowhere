@@ -12,6 +12,7 @@ build/
 __pycache__/
 *.pyc
 *.pyo
+.coverage
 .venv/
 venv/
 venv_pptx2md/
@@ -46,6 +47,7 @@ logs/
 *.log
 
 # Generated files
+.build/
 apps/api/openapi.json
 packages/shared-types/generated/
 
