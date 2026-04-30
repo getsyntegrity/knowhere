@@ -340,6 +340,9 @@ def configure_contract_environment(
         "QSTASH_CALLBACK_BASE_URL": "http://localhost:5005/api/v1",
     }
 
+    if "BILLING_ENABLED" not in os.environ:
+        environment["BILLING_ENABLED"] = "true"
+
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
 

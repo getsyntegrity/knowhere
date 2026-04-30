@@ -20,7 +20,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  UV_VERSION: "0.10.0"
+  UV_VERSION: "0.11.7"
   UV_LINK_MODE: copy
 
 jobs:
@@ -47,8 +47,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             uv.lock
-            apps/*/uv.lock
-            packages/*/uv.lock
 
       - name: Install dependencies
         run: uv sync --locked --all-packages --all-groups
@@ -79,8 +77,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             uv.lock
-            apps/*/uv.lock
-            packages/*/uv.lock
 
       - name: Install dependencies
         run: uv sync --locked --all-packages --all-groups
@@ -111,8 +107,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             uv.lock
-            apps/*/uv.lock
-            packages/*/uv.lock
 
       - name: Install dependencies
         run: uv sync --locked --all-packages --all-groups
