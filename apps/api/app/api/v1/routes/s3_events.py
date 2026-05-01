@@ -5,9 +5,11 @@ S3 event webhook routes.
 import base64
 import json
 import os
+import socket
 from typing import Any, Dict
 
 import aiohttp
+from aiohttp.abc import AbstractResolver
 from app.repositories.job_repository import JobRepository
 from app.services.knowledge.kb_orchestrator import KBOrchestrator
 from app.services.state_machine import JobStateMachine
@@ -19,8 +21,12 @@ from shared.core.logging import LogEvent
 from shared.core.state_machine.states import JobStatus
 from shared.models.schemas.oss_event import OSSEvent
 from shared.models.schemas.s3_event import S3Event
+from shared.services.webhook.validator import validate_webhook_url_async
+from shared.utils.url_security import SafePublicHTTPURL
 
 router = APIRouter(tags=["Internal"])
+
+SNS_SUBSCRIPTION_TIMEOUT_SECONDS = 10
 
 
 def verify_sns_signature(request_body: bytes, signature: str, message: str) -> bool:
@@ -207,22 +213,7 @@ async def handle_sns_event(body: bytes):
             if subscribe_url:
                 logger.info(f"SNS subscription confirmation URL: {subscribe_url}")
                 # Visit the URL to confirm the subscription.
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(subscribe_url) as response:
-                            if response.status == 200:
-                                logger.info("SNS subscription confirmed successfully")
-                                return {"message": "SNS subscription confirmed"}
-                            else:
-                                logger.error(
-                                    f"SNS subscription confirmation failed, status={response.status}"
-                                )
-                                return {
-                                    "message": "SNS subscription confirmation failed"
-                                }
-                except Exception as e:
-                    logger.error(f"Failed to reach the SNS confirmation URL: {e}")
-                    return {"message": "SNS subscription confirmation failed"}
+                return await confirm_sns_subscription(subscribe_url)
             else:
                 logger.warning(
                     "SNS subscription confirmation did not include SubscribeURL"
@@ -272,6 +263,80 @@ async def handle_sns_event(body: bytes):
     except Exception as e:
         logger.error(f"Failed to handle SNS event: {e}")
         raise
+
+
+async def confirm_sns_subscription(subscribe_url: str) -> dict[str, str]:
+    """Confirm an SNS subscription after SSRF validation and IP pinning."""
+    validation = await validate_webhook_url_async(subscribe_url)
+    if not validation.is_valid:
+        logger.warning(
+            f"SNS subscription confirmation URL failed validation: {validation.error_message}"
+        )
+        return {"message": "SNS subscription confirmation failed"}
+
+    if not validation.validated_ip:
+        logger.warning("SNS subscription confirmation URL validation returned no IP")
+        return {"message": "SNS subscription confirmation failed"}
+
+    try:
+        validated_subscribe_url = SafePublicHTTPURL(subscribe_url)
+        connector = aiohttp.TCPConnector(
+            resolver=_PinnedSNSResolver(validation.validated_ip),
+        )
+        timeout = aiohttp.ClientTimeout(total=SNS_SUBSCRIPTION_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+        ) as session:
+            async with session.get(
+                validated_subscribe_url,
+                allow_redirects=False,
+            ) as response:
+                if response.status == 200:
+                    logger.info("SNS subscription confirmed successfully")
+                    return {"message": "SNS subscription confirmed"}
+
+                if 300 <= response.status < 400:
+                    logger.warning(
+                        f"SNS subscription confirmation redirect blocked, status={response.status}"
+                    )
+                else:
+                    logger.error(
+                        f"SNS subscription confirmation failed, status={response.status}"
+                    )
+                return {"message": "SNS subscription confirmation failed"}
+    except Exception as e:
+        logger.error(f"Failed to reach the SNS confirmation URL: {e}")
+        return {"message": "SNS subscription confirmation failed"}
+
+
+class _PinnedSNSResolver(AbstractResolver):
+    """Resolver that pins SNS confirmation to a pre-validated public IP."""
+
+    def __init__(self, pinned_ip: str) -> None:
+        self.pinned_ip = pinned_ip
+
+    async def resolve(
+        self,
+        host: str,
+        port: int = 0,
+        family: int = socket.AF_INET,
+    ) -> list[dict[str, Any]]:
+        parsed_ip = self.pinned_ip
+        pinned_family = socket.AF_INET6 if ":" in parsed_ip else socket.AF_INET
+        return [
+            {
+                "hostname": host,
+                "host": parsed_ip,
+                "port": port,
+                "family": pinned_family,
+                "proto": 0,
+                "flags": socket.AI_NUMERICHOST,
+            }
+        ]
+
+    async def close(self) -> None:
+        pass
 
 
 async def handle_minio_event(body: bytes, auth_token: str):

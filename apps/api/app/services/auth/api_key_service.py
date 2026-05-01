@@ -1,7 +1,6 @@
 """API key management service."""
 
 import asyncio
-import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +22,7 @@ from shared.core.exceptions.domain_exceptions import (
 )
 from shared.models.database.api_key import APIKey
 from shared.models.database.user_balance import UserBalance
+from shared.utils.api_key_hashing import hash_api_key
 
 _DEFAULT_USER_TIER: str = "free"
 
@@ -85,7 +85,7 @@ class APIKeyService:
 
         # 3. Generate a secure API key (sk_ + a 32-char UUID without hyphens).
         api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_hash = hash_api_key(api_key)
         key_mask = self._mask_api_key(api_key)
 
         # 4. Store it in the database.
@@ -116,7 +116,7 @@ class APIKeyService:
         api_key: str,
     ) -> Optional[APIKeyIdentity]:
         """Validate API key and return the authenticated identity."""
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_hash = hash_api_key(api_key)
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
 
         if not api_key_record or not api_key_record.is_valid():
@@ -236,7 +236,7 @@ class APIKeyService:
 
         # 2. Generate a new API key (sk_ + a 32-char UUID without hyphens).
         new_api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
-        new_key_hash = hashlib.sha256(new_api_key.encode()).hexdigest()
+        new_key_hash = hash_api_key(new_api_key)
         new_key_mask = self._mask_api_key(new_api_key)
 
         # 3. Update the database record.
@@ -267,7 +267,7 @@ class APIKeyService:
         self, session: AsyncSession, api_key: str, module: str
     ) -> bool:
         """Check whether an API key can access the requested module."""
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_hash = hash_api_key(api_key)
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
 
         if not api_key_record or not api_key_record.is_valid():

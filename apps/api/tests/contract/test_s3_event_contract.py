@@ -1,5 +1,6 @@
 import importlib
 import json
+import socket
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import cast
@@ -158,6 +159,64 @@ async def test_should_accept_an_sns_wrapped_upload_complete_event_and_advance_a_
 
     assert job_row is not None
     assert job_row["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_should_reject_an_sns_subscription_confirmation_url_that_resolves_to_a_private_host(
+    api_client_factory: Callable[[], AbstractAsyncContextManager[AsyncClient]],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    contacted_urls: list[str] = []
+
+    def resolve_private_address(
+        host: str,
+        port: int | None,
+        *args: object,
+        **kwargs: object,
+    ) -> list[tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+
+    class _UnexpectedSession:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "_UnexpectedSession":
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: object,
+        ) -> None:
+            return None
+
+        def get(self, url: str, *args: object, **kwargs: object) -> object:
+            contacted_urls.append(url)
+            raise AssertionError("private SNS confirmation URL should not be requested")
+
+    async with api_client_factory() as api_client:
+        s3_events_module = importlib.import_module("app.api.v1.routes.s3_events")
+        monkeypatch.setattr(socket, "getaddrinfo", resolve_private_address)
+        monkeypatch.setattr(
+            s3_events_module.aiohttp,
+            "ClientSession",
+            _UnexpectedSession,
+        )
+        response = await api_client.post(
+            "/api/v1/internal/s3-events",
+            content=json.dumps(
+                {
+                    "Type": "SubscriptionConfirmation",
+                    "SubscribeURL": "https://sns.example.test/confirm",
+                }
+            ).encode("utf-8"),
+            headers={"x-amz-sns-message-type": "SubscriptionConfirmation"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "SNS subscription confirmation failed"}
+    assert contacted_urls == []
 
 
 @pytest.mark.asyncio

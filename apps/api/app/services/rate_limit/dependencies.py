@@ -14,7 +14,6 @@ daily quota (Layer 3) are enforced just before insert in the create-job route
 only when billing is enabled.
 """
 
-import hashlib
 import math
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -42,6 +41,7 @@ from shared.core.exceptions.domain_exceptions import (
 from shared.core.logging import log_context
 from shared.core.state_machine.states import JobStatus
 from shared.models.database.api_key import APIKey
+from shared.utils.api_key_hashing import hash_api_key
 from shared.models.database.job import Job
 from shared.models.database.user_balance import UserBalance
 
@@ -175,7 +175,7 @@ async def with_current_user(
             api_key_hash = None
             is_api_key_auth = isinstance(token, str) and token.startswith("sk_")
             if token is not None and is_api_key_auth:
-                api_key_hash = hashlib.sha256(token.encode()).hexdigest()
+                api_key_hash = hash_api_key(token)
             if is_api_key_auth and api_key_hash:
                 try:
                     ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
@@ -197,7 +197,7 @@ async def with_current_user(
         api_key_hash = None
         is_api_key_auth = isinstance(token, str) and token.startswith("sk_")
         if token is not None and is_api_key_auth:
-            api_key_hash = hashlib.sha256(token.encode()).hexdigest()
+            api_key_hash = hash_api_key(token)
         cache_key: str = (
             identity_cache._apikey_key(api_key_hash)
             if is_api_key_auth and api_key_hash

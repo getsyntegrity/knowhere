@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 from httpx import AsyncClient
+from pytest import MonkeyPatch
 
 
 @pytest.mark.asyncio
@@ -31,26 +32,32 @@ async def test_should_return_the_database_health_payload_shape(
 
 
 @pytest.mark.asyncio
-async def test_should_return_the_database_info_payload_shape(
+async def test_should_sanitize_database_health_errors_before_returning_them(
     api_client_factory: Callable[[], AbstractAsyncContextManager[AsyncClient]],
+    monkeypatch: MonkeyPatch,
 ) -> None:
+    async def _get_database_health() -> dict[str, object]:
+        return {
+            "status": "unhealthy",
+            "error": "Database health check failed",
+            "last_check": None,
+        }
+
     async with api_client_factory() as api_client:
-        response = await api_client.get("/api/v1/health/database/info")
+        from app.api.v1 import health as health_route_module
+
+        monkeypatch.setattr(
+            health_route_module,
+            "get_database_health",
+            _get_database_health,
+        )
+        response = await api_client.get("/api/v1/health/database/health")
 
     assert response.status_code == 200
-
-    response_json = cast(dict[str, object], response.json())
-    pool_status = cast(dict[str, object], response_json["pool_status"])
-
-    assert response_json["version"]
-    assert isinstance(response_json["active_connections"], int)
-    assert response_json["database_size"]
-    assert set(pool_status) == {
-        "size",
-        "checked_in",
-        "checked_out",
-        "overflow",
-        "invalid",
+    assert response.json() == {
+        "status": "unhealthy",
+        "error": "Database health check failed",
+        "last_check": None,
     }
 
 

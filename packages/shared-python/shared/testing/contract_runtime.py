@@ -657,7 +657,7 @@ async def seed_contract_developer() -> dict[str, str | int]:
     finally:
         await engine.dispose()
 
-    return bootstrap_module.LocalDevelopmentBootstrapService.get_local_developer_profile()
+    return bootstrap_module.LocalDevelopmentBootstrapService.get_local_developer_auth_profile()
 
 
 async def reset_contract_database() -> None:

@@ -45,7 +45,7 @@ Deterministic local developer account:
 - `user_id`: `local-dev-user`
 - `email`: `local-dev-user@knowhere.local`
 - `tier`: `tier_5`
-- `api_key`: `local_dev_demo_key_tier5_full_access`
+- `local_developer_key_seeded`: `true`
 
 ## Verify the Local API
 

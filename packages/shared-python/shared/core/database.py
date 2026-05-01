@@ -196,7 +196,7 @@ class DatabaseHealthChecker:
             logger.error(f"Database health check failed: {e}")
             return {
                 "status": "unhealthy",
-                "error": str(e),
+                "error": "Database health check failed",
                 "last_check": self.last_check.isoformat() if self.last_check else None,
             }
 
@@ -254,7 +254,7 @@ class DatabaseHealthChecker:
                 }
         except Exception as e:
             logger.error(f"Failed to get database info: {e}")
-            return {"error": str(e)}
+            return {"error": "Database information unavailable"}
 
 
 # Shared health-checker instance.

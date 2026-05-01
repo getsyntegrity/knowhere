@@ -532,8 +532,9 @@ async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the
     scheduled_tasks: list[dict[str, object]] = []
 
     class _FakeHeadResponse:
-        def __init__(self, content_type: str) -> None:
+        def __init__(self, content_type: str, status_code: int = 200) -> None:
             self.headers: dict[str, str] = {"content-type": content_type}
+            self.status_code = status_code
 
     class _FakeAsyncHttpClient:
         async def head(
@@ -543,7 +544,7 @@ async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the
             follow_redirects: bool = True,
         ) -> _FakeHeadResponse:
             requested_urls.append(url)
-            assert follow_redirects is True
+            assert follow_redirects is False
             return _FakeHeadResponse("application/pdf")
 
     class _FakeCeleryTask:
@@ -669,6 +670,8 @@ async def test_should_reject_url_source_when_url_resolves_to_private_network(
     def resolve_private_address(
         host: str,
         port: int | None,
+        *args: object,
+        **kwargs: object,
     ) -> list[tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]]:
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
 
@@ -685,6 +688,70 @@ async def test_should_reject_url_source_when_url_resolves_to_private_network(
     details = cast(dict[str, object], error["details"])
     violations = cast(list[dict[str, object]], details["violations"])
 
+    assert response_json["success"] is False
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert error["message"] == "Invalid URL"
+    assert violations == [
+        {
+            "field": "source_url",
+            "description": "URL host is not allowed",
+        }
+    ]
+    assert await _count_jobs() == 0
+
+
+@pytest.mark.asyncio
+async def test_should_reject_a_url_source_when_file_type_detection_redirects_to_a_private_host(
+    monkeypatch: MonkeyPatch,
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "url",
+        "source_url": "https://example.com/contracts/knowhere-upload",
+        "data_id": "contract-job-url-private-redirect",
+    }
+    requested_urls: list[str] = []
+
+    class _FakeHeadResponse:
+        status_code = 302
+        headers: dict[str, str] = {
+            "location": "http://127.0.0.1/internal-metadata.pdf",
+        }
+
+    class _FakeAsyncHttpClient:
+        async def head(
+            self,
+            url: str,
+            *,
+            follow_redirects: bool = True,
+        ) -> _FakeHeadResponse:
+            requested_urls.append(url)
+            assert follow_redirects is False
+            return _FakeHeadResponse()
+
+    import shared.utils.http_clients as http_clients_module
+
+    monkeypatch.setattr(
+        http_clients_module,
+        "get_async_client",
+        lambda: _FakeAsyncHttpClient(),
+    )
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 400
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    error = cast(dict[str, object], response_json["error"])
+    details = cast(dict[str, object], error["details"])
+    violations = cast(list[dict[str, object]], details["violations"])
+
+    assert requested_urls == [payload["source_url"]]
     assert response_json["success"] is False
     assert error["code"] == "INVALID_ARGUMENT"
     assert error["message"] == "Invalid URL"

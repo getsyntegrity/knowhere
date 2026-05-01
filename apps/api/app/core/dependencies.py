@@ -1,4 +1,3 @@
-import hashlib
 import threading
 from datetime import timedelta
 from fnmatch import fnmatch
@@ -18,6 +17,7 @@ from shared.core.exceptions.domain_exceptions import (
     AuthException,
     PermissionDeniedException,
 )
+from shared.utils.api_key_hashing import hash_api_key
 
 # Standard JWKS endpoint path (fixed, following OpenID Connect convention)
 JWKS_ENDPOINT_PATH = "/api/auth/jwks"
@@ -186,7 +186,7 @@ async def get_current_user_id(
     # Mode 1: API Key verification (for external clients)
     if token.startswith("sk_"):
         # Check identity cache first — skip DB on cache hit
-        api_key_hash = hashlib.sha256(token.encode()).hexdigest()
+        api_key_hash = hash_api_key(token)
         try:
             cached = await identity_cache.get_cached_identity(
                 redis_pool_manager.get_redis_service(),

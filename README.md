@@ -83,6 +83,10 @@ uv run --python 3.11 python -m alembic upgrade heads
 uv run --python 3.11 python scripts/init_user.py --email you@example.com
 ```
 
+Pass `--api-key-output-file ./standalone-api-key.txt` if you need the generated
+plaintext key written to a local `0600` file. The default console output only
+reports that the credential was created.
+
 If you plan to use the dashboard, start the combined self-hosted stack and
 register through the dashboard instead of using `scripts/init_user.py`.
 

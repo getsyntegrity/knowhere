@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +12,7 @@ from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
+from shared.utils.api_key_hashing import hash_api_key
 
 
 class LocalDevelopmentBootstrapService:
@@ -52,16 +52,23 @@ class LocalDevelopmentBootstrapService:
 
     @classmethod
     def get_local_developer_profile(cls) -> dict[str, str | int]:
-        """Expose deterministic local developer credentials for local tooling."""
-        return {
+        """Expose deterministic local developer profile details for local tooling."""
+        profile: dict[str, str | int] = {
             "user_id": cls.LOCAL_DEV_USER_ID,
             "name": cls.LOCAL_DEV_USER_NAME,
             "email": cls.LOCAL_DEV_USER_EMAIL,
             "tier": cls.LOCAL_DEV_TIER,
-            "api_key": cls.LOCAL_DEV_API_KEY,
             "credits_balance": cls.LOCAL_DEV_CREDITS_BALANCE,
             "lifetime_billing_micro": cls.LOCAL_DEV_LIFETIME_BILLING_MICRO,
         }
+        return profile
+
+    @classmethod
+    def get_local_developer_auth_profile(cls) -> dict[str, str | int]:
+        """Expose deterministic local developer auth details for contract tests."""
+        auth_profile = cls.get_local_developer_profile()
+        auth_profile["api_key"] = cls.LOCAL_DEV_API_KEY
+        return auth_profile
 
     async def _upsert_user(self, session: AsyncSession) -> None:
         user = await session.get(User, self.LOCAL_DEV_USER_ID)
@@ -148,7 +155,7 @@ class LocalDevelopmentBootstrapService:
 
     async def _upsert_api_key(self, session: AsyncSession) -> None:
         api_key = await session.get(APIKey, self.LOCAL_DEV_API_KEY_ID)
-        key_hash = hashlib.sha256(self.LOCAL_DEV_API_KEY.encode()).hexdigest()
+        key_hash = hash_api_key(self.LOCAL_DEV_API_KEY)
         key_mask = self._mask_api_key(self.LOCAL_DEV_API_KEY)
 
         if api_key is None:

@@ -11,7 +11,13 @@ from urllib.parse import urlparse
 from loguru import logger
 
 from shared.core.config import settings
-from shared.utils.url_security import validate_public_http_url
+from shared.core.exceptions.domain_exceptions import ValidationException
+from shared.utils.url_security import (
+    MAX_SAFE_REDIRECTS,
+    SafePublicHTTPURL,
+    get_safe_public_http_url,
+    validate_public_http_redirect_url,
+)
 
 # Content-Type to file extension mapping
 CONTENT_TYPE_TO_EXTENSION: dict[str, str] = {
@@ -32,6 +38,8 @@ CONTENT_TYPE_TO_EXTENSION: dict[str, str] = {
     "image/tiff": ".tiff",
     "image/svg+xml": ".svg",
 }
+
+REDIRECT_STATUS_CODES: set[int] = {301, 302, 303, 307, 308}
 
 
 def _extension_from_path(url: str) -> str | None:
@@ -63,9 +71,9 @@ async def resolve_file_extension_async(url: str) -> str | None:
     2. If that fails, send a HEAD request and read Content-Type.
     3. Return None if neither method produces a supported extension.
     """
-    validate_public_http_url(url, field="source_url")
+    safe_url = get_safe_public_http_url(url, field="source_url")
 
-    ext = _extension_from_path(url)
+    ext = _extension_from_path(safe_url)
     if ext:
         return ext
 
@@ -73,17 +81,36 @@ async def resolve_file_extension_async(url: str) -> str | None:
         from shared.utils.http_clients import get_async_client
 
         client = get_async_client()
-        response = await client.head(url, follow_redirects=True)
+        response = None
+        request_url: SafePublicHTTPURL = safe_url
+        for _ in range(MAX_SAFE_REDIRECTS + 1):
+            response = await client.head(request_url, follow_redirects=False)
+            if response.status_code not in REDIRECT_STATUS_CODES:
+                break
+
+            location = response.headers.get("location")
+            if not location:
+                break
+            request_url = validate_public_http_redirect_url(
+                request_url,
+                location,
+                field="source_url",
+            )
+
+        if response is None:
+            return None
         content_type = response.headers.get("content-type")
         ext = _extension_from_content_type(content_type)
         if ext:
             logger.info(
-                f"Resolved file extension from Content-Type header: {ext} (url={url})"
+                f"Resolved file extension from Content-Type header: {ext}"
             )
             return ext
+    except ValidationException:
+        raise
     except Exception as exc:
         logger.warning(
-            f"HEAD request failed for URL file type detection: {exc} (url={url})"
+            f"HEAD request failed for URL file type detection: {exc}"
         )
 
     return None
@@ -95,9 +122,9 @@ def resolve_file_extension_sync(url: str) -> str | None:
 
     Same logic as async variant but uses the shared sync httpx client.
     """
-    validate_public_http_url(url, field="source_url")
+    safe_url = get_safe_public_http_url(url, field="source_url")
 
-    ext = _extension_from_path(url)
+    ext = _extension_from_path(safe_url)
     if ext:
         return ext
 
@@ -105,17 +132,36 @@ def resolve_file_extension_sync(url: str) -> str | None:
         from shared.utils.http_clients import get_sync_client
 
         client = get_sync_client()
-        response = client.head(url, follow_redirects=True)
+        response = None
+        request_url: SafePublicHTTPURL = safe_url
+        for _ in range(MAX_SAFE_REDIRECTS + 1):
+            response = client.head(request_url, follow_redirects=False)
+            if response.status_code not in REDIRECT_STATUS_CODES:
+                break
+
+            location = response.headers.get("location")
+            if not location:
+                break
+            request_url = validate_public_http_redirect_url(
+                request_url,
+                location,
+                field="source_url",
+            )
+
+        if response is None:
+            return None
         content_type = response.headers.get("content-type")
         ext = _extension_from_content_type(content_type)
         if ext:
             logger.info(
-                f"Resolved file extension from Content-Type header: {ext} (url={url})"
+                f"Resolved file extension from Content-Type header: {ext}"
             )
             return ext
+    except ValidationException:
+        raise
     except Exception as exc:
         logger.warning(
-            f"HEAD request failed for URL file type detection: {exc} (url={url})"
+            f"HEAD request failed for URL file type detection: {exc}"
         )
 
     return None

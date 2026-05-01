@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -10,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from shared.testing.contract_runtime import get_contract_database_url
+from shared.utils.api_key_hashing import hash_api_key
 
 
 async def _create_contract_engine() -> AsyncEngine:
@@ -139,7 +139,7 @@ class ContractDatabase:
         )
 
         timestamp = _utc_now()
-        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        api_key_hash = hash_api_key(api_key)
         api_key_id = f"key_{uuid4().hex[:12]}"
 
         await cls.execute(
@@ -148,6 +148,7 @@ class ContractDatabase:
                 id,
                 user_id,
                 key_hash,
+                hash_version,
                 key_mask,
                 name,
                 enabled_modules,
@@ -157,6 +158,7 @@ class ContractDatabase:
                 :id,
                 :user_id,
                 :key_hash,
+                :hash_version,
                 :key_mask,
                 :name,
                 CAST(:enabled_modules AS JSON),
@@ -168,6 +170,7 @@ class ContractDatabase:
                 "id": api_key_id,
                 "user_id": user_id,
                 "key_hash": api_key_hash,
+                "hash_version": "hmac-v1",
                 "key_mask": f"{api_key[:8]}...{api_key[-4:]}",
                 "name": f"Contract API Key {user_id}",
                 "enabled_modules": json.dumps(enabled_modules or ["all"]),
