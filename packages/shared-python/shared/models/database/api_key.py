@@ -29,9 +29,6 @@ class APIKey(Base):
     key_hash: Mapped[str] = mapped_column(
         String(255), nullable=False, index=True
     )  # Encrypted storage
-    hash_version: Mapped[str] = mapped_column(
-        String(16), default="hmac-v1", nullable=False
-    )
     key_mask: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # Masked API Key (for display)
