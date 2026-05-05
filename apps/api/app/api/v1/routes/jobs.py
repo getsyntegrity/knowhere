@@ -53,7 +53,7 @@ from shared.models.schemas.job import (
     StandardErrorObject,
 )
 from shared.services.storage.file_upload_service import FileUploadService
-from shared.services.webhook.outbound_url_validator import (
+from shared.utils.outbound_url_validator import (
     validate_outbound_url_async,
 )
 from shared.utils.error_details import normalize_error_details

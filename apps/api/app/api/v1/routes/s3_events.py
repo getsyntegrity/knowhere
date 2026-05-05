@@ -18,10 +18,10 @@ from shared.core.logging import LogEvent
 from shared.core.state_machine.states import JobStatus
 from shared.models.schemas.oss_event import OSSEvent
 from shared.models.schemas.s3_event import S3Event
-from shared.services.webhook.pinned_outbound_http import (
+from shared.utils.pinned_outbound_http import (
     send_pinned_outbound_request,
 )
-from shared.services.webhook.outbound_url_validator import validate_outbound_url_async
+from shared.utils.outbound_url_validator import validate_outbound_url_async
 
 router = APIRouter(tags=["Internal"])
 

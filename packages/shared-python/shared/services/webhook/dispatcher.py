@@ -29,10 +29,10 @@ from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 from shared.models.database.job import Job
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.models.database.webhook_log import WebhookLog
-from shared.services.webhook.pinned_outbound_http import (
+from shared.utils.pinned_outbound_http import (
     send_pinned_outbound_request,
 )
-from shared.services.webhook.outbound_url_validator import (
+from shared.utils.outbound_url_validator import (
     OutboundURLValidationResult,
     validate_outbound_url_async,
 )

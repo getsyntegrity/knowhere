@@ -22,7 +22,7 @@ from loguru import logger
 from shared.core.config import app_config
 from shared.core.exceptions.domain_exceptions import QStashServiceException
 from shared.models.database.webhook import WebhookEventStatus
-from shared.services.webhook.outbound_url_validator import validate_outbound_url
+from shared.utils.outbound_url_validator import validate_outbound_url
 
 
 class QStashWebhookPublisher:
