@@ -6,16 +6,15 @@ that yield cooperatively under gevent.
 
 import os
 import tempfile
-import uuid as _uuid
 from typing import Any, Dict, Optional
 
-import requests
 from loguru import logger
 
 from shared.core.config import settings
 from shared.core.config.storage import get_cached_storage_adapter
 from shared.core.exceptions.domain_exceptions import StorageServiceException
-from shared.utils.url_security import validate_public_http_url
+from shared.utils.pinned_outbound_http import download_pinned_outbound_file
+from shared.utils.url_security import validate_public_http_url_and_resolve_ip
 
 
 def get_storage_adapter():
@@ -109,25 +108,23 @@ def upload_zip_result(job_id: str, zip_file_path: str) -> str:
 
 
 def download_file_from_url(file_url: str) -> str:
-    """Download file from URL to temp directory using requests (sync, gevent-compatible)."""
-    validate_public_http_url(file_url, field="source_url")
-
-    temp_dir = getattr(settings, "TMP_PATH", "/tmp")
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_filename = f"temp_{_uuid.uuid4().hex}"
-    temp_file_path = os.path.join(temp_dir, temp_filename)
-
+    """Download a URL file through SSRF validation and IP pinning."""
+    temp_file_path = ""
     try:
-        response = requests.get(
+        validation = validate_public_http_url_and_resolve_ip(
             file_url,
-            timeout=300,
-            stream=True,
-            headers={"User-Agent": "Knowhere-FileDownloader/1.0"},
+            field="source_url",
         )
-        response.raise_for_status()
-        with open(temp_file_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=65536):
-                f.write(chunk)
+        temp_dir = getattr(settings, "TMP_PATH", "/tmp")
+        os.makedirs(temp_dir, exist_ok=True)
+        download_result = download_pinned_outbound_file(
+            url=validation.url,
+            pinned_ip=validation.validated_ip,
+            timeout_seconds=300,
+            user_agent="Knowhere-FileDownloader/1.0",
+            temp_dir=temp_dir,
+        )
+        temp_file_path = download_result.temp_file_path
         return temp_file_path
     except Exception as e:
         if os.path.exists(temp_file_path):

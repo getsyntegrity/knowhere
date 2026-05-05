@@ -3,10 +3,8 @@
 import asyncio
 import json
 import os
-import uuid
 from typing import Any, Dict, Optional
 
-import aiohttp
 from loguru import logger
 
 from shared.core.config import settings
@@ -14,7 +12,12 @@ from shared.core.exceptions.domain_exceptions import (
     KnowhereException,
     StorageServiceException,
 )
-from shared.utils.url_security import validate_public_http_url
+from shared.utils.pinned_outbound_http import (
+    download_pinned_outbound_file_async,
+)
+from shared.utils.url_security import (
+    validate_public_http_url_and_resolve_ip_async,
+)
 
 
 class FileUploadService:
@@ -427,56 +430,27 @@ class FileUploadService:
 
     async def _download_file_from_url(self, file_url: str) -> str:
         """Download a file from a URL into a temporary directory."""
-        validate_public_http_url(file_url, field="source_url")
-
-        temp_dir = getattr(settings, "TMP_PATH", "/tmp")
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # Generate a temporary filename.
-        temp_filename = f"temp_{uuid.uuid4().hex}"
-        temp_file_path = os.path.join(temp_dir, temp_filename)
-
+        temp_file_path = ""
         try:
-            # Configure aiohttp for efficient large-file downloads.
-            timeout = aiohttp.ClientTimeout(
-                total=300, connect=30
-            )  # 5-minute total timeout, 30-second connect timeout.
-            connector = aiohttp.TCPConnector(
-                limit=100,  # Total connection pool size.
-                limit_per_host=30,  # Connection limit per host.
-                ttl_dns_cache=300,  # Cache DNS for 5 minutes.
-                use_dns_cache=True,
+            validation = await validate_public_http_url_and_resolve_ip_async(
+                file_url,
+                field="source_url",
             )
-
-            async with aiohttp.ClientSession(
-                timeout=timeout,
-                connector=connector,
-                headers={"User-Agent": "Knowhere-FileDownloader/1.0"},
-            ) as session:
-                async with session.get(file_url) as response:
-                    if response.status != 200:
-                        raise StorageServiceException(
-                            internal_message=(
-                                f"Download failed with status code: {response.status}"
-                            ),
-                            operation="download_from_url",
-                        )
-
-                    # Use a larger chunk size to improve download throughput.
-                    with open(temp_file_path, "wb") as f:
-                        async for chunk in response.content.iter_chunked(
-                            65536
-                        ):  # 64 KB chunks.
-                            f.write(chunk)
-
+            temp_dir = getattr(settings, "TMP_PATH", "/tmp")
+            os.makedirs(temp_dir, exist_ok=True)
+            download_result = await download_pinned_outbound_file_async(
+                url=validation.url,
+                pinned_ip=validation.validated_ip,
+                timeout_seconds=300,
+                user_agent="Knowhere-FileDownloader/1.0",
+                temp_dir=temp_dir,
+            )
+            temp_file_path = download_result.temp_file_path
             return temp_file_path
 
         except KnowhereException:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
             raise
         except Exception as e:
-            # Clean up the temporary file on failure.
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             raise StorageServiceException(

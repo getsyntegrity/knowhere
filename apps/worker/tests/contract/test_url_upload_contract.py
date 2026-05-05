@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -140,3 +141,74 @@ def test_should_upload_a_url_job_to_the_expected_storage_key_and_publish_progres
     assert job_row["status"] == "waiting-file"
     assert job_row["source_type"] == "url"
     assert job_row["s3_key"] == s3_key
+
+
+def test_should_download_a_url_file_through_a_pinned_public_ip(
+    worker_contract_environment: None,
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import app.services.storage.sync_storage_service as sync_storage_service
+
+    source_url = "https://example.test/files/contract-source.pdf"
+    pinned_ip = "93.184.216.34"
+    validation_calls: list[tuple[str, str]] = []
+    download_calls: list[dict[str, object]] = []
+
+    def fake_validate_public_http_url_and_resolve_ip(
+        url: str,
+        field: str = "url",
+    ) -> SimpleNamespace:
+        validation_calls.append((url, field))
+        return SimpleNamespace(url=url, validated_ip=pinned_ip)
+
+    def fake_download_pinned_outbound_file(
+        *,
+        url: str,
+        pinned_ip: str,
+        timeout_seconds: float,
+        user_agent: str,
+        temp_dir: str | None = None,
+        field: str = "source_url",
+    ) -> SimpleNamespace:
+        download_calls.append(
+            {
+                "url": url,
+                "pinned_ip": pinned_ip,
+                "timeout_seconds": timeout_seconds,
+                "user_agent": user_agent,
+                "temp_dir": temp_dir,
+                "field": field,
+            }
+        )
+        temp_file_path = Path(temp_dir or tmp_path) / "downloaded-contract-source.pdf"
+        temp_file_path.write_bytes(b"pdf")
+        return SimpleNamespace(status=200, temp_file_path=str(temp_file_path))
+
+    monkeypatch.setattr(
+        sync_storage_service,
+        "validate_public_http_url_and_resolve_ip",
+        fake_validate_public_http_url_and_resolve_ip,
+    )
+    monkeypatch.setattr(
+        sync_storage_service,
+        "download_pinned_outbound_file",
+        fake_download_pinned_outbound_file,
+    )
+    monkeypatch.setattr(sync_storage_service.settings, "TMP_PATH", str(tmp_path))
+
+    downloaded_path = sync_storage_service.download_file_from_url(source_url)
+
+    assert validation_calls == [(source_url, "source_url")]
+    assert download_calls == [
+        {
+            "url": source_url,
+            "pinned_ip": pinned_ip,
+            "timeout_seconds": 300,
+            "user_agent": "Knowhere-FileDownloader/1.0",
+            "temp_dir": str(tmp_path),
+            "field": "source_url",
+        }
+    ]
+    assert downloaded_path == str(tmp_path / "downloaded-contract-source.pdf")
+    assert Path(downloaded_path).read_bytes() == b"pdf"

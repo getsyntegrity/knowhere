@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import socket
+from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urljoin, urlparse
 
@@ -39,6 +40,14 @@ class SafePublicHTTPURL(str):
     """A URL string that has passed public HTTP SSRF validation."""
 
 
+@dataclass(frozen=True)
+class PublicHTTPURLValidationResult:
+    """Validated public HTTP URL and its pinned public IP address."""
+
+    url: SafePublicHTTPURL
+    validated_ip: str
+
+
 def validate_public_http_url(url: str, field: str = "url") -> None:
     """Reject URL inputs that could target internal networks or local services."""
     try:
@@ -72,6 +81,62 @@ def get_safe_public_http_url(url: str, field: str = "url") -> SafePublicHTTPURL:
     return SafePublicHTTPURL(url)
 
 
+def validate_public_http_url_and_resolve_ip(
+    url: str,
+    field: str = "url",
+) -> PublicHTTPURLValidationResult:
+    """Validate a public HTTP URL and return the IP selected during validation."""
+    try:
+        validated_ip = _validate_public_http_url(url)
+        return PublicHTTPURLValidationResult(
+            url=SafePublicHTTPURL(url),
+            validated_ip=validated_ip,
+        )
+    except UnsupportedURLSchemeError as exc:
+        raise _build_url_validation_error(field, "URL must use http or https") from exc
+    except MissingURLHostnameError as exc:
+        raise _build_url_validation_error(field, "URL must include a hostname") from exc
+    except HostnameResolutionError as exc:
+        raise _build_url_validation_error(field, "URL hostname could not be resolved") from exc
+    except InvalidResolvedAddressError as exc:
+        raise _build_url_validation_error(field, "URL resolved to an invalid IP") from exc
+    except HostnameNotAllowedError as exc:
+        raise _build_url_validation_error(field, "URL host is not allowed") from exc
+
+
+async def validate_public_http_url_and_resolve_ip_async(
+    url: str,
+    field: str = "url",
+) -> PublicHTTPURLValidationResult:
+    """Validate a public HTTP URL asynchronously and return the selected IP."""
+    try:
+        parsed_url = urlparse(url)
+        if parsed_url.scheme not in {"http", "https"}:
+            raise UnsupportedURLSchemeError(
+                f"Unsupported URL scheme: {parsed_url.scheme}"
+            )
+
+        hostname = parsed_url.hostname
+        if not hostname:
+            raise MissingURLHostnameError("URL must include a hostname")
+
+        validated_ip = await resolve_public_hostname_async(hostname)
+        return PublicHTTPURLValidationResult(
+            url=SafePublicHTTPURL(url),
+            validated_ip=validated_ip,
+        )
+    except UnsupportedURLSchemeError as exc:
+        raise _build_url_validation_error(field, "URL must use http or https") from exc
+    except MissingURLHostnameError as exc:
+        raise _build_url_validation_error(field, "URL must include a hostname") from exc
+    except HostnameResolutionError as exc:
+        raise _build_url_validation_error(field, "URL hostname could not be resolved") from exc
+    except InvalidResolvedAddressError as exc:
+        raise _build_url_validation_error(field, "URL resolved to an invalid IP") from exc
+    except HostnameNotAllowedError as exc:
+        raise _build_url_validation_error(field, "URL host is not allowed") from exc
+
+
 def get_safe_redirect_url(url: str, redirect_url: str) -> str:
     """Resolve and validate an HTTP redirect target for internal network callers."""
     resolved_url = urljoin(url, redirect_url)
@@ -92,7 +157,7 @@ def resolve_public_hostname(hostname: str) -> str:
     return _select_public_ip_address(hostname, address_infos)
 
 
-def _validate_public_http_url(url: str) -> None:
+def _validate_public_http_url(url: str) -> str:
     parsed_url = urlparse(url)
     if parsed_url.scheme not in {"http", "https"}:
         raise UnsupportedURLSchemeError(f"Unsupported URL scheme: {parsed_url.scheme}")
@@ -101,7 +166,7 @@ def _validate_public_http_url(url: str) -> None:
     if not hostname:
         raise MissingURLHostnameError("URL must include a hostname")
 
-    resolve_public_hostname(hostname)
+    return resolve_public_hostname(hostname)
 
 
 async def resolve_public_hostname_async(hostname: str) -> str:
