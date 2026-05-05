@@ -45,11 +45,12 @@ async def _run(mode: str) -> int:
 
 
 def _print_profile() -> None:
-    print("user_id=local-dev-user")
-    print("name=Local Development User")
-    print("email=local-dev-user@knowhere.local")
-    print("tier=tier_5")
-    print("local_developer_key_seeded=true")
+    profile = LocalDevelopmentBootstrapService.get_local_developer_auth_profile()
+    print(f"user_id={profile['user_id']}")
+    print(f"name={profile['name']}")
+    print(f"email={profile['email']}")
+    print(f"tier={profile['tier']}")
+    print(f"api_key={profile['api_key']}")
 
 
 def main() -> int:
