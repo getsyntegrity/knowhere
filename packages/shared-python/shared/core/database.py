@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Any, AsyncGenerator, Awaitable, Callable, TypeVar
 
 from sqlalchemy import event, text
@@ -255,73 +254,6 @@ async def _warm_connection():
             await conn.execute(text(ProcessingConstants.DB_VALIDATION_QUERY))
     except Exception as e:
         logger.debug(f"Connection warming failed: {e}")
-
-
-# Database performance monitoring.
-class DatabasePerformanceMonitor:
-    """Database performance monitor."""
-
-    def __init__(self):
-        self.query_times = []
-        self.connection_usage = []
-        self.error_count = 0
-
-    def record_query_time(self, query_time_ms: float):
-        """Record query latency."""
-        self.query_times.append(query_time_ms)
-        # Keep only the most recent 1000 query samples.
-        if len(self.query_times) > 1000:
-            self.query_times = self.query_times[-1000:]
-
-    def record_connection_usage(self, pool_status: dict):
-        """Record connection-pool usage."""
-        self.connection_usage.append(
-            {
-                "timestamp": datetime.now().isoformat(),
-                "checked_out": pool_status.get("checked_out", 0),
-                "checked_in": pool_status.get("checked_in", 0),
-                "overflow": pool_status.get("overflow", 0),
-            }
-        )
-        # Keep only the most recent 100 samples.
-        if len(self.connection_usage) > 100:
-            self.connection_usage = self.connection_usage[-100:]
-
-    def record_error(self):
-        """Record an error occurrence."""
-        self.error_count += 1
-
-    def get_performance_stats(self) -> dict:
-        """Return collected performance statistics."""
-        if not self.query_times:
-            return {"error": "No query data available"}
-
-        return {
-            "query_stats": {
-                "count": len(self.query_times),
-                "avg_time_ms": round(sum(self.query_times) / len(self.query_times), 2),
-                "min_time_ms": round(min(self.query_times), 2),
-                "max_time_ms": round(max(self.query_times), 2),
-                "p95_time_ms": round(
-                    sorted(self.query_times)[int(len(self.query_times) * 0.95)], 2
-                ),
-            },
-            "connection_stats": {
-                "recent_usage": (
-                    self.connection_usage[-10:] if self.connection_usage else []
-                ),
-                "total_errors": self.error_count,
-            },
-        }
-
-
-# Shared performance-monitor instance.
-db_performance_monitor = DatabasePerformanceMonitor()
-
-
-async def get_database_performance() -> dict:
-    """Return database performance statistics."""
-    return db_performance_monitor.get_performance_stats()
 
 
 async def safe_dispose_engine(db_engine: AsyncEngine) -> None:
