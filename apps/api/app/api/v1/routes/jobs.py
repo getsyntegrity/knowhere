@@ -53,7 +53,9 @@ from shared.models.schemas.job import (
     StandardErrorObject,
 )
 from shared.services.storage.file_upload_service import FileUploadService
-from shared.services.webhook.validator import validate_webhook_url_async
+from shared.services.webhook.outbound_url_validator import (
+    validate_outbound_url_async,
+)
 from shared.utils.error_details import normalize_error_details
 from shared.utils.url_file_type import resolve_file_extension_async
 
@@ -320,7 +322,7 @@ async def create_job(  # pyright: ignore[reportGeneralTypeIssues]
         if payload.webhook:
             # Check for URL validity
             if payload.webhook.url:
-                validation_result = await validate_webhook_url_async(
+                validation_result = await validate_outbound_url_async(
                     payload.webhook.url
                 )
                 if not validation_result.is_valid:

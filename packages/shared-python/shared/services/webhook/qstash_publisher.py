@@ -22,7 +22,7 @@ from loguru import logger
 from shared.core.config import app_config
 from shared.core.exceptions.domain_exceptions import QStashServiceException
 from shared.models.database.webhook import WebhookEventStatus
-from shared.services.webhook.validator import validate_webhook_url
+from shared.services.webhook.outbound_url_validator import validate_outbound_url
 
 
 class QStashWebhookPublisher:
@@ -84,7 +84,7 @@ class QStashWebhookPublisher:
                 return None
 
             # SSRF pre-validation
-            validation = validate_webhook_url(event.target_url)
+            validation = validate_outbound_url(event.target_url)
             if not validation.is_valid:
                 logger.warning(
                     f"QStash publish: SSRF validation failed for event {event_id}: "

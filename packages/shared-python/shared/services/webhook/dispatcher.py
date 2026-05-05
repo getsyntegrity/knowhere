@@ -9,15 +9,12 @@ import asyncio
 import hashlib
 import hmac
 import json
-import socket
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-import aiohttp
-from aiohttp.abc import AbstractResolver
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,9 +29,12 @@ from shared.core.exceptions.webhook_exceptions import WebhookDeliveryException
 from shared.models.database.job import Job
 from shared.models.database.webhook import WebhookEvent, WebhookEventStatus
 from shared.models.database.webhook_log import WebhookLog
-from shared.services.webhook.validator import (
-    WebhookValidationResult,
-    validate_webhook_url_async,
+from shared.services.webhook.pinned_outbound_http import (
+    send_pinned_outbound_request,
+)
+from shared.services.webhook.outbound_url_validator import (
+    OutboundURLValidationResult,
+    validate_outbound_url_async,
 )
 
 # Constants
@@ -166,7 +166,7 @@ class WebhookDispatcher:
         attempt_id = str(uuid.uuid4())
 
         # SSRF Protection
-        validation: WebhookValidationResult = await validate_webhook_url_async(
+        validation: OutboundURLValidationResult = await validate_outbound_url_async(
             event.target_url
         )
         if not validation.is_valid:
@@ -226,71 +226,39 @@ class WebhookDispatcher:
         success = False
 
         try:
-            # IP Pinning: Use a custom resolver that returns ONLY the pre-validated IP.
-            # This eliminates the DNS rebinding TOCTOU window — aiohttp will connect
-            # to the pinned IP while the Host header preserves the original hostname.
             pinned_ip = validation.validated_ip
             if not pinned_ip:
                 return False, 400, 0, "SSRF validation did not return a pinned IP"
 
-            # Detect address family from the pinned IP
-            pinned_family: int = socket.AF_INET6 if ":" in pinned_ip else socket.AF_INET
-
-            class PinnedResolver(AbstractResolver):
-                """Resolver that always returns the pre-validated IP address."""
-
-                async def resolve(
-                    self, host: str, port: int = 0, family: int = socket.AF_INET
-                ) -> list[dict[str, Any]]:
-                    return [
-                        {
-                            "hostname": host,
-                            "host": pinned_ip,
-                            "port": port,
-                            "family": pinned_family,
-                            "proto": 0,
-                            "flags": socket.AI_NUMERICHOST,
-                        }
-                    ]
-
-                async def close(self) -> None:
-                    pass
-
-            connector = aiohttp.TCPConnector(
-                resolver=PinnedResolver(),
-                # Disable redirect following to prevent redirect-based SSRF
-                # (attacker returns 302 → http://169.254.169.254/...)
+            response = await send_pinned_outbound_request(
+                method="POST",
+                url=event.target_url,
+                pinned_ip=pinned_ip,
+                timeout_seconds=HTTP_TIMEOUT_SECONDS,
+                headers=headers,
+                json_body=enriched_payload,
             )
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    event.target_url,
-                    json=enriched_payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS),
-                    allow_redirects=False,  # Block redirect-based SSRF
-                ) as response:
-                    duration_ms = int((time.time() - start_time) * 1000)
-                    status_code = response.status
+            duration_ms = int((time.time() - start_time) * 1000)
+            status_code = response.status
 
-                    # Treat 3xx as non-success (redirect-based SSRF prevention)
-                    if 200 <= response.status < 300:
-                        logger.info(
-                            f"Webhook delivered: event_id={event.id}, status={response.status}"
-                        )
-                        success = True
-                    elif 300 <= response.status < 400:
-                        logger.warning(
-                            f"Webhook redirect blocked (SSRF protection): "
-                            f"event_id={event.id}, status={response.status}"
-                        )
-                        error_message = f"Redirect blocked: HTTP {response.status}"
-                        success = False
-                    else:
-                        logger.warning(
-                            f"Webhook failed: event_id={event.id}, status={response.status}"
-                        )
-                        error_message = f"HTTP {response.status}"
-                        success = False
+            if 200 <= response.status < 300:
+                logger.info(
+                    f"Webhook delivered: event_id={event.id}, status={response.status}"
+                )
+                success = True
+            elif 300 <= response.status < 400:
+                logger.warning(
+                    f"Webhook redirect blocked (SSRF protection): "
+                    f"event_id={event.id}, status={response.status}"
+                )
+                error_message = f"Redirect blocked: HTTP {response.status}"
+                success = False
+            else:
+                logger.warning(
+                    f"Webhook failed: event_id={event.id}, status={response.status}"
+                )
+                error_message = f"HTTP {response.status}"
+                success = False
 
         except asyncio.TimeoutError:
             duration_ms = int((time.time() - start_time) * 1000)

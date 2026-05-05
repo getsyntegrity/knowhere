@@ -196,10 +196,12 @@ async def test_should_reject_an_sns_subscription_confirmation_url_that_resolves_
             raise AssertionError("private SNS confirmation URL should not be requested")
 
     async with api_client_factory() as api_client:
-        s3_events_module = importlib.import_module("app.api.v1.routes.s3_events")
         monkeypatch.setattr(socket, "getaddrinfo", resolve_private_address)
+        pinned_http_module = importlib.import_module(
+            "shared.services.webhook.pinned_outbound_http"
+        )
         monkeypatch.setattr(
-            s3_events_module.aiohttp,
+            pinned_http_module.aiohttp,
             "ClientSession",
             _UnexpectedSession,
         )

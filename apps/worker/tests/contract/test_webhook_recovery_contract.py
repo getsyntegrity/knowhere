@@ -119,7 +119,7 @@ def test_should_republish_only_orphaned_pending_webhook_events_and_persist_qstas
     )
     monkeypatch.setattr(
         qstash_publisher,
-        "validate_webhook_url",
+        "validate_outbound_url",
         lambda url: SimpleNamespace(
             is_valid=True,
             error_message=None,
