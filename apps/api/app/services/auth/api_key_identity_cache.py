@@ -82,24 +82,6 @@ class APIKeyIdentityCache:
                 user_id,
             )
 
-    async def invalidate_user(
-        self,
-        redis: RedisService,
-        user_id: str,
-    ) -> None:
-        """Delete all API-key identity cache entries for a user."""
-        try:
-            reverse_key: str = self.get_reverse_key(user_id)
-            api_key_hashes: set[object] = await redis.smembers(reverse_key)
-            for api_key_hash in api_key_hashes:
-                await redis.delete(self.get_cache_key(str(api_key_hash)))
-            await redis.delete(reverse_key)
-        except Exception:
-            logger.warning(
-                "api_key_identity_cache: failed to invalidate user_id={}",
-                user_id,
-            )
-
     def _coerce_user_id(self, raw_user_id: object) -> str | None:
         """Return a typed user ID from current or legacy Redis values."""
         if isinstance(raw_user_id, str):

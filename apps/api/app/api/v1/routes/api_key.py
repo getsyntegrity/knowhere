@@ -98,30 +98,6 @@ async def list_api_keys(
         )
 
 
-@router.post("/regenerate", summary="Regenerate an API key")
-async def regenerate_api_key(
-    request: RegenerateAPIKeyRequest,
-    current_user: CurrentUser = Depends(with_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Regenerate an API key."""
-    api_key_service = APIKeyService()
-
-    try:
-        new_api_key = await api_key_service.regenerate_api_key(
-            session=db, api_key_id=request.api_key_id, user_id=current_user.user_id
-        )
-
-        return {"api_key": new_api_key, "message": "API key regenerated"}
-
-    except NotFoundException:
-        raise
-    except Exception as e:
-        raise APIKeyOperationException(
-            internal_message=f"Failed to regenerate API Key: {str(e)}"
-        )
-
-
 @router.post("/revoke", summary="Revoke an API key")
 async def revoke_api_key(
     request: RevokeAPIKeyRequest,

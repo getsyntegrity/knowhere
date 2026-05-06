@@ -99,21 +99,6 @@ class APIKeyService:
 
         return api_key
 
-    async def validate_api_key(
-        self, session: AsyncSession, api_key: str
-    ) -> Optional[str]:
-        """Validate API key against DB, return user_id or None."""
-        identity = await self.get_identity(session, api_key)
-        return identity.user_id if identity is not None else None
-
-    async def validate_api_key_identity(
-        self,
-        session: AsyncSession,
-        api_key: str,
-    ) -> Optional[APIKeyIdentity]:
-        """Validate API key and return the authenticated identity."""
-        return await self.get_identity(session, api_key)
-
     async def get_identity(
         self,
         session: AsyncSession,
@@ -266,6 +251,7 @@ class APIKeyService:
 
         return success
 
+    # TODO, invalidate should not be best-effort
     async def _invalidate_revoked_api_key_cache_best_effort(
         self,
         user_id: str,
@@ -302,53 +288,6 @@ class APIKeyService:
             }
             for api_key in api_keys
         ]
-
-    async def regenerate_api_key(
-        self, session: AsyncSession, api_key_id: str, user_id: str
-    ) -> str:
-        """Regenerate an API key."""
-        api_key = await self.repository.get_by_id(session, api_key_id)
-        if not api_key or api_key.user_id != user_id:
-            raise NotFoundException(
-                resource="APIKey",
-                resource_id=api_key_id,
-                internal_message="API Key not found or does not belong to user",
-            )
-
-        new_api_key = generate_api_key()
-        new_key_hash = hash_api_key(new_api_key)
-        new_key_mask = mask_api_key(new_api_key)
-
-        await session.execute(
-            update(APIKey)
-            .where(APIKey.id == api_key_id)
-            .values(
-                key_hash=new_key_hash,
-                key_mask=new_key_mask,
-            )
-        )
-        await session.commit()
-
-        await api_key_identity_cache.invalidate_api_key(
-            redis_pool_manager.get_redis_service(),
-            user_id,
-            api_key.key_hash,
-        )
-
-        return new_api_key
-
-    async def check_module_permission(
-        self, session: AsyncSession, api_key: str, module: str
-    ) -> bool:
-        """Check whether an API key can access the requested module."""
-        key_hash = hash_api_key(api_key)
-        api_key_record = await self.repository.get_by_key_hash(session, key_hash)
-
-        if not api_key_record or not api_key_record.is_valid():
-            return False
-
-        enabled_modules = api_key_record.enabled_modules or []
-        return "all" in enabled_modules or module in enabled_modules
 
     def _schedule_last_used_update(self, api_key_id: str) -> None:
         """Schedule a best-effort background update for api_keys.last_used_at."""
