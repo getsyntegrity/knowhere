@@ -1,4 +1,36 @@
-<img width="2000" height="466" alt="20260506-100355" src="https://github.com/user-attachments/assets/d969e304-71eb-4610-8d94-0ea9706fec11" />
+<img width="1000" height="233" alt="20260506-102713" src="https://github.com/user-attachments/assets/896e64d2-e50e-4158-b71c-bc69e11c7c65" />
+
+---
+
+<a href="https://github.com/Ontos-AI/knowhere/blob/main/LICENSE">
+  <img
+    alt="License: Apache 2.0"
+    src="https://img.shields.io/badge/APACHE%202.0-16A34A.svg?style=for-the-badge&label=LICENSE&labelColor=000000"
+  >
+</a>
+
+<a href="https://www.python.org/downloads/">
+  <img alt="Python Version" src="https://img.shields.io/badge/Python-%3E%3D%203.11-3776AB.svg?style=for-the-badge&logo=python&logoColor=white&labelColor=000000">
+</a>
+
+<a href="https://pypi.org/project/your-package/">
+  <img alt="PyPI version" src="https://img.shields.io/pypi/v/your-package?style=for-the-badge&labelColor=000000">
+</a>
+
+<a href="https://github.com/your-org/your-repo/stargazers">
+  <img alt="GitHub stars" src="https://img.shields.io/github/stars/your-org/your-repo?style=for-the-badge&labelColor=000000">
+</a>
+
+<a href="https://github.com/your-org/your-repo/actions">
+  <img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/your-org/your-repo/ci.yml?style=for-the-badge&labelColor=000000">
+</a>
+
+<a href="https://github.com/Ontos-AI/knowhere/discussions">
+  <img
+    alt="Join the community on GitHub"
+    src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=GitHub&labelColor=000000&logoWidth=20"
+  >
+</a>
 
 
 Knowhere API is the backend repository for document ingestion, parsing,
