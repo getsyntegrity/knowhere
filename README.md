@@ -62,16 +62,6 @@ cp apps/worker/.env.example apps/worker/.env
 - `DS_KEY`
 - any optional LLM, billing, or webhook providers you want to enable
 
-These settings control the local startup mode:
-
-- `API_STANDALONE_MODE_ENABLED=false` for the combined dashboard + API flow, where
-  the dashboard initializes Better Auth tables before API migrations.
-- `BILLING_ENABLED` controls Stripe and credit deduction.
-- `RATE_LIMIT_ENABLED` controls API rate limit enforcement.
-
-For API-only development without the dashboard, set
-`API_STANDALONE_MODE_ENABLED=true` in `apps/api/.env`.
-
 4. Start the local infrastructure stack:
 
 ```bash
@@ -81,8 +71,8 @@ For API-only development without the dashboard, set
 5. Start the API and worker in separate terminals:
 
 ```bash
-cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
-cd apps/worker && uv run python worker.py
+cd apps/api && uv run main.py
+cd apps/worker && uv run worker.py
 ```
 
 The API runs migrations during startup.
@@ -92,7 +82,7 @@ after the API service starts:
 
 ```bash
 cd apps/api
-uv run --python 3.11 python scripts/init_user.py --email you@example.com
+uv run scripts/init_user.py --email you@example.com
 ```
 
 If you plan to use the dashboard, register through the dashboard instead of

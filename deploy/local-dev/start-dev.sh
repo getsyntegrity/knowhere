@@ -106,8 +106,6 @@ Service endpoints:
 Next steps:
   1. Start the API: cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
   2. Start the worker: cd apps/worker && uv run python worker.py
-  3. For API-only development, create a dev user after the API starts:
-     cd apps/api && uv run --python 3.11 python scripts/init_user.py --email you@example.com
 
 Stop services:
   ${SCRIPT_DIR}/stop-dev.sh

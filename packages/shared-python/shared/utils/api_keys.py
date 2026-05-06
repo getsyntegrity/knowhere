@@ -8,7 +8,6 @@ API_KEY_PREFIX: str = "sk_"
 API_KEY_RANDOM_BYTES: int = 32
 
 
-# TODO, use an alphanumeric api key
 def generate_api_key() -> str:
     """Generate a new plaintext API key with cryptographic randomness."""
     return f"{API_KEY_PREFIX}{token_urlsafe(API_KEY_RANDOM_BYTES)}"
