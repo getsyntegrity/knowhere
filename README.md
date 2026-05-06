@@ -19,12 +19,15 @@
   <a href="https://ghcr.io/ontos-ai/knowhere">
     <img alt="Container Images" src="https://img.shields.io/badge/CONTAINER%20IMAGES-2496ED.svg?style=for-the-badge&logo=docker&logoColor=white&labelColor=000000">
   </a>
-  <br>
   <a href="https://github.com/Ontos-AI/knowhere/blob/main/LICENSE">
     <img alt="License: Apache 2.0" src="https://img.shields.io/badge/APACHE%202.0-D97706.svg?style=for-the-badge&label=LICENSE&labelColor=000000">
   </a>
 </p>
 
+## 📢 News
+
+- **May 7, 2026**: 🚀 **Knowhere is now Open Source!** We've opened up our backend repository for document ingestion, parsing, and MCP-oriented knowledge access. Check out our [Contribution Guide](CONTRIBUTING.md) to get involved!
+- **Apr 30, 2026**: 📦 **Version [2026.04.30.1](https://github.com/Ontos-AI/knowhere/releases/tag/2026.04.30.1) has been released.** This update includes several stability improvements and initial support for the MCP knowledge access layer. See the [full changelog](https://github.com/Ontos-AI/knowhere/commits/2026.04.30.1) for details.
 
 Knowhere API is the backend repository for document ingestion, parsing,
 retrieval, and MCP-oriented knowledge access.
