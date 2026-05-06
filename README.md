@@ -7,11 +7,11 @@
 </a>
 
 <a href="https://github.com/Ontos-AI/knowhere/stargazers">
-  <img alt="GitHub stars" src="https://img.shields.io/github/stars/your-org/your-repo?style=for-the-badge&labelColor=000000">
+  <img alt="GitHub stars" src="https://img.shields.io/github/stars/Ontos-AI/knowhere?style=for-the-badge&labelColor=000000">
 </a>
 
 <a href="https://github.com/Ontos-AI/knowhere/actions">
-  <img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/your-org/your-repo/ci.yml?style=for-the-badge&labelColor=000000">
+  <img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/Ontos-AI/knowhere/pr-ci.yml?style=for-the-badge&labelColor=000000">
 </a>
 
 <a href="https://github.com/Ontos-AI/knowhere/discussions">
