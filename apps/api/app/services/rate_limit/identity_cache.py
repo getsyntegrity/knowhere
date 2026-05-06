@@ -6,22 +6,23 @@ from loguru import logger
 
 from shared.services.redis.redis_service import RedisService
 
-_JWT_TTL_SECONDS: int = 3600
+_USER_TIER_TTL_SECONDS: int = 3600
 
 
 class IdentityCache:
-    """Cache resolved rate-limit identity by user_id."""
+    """Cache resolved rate-limit user tier by user_id."""
 
     @staticmethod
-    def get_user_key(user_id: str) -> str:
+    def get_user_tier_key(user_id: str) -> str:
         return f"identity:user:{user_id}"
 
-    async def get_cached_identity(
+    async def get_user_tier(
         self,
         redis: RedisService,
-        cache_key: str,
+        user_id: str,
     ) -> dict[str, str] | None:
         """Return cached ``{user_id, user_tier}`` or ``None`` on miss."""
+        cache_key = self.get_user_tier_key(user_id)
         try:
             raw_identity: object = await redis.get(cache_key)
             return self._coerce_identity(raw_identity)
@@ -32,20 +33,20 @@ class IdentityCache:
             )
             return None
 
-    async def set_jwt_identity(
+    async def set_user_tier(
         self,
         redis: RedisService,
         user_id: str,
         user_tier: str,
     ) -> None:
         """Cache rate-limit identity for a user."""
-        key: str = self.get_user_key(user_id)
+        key: str = self.get_user_tier_key(user_id)
         payload: dict[str, str] = {"user_id": user_id, "user_tier": user_tier}
         try:
-            await redis.set(key, payload, ttl=_JWT_TTL_SECONDS)
+            await redis.set(key, payload, ttl=_USER_TIER_TTL_SECONDS)
         except Exception:
             logger.warning(
-                "identity_cache: failed to set jwt identity user_id={}",
+                "identity_cache: failed to set user tier for user_id={}",
                 user_id,
             )
 
@@ -56,7 +57,7 @@ class IdentityCache:
     ) -> None:
         """Delete cached rate-limit identity for a user."""
         try:
-            await redis.delete(self.get_user_key(user_id))
+            await redis.delete(self.get_user_tier_key(user_id))
         except Exception:
             logger.warning(
                 "identity_cache: failed to invalidate user_id={}",

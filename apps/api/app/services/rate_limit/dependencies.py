@@ -132,15 +132,12 @@ async def with_current_user(
 
     if not isinstance(user_tier, str) or stashed_user_id != user_id:
         try:
-            cached = await identity_cache.get_cached_identity(
-                redis_service,
-                identity_cache.get_user_key(user_id),
-            )
+            cached = await identity_cache.get_user_tier(redis_service, user_id)
             if cached is not None:
                 user_tier = cached.get("user_tier", _DEFAULT_TIER)
             else:
                 user_tier = await _resolve_user_tier_from_db(user_id)
-                await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
+                await identity_cache.set_user_tier(redis_service, user_id, user_tier)
         except Exception:
             logger.warning(
                 "rate_limit: Redis error during identity resolution, "

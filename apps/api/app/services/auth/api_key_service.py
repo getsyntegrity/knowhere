@@ -192,16 +192,13 @@ class APIKeyService:
     async def _get_user_tier(self, user_id: str) -> str:
         """Return user tier from rate-limit identity cache or DB fallback."""
         redis_service = redis_pool_manager.get_redis_service()
-        cached_identity = await identity_cache.get_cached_identity(
-            redis_service,
-            identity_cache.get_user_key(user_id),
-        )
+        cached_identity = await identity_cache.get_user_tier(redis_service, user_id)
         if cached_identity is not None:
             return cached_identity["user_tier"]
 
         async with get_db_context() as session:
             user_tier = await self._resolve_user_tier_from_db(session, user_id)
-            await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
+            await identity_cache.set_user_tier(redis_service, user_id, user_tier)
             return user_tier
 
     async def _resolve_user_tier_from_db(
