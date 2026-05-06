@@ -6,11 +6,12 @@ from uuid import UUID
 import stripe
 from app.repositories.payment_record_repository import PaymentRecordRepository
 from app.services.billing.price_config_service import PriceConfigService
+from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.tier_service import TierService
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.core.config import settings
+from shared.core.config import redis_pool_manager, settings
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
     KnowhereException,
@@ -384,6 +385,11 @@ class StripeService:
                 await db.commit()
                 await db.refresh(payment_record)
 
+                await identity_cache.invalidate_user(
+                    redis_pool_manager.get_redis_service(),
+                    user_id,
+                )
+
                 logger.info(
                     f"Credits pack purchase succeeded: user_id={user_id}, credits={credits_amount}, price_id={price_id}"
                 )
@@ -520,6 +526,11 @@ class StripeService:
             await TierService.refresh_tier(user_id, db)
             await db.commit()
             await db.refresh(payment_record)
+
+            await identity_cache.invalidate_user(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+            )
 
             logger.info(
                 f"buy credits success: user_id={user_id}, credits={credits_amount}, payment_intent_id={payment_intent_id}"

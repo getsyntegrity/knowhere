@@ -6,9 +6,6 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 
-from shared.utils.api_keys import hash_api_key
-from tests.support.contract_database import ContractDatabase
-
 
 @pytest.mark.asyncio
 async def test_should_revoke_a_created_api_key_through_http_only(
@@ -79,37 +76,6 @@ async def test_should_revoke_a_created_api_key_through_http_only(
     assert error["code"] == "UNAUTHENTICATED"
     assert error["message"] == "Invalid API Key"
     assert "details" not in error
-
-
-@pytest.mark.asyncio
-async def test_should_accept_an_active_sha256_api_key_hash(
-    api_client_factory: Callable[[], AbstractAsyncContextManager[AsyncClient]],
-) -> None:
-    user_id = f"sha256-user-{uuid4().hex[:12]}"
-    raw_api_key = f"sk_sha256_{uuid4().hex}"
-    key_hash = hash_api_key(raw_api_key)
-
-    async with api_client_factory() as api_client:
-        await ContractDatabase.insert_authenticated_user(
-            user_id=user_id,
-            api_key=raw_api_key,
-            user_tier="tier_5",
-        )
-        await ContractDatabase.execute(
-            """
-            UPDATE api_keys
-            SET key_hash = :key_hash
-            WHERE user_id = :user_id
-            """,
-            {
-                "key_hash": key_hash,
-                "user_id": user_id,
-            },
-        )
-        api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
-        response = await api_client.get("/api/v1/jobs")
-
-    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

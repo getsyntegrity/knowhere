@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import os
+import secrets
 import sys
-from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -19,7 +20,6 @@ from shared.models.database.api_key import APIKey
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
-from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
 _DEFAULT_API_KEY_NAME: str = "standalone-api-key"
 _DEFAULT_USER_TIER: str = "free"
@@ -42,11 +42,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tier",
         default=_DEFAULT_USER_TIER,
         help="Compatibility user tier to store in user_balances.",
-    )
-    parser.add_argument(
-        "--api-key-output-file",
-        default="",
-        help="Optional file path for the generated API key. The file is created with 0600 permissions.",
     )
     return parser
 
@@ -129,17 +124,14 @@ async def _resolve_key_name(
     return f"{key_name}-{suffix}"
 
 
-def _write_api_key_file(path_value: str, api_key: str) -> Path:
-    output_path = Path(path_value).expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor = os.open(
-        output_path,
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-        0o600,
-    )
-    with os.fdopen(file_descriptor, "w", encoding="utf-8") as output_file:
-        output_file.write(f"{api_key}\n")
-    return output_path
+def _generate_api_key() -> str:
+    return f"sk_kn_{secrets.token_hex(16)}"
+
+
+def _mask_api_key(api_key: str) -> str:
+    if len(api_key) < 12:
+        return api_key
+    return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
 
 
 async def _create_api_key(
@@ -148,12 +140,12 @@ async def _create_api_key(
     user_id: str,
     key_name: str,
 ) -> str:
-    api_key = generate_api_key()
+    api_key = _generate_api_key()
     session.add(
         APIKey(
             user_id=user_id,
-            key_hash=hash_api_key(api_key),
-            key_mask=mask_api_key(api_key),
+            key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            key_mask=_mask_api_key(api_key),
             name=key_name,
             enabled_modules=["all"],
         )
@@ -187,15 +179,8 @@ async def _run(args: argparse.Namespace) -> int:
 
     print(f"user_id={user.id}")
     print(f"email={user.email}")
-    print("credential_name_created=true")
-    print("api_key_created=true")
-    print("credential_hidden=true")
-    output_path_value = str(args.api_key_output_file).strip()
-    if output_path_value:
-        output_path = _write_api_key_file(output_path_value, api_key)
-        print(f"credential_output_file={output_path}")
-    else:
-        print("credential_output_file=")
+    print(f"api_key_name={key_name}")
+    print(f"api_key={api_key}")
     return 0
 
 

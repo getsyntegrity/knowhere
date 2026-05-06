@@ -45,7 +45,7 @@ async def _run(mode: str) -> int:
 
 
 def _print_profile() -> None:
-    profile = LocalDevelopmentBootstrapService.get_local_developer_auth_profile()
+    profile = LocalDevelopmentBootstrapService.get_local_developer_profile()
     print(f"user_id={profile['user_id']}")
     print(f"name={profile['name']}")
     print(f"email={profile['email']}")
