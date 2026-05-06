@@ -2,11 +2,11 @@
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from app.repositories.api_key_repository import APIKeyRepository
-from app.services.rate_limit.identity_cache import identity_cache
+from app.services.auth.api_key_identity_cache import api_key_identity_cache
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,7 @@ class APIKeyIdentity:
     user_id: str
     user_tier: str
     key_hash: str
+    expires_at: datetime | None
 
 
 class APIKeyService:
@@ -128,6 +129,24 @@ class APIKeyService:
             user_id=user_id,
             user_tier=user_tier,
             key_hash=str(api_key_record.key_hash),
+            expires_at=api_key_record.expires_at,
+        )
+
+    async def cache_api_key_identity(
+        self,
+        *,
+        key_hash: str,
+        user_id: str,
+        user_tier: str,
+        expires_at: datetime | None,
+    ) -> None:
+        """Cache a validated API-key identity for the auth layer."""
+        await api_key_identity_cache.set_identity(
+            redis_pool_manager.get_redis_service(),
+            key_hash,
+            user_id,
+            user_tier,
+            ttl_seconds=self._resolve_api_key_cache_ttl_seconds(expires_at),
         )
 
     async def _resolve_user_tier(
@@ -141,6 +160,20 @@ class APIKeyService:
         )
         user_tier = result.scalar_one_or_none()
         return str(user_tier) if user_tier is not None else _DEFAULT_USER_TIER
+
+    def _resolve_api_key_cache_ttl_seconds(self, expires_at: datetime | None) -> int:
+        """Resolve cache TTL for API-key identity without exceeding key expiry."""
+        max_ttl_seconds = 3600
+        if expires_at is None:
+            return max_ttl_seconds
+
+        expires_at_utc = expires_at
+        if expires_at_utc.tzinfo is None:
+            expires_at_utc = expires_at_utc.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        remaining_seconds = int((expires_at_utc - now).total_seconds())
+        return max(1, min(max_ttl_seconds, remaining_seconds))
 
     async def revoke_api_key(
         self, session: AsyncSession, api_key_id: str, user_id: str
@@ -191,7 +224,7 @@ class APIKeyService:
     ) -> None:
         """Best-effort cache invalidation after a revoke has already been committed."""
         try:
-            await identity_cache.invalidate_apikey(
+            await api_key_identity_cache.invalidate_api_key(
                 redis_pool_manager.get_redis_service(),
                 user_id,
                 key_hash,
@@ -254,7 +287,7 @@ class APIKeyService:
         await session.commit()
 
         # 4. Refresh the cache.
-        await identity_cache.invalidate_apikey(
+        await api_key_identity_cache.invalidate_api_key(
             redis_pool_manager.get_redis_service(),
             user_id,
             api_key.key_hash,
@@ -328,7 +361,7 @@ class APIKeyService:
             await session.refresh(api_key)
 
             if not api_key.is_active:
-                await identity_cache.invalidate_apikey(
+                await api_key_identity_cache.invalidate_api_key(
                     redis_pool_manager.get_redis_service(),
                     user_id,
                     api_key.key_hash,

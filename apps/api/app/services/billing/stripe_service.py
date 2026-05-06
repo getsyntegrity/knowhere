@@ -5,6 +5,7 @@ from uuid import UUID
 
 import stripe
 from app.repositories.payment_record_repository import PaymentRecordRepository
+from app.services.auth.api_key_identity_cache import api_key_identity_cache
 from app.services.billing.price_config_service import PriceConfigService
 from app.services.rate_limit.identity_cache import identity_cache
 from app.services.rate_limit.tier_service import TierService
@@ -389,6 +390,10 @@ class StripeService:
                     redis_pool_manager.get_redis_service(),
                     user_id,
                 )
+                await api_key_identity_cache.invalidate_user(
+                    redis_pool_manager.get_redis_service(),
+                    user_id,
+                )
 
                 logger.info(
                     f"Credits pack purchase succeeded: user_id={user_id}, credits={credits_amount}, price_id={price_id}"
@@ -528,6 +533,10 @@ class StripeService:
             await db.refresh(payment_record)
 
             await identity_cache.invalidate_user(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+            )
+            await api_key_identity_cache.invalidate_user(
                 redis_pool_manager.get_redis_service(),
                 user_id,
             )
