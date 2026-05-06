@@ -21,7 +21,7 @@
   </a>
   <br>
   <a href="https://github.com/Ontos-AI/knowhere/blob/main/LICENSE">
-    <img alt="License: Apache 2.0" src="https://img.shields.io/badge/APACHE%202.0-16A34A.svg?style=for-the-badge&label=LICENSE&labelColor=000000">
+    <img alt="License: Apache 2.0" src="https://img.shields.io/badge/APACHE%202.0-D97706.svg?style=for-the-badge&label=LICENSE&labelColor=000000">
   </a>
 </p>
 
