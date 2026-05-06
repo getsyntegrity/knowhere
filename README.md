@@ -17,7 +17,7 @@
   <img alt="PyPI version" src="https://img.shields.io/pypi/v/your-package?style=for-the-badge&labelColor=000000">
 </a>
 
-<a href="https://github.com/your-org/your-repo/stargazers">
+<a href="https://github.com/Ontos-AI/knowhere/stargazers">
   <img alt="GitHub stars" src="https://img.shields.io/github/stars/your-org/your-repo?style=for-the-badge&labelColor=000000">
 </a>
 
