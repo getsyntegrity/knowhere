@@ -16,11 +16,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from shared.core.database import Base
 from shared.utils.utc_now import utc_now_naive
 
-from shared.models.database.webhook import WebhookEvent
-
 if TYPE_CHECKING:
     from shared.models.database.job import Job
-
+    from shared.models.database.webhook import WebhookEvent
 
 class WebhookLog(Base):
     """Webhook Log Model - Records webhook delivery history."""
