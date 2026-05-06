@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import os
 import secrets
 import sys
@@ -20,6 +19,7 @@ from shared.models.database.api_key import APIKey
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
+from shared.utils.api_keys import hash_api_key
 
 _DEFAULT_API_KEY_NAME: str = "standalone-api-key"
 _DEFAULT_USER_TIER: str = "free"
@@ -144,7 +144,7 @@ async def _create_api_key(
     session.add(
         APIKey(
             user_id=user_id,
-            key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            key_hash=hash_api_key(api_key),
             key_mask=_mask_api_key(api_key),
             name=key_name,
             enabled_modules=["all"],

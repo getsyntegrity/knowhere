@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +12,7 @@ from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
+from shared.utils.api_keys import hash_api_key
 
 
 class LocalDevelopmentBootstrapService:
@@ -148,7 +148,7 @@ class LocalDevelopmentBootstrapService:
 
     async def _upsert_api_key(self, session: AsyncSession) -> None:
         api_key = await session.get(APIKey, self.LOCAL_DEV_API_KEY_ID)
-        key_hash = hashlib.sha256(self.LOCAL_DEV_API_KEY.encode()).hexdigest()
+        key_hash = hash_api_key(self.LOCAL_DEV_API_KEY)
         key_mask = self._mask_api_key(self.LOCAL_DEV_API_KEY)
 
         if api_key is None:
