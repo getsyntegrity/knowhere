@@ -1,16 +1,15 @@
 """API key management service."""
 
 import asyncio
-import hashlib
-import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from app.repositories.api_key_repository import APIKeyRepository
+from app.services.auth.api_key_identity_cache import api_key_identity_cache
 from app.services.rate_limit.identity_cache import identity_cache
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.config import redis_pool_manager
@@ -23,8 +22,10 @@ from shared.core.exceptions.domain_exceptions import (
 )
 from shared.models.database.api_key import APIKey
 from shared.models.database.user_balance import UserBalance
+from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
 _DEFAULT_USER_TIER: str = "free"
+_API_KEY_MAX_CACHE_TTL_SECONDS: int = 3600
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class APIKeyIdentity:
 
     user_id: str
     user_tier: str
+    expires_at: datetime | None
 
 
 class APIKeyService:
@@ -43,9 +45,7 @@ class APIKeyService:
 
     def _mask_api_key(self, api_key: str) -> str:
         """Mask an API key, exposing only the first 8 and last 4 characters."""
-        if not api_key or len(api_key) < 12:
-            return api_key
-        return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
+        return mask_api_key(api_key)
 
     async def create_api_key(
         self,
@@ -56,9 +56,8 @@ class APIKeyService:
         expires_at: Optional[datetime] = None,
     ) -> str:
         """Create an API key."""
-        # 1. Enforce the per-user API key limit.
         key_count = await self.repository.count_by_user(session, user_id)
-        if key_count >= 10:  # Limit each user to at most 10 API keys.
+        if key_count >= 10:
             raise ValidationException(
                 user_message="Maximum API Key limit reached (10)",
                 violations=[
@@ -83,19 +82,16 @@ class APIKeyService:
                 ],
             )
 
-        # 3. Generate a secure API key (sk_ + a 32-char UUID without hyphens).
-        api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        key_mask = self._mask_api_key(api_key)
+        api_key = generate_api_key()
+        key_hash = hash_api_key(api_key)
+        key_mask = mask_api_key(api_key)
 
-        # 4. Store it in the database.
         api_key_record = APIKey(
             user_id=user_id,
             key_hash=key_hash,
             key_mask=key_mask,
             name=name,
-            enabled_modules=enabled_modules
-            or ["all"],  # Enable all modules by default.
+            enabled_modules=enabled_modules or ["all"],
             expires_at=expires_at,
         )
 
@@ -107,7 +103,7 @@ class APIKeyService:
         self, session: AsyncSession, api_key: str
     ) -> Optional[str]:
         """Validate API key against DB, return user_id or None."""
-        identity = await self.validate_api_key_identity(session, api_key)
+        identity = await self.get_identity(session, api_key)
         return identity.user_id if identity is not None else None
 
     async def validate_api_key_identity(
@@ -116,7 +112,47 @@ class APIKeyService:
         api_key: str,
     ) -> Optional[APIKeyIdentity]:
         """Validate API key and return the authenticated identity."""
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        return await self.get_identity(session, api_key)
+
+    async def get_identity(
+        self,
+        session: AsyncSession,
+        api_key: str,
+    ) -> APIKeyIdentity | None:
+        """Return API-key identity, using auth cache before DB fallback."""
+        key_hash: str = hash_api_key(api_key)
+        cached_identity = await self._get_cached_identity(key_hash)
+        if cached_identity is not None:
+            return cached_identity
+
+        identity = await self._get_database_identity(session, key_hash)
+        if identity is None:
+            return None
+
+        await self._cache_api_key_identity(key_hash=key_hash, identity=identity)
+        return identity
+
+    async def _get_cached_identity(self, key_hash: str) -> APIKeyIdentity | None:
+        """Return cached API-key user identity, or None on miss/cache failure."""
+        user_id = await api_key_identity_cache.get_user_id(
+            redis_pool_manager.get_redis_service(),
+            key_hash,
+        )
+        if user_id is None:
+            return None
+
+        return APIKeyIdentity(
+            user_id=user_id,
+            user_tier=await self._get_user_tier(user_id),
+            expires_at=None,
+        )
+
+    async def _get_database_identity(
+        self,
+        session: AsyncSession,
+        key_hash: str,
+    ) -> APIKeyIdentity | None:
+        """Validate API key against the database."""
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
 
         if not api_key_record or not api_key_record.is_valid():
@@ -124,14 +160,49 @@ class APIKeyService:
 
         self._schedule_last_used_update(str(api_key_record.id))
         user_id = str(api_key_record.user_id)
-        user_tier = await self._resolve_user_tier(session, user_id)
+        user_tier = await self._resolve_user_tier_from_db(session, user_id)
 
         return APIKeyIdentity(
             user_id=user_id,
             user_tier=user_tier,
+            expires_at=api_key_record.expires_at,
         )
 
-    async def _resolve_user_tier(
+    async def _cache_api_key_identity(
+        self,
+        *,
+        key_hash: str,
+        identity: APIKeyIdentity,
+    ) -> None:
+        """Cache the validated API-key user ID for the auth layer."""
+        try:
+            await api_key_identity_cache.set_user_id(
+                redis_pool_manager.get_redis_service(),
+                key_hash,
+                identity.user_id,
+                ttl_seconds=self._resolve_api_key_cache_ttl_seconds(
+                    identity.expires_at
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "api_key_service: failed to cache identity for user_id={}",
+                identity.user_id,
+            )
+
+    async def _get_user_tier(self, user_id: str) -> str:
+        """Return user tier from rate-limit cache or DB fallback."""
+        redis_service = redis_pool_manager.get_redis_service()
+        cached_identity = await identity_cache.get_user_tier(redis_service, user_id)
+        if cached_identity is not None:
+            return cached_identity["user_tier"]
+
+        async with get_db_context() as session:
+            user_tier = await self._resolve_user_tier_from_db(session, user_id)
+            await identity_cache.set_user_tier(redis_service, user_id, user_tier)
+            return user_tier
+
+    async def _resolve_user_tier_from_db(
         self,
         session: AsyncSession,
         user_id: str,
@@ -143,13 +214,25 @@ class APIKeyService:
         user_tier = result.scalar_one_or_none()
         return str(user_tier) if user_tier is not None else _DEFAULT_USER_TIER
 
+    def _resolve_api_key_cache_ttl_seconds(self, expires_at: datetime | None) -> int:
+        """Resolve cache TTL for API-key identity without exceeding key expiry."""
+        if expires_at is None:
+            return _API_KEY_MAX_CACHE_TTL_SECONDS
+
+        expires_at_utc = expires_at
+        if expires_at_utc.tzinfo is None:
+            expires_at_utc = expires_at_utc.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        remaining_seconds = int((expires_at_utc - now).total_seconds())
+        return max(1, min(_API_KEY_MAX_CACHE_TTL_SECONDS, remaining_seconds))
+
     async def revoke_api_key(
         self, session: AsyncSession, api_key_id: str, user_id: str
     ) -> bool:
         """Revoke an API key by deleting it directly."""
         logger.info(f"Revoking API key: api_key_id={api_key_id}, user_id={user_id}")
 
-        # 1. Verify that the API key belongs to the user.
         api_key = await self.repository.get_by_id(session, api_key_id)
 
         if not api_key:
@@ -170,11 +253,9 @@ class APIKeyService:
                 internal_message="API Key not found or does not belong to user",
             )
 
-        # 2. Delete the API key directly.
         success = await self.repository.delete_by_id(session, api_key_id)
         logger.info(f"Delete result: {success}")
 
-        # 3. Commit the transaction.
         if success:
             await session.commit()
             logger.info("Transaction committed")
@@ -192,7 +273,7 @@ class APIKeyService:
     ) -> None:
         """Best-effort cache invalidation after a revoke has already been committed."""
         try:
-            await identity_cache.invalidate_apikey(
+            await api_key_identity_cache.invalidate_api_key(
                 redis_pool_manager.get_redis_service(),
                 user_id,
                 key_hash,
@@ -212,7 +293,7 @@ class APIKeyService:
                 "id": str(api_key.id),
                 "name": api_key.name,
                 "api_key": api_key.key_mask
-                or f"sk_{api_key.id[:8]}••••••••••••••••••••••••••••••••••••••••",  # Return the masked API key.
+                or f"sk_{api_key.id[:8]}••••••••••••••••••••••••••••••••••••••••",
                 "enabled_modules": api_key.enabled_modules,
                 "is_active": api_key.is_active,
                 "created_at": api_key.created_at,
@@ -234,15 +315,9 @@ class APIKeyService:
                 internal_message="API Key not found or does not belong to user",
             )
 
-        # 2. Generate a new API key (sk_ + a 32-char UUID without hyphens).
-        new_api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
-        new_key_hash = hashlib.sha256(new_api_key.encode()).hexdigest()
-        new_key_mask = self._mask_api_key(new_api_key)
-
-        # 3. Update the database record.
-        from sqlalchemy import update
-
-        from shared.models.database.api_key import APIKey
+        new_api_key = generate_api_key()
+        new_key_hash = hash_api_key(new_api_key)
+        new_key_mask = mask_api_key(new_api_key)
 
         await session.execute(
             update(APIKey)
@@ -254,8 +329,7 @@ class APIKeyService:
         )
         await session.commit()
 
-        # 4. Refresh the cache.
-        await identity_cache.invalidate_apikey(
+        await api_key_identity_cache.invalidate_api_key(
             redis_pool_manager.get_redis_service(),
             user_id,
             api_key.key_hash,
@@ -267,13 +341,12 @@ class APIKeyService:
         self, session: AsyncSession, api_key: str, module: str
     ) -> bool:
         """Check whether an API key can access the requested module."""
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_hash = hash_api_key(api_key)
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
 
         if not api_key_record or not api_key_record.is_valid():
             return False
 
-        # Allow access if all modules are enabled or the specific module is present.
         enabled_modules = api_key_record.enabled_modules or []
         return "all" in enabled_modules or module in enabled_modules
 
@@ -329,7 +402,7 @@ class APIKeyService:
             await session.refresh(api_key)
 
             if not api_key.is_active:
-                await identity_cache.invalidate_apikey(
+                await api_key_identity_cache.invalidate_api_key(
                     redis_pool_manager.get_redis_service(),
                     user_id,
                     api_key.key_hash,

@@ -1,4 +1,3 @@
-import hashlib
 import threading
 from datetime import timedelta
 from fnmatch import fnmatch
@@ -6,18 +5,18 @@ from typing import Any
 
 import jwt
 from app.services.auth.api_key_service import APIKeyService
-from app.services.rate_limit.identity_cache import identity_cache
 from fastapi import Depends, Header, Request
 from jwt import PyJWKClient
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.core.config import redis_pool_manager, settings
+from shared.core.config import settings
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
     PermissionDeniedException,
 )
+from shared.utils.api_keys import is_api_key_token
 
 # Standard JWKS endpoint path (fixed, following OpenID Connect convention)
 JWKS_ENDPOINT_PATH = "/api/auth/jwks"
@@ -184,39 +183,14 @@ async def get_current_user_id(
     route_path = _get_route_path(request)
 
     # Mode 1: API Key verification (for external clients)
-    if token.startswith("sk_"):
-        # Check identity cache first — skip DB on cache hit
-        api_key_hash = hashlib.sha256(token.encode()).hexdigest()
-        try:
-            cached = await identity_cache.get_cached_identity(
-                redis_pool_manager.get_redis_service(),
-                identity_cache._apikey_key(api_key_hash),
-            )
-            if cached is not None:
-                cached_user_id = cached.get("user_id")
-                cached_user_tier = cached.get("user_tier")
-                if cached_user_id and isinstance(cached_user_tier, str):
-                    request.state.cached_user_tier = cached_user_tier
-                    request.state.cached_identity_hit = True
-                    request.state.user_id = cached_user_id
-                    _enforce_guest_api_key_scope(route_path, cached_user_tier)
-                    return cached_user_id
-        except PermissionDeniedException:
-            raise
-        except Exception:
-            pass  # Fall through to DB validation
-
-        # Cache miss — validate via DB
+    if is_api_key_token(token):
         api_key_service = APIKeyService()
-        identity = await api_key_service.validate_api_key_identity(db, token)
+        identity = await api_key_service.get_identity(db, token)
         if identity:
-            request.state.cached_user_tier = identity.user_tier
-            request.state.cached_identity_hit = False
-            request.state.user_id = identity.user_id
             _enforce_guest_api_key_scope(route_path, identity.user_tier)
             return identity.user_id
-        else:
-            raise AuthException(user_message="Invalid API Key")
+
+        raise AuthException(user_message="Invalid API Key")
 
     # Mode 2: JWT verification (for Dashboard/Internal)
     return decode_jwt_token(token)

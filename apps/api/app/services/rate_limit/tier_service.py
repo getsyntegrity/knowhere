@@ -7,10 +7,12 @@ from typing import Optional
 
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
+from app.services.rate_limit.identity_cache import identity_cache
 from loguru import logger
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.core.config import redis_pool_manager
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.tier_limit import TierLimit
 from shared.models.database.user_balance import UserBalance
@@ -61,6 +63,7 @@ class TierService:
             .values(user_tier=new_tier)
         )
         await session.execute(stmt_update)
+        await TierService._invalidate_user_tier_cache(user_id)
 
         logger.info(
             "Tier refreshed: user_id=%s total_micro=%d new_tier=%s",
@@ -78,3 +81,17 @@ class TierService:
         """
         config = RateLimitConfig.get_instance()
         return config.tier_map.get(user_tier)
+
+    @staticmethod
+    async def _invalidate_user_tier_cache(user_id: str) -> None:
+        """Invalidate cached tier data without touching API-key auth cache."""
+        try:
+            await identity_cache.invalidate_user(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+            )
+        except Exception:
+            logger.warning(
+                "Tier refresh cache invalidation failed for user_id={}",
+                user_id,
+            )
