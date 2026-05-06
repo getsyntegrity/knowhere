@@ -21,7 +21,6 @@ from shared.models.schemas.api_key import (
     APIKeyResponse,
     CreateAPIKeyRequest,
     CreateAPIKeyResponse,
-    RegenerateAPIKeyRequest,
     RevokeAPIKeyRequest,
 )
 
@@ -35,7 +34,7 @@ async def create_api_key(
     db: AsyncSession = Depends(get_db),
 ):
     """Create an API key."""
-    api_key_service = APIKeyService()
+    api_key_service = APIKeyService.get_instance()
 
     try:
         api_key = await api_key_service.create_api_key(
@@ -69,7 +68,7 @@ async def list_api_keys(
     db: AsyncSession = Depends(get_db),
 ):
     """List API keys for the current user."""
-    api_key_service = APIKeyService()
+    api_key_service = APIKeyService.get_instance()
 
     try:
         api_keys_data = await api_key_service.list_user_api_keys(
@@ -105,7 +104,7 @@ async def revoke_api_key(
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke an API key."""
-    api_key_service = APIKeyService()
+    api_key_service = APIKeyService.get_instance()
 
     try:
         await api_key_service.revoke_api_key(
@@ -130,7 +129,7 @@ async def get_api_key(
     db: AsyncSession = Depends(get_db),
 ):
     """Get details for a single API key."""
-    api_key_service = APIKeyService()
+    api_key_service = APIKeyService.get_instance()
 
     try:
         api_key = await api_key_service.get_api_key(
@@ -168,7 +167,7 @@ async def toggle_api_key(
     db: AsyncSession = Depends(get_db),
 ):
     """Enable or disable an API key."""
-    api_key_service = APIKeyService()
+    api_key_service = APIKeyService.get_instance()
 
     try:
         success = await api_key_service.toggle_api_key(

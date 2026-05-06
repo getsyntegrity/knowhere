@@ -1,6 +1,5 @@
 import threading
 from datetime import timedelta
-from fnmatch import fnmatch
 from typing import Any
 
 import jwt
@@ -14,7 +13,6 @@ from shared.core.config import settings
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
-    PermissionDeniedException,
 )
 from shared.utils.api_keys import is_api_key_token
 
@@ -27,22 +25,6 @@ JWKS_CACHE_TTL_SECONDS = 60 * 60  # 3600 seconds
 # Cached PyJWKClient instance
 _jwks_client: PyJWKClient | None = None
 _jwks_client_lock = threading.Lock()
-_GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS: tuple[str, ...] = (
-    "/v1/jobs",
-    "/v1/jobs/*",
-    "/v1/billing/credits",
-    "/v1/retrieval/query",
-    "/v1/documents",
-    "/v1/documents/*",
-    "/mcp",
-)
-_GUEST_API_KEY_REQUIRED_PERMISSION: str = (
-    "jobs_documents_retrieval_mcp_or_billing_credits"
-)
-_GUEST_API_KEY_SCOPE_MESSAGE: str = (
-    "Guest API keys can only access job, document, retrieval, MCP query, "
-    "and billing credits APIs"
-)
 
 
 def _get_jwks_client() -> PyJWKClient:
@@ -124,44 +106,6 @@ def decode_jwt_token(token: str) -> str:
         raise AuthException(user_message="Invalid token")
 
 
-def _get_route_path(request: Request) -> str:
-    """Return the request path without the application's root_path prefix."""
-    scope_path = request.scope.get("path", request.url.path)
-    root_path = request.scope.get("root_path", "")
-    if root_path and scope_path.startswith(root_path):
-        return scope_path[len(root_path) :]
-    return scope_path
-
-
-def _normalize_route_path(route_path: str) -> str:
-    """Normalize guest route checks across slash-redirect variants."""
-    normalized_path = route_path.rstrip("/")
-    return normalized_path or "/"
-
-
-def _is_guest_api_key_route_allowed(route_path: str) -> bool:
-    """Return whether a guest API key may access the given route."""
-    normalized_path = _normalize_route_path(route_path)
-    return any(
-        fnmatch(normalized_path, pattern)
-        for pattern in _GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS
-    )
-
-
-def _enforce_guest_api_key_scope(route_path: str, user_tier: str) -> None:
-    """Reject guest API keys outside the guest-allowed API surface."""
-    if user_tier != "guest":
-        return
-
-    if _is_guest_api_key_route_allowed(route_path):
-        return
-
-    raise PermissionDeniedException(
-        user_message=_GUEST_API_KEY_SCOPE_MESSAGE,
-        required_permission=_GUEST_API_KEY_REQUIRED_PERMISSION,
-    )
-
-
 async def get_current_user_id(
     request: Request,
     authorization: str | None = Header(
@@ -180,17 +124,16 @@ async def get_current_user_id(
     if scheme.lower() != "bearer" or not token:
         raise AuthException(user_message="Invalid Authorization header format")
 
-    route_path = _get_route_path(request)
-
     # Mode 1: API Key verification (for external clients)
     if is_api_key_token(token):
-        api_key_service = APIKeyService()
-        identity = await api_key_service.get_identity(db, token)
-        if identity:
-            _enforce_guest_api_key_scope(route_path, identity.user_tier)
-            return identity.user_id
+        api_key_service = APIKeyService.get_instance()
+        user_id = await api_key_service.validate_api_key(db, token)
+        if user_id:
+            request.state.is_api_key_auth = True
+            return user_id
 
         raise AuthException(user_message="Invalid API Key")
 
     # Mode 2: JWT verification (for Dashboard/Internal)
+    request.state.is_api_key_auth = False
     return decode_jwt_token(token)

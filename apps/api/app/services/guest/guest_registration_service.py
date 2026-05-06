@@ -6,7 +6,6 @@ from typing import NoReturn
 from uuid import uuid4
 
 from app.repositories.guest_device_repository import GuestDeviceRepository
-from app.services.auth.api_key_service import APIKeyService
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
 from loguru import logger
@@ -40,7 +39,6 @@ class GuestRegistrationService:
 
     def __init__(self) -> None:
         self._device_repo = GuestDeviceRepository()
-        self._api_key_service = APIKeyService()
         self._credits_service = CreditsService()
 
     async def register_guest(
