@@ -24,12 +24,12 @@
   </a>
 </p>
 
+Knowhere is the open-source data layer that makes unstructured documents ready for AI Agents and RAG.
+
 ## 📢 News
 
 - **May 7, 2026**: 🚀 **Knowhere is now Open Source!** We have open-sourced our entire stack for document ingestion, parsing, and agentic RAG. You can now self-host the full platform using [knowhere-self-hosted](https://github.com/Ontos-AI/knowhere-self-hosted). Check out our [Contribution Guide](CONTRIBUTING.md) to get involved!
 - **Apr 30, 2026**: 📦 **Version [2026.04.30.1](https://github.com/Ontos-AI/knowhere/releases/tag/2026.04.30.1) has been released.** This update includes several stability improvements and initial support for the agentic RAG layer. See the [full changelog](https://github.com/Ontos-AI/knowhere/commits/2026.04.30.1) for details.
-
-Knowhere is the open-source data layer that makes unstructured documents ready for AI Agents and RAG.
 
 ## Features
 
