@@ -7,7 +7,7 @@
 </a>
 
 <a href="https://github.com/Ontos-AI/knowhere/stargazers">
-  <img alt="GitHub stars" src="https://img.shields.io/github/stars/Ontos-AI/knowhere?style=for-the-badge&labelColor=000000">
+  <img alt="GitHub stars" src="https://img.shields.io/github/stars/ontos-ai/knowhere?style=for-the-badge&logo=github&labelColor=000000">
 </a>
 
 <a href="https://github.com/Ontos-AI/knowhere/actions">
