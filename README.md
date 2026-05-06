@@ -33,15 +33,6 @@ Knowhere is the open-source data layer that makes unstructured documents ready f
 
 ## Features
 
-## Project Governance
-
-- Licensed under Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-- Contribution workflow and branch expectations live in
-  [CONTRIBUTING.md](CONTRIBUTING.md).
-- Security reporting guidance lives in [SECURITY.md](SECURITY.md).
-- Community behavior expectations live in
-  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-
 ## Repository Layout
 
 ```text
@@ -174,3 +165,12 @@ make check
 
 - External dependency guide:
   [docs/external-services.md](docs/external-services.md)
+
+## Project Governance
+
+- Licensed under Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+- Contribution workflow and branch expectations live in
+  [CONTRIBUTING.md](CONTRIBUTING.md).
+- Security reporting guidance lives in [SECURITY.md](SECURITY.md).
+- Community behavior expectations live in
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
