@@ -24,6 +24,12 @@
   </a>
 </p>
 
+<p align="center">
+  🔗 <a href="https://knowhereto.ai">Website</a> |
+  📄 <a href="https://docs.knowhereto.ai/">Docs</a> |
+  🏠 <a href="https://github.com/Ontos-AI/knowhere-self-hosted">Self-Host</a>
+</p>
+
 Knowhere is the open-source data layer that makes unstructured documents ready for AI Agents and RAG.
 
 ## 📢 News
@@ -49,8 +55,6 @@ knowhere-api/
     └── build-images.yml
 ```
 
-## Architecture Overview
-
 ## Prerequisites
 
 - Python 3.11+
@@ -58,8 +62,6 @@ knowhere-api/
 - Docker with `docker compose`
 - a local Chrome or Chromium driver if you plan to run document layout parsing
   flows
-
-## Configuration
 
 ## Quick Start
 
@@ -158,8 +160,6 @@ make check
 - LocalStack: `http://localhost:4566`
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`
-
-## Quick Example Request
 
 ## Additional Guides
 
