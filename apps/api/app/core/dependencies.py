@@ -129,11 +129,9 @@ async def get_current_user_id(
         api_key_service = APIKeyService.get_instance()
         user_id = await api_key_service.validate_api_key(db, token)
         if user_id:
-            request.state.is_api_key_auth = True
             return user_id
 
         raise AuthException(user_message="Invalid API Key")
 
     # Mode 2: JWT verification (for Dashboard/Internal)
-    request.state.is_api_key_auth = False
     return decode_jwt_token(token)

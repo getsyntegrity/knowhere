@@ -113,8 +113,7 @@ def _is_guest_api_key_route_allowed(route_path: str) -> bool:
 
 def _enforce_guest_api_key_scope(request: Request, user_tier: str) -> None:
     """Reject guest API keys outside the guest-allowed API surface."""
-    is_api_key_auth = getattr(request.state, "is_api_key_auth", False)
-    if not is_api_key_auth or user_tier != "guest":
+    if user_tier != "guest":
         return
 
     route_path = _get_route_path(request)
