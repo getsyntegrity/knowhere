@@ -2,8 +2,6 @@
 
 <h1 align="center">Prepare unstructured data for AI Agents</h1>
 
----
-
 <p align="center">
   <a href="https://www.python.org/downloads/">
     <img alt="Python Version" src="https://img.shields.io/badge/Python-%3E%3D%203.11-3776AB.svg?style=for-the-badge&logo=python&logoColor=white&labelColor=000000">
