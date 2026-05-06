@@ -1,4 +1,5 @@
-# Knowhere API
+<img width="2000" height="466" alt="20260506-100355" src="https://github.com/user-attachments/assets/d969e304-71eb-4610-8d94-0ea9706fec11" />
+
 
 Knowhere API is the backend repository for document ingestion, parsing,
 retrieval, and MCP-oriented knowledge access.
