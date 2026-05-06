@@ -37,8 +37,6 @@ knowhere-api/
 - Python 3.11+
 - `uv`
 - Docker with `docker compose`
-- a local Chrome or Chromium driver if you plan to run document layout parsing
-  flows
 
 ## Configuration
 
@@ -61,8 +59,6 @@ cp apps/worker/.env.example apps/worker/.env
 
 - database and Redis connection settings
 - S3-compatible storage credentials
-- `SECRET_KEY`
-- `USERS_DATA_PATH`
 - `DS_KEY`
 - any optional LLM, billing, or webhook providers you want to enable
 

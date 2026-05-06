@@ -7,7 +7,6 @@ from pathlib import Path
 
 _REQUIRED_IMPORT_ENVIRONMENT: dict[str, str] = {
     "DATABASE_URL": "postgresql+asyncpg://user:pass@127.0.0.1:15432/knowhere_test",
-    "SECRET_KEY": "test-secret-key",
     "DS_KEY": "test-deepseek-key",
     "DS_URL": "https://example.com/v1",
     "S3_BUCKET_NAME": "knowhere-test-bucket",
@@ -15,9 +14,6 @@ _REQUIRED_IMPORT_ENVIRONMENT: dict[str, str] = {
     "S3_SECRET_ACCESS_KEY": "test-secret-key",
     "S3_TEMP_PATH": "/tmp/knowhere-api-tests",
     "TMP_PATH": "/tmp/knowhere-api-tests",
-    "FONT_PATH": "/tmp/knowhere-api-tests",
-    "CHROMEDRIVER_PATH": "/tmp/knowhere-api-tests/chromedriver",
-    "USERS_DATA_PATH": "/tmp/knowhere-api-tests/users",
 }
 
 

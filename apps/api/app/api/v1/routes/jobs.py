@@ -362,7 +362,7 @@ async def create_job(  # pyright: ignore[reportGeneralTypeIssues]
 
         job_type = "kb_management"
 
-        # Keep job creation lightweight. The worker reads USERS_DATA_PATH directly.
+        # Keep job creation lightweight.
         from shared.services.redis import RedisServiceFactory
 
         redis_service = RedisServiceFactory.get_service()

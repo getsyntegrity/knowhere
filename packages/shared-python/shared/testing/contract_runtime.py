@@ -103,12 +103,7 @@ def _ensure_import_paths() -> None:
 
 
 def _ensure_test_directories() -> None:
-    users_data_path: Path = _TEST_TMP_ROOT / "users"
-    chromedriver_path: Path = _TEST_TMP_ROOT / "chromedriver"
-
     _TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
-    users_data_path.mkdir(parents=True, exist_ok=True)
-    chromedriver_path.touch(exist_ok=True)
 
 
 def _reset_contract_storage_state(database_url: str) -> None:
@@ -303,8 +298,6 @@ def configure_contract_environment(
 
     environment: dict[str, str] = {
         "ENVIRONMENT": "development",
-        "DEBUG": "true",
-        "SECRET_KEY": "test-secret-key",
         "WEBHOOK_MASTER_KEY": CONTRACT_WEBHOOK_MASTER_KEY,
         "DATABASE_URL": database_url,
         "DB_SSL_MODE": "disable",
@@ -316,22 +309,17 @@ def configure_contract_environment(
             f"redis://{CONTRACT_REDIS_HOST}:{CONTRACT_REDIS_PORT}/{CONTRACT_REDIS_DATABASE}"
         ),
         "TMP_PATH": str(_TEST_TMP_ROOT),
-        "FONT_PATH": str(_TEST_TMP_ROOT),
-        "CHROMEDRIVER_PATH": str(_TEST_TMP_ROOT / "chromedriver"),
-        "USERS_DATA_PATH": str(_TEST_TMP_ROOT / "users"),
         "S3_BUCKET_NAME": "knowhere-test-bucket",
         "S3_ACCESS_KEY_ID": "test-access-key",
         "S3_SECRET_ACCESS_KEY": "test-secret-key",
         "S3_TEMP_PATH": str(_TEST_TMP_ROOT),
         "S3_ENDPOINT_URL": "http://127.0.0.1:4566",
         "S3_PRIVATE_DOMAIN": "http://127.0.0.1:4566",
-        "S3_UPLOADS_BUCKET": "knowhere-test-uploads",
         "S3_RESULTS_BUCKET": "knowhere-test-results",
         "S3_REGION": "us-west-1",
         "S3_USE_SSL": "false",
         "S3_ADDRESSING_STYLE": "path",
         "STRIPE_SECRET_KEY": "sk_test_contract_secret",
-        "STRIPE_PUBLISHABLE_KEY": "pk_test_contract_publishable",
         "STRIPE_WEBHOOK_SECRET": "whsec_contract_test_secret",
         "DS_KEY": "test-deepseek-key",
         "DS_URL": "https://example.com/v1",
