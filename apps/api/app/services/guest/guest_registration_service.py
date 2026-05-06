@@ -1,7 +1,6 @@
 """Guest registration business logic."""
 
 import hashlib
-import uuid
 from datetime import datetime
 from typing import NoReturn
 from uuid import uuid4
@@ -26,7 +25,7 @@ from shared.models.schemas.guest import (
     GuestRegisterResponse,
 )
 from shared.services.billing.credits_service import CreditsService
-from shared.utils.api_key_hashing import hash_api_key
+from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
 _GUEST_TIER: str = "guest"
 _GUEST_KEY_NAME_PREFIX: str = "guest-device"
@@ -157,9 +156,9 @@ class GuestRegistrationService:
         """
         from shared.models.database.api_key import APIKey
 
-        api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
+        api_key = generate_api_key()
         key_hash = hash_api_key(api_key)
-        key_mask = self._api_key_service._mask_api_key(api_key)
+        key_mask = mask_api_key(api_key)
 
         api_key_record = APIKey(
             user_id=user_id,

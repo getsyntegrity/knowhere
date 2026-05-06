@@ -12,7 +12,7 @@ from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
-from shared.utils.api_key_hashing import hash_api_key
+from shared.utils.api_keys import hash_api_key, mask_api_key
 
 
 class LocalDevelopmentBootstrapService:
@@ -156,7 +156,7 @@ class LocalDevelopmentBootstrapService:
     async def _upsert_api_key(self, session: AsyncSession) -> None:
         api_key = await session.get(APIKey, self.LOCAL_DEV_API_KEY_ID)
         key_hash = hash_api_key(self.LOCAL_DEV_API_KEY)
-        key_mask = self._mask_api_key(self.LOCAL_DEV_API_KEY)
+        key_mask = mask_api_key(self.LOCAL_DEV_API_KEY)
 
         if api_key is None:
             session.add(
@@ -177,12 +177,6 @@ class LocalDevelopmentBootstrapService:
         api_key.name = self.LOCAL_DEV_API_KEY_NAME
         api_key.enabled_modules = ["all"]
         api_key.is_active = True
-
-    @staticmethod
-    def _mask_api_key(api_key: str) -> str:
-        if len(api_key) < 12:
-            return api_key
-        return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
 
     @staticmethod
     def _utc_now() -> datetime:

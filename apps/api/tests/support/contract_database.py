@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from shared.testing.contract_runtime import get_contract_database_url
-from shared.utils.api_key_hashing import hash_api_key
+from shared.utils.api_keys import hash_api_key, mask_api_key
 
 
 async def _create_contract_engine() -> AsyncEngine:
@@ -168,7 +168,7 @@ class ContractDatabase:
                 "id": api_key_id,
                 "user_id": user_id,
                 "key_hash": api_key_hash,
-                "key_mask": f"{api_key[:8]}...{api_key[-4:]}",
+                "key_mask": mask_api_key(api_key),
                 "name": f"Contract API Key {user_id}",
                 "enabled_modules": json.dumps(enabled_modules or ["all"]),
                 "is_active": True,

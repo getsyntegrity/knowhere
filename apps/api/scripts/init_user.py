@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import secrets
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -20,7 +19,7 @@ from shared.models.database.api_key import APIKey
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
 from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
-from shared.utils.api_key_hashing import hash_api_key
+from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
 _DEFAULT_API_KEY_NAME: str = "standalone-api-key"
 _DEFAULT_USER_TIER: str = "free"
@@ -130,16 +129,6 @@ async def _resolve_key_name(
     return f"{key_name}-{suffix}"
 
 
-def _generate_api_key() -> str:
-    return f"sk_kn_{secrets.token_hex(16)}"
-
-
-def _mask_api_key(api_key: str) -> str:
-    if len(api_key) < 12:
-        return api_key
-    return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
-
-
 def _write_api_key_file(path_value: str, api_key: str) -> Path:
     output_path = Path(path_value).expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,12 +148,12 @@ async def _create_api_key(
     user_id: str,
     key_name: str,
 ) -> str:
-    api_key = _generate_api_key()
+    api_key = generate_api_key()
     session.add(
         APIKey(
             user_id=user_id,
             key_hash=hash_api_key(api_key),
-            key_mask=_mask_api_key(api_key),
+            key_mask=mask_api_key(api_key),
             name=key_name,
             enabled_modules=["all"],
         )

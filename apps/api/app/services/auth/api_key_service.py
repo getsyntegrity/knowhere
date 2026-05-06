@@ -1,7 +1,6 @@
 """API key management service."""
 
 import asyncio
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
@@ -22,7 +21,11 @@ from shared.core.exceptions.domain_exceptions import (
 )
 from shared.models.database.api_key import APIKey
 from shared.models.database.user_balance import UserBalance
-from shared.utils.api_key_hashing import hash_api_key
+from shared.utils.api_keys import (
+    generate_api_key,
+    hash_api_key,
+    mask_api_key,
+)
 
 _DEFAULT_USER_TIER: str = "free"
 
@@ -33,6 +36,7 @@ class APIKeyIdentity:
 
     user_id: str
     user_tier: str
+    key_hash: str
 
 
 class APIKeyService:
@@ -40,12 +44,6 @@ class APIKeyService:
 
     def __init__(self):
         self.repository = APIKeyRepository()
-
-    def _mask_api_key(self, api_key: str) -> str:
-        """Mask an API key, exposing only the first 8 and last 4 characters."""
-        if not api_key or len(api_key) < 12:
-            return api_key
-        return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
 
     async def create_api_key(
         self,
@@ -83,10 +81,10 @@ class APIKeyService:
                 ],
             )
 
-        # 3. Generate a secure API key (sk_ + a 32-char UUID without hyphens).
-        api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
+        # 3. Generate and store a secure API key.
+        api_key = generate_api_key()
         key_hash = hash_api_key(api_key)
-        key_mask = self._mask_api_key(api_key)
+        key_mask = mask_api_key(api_key)
 
         # 4. Store it in the database.
         api_key_record = APIKey(
@@ -129,6 +127,7 @@ class APIKeyService:
         return APIKeyIdentity(
             user_id=user_id,
             user_tier=user_tier,
+            key_hash=str(api_key_record.key_hash),
         )
 
     async def _resolve_user_tier(
@@ -234,10 +233,10 @@ class APIKeyService:
                 internal_message="API Key not found or does not belong to user",
             )
 
-        # 2. Generate a new API key (sk_ + a 32-char UUID without hyphens).
-        new_api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
+        # 2. Generate a new API key.
+        new_api_key = generate_api_key()
         new_key_hash = hash_api_key(new_api_key)
-        new_key_mask = self._mask_api_key(new_api_key)
+        new_key_mask = mask_api_key(new_api_key)
 
         # 3. Update the database record.
         from sqlalchemy import update

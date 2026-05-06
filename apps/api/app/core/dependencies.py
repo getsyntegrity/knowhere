@@ -17,7 +17,7 @@ from shared.core.exceptions.domain_exceptions import (
     AuthException,
     PermissionDeniedException,
 )
-from shared.utils.api_key_hashing import hash_api_key
+from shared.utils.api_keys import hash_api_key
 
 # Standard JWKS endpoint path (fixed, following OpenID Connect convention)
 JWKS_ENDPOINT_PATH = "/api/auth/jwks"
@@ -188,8 +188,9 @@ async def get_current_user_id(
         # Check identity cache first — skip DB on cache hit
         api_key_hash = hash_api_key(token)
         try:
+            redis_service = redis_pool_manager.get_redis_service()
             cached = await identity_cache.get_cached_identity(
-                redis_pool_manager.get_redis_service(),
+                redis_service,
                 identity_cache._apikey_key(api_key_hash),
             )
             if cached is not None:
@@ -199,6 +200,7 @@ async def get_current_user_id(
                     request.state.cached_user_tier = cached_user_tier
                     request.state.cached_identity_hit = True
                     request.state.user_id = cached_user_id
+                    request.state.api_key_hash = api_key_hash
                     _enforce_guest_api_key_scope(route_path, cached_user_tier)
                     return cached_user_id
         except PermissionDeniedException:
@@ -213,6 +215,7 @@ async def get_current_user_id(
             request.state.cached_user_tier = identity.user_tier
             request.state.cached_identity_hit = False
             request.state.user_id = identity.user_id
+            request.state.api_key_hash = identity.key_hash
             _enforce_guest_api_key_scope(route_path, identity.user_tier)
             return identity.user_id
         else:

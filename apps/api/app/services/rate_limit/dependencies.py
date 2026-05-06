@@ -41,9 +41,9 @@ from shared.core.exceptions.domain_exceptions import (
 from shared.core.logging import log_context
 from shared.core.state_machine.states import JobStatus
 from shared.models.database.api_key import APIKey
-from shared.utils.api_key_hashing import hash_api_key
 from shared.models.database.job import Job
 from shared.models.database.user_balance import UserBalance
+from shared.utils.api_keys import hash_api_key, is_api_key_token
 
 _DEFAULT_TIER: str = "free"
 _ACTIVE_JOB_STATES: tuple[str, ...] = (
@@ -172,11 +172,11 @@ async def with_current_user(
     if isinstance(user_tier, str) and stashed_user_id == user_id:
         if cached_identity_hit is False:
             token = _extract_bearer_token(request.headers.get("authorization"))
-            api_key_hash = None
-            is_api_key_auth = isinstance(token, str) and token.startswith("sk_")
-            if token is not None and is_api_key_auth:
+            api_key_hash = getattr(request.state, "api_key_hash", None)
+            is_api_key_auth = is_api_key_token(token)
+            if is_api_key_auth and not api_key_hash and isinstance(token, str):
                 api_key_hash = hash_api_key(token)
-            if is_api_key_auth and api_key_hash:
+            if is_api_key_auth and isinstance(api_key_hash, str):
                 try:
                     ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
                     await identity_cache.set_apikey_identity(
@@ -194,24 +194,36 @@ async def with_current_user(
                     )
     else:
         token = _extract_bearer_token(request.headers.get("authorization"))
-        api_key_hash = None
-        is_api_key_auth = isinstance(token, str) and token.startswith("sk_")
-        if token is not None and is_api_key_auth:
-            api_key_hash = hash_api_key(token)
+        is_api_key_auth = is_api_key_token(token)
+        api_key_hash = (
+            hash_api_key(token)
+            if is_api_key_auth and isinstance(token, str)
+            else None
+        )
         cache_key: str = (
             identity_cache._apikey_key(api_key_hash)
-            if is_api_key_auth and api_key_hash
+            if isinstance(api_key_hash, str)
             else identity_cache._jwt_key(user_id)
         )
         try:
-            cached: dict | None = await identity_cache.get_cached_identity(
-                redis_service, cache_key
-            )
+            if isinstance(api_key_hash, str):
+                cached = await identity_cache.get_cached_identity(
+                    redis_service,
+                    identity_cache._apikey_key(api_key_hash),
+                )
+            else:
+                cached = await identity_cache.get_cached_identity(
+                    redis_service,
+                    cache_key,
+                )
             if cached is not None:
                 user_tier = cached.get("user_tier", _DEFAULT_TIER)
+                if isinstance(api_key_hash, str):
+                    request.state.api_key_hash = api_key_hash
             else:
                 user_tier = await _resolve_user_tier_from_db(user_id)
-                if is_api_key_auth and api_key_hash:
+                api_key_hash = getattr(request.state, "api_key_hash", None)
+                if is_api_key_auth and isinstance(api_key_hash, str):
                     ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
                     await identity_cache.set_apikey_identity(
                         redis_service,
