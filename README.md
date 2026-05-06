@@ -21,7 +21,7 @@
   >
 </a>
 
-<a href="ghcr.io/ontos-ai/knowhere">
+<a href="https://ghcr.io/ontos-ai/knowhere">
   <img
     alt="Container Images"
     src="https://img.shields.io/badge/CONTAINER%20IMAGES-2496ED.svg?style=for-the-badge&logo=docker&logoColor=white&labelColor=000000"
