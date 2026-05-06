@@ -1,14 +1,26 @@
 from datetime import datetime, timedelta, timezone
+from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from app.services.auth.api_key_service import APIKeyService
+from tests.support.import_environment import configure_import_environment, ensure_import_paths
 
 if TYPE_CHECKING:
+    from app.services.auth.api_key_service import APIKeyService as APIKeyServiceType
     from shared.services.redis.redis_service import RedisService
 else:
+    APIKeyServiceType = object
     RedisService = object
+
+configure_import_environment()
+ensure_import_paths()
+
+
+def get_api_key_service_class() -> type[APIKeyServiceType]:
+    """Import APIKeyService after test import paths are configured."""
+    module = import_module("app.services.auth.api_key_service")
+    return cast(type[APIKeyServiceType], module.APIKeyService)
 
 
 class FakeRedisService:
@@ -62,7 +74,7 @@ class FakeRedisService:
 
 @pytest.mark.asyncio
 async def test_api_key_cache_should_store_user_id_without_tier() -> None:
-    service = APIKeyService.get_instance()
+    service = get_api_key_service_class().get_instance()
     fake_redis = FakeRedisService()
     redis_service = cast(RedisService, fake_redis)
 
@@ -85,7 +97,7 @@ async def test_api_key_cache_should_store_user_id_without_tier() -> None:
 
 @pytest.mark.asyncio
 async def test_api_key_cache_invalidation_should_not_touch_tier_cache() -> None:
-    service = APIKeyService.get_instance()
+    service = get_api_key_service_class().get_instance()
     fake_redis = FakeRedisService()
     redis_service = cast(RedisService, fake_redis)
 
@@ -103,7 +115,7 @@ async def test_api_key_cache_invalidation_should_not_touch_tier_cache() -> None:
 
 
 def test_api_key_cache_ttl_should_not_exceed_api_key_expiration() -> None:
-    service = APIKeyService.get_instance()
+    service = get_api_key_service_class().get_instance()
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=120)
 
     ttl_seconds = service._resolve_api_key_cache_ttl_seconds(expires_at)
@@ -112,4 +124,6 @@ def test_api_key_cache_ttl_should_not_exceed_api_key_expiration() -> None:
 
 
 def test_api_key_service_should_be_singleton() -> None:
-    assert APIKeyService.get_instance() is APIKeyService()
+    api_key_service_class = get_api_key_service_class()
+
+    assert api_key_service_class.get_instance() is api_key_service_class()
