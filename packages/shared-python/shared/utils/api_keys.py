@@ -16,7 +16,7 @@ def generate_api_key() -> str:
 
 def hash_api_key(api_key: str) -> str:
     """Return a deterministic SHA-256 digest for API key lookup."""
-    # lgtm[py/weak-sensitive-data-hashing]
+    # API keys are high-entropy bearer tokens; this digest is only a DB lookup key.
     return sha256(api_key.encode("utf-8")).hexdigest()
 
 
