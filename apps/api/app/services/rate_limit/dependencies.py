@@ -173,10 +173,9 @@ async def with_current_user(
         if cached_identity_hit is False:
             token = _extract_bearer_token(request.headers.get("authorization"))
             api_key_hash = getattr(request.state, "api_key_hash", None)
-            is_api_key_auth = is_api_key_token(token)
-            if is_api_key_auth and not api_key_hash and isinstance(token, str):
+            if not isinstance(api_key_hash, str) and is_api_key_token(token):
                 api_key_hash = hash_api_key(token)
-            if is_api_key_auth and isinstance(api_key_hash, str):
+            if isinstance(api_key_hash, str):
                 try:
                     ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
                     await identity_cache.set_apikey_identity(
@@ -194,12 +193,9 @@ async def with_current_user(
                     )
     else:
         token = _extract_bearer_token(request.headers.get("authorization"))
-        is_api_key_auth = is_api_key_token(token)
-        api_key_hash = (
-            hash_api_key(token)
-            if is_api_key_auth and isinstance(token, str)
-            else None
-        )
+        api_key_hash: str | None = None
+        if is_api_key_token(token):
+            api_key_hash = hash_api_key(token)
         cache_key: str = (
             identity_cache._apikey_key(api_key_hash)
             if isinstance(api_key_hash, str)
@@ -222,8 +218,7 @@ async def with_current_user(
                     request.state.api_key_hash = api_key_hash
             else:
                 user_tier = await _resolve_user_tier_from_db(user_id)
-                api_key_hash = getattr(request.state, "api_key_hash", None)
-                if is_api_key_auth and isinstance(api_key_hash, str):
+                if isinstance(api_key_hash, str):
                     ttl_seconds = await _resolve_apikey_cache_ttl_seconds(api_key_hash)
                     await identity_cache.set_apikey_identity(
                         redis_service,
