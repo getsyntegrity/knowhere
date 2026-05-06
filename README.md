@@ -30,7 +30,7 @@
   🏠 <a href="https://github.com/Ontos-AI/knowhere-self-hosted">Self-Host</a>
 </p>
 
-Knowhere is the open-source data layer that makes unstructured documents ready for AI Agents and RAG.
+Knowhere is the open-source infrastructure for unstructured data processing. It automates the complex pipeline of extracting, parsing, and transforming messy documents into structured, high-quality data optimized for *AI Agents*, *Agentic RAG*, and *traditional vector-based RAG workflows*.
 
 ## 📢 News
 
