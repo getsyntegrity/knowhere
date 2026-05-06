@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import  Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
@@ -12,7 +12,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from shared.core.database import Base
 from shared.utils.utc_now import utc_now_naive
 
-from shared.models.database.job import Job
+if TYPE_CHECKING:
+    from shared.models.database.job import Job
 
 
 class JobResult(Base):
@@ -95,7 +96,7 @@ class JobChunk(Base):
         DateTime, default=utc_now_naive, nullable=False
     )
 
-    job_result: Mapped[JobResult] = relationship("JobResult", back_populates="chunks")
+    job_result: Mapped["JobResult"] = relationship("JobResult", back_populates="chunks")
 
     __table_args__ = (
         Index("idx_job_chunks_result", "job_result_id"),

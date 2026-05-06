@@ -3,39 +3,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-API_DIR="${REPO_ROOT}/apps/api"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.dev.yml"
-
-LOCAL_DEV_DATABASE_URL="postgresql+asyncpg://root:root123@localhost:5432/Knowhere"
-LOCAL_DEV_DB_SSL_MODE="disable"
-RUN_USER_INIT=0
 
 log_step() {
     printf '%s\n' "$1"
 }
 
-warn() {
-    printf 'Warning: %s\n' "$1"
-}
-
 print_usage() {
     cat <<EOF
-Usage: ./start-dev.sh [--init-user]
+Usage: ./start-dev.sh
 
 Options:
-  --init-user   Create the dashboard-compatible local user table, run API migrations,
-                and seed the deterministic local developer account.
-  -h, --help    Show this help message.
+  -h, --help   Show this help message.
 EOF
 }
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --init-user)
-                RUN_USER_INIT=1
-                ;;
             -h|--help)
                 print_usage
                 exit 0
@@ -57,13 +42,6 @@ run_compose() {
     fi
 
     docker compose "$@"
-}
-
-require_uv() {
-    if ! command -v uv >/dev/null 2>&1; then
-        printf 'uv is required for local bootstrap. Install uv first.\n' >&2
-        exit 1
-    fi
 }
 
 require_docker() {
@@ -115,54 +93,7 @@ wait_for_localstack() {
     exit 1
 }
 
-prepare_api_env() {
-    if [[ ! -f "${API_DIR}/.env" ]]; then
-        cp "${API_DIR}/.env.example" "${API_DIR}/.env"
-        warn "Created apps/api/.env from .env.example for local development."
-    fi
-}
-
-configure_local_bootstrap_env() {
-    export DATABASE_URL="${LOCAL_DEV_DATABASE_URL}"
-    export DB_SSL_MODE="${LOCAL_DEV_DB_SSL_MODE}"
-}
-
-run_local_bootstrap() {
-    require_uv
-    prepare_api_env
-    configure_local_bootstrap_env
-
-    log_step "Ensuring local development user table..."
-    (
-        cd "${API_DIR}" &&
-        uv run --python 3.11 python scripts/bootstrap_local_dev.py --mode ensure-user-table
-    )
-
-    log_step "Running local API migrations..."
-    (
-        cd "${API_DIR}" &&
-        uv run --python 3.11 python -m alembic upgrade heads
-    )
-
-    log_step "Seeding deterministic local development user..."
-    (
-        cd "${API_DIR}" &&
-        uv run --python 3.11 python scripts/bootstrap_local_dev.py --mode seed
-    )
-}
-
 print_summary() {
-    if [[ "${RUN_USER_INIT}" -eq 1 ]]; then
-        cat <<EOF
-
-Local development services are ready.
-
-Stop services:
-  ${SCRIPT_DIR}/stop-dev.sh
-EOF
-        return 0
-    fi
-
     cat <<EOF
 
 Local development services are ready.
@@ -175,10 +106,8 @@ Service endpoints:
 Next steps:
   1. Start the API: cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
   2. Start the worker: cd apps/worker && uv run python worker.py
-
-Optional user bootstrap:
-  - rerun this script with --init-user to create the dashboard-compatible local user table
-  - the same --init-user path also runs API migrations and seeds the deterministic local developer account
+  3. For API-only development, create a dev user after the API starts:
+     cd apps/api && uv run --python 3.11 python scripts/init_user.py --email you@example.com
 
 Stop services:
   ${SCRIPT_DIR}/stop-dev.sh
@@ -195,9 +124,6 @@ main() {
     wait_for_postgres
     wait_for_redis
     wait_for_localstack
-    if [[ "${RUN_USER_INIT}" -eq 1 ]]; then
-        run_local_bootstrap
-    fi
     print_summary
 }
 

@@ -156,6 +156,7 @@ async def test_should_disable_and_then_reenable_an_api_key_via_the_toggle_route(
     }
 
     async with developer_api_client_factory() as api_client:
+        developer_authorization = api_client.headers["Authorization"]
         create_response = await api_client.post("/api/v1/auth/create", json=create_payload)
         assert create_response.status_code == 200
         create_response_json = cast(dict[str, object], create_response.json())
@@ -175,9 +176,7 @@ async def test_should_disable_and_then_reenable_an_api_key_via_the_toggle_route(
         api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
         pre_toggle_response = await api_client.get("/api/v1/jobs")
 
-        api_client.headers.update(
-            {"Authorization": "Bearer sk_local_dev_demo_key_tier5_full_access"}
-        )
+        api_client.headers.update({"Authorization": developer_authorization})
         disable_response = await api_client.put(
             f"/api/v1/auth/{created_api_key_id}/toggle"
         )
@@ -185,9 +184,7 @@ async def test_should_disable_and_then_reenable_an_api_key_via_the_toggle_route(
         api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
         disabled_key_response = await api_client.get("/api/v1/jobs")
 
-        api_client.headers.update(
-            {"Authorization": "Bearer sk_local_dev_demo_key_tier5_full_access"}
-        )
+        api_client.headers.update({"Authorization": developer_authorization})
         enable_response = await api_client.put(
             f"/api/v1/auth/{created_api_key_id}/toggle"
         )

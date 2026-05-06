@@ -62,25 +62,15 @@ cp apps/worker/.env.example apps/worker/.env
 - `DS_KEY`
 - any optional LLM, billing, or webhook providers you want to enable
 
-The example files default to the open-source/self-hosted behavior:
+These settings control the local startup mode:
 
 - `API_STANDALONE_MODE_ENABLED=false` for the combined dashboard + API flow, where
   the dashboard initializes Better Auth tables before API migrations.
-- `BILLING_ENABLED=false`, so Stripe and credit deduction are not required.
-- `RATE_LIMIT_ENABLED=false` for local/self-hosted convenience; set it to
-  `true` when you want API rate limits enforced.
+- `BILLING_ENABLED` controls Stripe and credit deduction.
+- `RATE_LIMIT_ENABLED` controls API rate limit enforcement.
 
-For API-only development without the dashboard, set `API_STANDALONE_MODE_ENABLED=true`,
-run API migrations, then create an API-only user/key:
-
-```bash
-cd apps/api
-uv run --python 3.11 python -m alembic upgrade heads
-uv run --python 3.11 python scripts/init_user.py --email you@example.com
-```
-
-If you plan to use the dashboard, start the combined self-hosted stack and
-register through the dashboard instead of using `scripts/init_user.py`.
+For API-only development without the dashboard, set
+`API_STANDALONE_MODE_ENABLED=true` in `apps/api/.env`.
 
 4. Start the local infrastructure stack:
 
@@ -88,19 +78,25 @@ register through the dashboard instead of using `scripts/init_user.py`.
 ./deploy/local-dev/start-dev.sh
 ```
 
-If you also want the helper to initialize the local API user state, rerun it
-with `--init-user`:
-
-```bash
-./deploy/local-dev/start-dev.sh --init-user
-```
-
 5. Start the API and worker in separate terminals:
 
 ```bash
-cd apps/api && uv run main.py
-cd apps/worker && uv run worker.py
+cd apps/api && uv run uvicorn main:app --host 0.0.0.0 --port 5005 --reload
+cd apps/worker && uv run python worker.py
 ```
+
+The API runs migrations during startup.
+
+For API-only development without the dashboard, create an API-only user/key
+after the API service starts:
+
+```bash
+cd apps/api
+uv run --python 3.11 python scripts/init_user.py --email you@example.com
+```
+
+If you plan to use the dashboard, register through the dashboard instead of
+using `scripts/init_user.py`.
 
 ## Quality Checks
 

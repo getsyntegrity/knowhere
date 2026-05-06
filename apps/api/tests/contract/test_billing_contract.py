@@ -26,7 +26,7 @@ async def test_should_return_the_authenticated_users_initialized_credits_balance
         response = await api_client.get("/api/v1/billing/credits")
 
     assert response.status_code == 200
-    assert response.json() == {"credits_balance": 2000.0}
+    assert response.json() == {"credits_balance": 5.0}
 
 
 @pytest.mark.asyncio
