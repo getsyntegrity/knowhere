@@ -1,18 +1,13 @@
 from importlib import import_module
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pytest
 
 from tests.support.import_environment import configure_import_environment, ensure_import_paths
 
-if TYPE_CHECKING:
-    from app.services.rate_limit.tier_service import TierService as TierServiceType
-    from shared.core.exceptions.domain_exceptions import NotFoundException
-    from shared.services.redis.redis_service import RedisService
-else:
-    TierServiceType = object
-    NotFoundException = Exception
-    RedisService = object
+from app.services.rate_limit.tier_service import TierService as TierServiceType
+from shared.core.exceptions.domain_exceptions import NotFoundException
+from shared.services.redis.redis_service import RedisService
 
 configure_import_environment()
 ensure_import_paths()

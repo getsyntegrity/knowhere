@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List, Optional
+from typing import List, Optional
 
 from app.repositories.api_key_repository import APIKeyRepository
 from loguru import logger
@@ -22,8 +22,7 @@ from shared.core.exceptions.domain_exceptions import (
 from shared.models.database.api_key import APIKey
 from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
-if TYPE_CHECKING:
-    from shared.services.redis.redis_service import RedisService
+from shared.services.redis.redis_service import RedisService
 
 _API_KEY_USER_CACHE_TTL_SECONDS: int = 3600
 

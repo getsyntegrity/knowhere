@@ -5,7 +5,7 @@ Determines, caches, and refreshes a user's tier based on lifetime payment histor
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
@@ -20,8 +20,7 @@ from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.tier_limit import TierLimit
 from shared.models.database.user_balance import UserBalance
 
-if TYPE_CHECKING:
-    from shared.services.redis.redis_service import RedisService
+from shared.services.redis.redis_service import RedisService
 
 _DEFAULT_TIER: str = "free"
 _USER_TIER_TTL_SECONDS: int = 3600

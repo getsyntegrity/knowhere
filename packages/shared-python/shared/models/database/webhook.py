@@ -8,7 +8,7 @@ WebhookDelivery is handled by the existing WebhookLog model
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
@@ -18,9 +18,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from shared.core.database import Base
 from shared.utils.utc_now import utc_now_naive
 
-if TYPE_CHECKING:
-    from shared.models.database.job import Job
-    from shared.models.database.webhook_log import WebhookLog
+from shared.models.database.job import Job
+from shared.models.database.webhook_log import WebhookLog
 
 
 class WebhookEventStatus:

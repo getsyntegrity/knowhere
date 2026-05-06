@@ -1,17 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from importlib import import_module
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pytest
 
 from tests.support.import_environment import configure_import_environment, ensure_import_paths
 
-if TYPE_CHECKING:
-    from app.services.auth.api_key_service import APIKeyService as APIKeyServiceType
-    from shared.services.redis.redis_service import RedisService
-else:
-    APIKeyServiceType = object
-    RedisService = object
+from app.services.auth.api_key_service import APIKeyService as APIKeyServiceType
+from shared.services.redis.redis_service import RedisService
+
 
 configure_import_environment()
 ensure_import_paths()

@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 
 # Forward references avoid circular imports.
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -27,11 +27,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from shared.core.database import Base
 from shared.utils.utc_now import utc_now_naive
 
-if TYPE_CHECKING:
-    from shared.models.database.job_result import JobResult
-    from shared.models.database.job_state_audit_log import JobStateAuditLog
-    from shared.models.database.job_state_history import JobStateHistory
-    from shared.models.database.webhook_log import WebhookLog
+from shared.models.database.job_result import JobResult
+from shared.models.database.job_state_audit_log import JobStateAuditLog
+from shared.models.database.job_state_history import JobStateHistory
+from shared.models.database.webhook_log import WebhookLog
 
 
 class Job(Base):
