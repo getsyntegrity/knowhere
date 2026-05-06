@@ -1,9 +1,6 @@
 <img width="1000" height="233" alt="20260506-102713" src="https://github.com/user-attachments/assets/896e64d2-e50e-4158-b71c-bc69e11c7c65" />
 
-<h1 align="center">The Knowledge Layer for AI Agents</h1>
-<p align="center">
-  <b>Prepare your unstructured data for AI Agents with high-performance ingestion and parsing.</b>
-</p>
+<h1 align="center">Prepare unstructured data for AI Agents</h1>
 
 ---
 
