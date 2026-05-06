@@ -36,7 +36,6 @@ class APIKeyIdentity:
 
     user_id: str
     user_tier: str
-    key_hash: str
     expires_at: datetime | None
 
 
@@ -106,16 +105,52 @@ class APIKeyService:
         self, session: AsyncSession, api_key: str
     ) -> Optional[str]:
         """Validate API key against DB, return user_id or None."""
-        identity = await self.validate_api_key_identity(session, api_key)
+        identity = await self.get_identity(session, api_key)
         return identity.user_id if identity is not None else None
 
-    async def validate_api_key_identity(
+    async def get_identity(
         self,
         session: AsyncSession,
         api_key: str,
     ) -> Optional[APIKeyIdentity]:
-        """Validate API key and return the authenticated identity."""
+        """Return API-key identity, using Redis cache before DB fallback."""
         key_hash = hash_api_key(api_key)
+        cached_identity = await self._get_cached_identity(key_hash)
+        if cached_identity is not None:
+            return cached_identity
+
+        identity = await self._get_database_identity(session, api_key, key_hash)
+        if identity is None:
+            return None
+
+        await self._cache_api_key_identity(
+            key_hash=key_hash,
+            identity=identity,
+        )
+        return identity
+
+    async def _get_cached_identity(self, key_hash: str) -> APIKeyIdentity | None:
+        """Return cached API-key identity, or None on miss/cache failure."""
+        cached_identity = await api_key_identity_cache.get_identity(
+            redis_pool_manager.get_redis_service(),
+            key_hash,
+        )
+        if cached_identity is None:
+            return None
+
+        return APIKeyIdentity(
+            user_id=cached_identity["user_id"],
+            user_tier=cached_identity["user_tier"],
+            expires_at=None,
+        )
+
+    async def _get_database_identity(
+        self,
+        session: AsyncSession,
+        api_key: str,
+        key_hash: str,
+    ) -> APIKeyIdentity | None:
+        """Validate API key against the database."""
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
 
         if not api_key_record or not api_key_record.is_valid():
@@ -128,26 +163,31 @@ class APIKeyService:
         return APIKeyIdentity(
             user_id=user_id,
             user_tier=user_tier,
-            key_hash=str(api_key_record.key_hash),
             expires_at=api_key_record.expires_at,
         )
 
-    async def cache_api_key_identity(
+    async def _cache_api_key_identity(
         self,
         *,
         key_hash: str,
-        user_id: str,
-        user_tier: str,
-        expires_at: datetime | None,
+        identity: APIKeyIdentity,
     ) -> None:
         """Cache a validated API-key identity for the auth layer."""
-        await api_key_identity_cache.set_identity(
-            redis_pool_manager.get_redis_service(),
-            key_hash,
-            user_id,
-            user_tier,
-            ttl_seconds=self._resolve_api_key_cache_ttl_seconds(expires_at),
-        )
+        try:
+            await api_key_identity_cache.set_identity(
+                redis_pool_manager.get_redis_service(),
+                key_hash,
+                identity.user_id,
+                identity.user_tier,
+                ttl_seconds=self._resolve_api_key_cache_ttl_seconds(
+                    identity.expires_at
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "api_key_service: failed to cache identity for user_id={}",
+                identity.user_id,
+            )
 
     async def _resolve_user_tier(
         self,
