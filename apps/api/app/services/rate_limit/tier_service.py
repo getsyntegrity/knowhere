@@ -5,7 +5,6 @@ Determines and refreshes a user's tier based on lifetime payment history.
 
 from typing import Optional
 
-from app.services.auth.api_key_identity_cache import api_key_identity_cache
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
 from app.services.rate_limit.identity_cache import identity_cache
@@ -89,7 +88,6 @@ class TierService:
         try:
             redis_service = redis_pool_manager.get_redis_service()
             await identity_cache.invalidate_user(redis_service, user_id)
-            await api_key_identity_cache.invalidate_user(redis_service, user_id)
         except Exception:
             logger.warning(
                 "Tier refresh cache invalidation failed for user_id={}",

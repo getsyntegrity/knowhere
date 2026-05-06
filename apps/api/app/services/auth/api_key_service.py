@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from app.repositories.api_key_repository import APIKeyRepository
 from app.services.auth.api_key_identity_cache import api_key_identity_cache
+from app.services.rate_limit.identity_cache import identity_cache
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,17 +131,17 @@ class APIKeyService:
         return identity
 
     async def _get_cached_identity(self, key_hash: str) -> APIKeyIdentity | None:
-        """Return cached API-key identity, or None on miss/cache failure."""
-        cached_identity = await api_key_identity_cache.get_identity(
+        """Return cached API-key user identity, or None on miss/cache failure."""
+        user_id = await api_key_identity_cache.get_user_id(
             redis_pool_manager.get_redis_service(),
             key_hash,
         )
-        if cached_identity is None:
+        if user_id is None:
             return None
 
         return APIKeyIdentity(
-            user_id=cached_identity["user_id"],
-            user_tier=cached_identity["user_tier"],
+            user_id=user_id,
+            user_tier=await self._get_user_tier(user_id),
             expires_at=None,
         )
 
@@ -158,7 +159,7 @@ class APIKeyService:
 
         self._schedule_last_used_update(str(api_key_record.id))
         user_id = str(api_key_record.user_id)
-        user_tier = await self._resolve_user_tier(session, user_id)
+        user_tier = await self._resolve_user_tier_from_db(session, user_id)
 
         return APIKeyIdentity(
             user_id=user_id,
@@ -172,13 +173,12 @@ class APIKeyService:
         key_hash: str,
         identity: APIKeyIdentity,
     ) -> None:
-        """Cache a validated API-key identity for the auth layer."""
+        """Cache the validated API-key user ID for the auth layer."""
         try:
-            await api_key_identity_cache.set_identity(
+            await api_key_identity_cache.set_user_id(
                 redis_pool_manager.get_redis_service(),
                 key_hash,
                 identity.user_id,
-                identity.user_tier,
                 ttl_seconds=self._resolve_api_key_cache_ttl_seconds(
                     identity.expires_at
                 ),
@@ -189,7 +189,22 @@ class APIKeyService:
                 identity.user_id,
             )
 
-    async def _resolve_user_tier(
+    async def _get_user_tier(self, user_id: str) -> str:
+        """Return user tier from rate-limit identity cache or DB fallback."""
+        redis_service = redis_pool_manager.get_redis_service()
+        cached_identity = await identity_cache.get_cached_identity(
+            redis_service,
+            identity_cache.get_user_key(user_id),
+        )
+        if cached_identity is not None:
+            return cached_identity["user_tier"]
+
+        async with get_db_context() as session:
+            user_tier = await self._resolve_user_tier_from_db(session, user_id)
+            await identity_cache.set_jwt_identity(redis_service, user_id, user_tier)
+            return user_tier
+
+    async def _resolve_user_tier_from_db(
         self,
         session: AsyncSession,
         user_id: str,

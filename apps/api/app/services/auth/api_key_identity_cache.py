@@ -1,4 +1,4 @@
-"""Redis-backed API-key authentication identity cache."""
+"""Redis-backed API-key authentication user cache."""
 
 import json
 
@@ -10,7 +10,7 @@ _API_KEY_MAX_TTL_SECONDS: int = 3600
 
 
 class APIKeyIdentityCache:
-    """Cache validated API-key identities by API-key lookup hash."""
+    """Cache validated API-key user IDs by API-key lookup hash."""
 
     @staticmethod
     def get_cache_key(api_key_hash: str) -> str:
@@ -22,37 +22,35 @@ class APIKeyIdentityCache:
         """Return the reverse-index Redis key for a user."""
         return f"identity:apikeys:{user_id}"
 
-    async def get_identity(
+    async def get_user_id(
         self,
         redis: RedisService,
         api_key_hash: str,
-    ) -> dict[str, str] | None:
-        """Return cached ``{user_id, user_tier}`` for an API key."""
+    ) -> str | None:
+        """Return cached user_id for an API key."""
         try:
-            raw_identity: object = await redis.get(self.get_cache_key(api_key_hash))
-            return self._coerce_identity(raw_identity)
+            raw_user_id: object = await redis.get(self.get_cache_key(api_key_hash))
+            return self._coerce_user_id(raw_user_id)
         except Exception:
             logger.warning(
-                "api_key_identity_cache: failed to read identity",
+                "api_key_identity_cache: failed to read user",
             )
             return None
 
-    async def set_identity(
+    async def set_user_id(
         self,
         redis: RedisService,
         api_key_hash: str,
         user_id: str,
-        user_tier: str,
         ttl_seconds: int,
     ) -> None:
-        """Cache a validated API-key identity."""
+        """Cache a validated API-key user ID."""
         effective_ttl_seconds: int = min(_API_KEY_MAX_TTL_SECONDS, ttl_seconds)
         cache_key: str = self.get_cache_key(api_key_hash)
         reverse_key: str = self.get_reverse_key(user_id)
-        payload: dict[str, str] = {"user_id": user_id, "user_tier": user_tier}
 
         try:
-            await redis.set(cache_key, payload, ttl=effective_ttl_seconds)
+            await redis.set(cache_key, user_id, ttl=effective_ttl_seconds)
             await redis.sadd(reverse_key, api_key_hash)
             current_ttl_seconds = await redis.ttl(reverse_key)
             if (
@@ -62,7 +60,7 @@ class APIKeyIdentityCache:
                 await redis.expire(reverse_key, effective_ttl_seconds)
         except Exception:
             logger.warning(
-                "api_key_identity_cache: failed to set identity for user_id={}",
+                "api_key_identity_cache: failed to set user for user_id={}",
                 user_id,
             )
 
@@ -100,21 +98,25 @@ class APIKeyIdentityCache:
                 user_id,
             )
 
-    def _coerce_identity(self, raw_identity: object) -> dict[str, str] | None:
-        """Return a typed identity payload from a Redis value."""
-        parsed_identity = raw_identity
-        if isinstance(raw_identity, str):
-            parsed_identity = json.loads(raw_identity)
+    def _coerce_user_id(self, raw_user_id: object) -> str | None:
+        """Return a typed user ID from current or legacy Redis values."""
+        if isinstance(raw_user_id, str):
+            try:
+                parsed_user_id = json.loads(raw_user_id)
+            except json.JSONDecodeError:
+                return raw_user_id
+        else:
+            parsed_user_id = raw_user_id
 
-        if not isinstance(parsed_identity, dict):
-            return None
+        if isinstance(parsed_user_id, str):
+            return parsed_user_id
 
-        user_id = parsed_identity.get("user_id")
-        user_tier = parsed_identity.get("user_tier")
-        if not isinstance(user_id, str) or not isinstance(user_tier, str):
-            return None
+        if isinstance(parsed_user_id, dict):
+            legacy_user_id = parsed_user_id.get("user_id")
+            if isinstance(legacy_user_id, str):
+                return legacy_user_id
 
-        return {"user_id": user_id, "user_tier": user_tier}
+        return None
 
 
 api_key_identity_cache = APIKeyIdentityCache()
