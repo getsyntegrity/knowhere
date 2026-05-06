@@ -2,23 +2,19 @@
 
 ---
 
-<a href="https://github.com/Ontos-AI/knowhere/blob/main/LICENSE">
-  <img
-    alt="License: Apache 2.0"
-    src="https://img.shields.io/badge/APACHE%202.0-16A34A.svg?style=for-the-badge&label=LICENSE&labelColor=000000"
-  >
-</a>
-
 <a href="https://www.python.org/downloads/">
   <img alt="Python Version" src="https://img.shields.io/badge/Python-%3E%3D%203.11-3776AB.svg?style=for-the-badge&logo=python&logoColor=white&labelColor=000000">
 </a>
 
-<a href="https://pypi.org/project/your-package/">
-  <img alt="PyPI version" src="https://img.shields.io/pypi/v/your-package?style=for-the-badge&labelColor=000000">
+<a href="https://github.com/Ontos-AI/knowhere/stargazers">
+  <img alt="GitHub stars" src="https://img.shields.io/github/stars/your-org/your-repo?style=for-the-badge&labelColor=000000">
 </a>
 
 <a href="https://github.com/Ontos-AI/knowhere/stargazers">
-  <img alt="GitHub stars" src="https://img.shields.io/github/stars/your-org/your-repo?style=for-the-badge&labelColor=000000">
+  <img
+    alt="GitHub stars"
+    src="https://img.shields.io/github/stars/Ontos-AI/knowhere?style=for-the-badge&labelColor=000000&color=F59E0B"
+  >
 </a>
 
 <a href="https://github.com/Ontos-AI/knowhere/actions">
@@ -29,6 +25,20 @@
   <img
     alt="Join the community on GitHub"
     src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=GitHub&labelColor=000000&logoWidth=20"
+  >
+</a>
+
+<a href="ghcr.io/ontos-ai/knowhere">
+  <img
+    alt="Container Images"
+    src="https://img.shields.io/badge/CONTAINER%20IMAGES-2496ED.svg?style=for-the-badge&logo=docker&logoColor=white&labelColor=000000"
+  >
+</a>
+
+<a href="https://github.com/Ontos-AI/knowhere/blob/main/LICENSE">
+  <img
+    alt="License: Apache 2.0"
+    src="https://img.shields.io/badge/APACHE%202.0-16A34A.svg?style=for-the-badge&label=LICENSE&labelColor=000000"
   >
 </a>
 
