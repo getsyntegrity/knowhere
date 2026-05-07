@@ -238,7 +238,7 @@ If you use Knowhere in your research, please cite it as:
 ```bibtex
 @software{knowhere2026,
   author       = {Ontos AI},
-  title        = {Knowhere: The Open-Source Data Layer for AI Agents and RAG},
+  title        = {Knowhere: Prepare Unstructured Data for AI Agents},
   year         = {2026},
   publisher    = {GitHub},
   url          = {https://github.com/Ontos-AI/knowhere},
