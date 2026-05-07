@@ -5,7 +5,7 @@ FROM python:3.12-slim AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
@@ -25,7 +25,9 @@ COPY apps/api/pyproject.toml /app/apps/api/pyproject.toml
 COPY apps/worker/pyproject.toml /app/apps/worker/pyproject.toml
 
 # Sync dependencies into the fixed virtualenv path
-RUN cd /app/apps/api && \
+WORKDIR /app/apps/api
+
+RUN \
     UV_PROJECT_ENVIRONMENT=/app/venv uv sync --locked --no-dev
 
 # Runtime stage
@@ -35,7 +37,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install runtime dependencies only
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -74,31 +76,17 @@ ENV GIT_COMMIT=${GIT_COMMIT}
 RUN useradd --create-home --shell /bin/bash appuser && \
     chown -R appuser:appuser /app
 
-# Prepare writable directories before dropping privileges
 RUN mkdir -p /tmp/users /tmp/aismart_bid && \
-    chmod -R 777 /tmp/users /tmp/aismart_bid
-
-# Create the entrypoint inline so it cannot drift behind dockerignore rules
-# Use `su` to drop privileges on Debian
-RUN echo '#!/bin/sh\n\
+    chmod -R 777 /tmp/users /tmp/aismart_bid && \
+    echo '#!/bin/sh\n\
 # API entrypoint: normalize writable volumes and start the service\n\
 \n\
 # Ensure mounted directories exist\n\
 mkdir -p /tmp/users /tmp/aismart_bid\n\
 \n\
-# Try to fix ownership when the container starts as root\n\
-if [ "$(id -u)" = "0" ]; then\n\
-    chown -R appuser:appuser /tmp/users /tmp/aismart_bid 2>/dev/null || true\n\
-    chmod -R 777 /tmp/users /tmp/aismart_bid 2>/dev/null || true\n\
-    # Drop to the unprivileged runtime user\n\
-    exec su -s /bin/sh appuser -c "python main.py"\n\
-else\n\
-    # Already unprivileged\n\
-    exec python main.py\n\
-fi' > /entrypoint.sh && chmod +x /entrypoint.sh
+exec python main.py' > /entrypoint.sh && chmod +x /entrypoint.sh
 
-# Keep user switching in the entrypoint
-# USER appuser
+USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \

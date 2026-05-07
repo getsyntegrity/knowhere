@@ -1,16 +1,14 @@
 """API key management service."""
 
+from __future__ import annotations
+
 import asyncio
-import hashlib
-import uuid
-from dataclasses import dataclass
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from app.repositories.api_key_repository import APIKeyRepository
-from app.services.rate_limit.identity_cache import identity_cache
 from loguru import logger
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.core.config import redis_pool_manager
@@ -22,30 +20,37 @@ from shared.core.exceptions.domain_exceptions import (
     ValidationException,
 )
 from shared.models.database.api_key import APIKey
-from shared.models.database.user_balance import UserBalance
+from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
-_DEFAULT_USER_TIER: str = "free"
+from shared.services.redis.redis_service import RedisService
 
-
-@dataclass(frozen=True)
-class APIKeyIdentity:
-    """Resolved identity for a validated API key."""
-
-    user_id: str
-    user_tier: str
+_API_KEY_USER_CACHE_TTL_SECONDS: int = 3600
 
 
 class APIKeyService:
     """API key management service."""
 
-    def __init__(self):
+    _instance: "APIKeyService | None" = None
+
+    def __new__(cls) -> "APIKeyService":
+        """Return the singleton API-key service object."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -> None:
+        if hasattr(self, "repository"):
+            return
         self.repository = APIKeyRepository()
+
+    @classmethod
+    def get_instance(cls) -> "APIKeyService":
+        """Return the singleton API-key service instance."""
+        return cls()
 
     def _mask_api_key(self, api_key: str) -> str:
         """Mask an API key, exposing only the first 8 and last 4 characters."""
-        if not api_key or len(api_key) < 12:
-            return api_key
-        return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
+        return mask_api_key(api_key)
 
     async def create_api_key(
         self,
@@ -56,9 +61,8 @@ class APIKeyService:
         expires_at: Optional[datetime] = None,
     ) -> str:
         """Create an API key."""
-        # 1. Enforce the per-user API key limit.
         key_count = await self.repository.count_by_user(session, user_id)
-        if key_count >= 10:  # Limit each user to at most 10 API keys.
+        if key_count >= 10:
             raise ValidationException(
                 user_message="Maximum API Key limit reached (10)",
                 violations=[
@@ -83,19 +87,16 @@ class APIKeyService:
                 ],
             )
 
-        # 3. Generate a secure API key (sk_ + a 32-char UUID without hyphens).
-        api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        key_mask = self._mask_api_key(api_key)
+        api_key = generate_api_key()
+        key_hash = hash_api_key(api_key)
+        key_mask = mask_api_key(api_key)
 
-        # 4. Store it in the database.
         api_key_record = APIKey(
             user_id=user_id,
             key_hash=key_hash,
             key_mask=key_mask,
             name=name,
-            enabled_modules=enabled_modules
-            or ["all"],  # Enable all modules by default.
+            enabled_modules=enabled_modules or ["all"],
             expires_at=expires_at,
         )
 
@@ -107,41 +108,126 @@ class APIKeyService:
         self, session: AsyncSession, api_key: str
     ) -> Optional[str]:
         """Validate API key against DB, return user_id or None."""
-        identity = await self.validate_api_key_identity(session, api_key)
-        return identity.user_id if identity is not None else None
+        key_hash: str = hash_api_key(api_key)
+        cached_user_id = await self._get_cached_user_id(
+            redis_pool_manager.get_redis_service(),
+            key_hash,
+        )
+        if cached_user_id is not None:
+            return cached_user_id
 
-    async def validate_api_key_identity(
-        self,
-        session: AsyncSession,
-        api_key: str,
-    ) -> Optional[APIKeyIdentity]:
-        """Validate API key and return the authenticated identity."""
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         api_key_record = await self.repository.get_by_key_hash(session, key_hash)
-
         if not api_key_record or not api_key_record.is_valid():
             return None
 
         self._schedule_last_used_update(str(api_key_record.id))
         user_id = str(api_key_record.user_id)
-        user_tier = await self._resolve_user_tier(session, user_id)
-
-        return APIKeyIdentity(
-            user_id=user_id,
-            user_tier=user_tier,
+        await self._set_cached_user_id(
+            redis_pool_manager.get_redis_service(),
+            key_hash,
+            user_id,
+            self._resolve_api_key_cache_ttl_seconds(api_key_record.expires_at),
         )
+        return user_id
 
-    async def _resolve_user_tier(
+    @staticmethod
+    def _get_user_id_key(api_key_hash: str) -> str:
+        """Return the Redis key for an API-key hash to user ID lookup."""
+        return f"api-key:user-id:{api_key_hash}"
+
+    @staticmethod
+    def _get_user_api_keys_key(user_id: str) -> str:
+        """Return the Redis reverse-index key for a user's API-key hashes."""
+        return f"api-key:user-hashes:{user_id}"
+
+    async def _get_cached_user_id(
         self,
-        session: AsyncSession,
+        redis_service: RedisService,
+        api_key_hash: str,
+    ) -> str | None:
+        """Return cached API-key user ID or None on miss/cache failure."""
+        try:
+            raw_user_id = await redis_service.get(self._get_user_id_key(api_key_hash))
+            return self._coerce_user_id(raw_user_id)
+        except Exception:
+            logger.warning("api_key_service: failed to read API-key user cache")
+            return None
+
+    async def _set_cached_user_id(
+        self,
+        redis_service: RedisService,
+        api_key_hash: str,
         user_id: str,
-    ) -> str:
-        """Resolve the billing tier for the API key owner."""
-        result = await session.execute(
-            select(UserBalance.user_tier).where(UserBalance.user_id == user_id).limit(1)
-        )
-        user_tier = result.scalar_one_or_none()
-        return str(user_tier) if user_tier is not None else _DEFAULT_USER_TIER
+        ttl_seconds: int,
+    ) -> None:
+        """Cache a validated API-key to user ID lookup."""
+        effective_ttl_seconds = min(_API_KEY_USER_CACHE_TTL_SECONDS, ttl_seconds)
+        user_id_key = self._get_user_id_key(api_key_hash)
+        user_api_keys_key = self._get_user_api_keys_key(user_id)
+
+        try:
+            await redis_service.set(user_id_key, user_id, ttl=effective_ttl_seconds)
+            await redis_service.sadd(user_api_keys_key, api_key_hash)
+            reverse_ttl_seconds = await redis_service.ttl(user_api_keys_key)
+            if (
+                reverse_ttl_seconds in (-2, -1)
+                or reverse_ttl_seconds < effective_ttl_seconds
+            ):
+                await redis_service.expire(user_api_keys_key, effective_ttl_seconds)
+        except Exception:
+            logger.warning(
+                "api_key_service: failed to write API-key user cache for user_id={}",
+                user_id,
+            )
+
+    async def _invalidate_cached_api_key_user_id(
+        self,
+        redis_service: RedisService,
+        user_id: str,
+        api_key_hash: str,
+    ) -> None:
+        """Delete one API-key to user ID cache entry."""
+        try:
+            await redis_service.delete(self._get_user_id_key(api_key_hash))
+            await redis_service.srem(self._get_user_api_keys_key(user_id), api_key_hash)
+        except Exception:
+            logger.warning(
+                "api_key_service: failed to invalidate API-key cache for user_id={}",
+                user_id,
+            )
+
+    def _coerce_user_id(self, raw_user_id: object) -> str | None:
+        """Return a typed user ID from current or legacy Redis values."""
+        if isinstance(raw_user_id, str):
+            try:
+                parsed_user_id: object = json.loads(raw_user_id)
+            except json.JSONDecodeError:
+                return raw_user_id
+        else:
+            parsed_user_id = raw_user_id
+
+        if isinstance(parsed_user_id, str):
+            return parsed_user_id
+
+        if isinstance(parsed_user_id, dict):
+            legacy_user_id = parsed_user_id.get("user_id")
+            if isinstance(legacy_user_id, str):
+                return legacy_user_id
+
+        return None
+
+    def _resolve_api_key_cache_ttl_seconds(self, expires_at: datetime | None) -> int:
+        """Resolve cache TTL for an API-key lookup without exceeding key expiry."""
+        if expires_at is None:
+            return _API_KEY_USER_CACHE_TTL_SECONDS
+
+        expires_at_utc = expires_at
+        if expires_at_utc.tzinfo is None:
+            expires_at_utc = expires_at_utc.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        remaining_seconds = int((expires_at_utc - now).total_seconds())
+        return max(1, min(_API_KEY_USER_CACHE_TTL_SECONDS, remaining_seconds))
 
     async def revoke_api_key(
         self, session: AsyncSession, api_key_id: str, user_id: str
@@ -149,7 +235,6 @@ class APIKeyService:
         """Revoke an API key by deleting it directly."""
         logger.info(f"Revoking API key: api_key_id={api_key_id}, user_id={user_id}")
 
-        # 1. Verify that the API key belongs to the user.
         api_key = await self.repository.get_by_id(session, api_key_id)
 
         if not api_key:
@@ -170,37 +255,19 @@ class APIKeyService:
                 internal_message="API Key not found or does not belong to user",
             )
 
-        # 2. Delete the API key directly.
         success = await self.repository.delete_by_id(session, api_key_id)
         logger.info(f"Delete result: {success}")
 
-        # 3. Commit the transaction.
         if success:
             await session.commit()
             logger.info("Transaction committed")
-            await self._invalidate_revoked_api_key_cache_best_effort(
-                user_id=user_id,
-                key_hash=api_key.key_hash,
+            await self._invalidate_cached_api_key_user_id(
+                redis_pool_manager.get_redis_service(),
+                user_id,
+                api_key.key_hash,
             )
 
         return success
-
-    async def _invalidate_revoked_api_key_cache_best_effort(
-        self,
-        user_id: str,
-        key_hash: str,
-    ) -> None:
-        """Best-effort cache invalidation after a revoke has already been committed."""
-        try:
-            await identity_cache.invalidate_apikey(
-                redis_pool_manager.get_redis_service(),
-                user_id,
-                key_hash,
-            )
-        except Exception as err:
-            logger.warning(
-                f"Failed to invalidate revoked API key cache (ignored): {err}"
-            )
 
     async def list_user_api_keys(
         self, session: AsyncSession, user_id: str
@@ -212,7 +279,7 @@ class APIKeyService:
                 "id": str(api_key.id),
                 "name": api_key.name,
                 "api_key": api_key.key_mask
-                or f"sk_{api_key.id[:8]}••••••••••••••••••••••••••••••••••••••••",  # Return the masked API key.
+                or f"sk_{api_key.id[:8]}••••••••••••••••••••••••••••••••••••••••",
                 "enabled_modules": api_key.enabled_modules,
                 "is_active": api_key.is_active,
                 "created_at": api_key.created_at,
@@ -221,61 +288,6 @@ class APIKeyService:
             }
             for api_key in api_keys
         ]
-
-    async def regenerate_api_key(
-        self, session: AsyncSession, api_key_id: str, user_id: str
-    ) -> str:
-        """Regenerate an API key."""
-        api_key = await self.repository.get_by_id(session, api_key_id)
-        if not api_key or api_key.user_id != user_id:
-            raise NotFoundException(
-                resource="APIKey",
-                resource_id=api_key_id,
-                internal_message="API Key not found or does not belong to user",
-            )
-
-        # 2. Generate a new API key (sk_ + a 32-char UUID without hyphens).
-        new_api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
-        new_key_hash = hashlib.sha256(new_api_key.encode()).hexdigest()
-        new_key_mask = self._mask_api_key(new_api_key)
-
-        # 3. Update the database record.
-        from sqlalchemy import update
-
-        from shared.models.database.api_key import APIKey
-
-        await session.execute(
-            update(APIKey)
-            .where(APIKey.id == api_key_id)
-            .values(
-                key_hash=new_key_hash,
-                key_mask=new_key_mask,
-            )
-        )
-        await session.commit()
-
-        # 4. Refresh the cache.
-        await identity_cache.invalidate_apikey(
-            redis_pool_manager.get_redis_service(),
-            user_id,
-            api_key.key_hash,
-        )
-
-        return new_api_key
-
-    async def check_module_permission(
-        self, session: AsyncSession, api_key: str, module: str
-    ) -> bool:
-        """Check whether an API key can access the requested module."""
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        api_key_record = await self.repository.get_by_key_hash(session, key_hash)
-
-        if not api_key_record or not api_key_record.is_valid():
-            return False
-
-        # Allow access if all modules are enabled or the specific module is present.
-        enabled_modules = api_key_record.enabled_modules or []
-        return "all" in enabled_modules or module in enabled_modules
 
     def _schedule_last_used_update(self, api_key_id: str) -> None:
         """Schedule a best-effort background update for api_keys.last_used_at."""
@@ -329,7 +341,7 @@ class APIKeyService:
             await session.refresh(api_key)
 
             if not api_key.is_active:
-                await identity_cache.invalidate_apikey(
+                await self._invalidate_cached_api_key_user_id(
                     redis_pool_manager.get_redis_service(),
                     user_id,
                     api_key.key_hash,

@@ -96,7 +96,7 @@ class JobChunk(Base):
         DateTime, default=utc_now_naive, nullable=False
     )
 
-    job_result: Mapped[JobResult] = relationship("JobResult", back_populates="chunks")
+    job_result: Mapped["JobResult"] = relationship("JobResult", back_populates="chunks")
 
     __table_args__ = (
         Index("idx_job_chunks_result", "job_result_id"),

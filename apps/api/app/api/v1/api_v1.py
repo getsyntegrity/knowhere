@@ -2,7 +2,6 @@
 API v1 route registry.
 """
 
-from app.api.v1 import health
 from app.api.v1.routes import (
     api_key,
     documents,
@@ -58,9 +57,6 @@ api_router.include_router(
 api_router.include_router(
     qstash_callbacks.router, prefix="/webhooks", tags=["QStash Callbacks"]
 )
-
-# Health check
-api_router.include_router(health.router, prefix="/health", tags=["Health"])
 
 # Version info
 api_router.include_router(version.router, tags=["Version"])

@@ -1,9 +1,7 @@
 import asyncio
 import logging
 import os
-import time
 from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Any, AsyncGenerator, Awaitable, Callable, TypeVar
 
 from sqlalchemy import event, text
@@ -144,133 +142,6 @@ async def create_tables():
         await conn.run_sync(Base.metadata.create_all)
 
 
-# Connection-pool monitoring and health checks.
-class DatabaseHealthChecker:
-    """Database health checker."""
-
-    def __init__(self, engine: AsyncEngine):
-        self.engine = engine
-        self.last_check: datetime | None = None
-        self.is_healthy = False
-
-    def _pool_metric(self, name: str) -> int:
-        metric = getattr(self.engine.pool, name, None)
-        if callable(metric):
-            value = metric()
-            return int(value) if isinstance(value, (int, float)) else 0
-        return 0
-
-    async def check_health(self) -> dict[str, object]:
-        """Check database connection health."""
-        try:
-            start_time = time.time()
-            async with self.engine.begin() as conn:
-                # Run a simple query to validate connectivity.
-                result = await conn.execute(text("SELECT 1 as health_check"))
-                row = result.fetchone()
-
-                if row and row[0] == 1:
-                    self.is_healthy = True
-                    self.last_check = datetime.now()
-
-                    # Collect current connection-pool status.
-                    pool_status = self.get_pool_status()
-
-                    return {
-                        "status": "healthy",
-                        "response_time_ms": round((time.time() - start_time) * 1000, 2),
-                        "last_check": self.last_check.isoformat(),
-                        "pool_status": pool_status,
-                    }
-                else:
-                    self.is_healthy = False
-                    return {
-                        "status": "unhealthy",
-                        "error": "Health check query failed",
-                        "last_check": (
-                            self.last_check.isoformat() if self.last_check else None
-                        ),
-                    }
-        except Exception as e:
-            self.is_healthy = False
-            logger.error(f"Database health check failed: {e}")
-            return {
-                "status": "unhealthy",
-                "error": str(e),
-                "last_check": self.last_check.isoformat() if self.last_check else None,
-            }
-
-    def get_pool_status(self) -> dict[str, int]:
-        """Return connection-pool status details."""
-        status = {
-            "size": self._pool_metric("size"),
-            "checked_in": self._pool_metric("checkedin"),
-            "checked_out": self._pool_metric("checkedout"),
-            "overflow": self._pool_metric("overflow"),
-        }
-        status["invalid"] = self._pool_metric("invalid")
-        return status
-
-    async def get_database_info(self) -> dict[str, object]:
-        """Return database metadata and connection status."""
-        try:
-            async with self.engine.begin() as conn:
-                # Read the database version.
-                version_result = await conn.execute(text("SELECT version()"))
-                version_row = version_result.fetchone()
-                if version_row is None:
-                    return {"error": "Failed to read database version"}
-                version = version_row[0]
-
-                # Read the current active-connection count.
-                connections_result = await conn.execute(
-                    text("""
-                    SELECT count(*) as active_connections 
-                    FROM pg_stat_activity 
-                    WHERE state = 'active'
-                """)
-                )
-                active_connections_row = connections_result.fetchone()
-                if active_connections_row is None:
-                    return {"error": "Failed to read active connection count"}
-                active_connections = active_connections_row[0]
-
-                # Read the current database size.
-                size_result = await conn.execute(
-                    text("""
-                    SELECT pg_size_pretty(pg_database_size(current_database())) as db_size
-                """)
-                )
-                db_size_row = size_result.fetchone()
-                if db_size_row is None:
-                    return {"error": "Failed to read database size"}
-                db_size = db_size_row[0]
-
-                return {
-                    "version": version,
-                    "active_connections": active_connections,
-                    "database_size": db_size,
-                    "pool_status": self.get_pool_status(),
-                }
-        except Exception as e:
-            logger.error(f"Failed to get database info: {e}")
-            return {"error": str(e)}
-
-
-# Shared health-checker instance.
-db_health_checker = DatabaseHealthChecker(engine)
-
-
-async def get_database_health() -> dict:
-    """Return database health status."""
-    return await db_health_checker.check_health()
-
-
-async def get_database_info() -> dict:
-    """Return database information."""
-    return await db_health_checker.get_database_info()
-
-
 # Database retry helpers.
 class DatabaseRetryManager:
     """Database retry manager."""
@@ -383,73 +254,6 @@ async def _warm_connection():
             await conn.execute(text(ProcessingConstants.DB_VALIDATION_QUERY))
     except Exception as e:
         logger.debug(f"Connection warming failed: {e}")
-
-
-# Database performance monitoring.
-class DatabasePerformanceMonitor:
-    """Database performance monitor."""
-
-    def __init__(self):
-        self.query_times = []
-        self.connection_usage = []
-        self.error_count = 0
-
-    def record_query_time(self, query_time_ms: float):
-        """Record query latency."""
-        self.query_times.append(query_time_ms)
-        # Keep only the most recent 1000 query samples.
-        if len(self.query_times) > 1000:
-            self.query_times = self.query_times[-1000:]
-
-    def record_connection_usage(self, pool_status: dict):
-        """Record connection-pool usage."""
-        self.connection_usage.append(
-            {
-                "timestamp": datetime.now().isoformat(),
-                "checked_out": pool_status.get("checked_out", 0),
-                "checked_in": pool_status.get("checked_in", 0),
-                "overflow": pool_status.get("overflow", 0),
-            }
-        )
-        # Keep only the most recent 100 samples.
-        if len(self.connection_usage) > 100:
-            self.connection_usage = self.connection_usage[-100:]
-
-    def record_error(self):
-        """Record an error occurrence."""
-        self.error_count += 1
-
-    def get_performance_stats(self) -> dict:
-        """Return collected performance statistics."""
-        if not self.query_times:
-            return {"error": "No query data available"}
-
-        return {
-            "query_stats": {
-                "count": len(self.query_times),
-                "avg_time_ms": round(sum(self.query_times) / len(self.query_times), 2),
-                "min_time_ms": round(min(self.query_times), 2),
-                "max_time_ms": round(max(self.query_times), 2),
-                "p95_time_ms": round(
-                    sorted(self.query_times)[int(len(self.query_times) * 0.95)], 2
-                ),
-            },
-            "connection_stats": {
-                "recent_usage": (
-                    self.connection_usage[-10:] if self.connection_usage else []
-                ),
-                "total_errors": self.error_count,
-            },
-        }
-
-
-# Shared performance-monitor instance.
-db_performance_monitor = DatabasePerformanceMonitor()
-
-
-async def get_database_performance() -> dict:
-    """Return database performance statistics."""
-    return db_performance_monitor.get_performance_stats()
 
 
 async def safe_dispose_engine(db_engine: AsyncEngine) -> None:
