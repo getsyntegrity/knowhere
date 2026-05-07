@@ -41,7 +41,60 @@ Knowhere is the open-source infrastructure for unstructured data processing. It 
 - **May 7, 2026**: 🚀 **Knowhere is now Open Source!** We have open-sourced our entire stack for document ingestion, parsing, and agentic RAG. You can now self-host the full platform using [knowhere-self-hosted](https://github.com/Ontos-AI/knowhere-self-hosted). Check out our [Contribution Guide](CONTRIBUTING.md) to get involved!
 - **Apr 30, 2026**: 📦 **Version [2026.04.30.1](https://github.com/Ontos-AI/knowhere/releases/tag/2026.04.30.1) has been released.** This update includes several stability improvements and initial support for the agentic RAG layer. See the [full changelog](https://github.com/Ontos-AI/knowhere/commits/2026.04.30.1) for details.
 
+## How it Works
+
+Knowhere has one simple goal: turn uploaded documents into a long-term memory store that agents can understand, navigate, and cite.
+
+The system can be understood as a three-stage pipeline:
+
+```text
+Document parsing -> Memory graph construction -> Agentic retrieval -> Cited results
+```
+
+### 1. Document Parsing
+
+Knowhere first profiles each uploaded file and routes it to the right parser: regular PDF, scanned drawing, Word, PowerPoint, spreadsheet, image, Markdown, or plain text. The parser converts the original file into structured content units:
+
+- `text`: paragraphs, headings, and body content
+- `table`: table content and table asset references
+- `image`: image content, OCR, or visual summaries
+- `path`: the hierarchical location of each chunk in the source document
+- `metadata`: summaries, keywords, media references, and contextual links between knowledge chunks and documents of various formats
+
+The parser is designed to preserve document structure, not just extract raw text. Heading hierarchy, section paths, images, and tables are converted into chunks that can be searched, navigated, and cited.
+
+### 2. Memory Graph Construction
+
+After parsing, Knowhere publishes the chunks into a canonical retrieval state:
+
+- `Document` represents a user document.
+- `DocumentSection` stores the document's section hierarchy.
+- `DocumentChunk` stores the final content units returned to users or agents.
+- `GraphNode` stores document-level memory, including summaries, keywords, chunk counts, media types, and navigation sections.
+- `GraphEdge` stores relationships between documents.
+
+The graph is intentionally lightweight. Its purpose is not to create an overly complex ontology, but to help the system understand which documents may be related, what each document is about, and why neighboring documents might matter. The current graph centers on document-level nodes and builds connections from keyword overlap, summaries, and navigation structure, making it useful for fast routing and expansion during retrieval.
+
+### 3. Agentic Retrieval
+
+At query time, Knowhere combines bottom-layer retrieval with agent-guided navigation:
+
+- **Bottom discovery**: retrieve candidate chunks from path, content, and term channels, then fuse them with RRF.
+- **Document selection**: the agent reads the memory graph overview and selects potentially relevant documents.
+- **Path selection**: the agent reviews compact chunk previews and selects the most relevant section or chunk paths.
+- **Hierarchical navigation**: for large documents, the agent takes a progressive strategy; it first inspects top-level and second-level sections, then expands selected sections to leaf chunks.
+- **Result merging**: agent-selected paths and bottom-layer candidates are merged, deduplicated, ranked, and returned with source citations.
+
+This gives Knowhere the stability of traditional retrieval and the structural awareness of agent navigation. The final output is not just a text snippet. It is cited evidence: the source document, section, chunk, and, when needed, linked image or table assets.
+
+> **TL;DR**: Knowhere parses documents into structured memory units, organizes them with a lightweight graph, and lets agents navigate through graph context and section paths to find evidence that can be reliably cited.
+
 ## Features
+
+- **Multi-modal Parsing**: High-fidelity extraction from PDF, Office, and images, preserving headings, tables, and hierarchical paths.
+- **Lightweight Memory Graph**: Context-aware organization that links documents and chunks for better relationship understanding.
+- **Agentic RAG**: A hybrid retrieval engine combining traditional search (RRF) with autonomous agent navigation.
+- **Evidence-based Citations**: Every result is backed by traceable source paths, ensuring reliability for AI Agent decision-making.
 
 ## Repository Layout
 
