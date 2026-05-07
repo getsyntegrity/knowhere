@@ -101,7 +101,7 @@ For teams that prefer a pure retrieval pipeline without agent overhead, Knowhere
 
 ## Supported Formats
 
-| Supported | Coming Soon |
+| ✅ Supported | ⏳ Coming Soon |
 |---|---|
 | `.pdf` `.docx` `.pptx` `.xlsx` `.csv` | `.epub` `.html` `.xml` |
 | `.jpg` `.png` | `.mp4` `.mp3` |
