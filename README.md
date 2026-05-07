@@ -228,6 +228,27 @@ make check
 - External dependency guide:
   [docs/external-services.md](docs/external-services.md)
 
+## Citation
+
+If you use Knowhere in your research, please cite it as:
+
+<details>
+<summary>BibTeX</summary>
+
+```bibtex
+@software{knowhere2026,
+  author       = {Ontos AI},
+  title        = {Knowhere: The Open-Source Data Layer for AI Agents and RAG},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/Ontos-AI/knowhere},
+  version      = {2026.04.30.1},
+  license      = {Apache-2.0}
+}
+```
+
+</details>
+
 ## Communication
 
 - [GitHub Discussions](https://github.com/Ontos-AI/knowhere/discussions) for questions, ideas, and general conversation.
