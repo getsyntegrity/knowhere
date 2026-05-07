@@ -1,23 +1,20 @@
-import hashlib
 import threading
 from datetime import timedelta
-from fnmatch import fnmatch
 from typing import Any
 
 import jwt
 from app.services.auth.api_key_service import APIKeyService
-from app.services.rate_limit.identity_cache import identity_cache
 from fastapi import Depends, Header, Request
 from jwt import PyJWKClient
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.core.config import redis_pool_manager, settings
+from shared.core.config import settings
 from shared.core.database import get_db
 from shared.core.exceptions.domain_exceptions import (
     AuthException,
-    PermissionDeniedException,
 )
+from shared.utils.api_keys import is_api_key_token
 
 # Standard JWKS endpoint path (fixed, following OpenID Connect convention)
 JWKS_ENDPOINT_PATH = "/api/auth/jwks"
@@ -28,22 +25,6 @@ JWKS_CACHE_TTL_SECONDS = 60 * 60  # 3600 seconds
 # Cached PyJWKClient instance
 _jwks_client: PyJWKClient | None = None
 _jwks_client_lock = threading.Lock()
-_GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS: tuple[str, ...] = (
-    "/v1/jobs",
-    "/v1/jobs/*",
-    "/v1/billing/credits",
-    "/v1/retrieval/query",
-    "/v1/documents",
-    "/v1/documents/*",
-    "/mcp",
-)
-_GUEST_API_KEY_REQUIRED_PERMISSION: str = (
-    "jobs_documents_retrieval_mcp_or_billing_credits"
-)
-_GUEST_API_KEY_SCOPE_MESSAGE: str = (
-    "Guest API keys can only access job, document, retrieval, MCP query, "
-    "and billing credits APIs"
-)
 
 
 def _get_jwks_client() -> PyJWKClient:
@@ -125,44 +106,6 @@ def decode_jwt_token(token: str) -> str:
         raise AuthException(user_message="Invalid token")
 
 
-def _get_route_path(request: Request) -> str:
-    """Return the request path without the application's root_path prefix."""
-    scope_path = request.scope.get("path", request.url.path)
-    root_path = request.scope.get("root_path", "")
-    if root_path and scope_path.startswith(root_path):
-        return scope_path[len(root_path) :]
-    return scope_path
-
-
-def _normalize_route_path(route_path: str) -> str:
-    """Normalize guest route checks across slash-redirect variants."""
-    normalized_path = route_path.rstrip("/")
-    return normalized_path or "/"
-
-
-def _is_guest_api_key_route_allowed(route_path: str) -> bool:
-    """Return whether a guest API key may access the given route."""
-    normalized_path = _normalize_route_path(route_path)
-    return any(
-        fnmatch(normalized_path, pattern)
-        for pattern in _GUEST_API_KEY_ALLOWED_ROUTE_PATTERNS
-    )
-
-
-def _enforce_guest_api_key_scope(route_path: str, user_tier: str) -> None:
-    """Reject guest API keys outside the guest-allowed API surface."""
-    if user_tier != "guest":
-        return
-
-    if _is_guest_api_key_route_allowed(route_path):
-        return
-
-    raise PermissionDeniedException(
-        user_message=_GUEST_API_KEY_SCOPE_MESSAGE,
-        required_permission=_GUEST_API_KEY_REQUIRED_PERMISSION,
-    )
-
-
 async def get_current_user_id(
     request: Request,
     authorization: str | None = Header(
@@ -181,42 +124,14 @@ async def get_current_user_id(
     if scheme.lower() != "bearer" or not token:
         raise AuthException(user_message="Invalid Authorization header format")
 
-    route_path = _get_route_path(request)
-
     # Mode 1: API Key verification (for external clients)
-    if token.startswith("sk_"):
-        # Check identity cache first — skip DB on cache hit
-        api_key_hash = hashlib.sha256(token.encode()).hexdigest()
-        try:
-            cached = await identity_cache.get_cached_identity(
-                redis_pool_manager.get_redis_service(),
-                identity_cache._apikey_key(api_key_hash),
-            )
-            if cached is not None:
-                cached_user_id = cached.get("user_id")
-                cached_user_tier = cached.get("user_tier")
-                if cached_user_id and isinstance(cached_user_tier, str):
-                    request.state.cached_user_tier = cached_user_tier
-                    request.state.cached_identity_hit = True
-                    request.state.user_id = cached_user_id
-                    _enforce_guest_api_key_scope(route_path, cached_user_tier)
-                    return cached_user_id
-        except PermissionDeniedException:
-            raise
-        except Exception:
-            pass  # Fall through to DB validation
+    if is_api_key_token(token):
+        api_key_service = APIKeyService.get_instance()
+        user_id = await api_key_service.validate_api_key(db, token)
+        if user_id:
+            return user_id
 
-        # Cache miss — validate via DB
-        api_key_service = APIKeyService()
-        identity = await api_key_service.validate_api_key_identity(db, token)
-        if identity:
-            request.state.cached_user_tier = identity.user_tier
-            request.state.cached_identity_hit = False
-            request.state.user_id = identity.user_id
-            _enforce_guest_api_key_scope(route_path, identity.user_tier)
-            return identity.user_id
-        else:
-            raise AuthException(user_message="Invalid API Key")
+        raise AuthException(user_message="Invalid API Key")
 
     # Mode 2: JWT verification (for Dashboard/Internal)
     return decode_jwt_token(token)

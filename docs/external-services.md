@@ -6,7 +6,7 @@ references are helpful.
 
 ## Required For Local Startup
 
-An external contributor needs these dependencies to run the retained backend
+Needs these dependencies to run the backend
 surface locally:
 
 - PostgreSQL for the application database
@@ -27,16 +27,12 @@ LocalStack so the default `env.example` files can use a coherent local baseline.
   required only if you want queued outbound webhook delivery
 - Stripe:
   required only if you enable billing and checkout flows
-- Resend:
-  required only if you enable email notifications
 - OAuth provider credentials:
   required only if you run dashboard-linked auth flows
 
 ## Optional Observability And Analytics
 
 - Logfire for distributed tracing export
-- Moesif for API analytics
-- PostHog for product analytics
 
 These integrations are intentionally optional. Leaving them empty should not
 block a local backend bootstrap.

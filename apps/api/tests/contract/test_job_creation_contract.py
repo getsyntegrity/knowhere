@@ -43,6 +43,7 @@ async def _load_job_record(job_id: str) -> dict[str, object]:
                             status,
                             source_type,
                             s3_key,
+                            webhook_url,
                             webhook_enabled,
                             job_metadata
                         FROM jobs
@@ -532,8 +533,9 @@ async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the
     scheduled_tasks: list[dict[str, object]] = []
 
     class _FakeHeadResponse:
-        def __init__(self, content_type: str) -> None:
+        def __init__(self, content_type: str, status_code: int = 200) -> None:
             self.headers: dict[str, str] = {"content-type": content_type}
+            self.status_code = status_code
 
     class _FakeAsyncHttpClient:
         async def head(
@@ -543,7 +545,7 @@ async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the
             follow_redirects: bool = True,
         ) -> _FakeHeadResponse:
             requested_urls.append(url)
-            assert follow_redirects is True
+            assert follow_redirects is False
             return _FakeHeadResponse("application/pdf")
 
     class _FakeCeleryTask:
@@ -565,6 +567,11 @@ async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the
             )
 
     class _FakeCeleryApp:
+        def __init__(self) -> None:
+            from types import SimpleNamespace
+
+            self.conf = SimpleNamespace(task_routes={})
+
         def signature(self, task_name: str) -> _FakeCeleryTask:
             return _FakeCeleryTask(task_name)
 
@@ -653,6 +660,137 @@ async def test_should_create_a_waiting_file_job_for_a_url_source_and_enqueue_the
 
 
 @pytest.mark.asyncio
+async def test_should_accept_an_http_webhook_url_when_creating_a_file_job_in_production(
+    monkeypatch: MonkeyPatch,
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    webhook_url = "http://hooks.example.test/notify"
+    payload: dict[str, object] = {
+        "namespace": "contract-jobs",
+        "source_type": "file",
+        "file_name": "contract-upload.pdf",
+        "data_id": "contract-job-http-webhook",
+        "webhook": {"url": webhook_url},
+    }
+
+    def resolve_public_address(
+        host: str,
+        port: int | None,
+        *args: object,
+        **kwargs: object,
+    ) -> list[tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_public_address)
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    job_id = cast(str, response_json["job_id"])
+
+    assert response_json["status"] == "waiting-file"
+    assert response_json["source_type"] == "file"
+
+    job_row = await _load_job_record(job_id)
+    assert job_row["webhook_enabled"] is True
+    assert job_row["webhook_url"] == webhook_url
+
+
+@pytest.mark.asyncio
+async def test_should_accept_a_private_url_source_when_creating_a_url_job_in_local_development(
+    monkeypatch: MonkeyPatch,
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    source_url = "http://127.0.0.1/contracts/local-private.pdf"
+    payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "url",
+        "source_url": source_url,
+        "data_id": "contract-job-url-local-private-host",
+    }
+    scheduled_tasks: list[dict[str, object]] = []
+
+    class _FakeCeleryTask:
+        def __init__(self, task_name: str) -> None:
+            self._task_name = task_name
+
+        def apply_async(
+            self,
+            *,
+            args: list[object],
+            kwargs: dict[str, object],
+        ) -> None:
+            scheduled_tasks.append(
+                {
+                    "task_name": self._task_name,
+                    "args": args,
+                    "kwargs": kwargs,
+                }
+            )
+
+    class _FakeCeleryApp:
+        def __init__(self) -> None:
+            from types import SimpleNamespace
+
+            self.conf = SimpleNamespace(task_routes={})
+
+        def signature(self, task_name: str) -> _FakeCeleryTask:
+            return _FakeCeleryTask(task_name)
+
+    def resolve_private_address(
+        host: str,
+        port: int | None,
+        *args: object,
+        **kwargs: object,
+    ) -> list[tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+
+    import shared.core.celery_app as celery_app_module
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_private_address)
+    monkeypatch.setattr(
+        celery_app_module,
+        "get_celery_app",
+        lambda: _FakeCeleryApp(),
+    )
+
+    async with developer_api_client_factory() as api_client:
+        import shared.core.config as shared_config_module
+
+        monkeypatch.setattr(shared_config_module.app_config, "ENVIRONMENT", "local")
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    job_id = cast(str, response_json["job_id"])
+
+    assert response_json["status"] == "waiting-file"
+    assert response_json["source_type"] == "url"
+
+    job_row = await _load_job_record(job_id)
+    job_metadata = cast(dict[str, object], job_row["job_metadata"])
+
+    assert job_row["source_type"] == "url"
+    assert job_metadata["source_url"] == source_url
+    assert scheduled_tasks == [
+        {
+            "task_name": "app.core.tasks.kb_tasks.upload_url_file_task",
+            "args": [job_id, source_url, "local-dev-user"],
+            "kwargs": {"job_type": "kb_management"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_should_reject_url_source_when_url_resolves_to_private_network(
     monkeypatch: MonkeyPatch,
     developer_api_client_factory: Callable[
@@ -669,6 +807,8 @@ async def test_should_reject_url_source_when_url_resolves_to_private_network(
     def resolve_private_address(
         host: str,
         port: int | None,
+        *args: object,
+        **kwargs: object,
     ) -> list[tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]]:
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
 
@@ -685,6 +825,69 @@ async def test_should_reject_url_source_when_url_resolves_to_private_network(
     details = cast(dict[str, object], error["details"])
     violations = cast(list[dict[str, object]], details["violations"])
 
+    assert response_json["success"] is False
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert error["message"] == "Invalid URL"
+    assert violations == [
+        {
+            "field": "source_url",
+            "description": "URL host is not allowed",
+        }
+    ]
+    assert await _count_jobs() == 0
+
+
+@pytest.mark.asyncio
+async def test_should_reject_a_url_source_when_file_type_detection_redirects_to_a_private_host(
+    monkeypatch: MonkeyPatch,
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    payload: dict[str, str] = {
+        "namespace": "contract-jobs",
+        "source_type": "url",
+        "source_url": "https://example.com/contracts/knowhere-upload",
+        "data_id": "contract-job-url-private-redirect",
+    }
+    requested_urls: list[str] = []
+
+    class _FakeHeadResponse:
+        status_code = 302
+        headers: dict[str, str] = {
+            "location": "http://127.0.0.1/internal-metadata.pdf",
+        }
+
+    class _FakeAsyncHttpClient:
+        async def head(
+            self,
+            url: str,
+            *,
+            follow_redirects: bool = True,
+        ) -> _FakeHeadResponse:
+            requested_urls.append(url)
+            assert follow_redirects is False
+            return _FakeHeadResponse()
+
+    import shared.utils.http_clients as http_clients_module
+    monkeypatch.setattr(
+        http_clients_module,
+        "get_async_client",
+        lambda: _FakeAsyncHttpClient(),
+    )
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.post("/api/v1/jobs", json=payload)
+
+    assert response.status_code == 400
+    assert response.headers["x-request-id"]
+
+    response_json: dict[str, object] = response.json()
+    error = cast(dict[str, object], response_json["error"])
+    details = cast(dict[str, object], error["details"])
+    violations = cast(list[dict[str, object]], details["violations"])
+
+    assert requested_urls == [payload["source_url"]]
     assert response_json["success"] is False
     assert error["code"] == "INVALID_ARGUMENT"
     assert error["message"] == "Invalid URL"

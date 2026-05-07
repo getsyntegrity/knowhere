@@ -16,7 +16,6 @@ class BaseConfig(BaseSettings):
         default="",
         description="Deploy environment (<empty>|development|staging|production)",
     )
-    DEBUG: bool = Field(default=False, description="Debug mode")
     LOG_LEVEL: str = Field(default="INFO", description="Log level")
 
     # Application metadata.
@@ -36,11 +35,6 @@ class BaseConfig(BaseSettings):
     )
 
     # Security configuration.
-    SECRET_KEY: str = Field(..., description="JWT secret key")
-    ALGORITHM: str = Field(default="HS256", description="JWT signing algorithm")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
-        default=10080, description="Access-token expiration in minutes"
-    )
     WEBHOOK_MASTER_KEY: str = Field(
         default="", description="Webhook encryption master key"
     )
@@ -57,8 +51,6 @@ class BaseConfig(BaseSettings):
 
     # Local path configuration.
     TMP_PATH: str = Field(..., description="Temporary-file path")
-    FONT_PATH: str = Field(..., description="Font-file path")
-    CHROMEDRIVER_PATH: str = Field(..., description="ChromeDriver path")
 
     @field_validator("ENVIRONMENT")
     @classmethod
@@ -89,8 +81,6 @@ class BaseConfig(BaseSettings):
         """Validate required local file paths."""
         paths_to_check = {
             "TMP_PATH": self.TMP_PATH,
-            "FONT_PATH": self.FONT_PATH,
-            "CHROMEDRIVER_PATH": self.CHROMEDRIVER_PATH,
         }
 
         for name, path in paths_to_check.items():

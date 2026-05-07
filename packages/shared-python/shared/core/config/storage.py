@@ -6,11 +6,10 @@ import threading
 import boto3
 from botocore.client import BaseClient
 from botocore.config import Config
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from shared.core.exceptions.domain_exceptions import (
     DependencyMissingException,
-    SystemSettingInvalidException,
     SystemSettingMissingException,
 )
 
@@ -56,48 +55,14 @@ class StorageConfig(BaseModel):
     MAX_FILE_SIZE: int = Field(
         default=104857600, description="Maximum file size in bytes"
     )
-    MAX_IMAGE_SIZE: int = Field(
-        default=10485760, description="Maximum image size in bytes"
-    )
     SUPPORTED_EXTENSIONS: str = Field(
         default=".doc,.docx,.pdf,.txt,.xls,.xlsx,.pptx,.jpg,.jpeg,.png,.md",
         description="Supported file extensions",
     )
 
-    # Shared user-data directory for API and worker processes.
-    USERS_DATA_PATH: str = Field(
-        ..., description="Absolute path to the shared user-data directory"
-    )
-
-    @model_validator(mode="after")
-    def _validate_users_data_path(self):
-        """Validate the USERS_DATA_PATH setting."""
-        if not self.USERS_DATA_PATH:
-            raise SystemSettingMissingException(
-                internal_message="USERS_DATA_PATH must be configured, cannot be empty"
-            )
-
-        # Require an absolute path.
-        if not os.path.isabs(self.USERS_DATA_PATH):
-            raise SystemSettingInvalidException(
-                internal_message=f"USERS_DATA_PATH must be an absolute path, current value: {self.USERS_DATA_PATH}"
-            )
-
-        # Only check writeability when the directory already exists.
-        if os.path.exists(self.USERS_DATA_PATH):
-            if not os.access(self.USERS_DATA_PATH, os.W_OK):
-                raise SystemSettingInvalidException(
-                    internal_message=f"USERS_DATA_PATH directory is not writable: {self.USERS_DATA_PATH}"
-                )
-
-        return self
-
     # S3 event-notification configuration.
     S3_WEBHOOK_AUTH_TOKEN: str = Field(
         default="", description="MinIO webhook authentication token"
-    )
-    SNS_SIGNATURE_VERIFICATION: bool = Field(
-        default=True, description="Verify SNS signatures"
     )
 
     # OSS event-notification configuration.

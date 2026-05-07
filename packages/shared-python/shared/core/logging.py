@@ -3,12 +3,11 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict
+from typing import Any, Dict
 
 from loguru import logger
 
-if TYPE_CHECKING:
-    from logfire.types import ExceptionCallbackHelper
+from logfire.types import ExceptionCallbackHelper
 
 _log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
 _DEFAULT_CONSOLE_FORMAT = (

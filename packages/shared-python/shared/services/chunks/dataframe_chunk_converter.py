@@ -5,13 +5,21 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from typing import Dict, Literal, Protocol, TypeAlias, TypedDict, Union, cast
 
 import pandas as pd
 from loguru import logger
 
-from shared.utils.chunk_refs import ChunkRefSpan, extract_chunk_ref_spans
+from shared.services.chunks.chunk_connections import (
+    ConnectionValue,
+    RelationshipRef,
+    build_resource_target_map,
+    convert_refs_to_embed_connections,
+    merge_connections,
+    normalize_connect_to_targets,
+    parse_relationship_refs,
+)
 
 
 class _ParserRow(Protocol):
@@ -24,28 +32,12 @@ class _ParserDataFrame(Protocol):
     def iterrows(self) -> Iterable[tuple[object, _ParserRow]]: ...
 
 
-class PositionPayload(TypedDict):
-    start: int
-    end: int
-
-
-class ConnectionPayload(TypedDict, total=False):
-    target: str
-    relation: str
-    ref: str
-    position: PositionPayload
-    score: float
-    keywords: list[str]
-
-
 JsonPrimitive: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = Union[
     JsonPrimitive,
     list["JsonValue"],
     dict[str, "JsonValue"],
 ]
-RelationshipRef: TypeAlias = str | ChunkRefSpan
-ConnectionValue: TypeAlias = str | ConnectionPayload
 ChunkType: TypeAlias = Literal["text", "image", "table"]
 
 
@@ -134,15 +126,6 @@ def _safe_parse_tokens(value: object) -> list[str]:
     return []
 
 
-def _safe_parse_relationships(value: object) -> list[str]:
-    if _is_missing(value):
-        return []
-    if not isinstance(value, str) or "\n" not in value:
-        return []
-    lines = [line.strip() for line in value.split("\n") if line.strip()]
-    return [line for line in lines[1:] if line.upper() != "PTXT"]
-
-
 def _normalize_resource_ref(ref: RelationshipRef) -> str:
     if isinstance(ref, dict):
         ref_text = str(ref.get("ref") or "").strip()
@@ -197,87 +180,6 @@ def _parse_connect_to(value: object) -> list[ConnectionValue]:
     ]
 
 
-def _build_resource_target_map(chunks: Sequence[ChunkPayload]) -> dict[str, str]:
-    target_map: dict[str, str] = {}
-    for chunk in chunks:
-        if chunk["type"] not in {"image", "table"}:
-            continue
-        chunk_id = str(chunk["chunk_id"] or chunk["know_id"]).strip()
-        if not chunk_id:
-            continue
-        metadata = chunk["metadata"]
-        file_path = ""
-        file_path = str(metadata.get("file_path") or "").strip()
-        path_alias = chunk["path"].strip()
-        aliases = {file_path, path_alias}
-        for alias in list(aliases):
-            if alias:
-                aliases.add(f"[{alias}]")
-        for alias in aliases:
-            if alias:
-                target_map[alias] = chunk_id
-    return target_map
-
-
-def _refs_to_embed_connections(
-    refs: Sequence[RelationshipRef], target_map: Mapping[str, str]
-) -> list[ConnectionPayload]:
-    connections: list[ConnectionPayload] = []
-    for ref in refs:
-        if isinstance(ref, dict):
-            ref_text = str(ref.get("ref") or "").strip()
-            start = ref.get("start")
-            end = ref.get("end")
-        else:
-            ref_text = str(ref or "").strip()
-            start = None
-            end = None
-        if not ref_text:
-            continue
-        target_id = target_map.get(ref_text)
-        if not target_id and ref_text.startswith("[") and ref_text.endswith("]"):
-            target_id = target_map.get(ref_text[1:-1].strip())
-        if not target_id:
-            continue
-        connection: ConnectionPayload = {
-            "target": target_id,
-            "relation": "embeds",
-            "ref": ref_text,
-        }
-        if isinstance(start, int) and isinstance(end, int):
-            connection["position"] = {
-                "start": start,
-                "end": end,
-            }
-        connections.append(connection)
-    return connections
-
-
-def _merge_connections(
-    *connection_lists: Sequence[ConnectionValue],
-) -> list[ConnectionValue]:
-    merged: list[ConnectionValue] = []
-    seen: set[tuple[str, str, str, str, str]] = set()
-    for connection_list in connection_lists:
-        for item in connection_list or []:
-            if not isinstance(item, dict):
-                continue
-            position = item.get("position")
-            position_data = position if isinstance(position, dict) else {}
-            key = (
-                str(item.get("target") or ""),
-                str(item.get("relation") or "related"),
-                str(item.get("ref") or ""),
-                str(position_data.get("start", "")),
-                str(position_data.get("end", "")),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(item)
-    return merged
-
-
 def _parse_page_numbers(value: object) -> list[int]:
     if _is_missing(value):
         return []
@@ -305,10 +207,7 @@ def _get_chunk_type(value: object) -> ChunkType:
 
 
 def _get_relationship_refs(type_value: object, content: str) -> list[RelationshipRef]:
-    parsed_relationships = _safe_parse_relationships(type_value)
-    if parsed_relationships:
-        return [relationship for relationship in parsed_relationships]
-    return [span for span in extract_chunk_ref_spans(content)]
+    return parse_relationship_refs(type_value, content)
 
 
 def _get_connect_to(metadata: ChunkMetadata) -> list[ConnectionValue]:
@@ -399,18 +298,21 @@ def dataframe_to_chunks(df: _ParserDataFrame | None) -> list[Dict[str, JsonValue
             }
         )
 
-    resource_target_map = _build_resource_target_map(chunks)
+    resource_target_map = build_resource_target_map(chunks)
     for chunk in chunks:
         metadata = chunk["metadata"]
         relationship_refs = metadata.pop("_relationship_refs", [])
         if chunk["type"] != "text":
             continue
-        embed_connections = _refs_to_embed_connections(
+        embed_connections = convert_refs_to_embed_connections(
             relationship_refs, resource_target_map
         )
-        metadata["connect_to"] = _merge_connections(
+        metadata["connect_to"] = merge_connections(
             embed_connections,
-            _get_connect_to(metadata),
+            normalize_connect_to_targets(
+                _get_connect_to(metadata),
+                resource_target_map,
+            ),
         )
 
     logger.debug(f"DataFrame conversion completed: chunk count={len(chunks)}")

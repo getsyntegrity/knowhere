@@ -53,7 +53,9 @@ from shared.models.schemas.job import (
     StandardErrorObject,
 )
 from shared.services.storage.file_upload_service import FileUploadService
-from shared.services.webhook.validator import validate_webhook_url_async
+from shared.utils.url_security import (
+    validate_http_url_and_resolve_ip_async,
+)
 from shared.utils.error_details import normalize_error_details
 from shared.utils.url_file_type import resolve_file_extension_async
 
@@ -320,8 +322,8 @@ async def create_job(  # pyright: ignore[reportGeneralTypeIssues]
         if payload.webhook:
             # Check for URL validity
             if payload.webhook.url:
-                validation_result = await validate_webhook_url_async(
-                    payload.webhook.url
+                validation_result = await validate_http_url_and_resolve_ip_async(
+                    payload.webhook.url,
                 )
                 if not validation_result.is_valid:
                     raise WebhookConfigException(
@@ -360,7 +362,7 @@ async def create_job(  # pyright: ignore[reportGeneralTypeIssues]
 
         job_type = "kb_management"
 
-        # Keep job creation lightweight. The worker reads USERS_DATA_PATH directly.
+        # Keep job creation lightweight.
         from shared.services.redis import RedisServiceFactory
 
         redis_service = RedisServiceFactory.get_service()

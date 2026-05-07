@@ -140,3 +140,4 @@ def test_should_upload_a_url_job_to_the_expected_storage_key_and_publish_progres
     assert job_row["status"] == "waiting-file"
     assert job_row["source_type"] == "url"
     assert job_row["s3_key"] == s3_key
+

@@ -8,16 +8,21 @@ import json
 import os
 import tempfile
 import zipfile
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 from PIL import Image
 
-from shared.utils.chunk_refs import extract_chunk_ref_spans
+from shared.services.chunks.chunk_connections import (
+    build_resource_target_map,
+    convert_refs_to_embed_connections,
+    merge_connections,
+    normalize_connect_to_targets,
+    parse_relationship_refs,
+)
 from shared.utils.text_utils import truncate_content_preview
 
-if TYPE_CHECKING:
-    import pandas as pd
+import pandas as pd
 
 from shared.core.exceptions.domain_exceptions import (
     KnowhereException,
@@ -202,163 +207,11 @@ class ZipResultService:
         table_files_map: Dict[str, Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Convert chunks data to ZIP specification format"""
-
-        def safe_parse_rels(type_val):
-            """Safely parse in-document relationship fields from type metadata."""
-            rels = []
-            if type_val and isinstance(type_val, str):
-                if "\n" in type_val:
-                    lines = [
-                        line.strip() for line in type_val.split("\n") if line.strip()
-                    ]
-                    rels.extend([line for line in lines[1:] if line.upper() != "PTXT"])
-            return rels if rels else []
-
-        def build_resource_target_map() -> Dict[str, str]:
-            """Build ref/path -> chunk_id aliases for image and table chunks."""
-            target_map: Dict[str, str] = {}
-            for chunk in chunks:
-                chunk_id = str(
-                    chunk.get("chunk_id") or chunk.get("know_id") or ""
-                ).strip()
-                if not chunk_id:
-                    continue
-                chunk_type_str = (
-                    str(chunk.get("type", "")).strip().split("\n", 1)[0].lower()
-                )
-                if chunk_type_str not in {"image", "table"}:
-                    continue
-                metadata = chunk.get("metadata", {})
-                file_path = ""
-                if isinstance(metadata, dict):
-                    file_path = str(metadata.get("file_path") or "").strip()
-                if not file_path:
-                    file_info = (
-                        image_files_map.get(chunk_id)
-                        if chunk_type_str == "image"
-                        else table_files_map.get(chunk_id)
-                    )
-                    if file_info:
-                        file_path = str(file_info.get("file_path") or "").strip()
-                path_alias = str(chunk.get("path") or "").strip()
-                aliases = {file_path, path_alias}
-                for alias in list(aliases):
-                    if alias:
-                        aliases.add(f"[{alias}]")
-                for alias in aliases:
-                    if alias:
-                        target_map[alias] = chunk_id
-            return target_map
-
-        def normalize_connect_to(
-            connects, target_map: Dict[str, str]
-        ) -> List[Dict[str, Any]]:
-            """Normalize connect_to to chunk_id-based entries."""
-            if not connects:
-                return []
-
-            raw_items = connects if isinstance(connects, list) else [connects]
-            normalized = []
-            for item in raw_items:
-                if not item:
-                    continue
-
-                if isinstance(item, dict):
-                    target = str(item.get("target") or "").strip()
-                    normalized_target = target_map.get(target, target)
-                    if not normalized_target:
-                        continue
-
-                    normalized_item = {
-                        "target": normalized_target,
-                        "relation": item.get("relation", "related"),
-                    }
-                    if "score" in item:
-                        normalized_item["score"] = item.get("score", 1.0)
-                    if "keywords" in item:
-                        normalized_item["keywords"] = item.get("keywords", [])
-                    if "ref" in item and item.get("ref"):
-                        normalized_item["ref"] = item.get("ref")
-                    if "position" in item and isinstance(item.get("position"), dict):
-                        normalized_item["position"] = item.get("position")
-                    normalized.append(normalized_item)
-                    continue
-
-                item_str = str(item).strip()
-                if not item_str:
-                    continue
-                normalized_target = target_map.get(item_str, item_str)
-                normalized.append(
-                    {
-                        "target": normalized_target,
-                        "relation": "related",
-                        "score": 1.0,
-                        "keywords": [],
-                    }
-                )
-
-            return normalized
-
-        def refs_to_embed_connections(
-            refs: List[Any], target_map: Dict[str, str]
-        ) -> List[Dict[str, Any]]:
-            """Convert resource refs to connect_to embeds entries."""
-            normalized = []
-            for ref in refs:
-                if isinstance(ref, dict):
-                    ref_str = str(ref.get("ref") or "").strip()
-                    start = ref.get("start")
-                    end = ref.get("end")
-                else:
-                    ref_str = str(ref or "").strip()
-                    start = None
-                    end = None
-                if not ref_str:
-                    continue
-                target_id = target_map.get(ref_str)
-                if not target_id and ref_str.startswith("[") and ref_str.endswith("]"):
-                    target_id = target_map.get(ref_str[1:-1].strip())
-                if not target_id:
-                    continue
-                connection: Dict[str, Any] = {
-                    "target": target_id,
-                    "relation": "embeds",
-                    "ref": ref_str,
-                }
-                if isinstance(start, int) and isinstance(end, int):
-                    connection["position"] = {
-                        "start": start,
-                        "end": end,
-                    }
-                normalized.append(connection)
-            return normalized
-
-        def merge_connections(
-            *connection_lists: List[Dict[str, Any]],
-        ) -> List[Dict[str, Any]]:
-            """Merge connect_to entries while keeping stable order."""
-            merged: List[Dict[str, Any]] = []
-            seen = set()
-            for connection_list in connection_lists:
-                for item in connection_list or []:
-                    if not isinstance(item, dict):
-                        continue
-                    position = item.get("position")
-                    position_data = position if isinstance(position, dict) else {}
-                    key = (
-                        str(item.get("target") or ""),
-                        str(item.get("relation") or "related"),
-                        str(item.get("ref") or ""),
-                        str(position_data.get("start", "")),
-                        str(position_data.get("end", "")),
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    merged.append(item)
-            return merged
-
-        resource_target_map = build_resource_target_map()
+        resource_target_map = build_resource_target_map(
+            chunks,
+            image_files_map=image_files_map,
+            table_files_map=table_files_map,
+        )
 
         formatted = []
         for chunk in chunks:
@@ -405,16 +258,14 @@ class ZipResultService:
                 )
 
                 # Convert in-text resource refs into embeds edges.
-                relationship_refs = safe_parse_rels(
-                    chunk.get("type_raw") or chunk_type_str
+                relationship_refs = parse_relationship_refs(
+                    chunk.get("type_raw") or chunk_type_str,
+                    str(content),
                 )
-                if not relationship_refs:
-                    relationship_refs = extract_chunk_ref_spans(content)
-
-                embed_connections = refs_to_embed_connections(
+                embed_connections = convert_refs_to_embed_connections(
                     relationship_refs, resource_target_map
                 )
-                related_connections = normalize_connect_to(
+                related_connections = normalize_connect_to_targets(
                     existing_metadata.get("connect_to")
                     or chunk.get("connect_to")
                     or chunk.get("connectto"),

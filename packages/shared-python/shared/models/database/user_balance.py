@@ -5,17 +5,13 @@ User Balance data model
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
 from shared.utils.utc_now import utc_now_naive
-
-if TYPE_CHECKING:
-    pass
-
 
 class UserBalance(Base):
     """User balance model — tracks credits balance and tier membership"""
