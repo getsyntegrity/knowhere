@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: "Knowhere: Prepare Unstructured Data for AI Agents"
+message: "If you use this software in your research, please cite it using the metadata from this file."
+type: software
+authors:
+  - name: "Ontos AI"
+    website: "https://knowhereto.ai"
+repository-code: "https://github.com/Ontos-AI/knowhere"
+url: "https://knowhereto.ai"
+license: Apache-2.0
+version: "2026.04.30.1"
+date-released: "2026-04-30"
+keywords:
+  - RAG
+  - agentic RAG
+  - document parsing
+  - unstructured data
+  - AI agents
+  - knowledge graph
