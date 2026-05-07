@@ -101,11 +101,12 @@ For teams that prefer a pure retrieval pipeline without agent overhead, Knowhere
 
 ## Supported Formats
 
-| ✅ Supported | ⏳ Coming Soon |
-|---|---|
-| `.pdf` `.docx` `.pptx` `.xlsx` `.csv` | `.epub` `.html` `.xml` |
-| `.jpg` `.png` | `.mp4` `.mp3` |
-| `.md` `.txt` `.json` | `.skills.md` |
+- [x] `.pdf` `.docx` `.pptx` `.xlsx` `.csv`
+- [x] `.jpg` `.png`
+- [x] `.md` `.txt` `.json`
+- [ ] `.epub` `.html` `.xml`
+- [ ] `.mp4` `.mp3`
+- [ ] `.skills.md`
 
 Want to see a new format supported? Adding a parser is a great first contribution. Check out [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
