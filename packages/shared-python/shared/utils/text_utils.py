@@ -199,7 +199,10 @@ def _tokenize_english_segment(text: str) -> list[str]:
 def _tokenize_cjk_segment(text: str) -> list[str]:
     if not text.strip():
         return []
-    return list(_jieba.lcut(text))
+    try:
+        return list(_jieba.lcut(text))
+    except AttributeError:
+        return list(_jieba.cut(text))
 
 
 def _resolve_retrieval_stopwords(
@@ -298,7 +301,10 @@ def tokenize2stw_remove(contents: List[str], stopwords: Optional[List[str]] = No
     for content in contents:
         # Pre-clean: remove IMAGE_/TABLE_ markers and reference labels
         content = _CHUNK_MARKER_RE.sub('', content)
-        raw_tokens = _jieba.lcut(content)
+        try:
+            raw_tokens = _jieba.lcut(content)
+        except AttributeError:
+            raw_tokens = list(_jieba.cut(content))
         # Filter: keep only tokens with meaningful characters (Chinese/English/numbers)
         tokens = [t for t in raw_tokens if _is_meaningful_token(t)]
         # Remove stopwords

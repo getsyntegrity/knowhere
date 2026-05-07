@@ -686,6 +686,29 @@ def _parse(job_id: str, user_id: str | None):
             metadata_service.update_metadata(job_id, processing_timing_updates)
             job_metadata.update(processing_timing_updates)
 
+            # 1.5. Garbage Collection: Remove redundant local media files
+            try:
+                from shared.core.database_sync import get_sync_db_context
+                from shared.services.retrieval.publication_service import RetrievalPublicationService
+                from shared.models.database.job import Job
+                from sqlalchemy import select
+                
+                with get_sync_db_context() as db:
+                    job_record = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+                    if job_record:
+                        gc_namespace = JobMetadataHelper.get_field(job_metadata, "namespace") or "default"
+                        chunks, dedup_stats = RetrievalPublicationService.garbage_collect_and_dedup_local_media(
+                            db,
+                            job_id=job_id,
+                            user_id=str(job_record.user_id),
+                            namespace=gc_namespace,
+                            add_dir=str(add_dir) if add_dir else "",
+                            chunks=chunks,
+                        )
+            except Exception as e:
+                logger.error(f"[{job_id}] GC failed (non-fatal): {e}")
+                dedup_stats = None
+
             # Generate ZIP package
             zip_service = ZipResultService()
             zip_file_path, checksum, statistics, zip_size = (
@@ -734,6 +757,7 @@ def _parse(job_id: str, user_id: str | None):
                 stored_count=stored_count,
                 delivery_mode="url",
                 section_summaries=section_summaries,
+                chunk_dedup_stats=dedup_stats,
             )
 
             logger.info(

@@ -39,16 +39,6 @@ class CompressionStats(NamedTuple):
     rename_map: dict  # {"old_relative_path": "new_relative_path"}, e.g. {"images/foo.png": "images/foo.jpg"}
 
 
-def _has_transparency(img) -> bool:
-    """Check whether a PIL Image has meaningful alpha (transparency) data."""
-    if img.mode != "RGBA":
-        return False
-    # Sample alpha channel — if any pixel has alpha < 250, treat as transparent
-    alpha = img.getchannel("A")
-    extrema = alpha.getextrema()
-    return extrema[0] < 250
-
-
 def compress_output_images(
     output_dir: str,
     *,
@@ -104,38 +94,9 @@ def compress_output_images(
             w, h = img.size
             needs_resize = max(w, h) > max_side
             is_png = ext == ".png"
-            has_alpha = is_png and _has_transparency(img)
 
-            if is_png and not has_alpha:
-                # Opaque PNG → convert to JPEG
-                if needs_resize:
-                    ratio = max_side / max(w, h)
-                    new_w, new_h = int(w * ratio), int(h * ratio)
-                    img = img.resize((new_w, new_h), Image.LANCZOS)
-                    resized_count += 1
-
-                # Convert RGBA → RGB for JPEG
-                if img.mode in ("RGBA", "P", "LA"):
-                    img = img.convert("RGB")
-
-                jpg_path = os.path.splitext(file_path)[0] + ".jpg"
-                img.save(jpg_path, "JPEG", quality=jpeg_quality, optimize=True)
-                img.close()
-
-                # Remove original PNG
-                if jpg_path != file_path:
-                    os.remove(file_path)
-                    # Record rename for downstream reference updates
-                    old_rel = f"images/{filename}"
-                    new_rel = f"images/{os.path.basename(jpg_path)}"
-                    rename_map[old_rel] = new_rel
-
-                converted += 1
-                processed += 1
-                total_after += os.path.getsize(jpg_path)
-
-            elif is_png and has_alpha:
-                # Transparent PNG → keep as PNG but resize if needed
+            if is_png:
+                # Keep as PNG, only resize if needed
                 if needs_resize:
                     ratio = max_side / max(w, h)
                     new_w, new_h = int(w * ratio), int(h * ratio)
@@ -188,7 +149,7 @@ def compress_output_images(
         ratio = total_before / total_after if total_after > 0 else 0
         logger.info(
             f"[image_compressor] Compressed {processed} images "
-            f"({converted} PNG→JPG, {resized_count} resized), "
+            f"({resized_count} resized), "
             f"skipped {skipped}. "
             f"Size: {total_before / 1024 / 1024:.1f}MB → {total_after / 1024 / 1024:.1f}MB "
             f"({ratio:.1f}x reduction)"

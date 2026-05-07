@@ -1197,7 +1197,7 @@ def hiearchy_llm(
     model_name=None,
     max_depth=6,
     toc_context=None,
-    max_len=2048,
+    max_len=8192,
     task="eval-headings",
 ):
     """Apply LLM to analyze the hierarchy of headings
