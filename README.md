@@ -267,4 +267,10 @@ Other useful references:
 
 ## We're Hiring
 
-We're building the knowledge layer for the Agent era. If that sounds like work you want to do, reach out at [team@knowhereto.ai](mailto:team@knowhereto.ai).
+We're building the knowledge layer for the Agent era. If that sounds like work you want to do, reach out — decode the address below and drop us a line:
+
+```
+dGVhbUBrbm93aGVyZXRvLmFp
+```
+
+`echo 'dGVhbUBrbm93aGVyZXRvLmFp' | base64 --decode`
