@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from loguru import logger
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from shared.models.database.document import Document, DocumentChunk, DocumentSection
@@ -201,7 +201,7 @@ class RetrievalPublicationService:
         job_id: str,
         job_result_id: str,
         chunks: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, str]]:
+    ) -> Optional[Dict[str, Any]]:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if not job:
             logger.warning(f"Job not found for document publication: {job_id}")
@@ -221,7 +221,7 @@ class RetrievalPublicationService:
         job: Job,
         job_result_id: str,
         chunks: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, str]]:
+    ) -> Optional[Dict[str, Any]]:
 
         job_metadata = job.job_metadata or {}
         namespace = job_metadata.get("namespace") or "default"

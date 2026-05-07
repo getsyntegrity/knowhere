@@ -688,10 +688,7 @@ def _parse(job_id: str, user_id: str | None):
 
             # 1.5. Garbage Collection: Remove redundant local media files
             try:
-                from shared.core.database_sync import get_sync_db_context
                 from shared.services.retrieval.publication_service import RetrievalPublicationService
-                from shared.models.database.job import Job
-                from sqlalchemy import select
                 
                 with get_sync_db_context() as db:
                     job_record = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()

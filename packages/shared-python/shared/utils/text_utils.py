@@ -20,6 +20,7 @@ except (ImportError, OSError):  # blingfire ships a native lib; fall back to syn
 
 class _JiebaModule(Protocol):
     def lcut(self, sentence: str) -> list[str]: ...
+    def cut(self, sentence: str) -> list[str]: ...
 
 
 warnings.filterwarnings(
