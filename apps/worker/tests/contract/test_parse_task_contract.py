@@ -223,7 +223,15 @@ def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
                 "summary": "",
                 "know_id": "kid-1",
                 "tokens": "",
-                "connectto": "",
+                "connectto": json.dumps(
+                    [
+                        {
+                            "target": "table-1",
+                            "relation": "embeds",
+                            "ref": "[tables/table-1.html]",
+                        }
+                    ]
+                ),
                 "addtime": "now",
                 "page_nums": "1",
             },
