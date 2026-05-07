@@ -199,11 +199,21 @@ make check
 - External dependency guide:
   [docs/external-services.md](docs/external-services.md)
 
-## Project Governance
+## Communication
 
-- Licensed under Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-- Contribution workflow and branch expectations live in
-  [CONTRIBUTING.md](CONTRIBUTING.md).
-- Security reporting guidance lives in [SECURITY.md](SECURITY.md).
-- Community behavior expectations live in
-  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- [GitHub Discussions](https://github.com/Ontos-AI/knowhere/discussions) for questions, ideas, and general conversation.
+- [GitHub Issues](https://github.com/Ontos-AI/knowhere/issues) for bug reports and feature requests.
+
+## Contribution
+
+Any contributions to Knowhere are more than welcome!
+
+If you are new to the project, check out the [good first issues](https://github.com/Ontos-AI/knowhere/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22). They are well-defined, relatively simple, and a great way to get familiar with the codebase and the contribution workflow.
+
+For general guidelines on branching, commit conventions, and the review process, take a look at [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Other useful references:
+
+- [SECURITY.md](SECURITY.md) — how to report vulnerabilities responsibly.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community behavior expectations.
+- [LICENSE](LICENSE) and [NOTICE](NOTICE) — Apache 2.0.
