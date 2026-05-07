@@ -267,8 +267,6 @@ Other useful references:
 
 We're building the knowledge layer for the Agent era. If that sounds like work you want to do, reach out — decode the address below and drop us a line:
 
-```
-dGVhbUBrbm93aGVyZXRvLmFp
-```
-
+```bash
 `echo 'dGVhbUBrbm93aGVyZXRvLmFp' | base64 --decode`
+```
