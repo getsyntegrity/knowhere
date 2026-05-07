@@ -48,8 +48,13 @@ Knowhere is the open-source infrastructure for unstructured data processing. It 
 
 Knowhere turns raw documents into a structured memory store that AI agents can navigate and cite. The process follows a three-stage pipeline:
 
-```text
-Parsing -> Graph Construction -> Agentic Retrieval
+```mermaid
+flowchart LR
+    A[📄 Document Parsing] --> B[🕸️ Graph Construction]
+    B --> C[🤖 Agentic Retrieval]
+    B --> D[🔍 Vector-based RAG]
+    C --> E[✅ Cited Results]
+    D --> E
 ```
 
 ### 1. Document Parsing
