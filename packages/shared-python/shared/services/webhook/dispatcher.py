@@ -32,9 +32,9 @@ from shared.models.database.webhook_log import WebhookLog
 from shared.utils.pinned_outbound_http import (
     send_pinned_outbound_request,
 )
-from shared.utils.outbound_url_validator import (
-    OutboundURLValidationResult,
-    validate_outbound_url_async,
+from shared.utils.url_security import (
+    HTTPURLValidationResult,
+    validate_http_url_and_resolve_ip_async,
 )
 
 # Constants
@@ -166,8 +166,8 @@ class WebhookDispatcher:
         attempt_id = str(uuid.uuid4())
 
         # SSRF Protection
-        validation: OutboundURLValidationResult = await validate_outbound_url_async(
-            event.target_url
+        validation: HTTPURLValidationResult = await validate_http_url_and_resolve_ip_async(
+            event.target_url,
         )
         if not validation.is_valid:
             logger.warning(

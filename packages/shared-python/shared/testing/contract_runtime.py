@@ -302,7 +302,7 @@ def configure_contract_environment(
     _reset_contract_storage_state(database_url)
 
     environment: dict[str, str] = {
-        "ENVIRONMENT": "development",
+        "ENVIRONMENT": "production",
         "API_STANDALONE_MODE_ENABLED": "true",
         "WEBHOOK_MASTER_KEY": CONTRACT_WEBHOOK_MASTER_KEY,
         "DATABASE_URL": database_url,

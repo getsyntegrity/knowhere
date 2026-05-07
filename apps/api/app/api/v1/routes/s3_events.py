@@ -21,7 +21,9 @@ from shared.models.schemas.s3_event import S3Event
 from shared.utils.pinned_outbound_http import (
     send_pinned_outbound_request,
 )
-from shared.utils.outbound_url_validator import validate_outbound_url_async
+from shared.utils.url_security import (
+    validate_http_url_and_resolve_ip_async,
+)
 
 router = APIRouter(tags=["Internal"])
 
@@ -266,7 +268,9 @@ async def handle_sns_event(body: bytes):
 
 async def confirm_sns_subscription(subscribe_url: str) -> dict[str, str]:
     """Confirm an SNS subscription after SSRF validation and IP pinning."""
-    validation = await validate_outbound_url_async(subscribe_url)
+    validation = await validate_http_url_and_resolve_ip_async(
+        subscribe_url,
+    )
     if not validation.is_valid:
         logger.warning(
             f"SNS subscription confirmation URL failed validation: {validation.error_message}"

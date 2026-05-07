@@ -6,17 +6,16 @@ Provides both async (for API) and sync (for worker) variants.
 """
 
 import os
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from loguru import logger
 
 from shared.core.config import settings
 from shared.core.exceptions.domain_exceptions import ValidationException
 from shared.utils.url_security import (
-    MAX_SAFE_REDIRECTS,
+    HTTPURLValidationResult,
     SafePublicHTTPURL,
-    get_safe_public_http_url,
-    validate_public_http_redirect_url,
+    validate_http_url_and_resolve_ip,
 )
 
 # Content-Type to file extension mapping
@@ -40,6 +39,45 @@ CONTENT_TYPE_TO_EXTENSION: dict[str, str] = {
 }
 
 REDIRECT_STATUS_CODES: set[int] = {301, 302, 303, 307, 308}
+MAX_SAFE_REDIRECTS: int = 5
+URL_VALIDATION_DESCRIPTIONS: dict[str, str] = {
+    "unsupported_scheme": "URL must use http or https",
+    "missing_hostname": "URL must include a hostname",
+    "hostname_resolution_failed": "URL hostname could not be resolved",
+    "invalid_resolved_address": "URL resolved to an invalid IP",
+    "hostname_not_allowed": "URL host is not allowed",
+}
+
+
+def _validate_source_url(url: str, field: str) -> SafePublicHTTPURL:
+    validation = validate_http_url_and_resolve_ip(url)
+    if not validation.is_valid:
+        _raise_url_validation_error(field, validation)
+    return SafePublicHTTPURL(url)
+
+
+def _validate_redirect_url(
+    url: str,
+    redirect_url: str,
+    field: str,
+) -> SafePublicHTTPURL:
+    return _validate_source_url(urljoin(url, redirect_url), field=field)
+
+
+def _raise_url_validation_error(
+    field: str,
+    validation: HTTPURLValidationResult,
+) -> None:
+    description = URL_VALIDATION_DESCRIPTIONS.get(
+        str(validation.failure_reason),
+        "URL is invalid",
+    )
+
+    raise ValidationException(
+        user_message="Invalid URL",
+        violations=[{"field": field, "description": description}],
+        internal_message=validation.error_message,
+    )
 
 
 def _extension_from_path(url: str) -> str | None:
@@ -71,7 +109,7 @@ async def resolve_file_extension_async(url: str) -> str | None:
     2. If that fails, send a HEAD request and read Content-Type.
     3. Return None if neither method produces a supported extension.
     """
-    safe_url = get_safe_public_http_url(url, field="source_url")
+    safe_url = _validate_source_url(url, field="source_url")
 
     ext = _extension_from_path(safe_url)
     if ext:
@@ -91,7 +129,7 @@ async def resolve_file_extension_async(url: str) -> str | None:
             location = response.headers.get("location")
             if not location:
                 break
-            request_url = validate_public_http_redirect_url(
+            request_url = _validate_redirect_url(
                 request_url,
                 location,
                 field="source_url",
@@ -122,7 +160,7 @@ def resolve_file_extension_sync(url: str) -> str | None:
 
     Same logic as async variant but uses the shared sync httpx client.
     """
-    safe_url = get_safe_public_http_url(url, field="source_url")
+    safe_url = _validate_source_url(url, field="source_url")
 
     ext = _extension_from_path(safe_url)
     if ext:
@@ -142,7 +180,7 @@ def resolve_file_extension_sync(url: str) -> str | None:
             location = response.headers.get("location")
             if not location:
                 break
-            request_url = validate_public_http_redirect_url(
+            request_url = _validate_redirect_url(
                 request_url,
                 location,
                 field="source_url",

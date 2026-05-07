@@ -29,10 +29,10 @@ from shared.utils.utc_now import utc_now_naive
 
 
 if TYPE_CHECKING:
+    from shared.models.database.job_result import JobResult
+    from shared.models.database.job_state_audit_log import JobStateAuditLog
     from shared.models.database.job_state_history import JobStateHistory
     from shared.models.database.webhook_log import WebhookLog
-    from shared.models.database.job_state_audit_log import JobStateAuditLog
-    from shared.models.database.job_result import JobResult
 
 
 class Job(Base):

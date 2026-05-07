@@ -14,7 +14,7 @@ from shared.core.config import settings
 from shared.core.config.storage import get_cached_storage_adapter
 from shared.core.exceptions.domain_exceptions import StorageServiceException
 from shared.utils.pinned_outbound_http import download_pinned_outbound_file
-from shared.utils.url_security import validate_public_http_url_and_resolve_ip
+from shared.utils.url_security import validate_http_url_and_resolve_ip
 
 
 def get_storage_adapter():
@@ -111,10 +111,13 @@ def download_file_from_url(file_url: str) -> str:
     """Download a URL file through SSRF validation and IP pinning."""
     temp_file_path = ""
     try:
-        validation = validate_public_http_url_and_resolve_ip(
-            file_url,
-            field="source_url",
-        )
+        validation = validate_http_url_and_resolve_ip(file_url)
+        if not validation.is_valid or not validation.validated_ip:
+            raise StorageServiceException(
+                internal_message=f"Invalid URL: {validation.error_message}",
+                operation="download_from_url",
+            )
+
         temp_dir = getattr(settings, "TMP_PATH", "/tmp")
         os.makedirs(temp_dir, exist_ok=True)
         download_result = download_pinned_outbound_file(
@@ -126,6 +129,8 @@ def download_file_from_url(file_url: str) -> str:
         )
         temp_file_path = download_result.temp_file_path
         return temp_file_path
+    except StorageServiceException:
+        raise
     except Exception as e:
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)

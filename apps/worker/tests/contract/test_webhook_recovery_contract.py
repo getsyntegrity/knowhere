@@ -119,8 +119,8 @@ def test_should_republish_only_orphaned_pending_webhook_events_and_persist_qstas
     )
     monkeypatch.setattr(
         qstash_publisher,
-        "validate_outbound_url",
-        lambda url: SimpleNamespace(
+        "validate_http_url_and_resolve_ip",
+        lambda *args, **kwargs: SimpleNamespace(
             is_valid=True,
             error_message=None,
             validated_ip="93.184.216.34",

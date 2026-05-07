@@ -2,38 +2,25 @@ import asyncio
 import ipaddress
 import socket
 from dataclasses import dataclass
-from typing import cast
-from urllib.parse import urljoin, urlparse
+from typing import Literal, TypeAlias, cast
+from urllib.parse import urlparse
 
-from shared.core.exceptions.domain_exceptions import ValidationException
-
-AddressInfo = tuple[int, int, int, str, tuple[str, ...]]
-AllowedIPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
-MAX_SAFE_REDIRECTS = 5
-
-
-class URLSecurityError(ValueError):
-    """Base error for URL safety validation failures."""
-
-
-class HostnameResolutionError(URLSecurityError):
-    """Raised when a hostname cannot be resolved."""
-
-
-class HostnameNotAllowedError(URLSecurityError):
-    """Raised when a hostname resolves to a blocked network address."""
-
-
-class InvalidResolvedAddressError(URLSecurityError):
-    """Raised when DNS returns an invalid IP address."""
-
-
-class UnsupportedURLSchemeError(URLSecurityError):
-    """Raised when a URL uses a disallowed scheme."""
-
-
-class MissingURLHostnameError(URLSecurityError):
-    """Raised when a URL does not include a hostname."""
+SocketAddress: TypeAlias = tuple[object, ...]
+AddressInfo: TypeAlias = tuple[int, int, int, str, SocketAddress]
+AllowedIPAddress: TypeAlias = ipaddress.IPv4Address | ipaddress.IPv6Address
+URLValidationFailureReason: TypeAlias = Literal[
+    "unsupported_scheme",
+    "missing_hostname",
+    "hostname_resolution_failed",
+    "invalid_resolved_address",
+    "hostname_not_allowed",
+    "validation_failed",
+]
+HTTP_SCHEMES: frozenset[str] = frozenset({"http", "https"})
+DEVELOPMENT_ENVIRONMENTS: frozenset[str] = frozenset({"dev", "development", "local"})
+BLOCKED_HOSTNAMES: frozenset[str] = frozenset(
+    {"localhost", "ip6-localhost", "ip6-loopback"}
+)
 
 
 class SafePublicHTTPURL(str):
@@ -41,186 +28,107 @@ class SafePublicHTTPURL(str):
 
 
 @dataclass(frozen=True)
-class PublicHTTPURLValidationResult:
-    """Validated public HTTP URL and its pinned public IP address."""
+class HTTPURLValidationResult:
+    """Validated HTTP URL and its pinned IP address."""
 
-    url: SafePublicHTTPURL
-    validated_ip: str
-
-
-def validate_public_http_url(url: str, field: str = "url") -> None:
-    """Reject URL inputs that could target internal networks or local services."""
-    try:
-        _validate_public_http_url(url)
-    except UnsupportedURLSchemeError as exc:
-        raise _build_url_validation_error(field, "URL must use http or https") from exc
-    except MissingURLHostnameError as exc:
-        raise _build_url_validation_error(field, "URL must include a hostname") from exc
-    except HostnameResolutionError as exc:
-        raise _build_url_validation_error(field, "URL hostname could not be resolved") from exc
-    except InvalidResolvedAddressError as exc:
-        raise _build_url_validation_error(field, "URL resolved to an invalid IP") from exc
-    except HostnameNotAllowedError as exc:
-        raise _build_url_validation_error(field, "URL host is not allowed") from exc
+    is_valid: bool
+    url: str
+    hostname: str | None = None
+    validated_ip: str | None = None
+    error_message: str | None = None
+    failure_reason: URLValidationFailureReason | None = None
 
 
-def validate_public_http_redirect_url(
+def validate_http_url_and_resolve_ip(
     url: str,
-    redirect_url: str,
-    field: str = "url",
-) -> SafePublicHTTPURL:
-    """Resolve and validate an HTTP redirect target before following it."""
-    resolved_url = urljoin(url, redirect_url)
-    validate_public_http_url(resolved_url, field=field)
-    return SafePublicHTTPURL(resolved_url)
-
-
-def get_safe_public_http_url(url: str, field: str = "url") -> SafePublicHTTPURL:
-    """Return a validated public HTTP URL for outbound HTTP clients."""
-    validate_public_http_url(url, field=field)
-    return SafePublicHTTPURL(url)
-
-
-def validate_public_http_url_and_resolve_ip(
-    url: str,
-    field: str = "url",
-) -> PublicHTTPURLValidationResult:
-    """Validate a public HTTP URL and return the IP selected during validation."""
+) -> HTTPURLValidationResult:
+    """Validate an HTTP URL policy and return the pinned resolved IP address."""
     try:
-        validated_ip = _validate_public_http_url(url)
-        return PublicHTTPURLValidationResult(
-            url=SafePublicHTTPURL(url),
-            validated_ip=validated_ip,
-        )
-    except UnsupportedURLSchemeError as exc:
-        raise _build_url_validation_error(field, "URL must use http or https") from exc
-    except MissingURLHostnameError as exc:
-        raise _build_url_validation_error(field, "URL must include a hostname") from exc
-    except HostnameResolutionError as exc:
-        raise _build_url_validation_error(field, "URL hostname could not be resolved") from exc
-    except InvalidResolvedAddressError as exc:
-        raise _build_url_validation_error(field, "URL resolved to an invalid IP") from exc
-    except HostnameNotAllowedError as exc:
-        raise _build_url_validation_error(field, "URL host is not allowed") from exc
+        can_use_private_hosts = _can_use_private_hosts()
+        hostname_result = _validate_url_hostname(url)
+        if not hostname_result.is_valid:
+            return hostname_result
 
-
-async def validate_public_http_url_and_resolve_ip_async(
-    url: str,
-    field: str = "url",
-) -> PublicHTTPURLValidationResult:
-    """Validate a public HTTP URL asynchronously and return the selected IP."""
-    try:
-        parsed_url = urlparse(url)
-        if parsed_url.scheme not in {"http", "https"}:
-            raise UnsupportedURLSchemeError(
-                f"Unsupported URL scheme: {parsed_url.scheme}"
+        hostname = cast(str, hostname_result.hostname)
+        if not can_use_private_hosts and _is_blocked_hostname(hostname):
+            return _build_url_validation_failure(
+                url,
+                f"Hostname {hostname} failed validation",
+                "hostname_not_allowed",
             )
 
-        hostname = parsed_url.hostname
-        if not hostname:
-            raise MissingURLHostnameError("URL must include a hostname")
-
-        validated_ip = await resolve_public_hostname_async(hostname)
-        return PublicHTTPURLValidationResult(
-            url=SafePublicHTTPURL(url),
-            validated_ip=validated_ip,
-        )
-    except UnsupportedURLSchemeError as exc:
-        raise _build_url_validation_error(field, "URL must use http or https") from exc
-    except MissingURLHostnameError as exc:
-        raise _build_url_validation_error(field, "URL must include a hostname") from exc
-    except HostnameResolutionError as exc:
-        raise _build_url_validation_error(field, "URL hostname could not be resolved") from exc
-    except InvalidResolvedAddressError as exc:
-        raise _build_url_validation_error(field, "URL resolved to an invalid IP") from exc
-    except HostnameNotAllowedError as exc:
-        raise _build_url_validation_error(field, "URL host is not allowed") from exc
-
-
-def get_safe_redirect_url(url: str, redirect_url: str) -> str:
-    """Resolve and validate an HTTP redirect target for internal network callers."""
-    resolved_url = urljoin(url, redirect_url)
-    _validate_public_http_url(resolved_url)
-    return resolved_url
-
-
-def resolve_public_hostname(hostname: str) -> str:
-    """Resolve a hostname to a public IP address and return the pinned IP."""
-    _ensure_hostname_is_allowed(hostname)
-    try:
-        address_infos = cast(list[AddressInfo], socket.getaddrinfo(hostname, None))
-    except socket.gaierror as exc:
-        raise HostnameResolutionError(
-            f"Unable to resolve hostname {hostname}: {exc}"
-        ) from exc
-
-    return _select_public_ip_address(hostname, address_infos)
-
-
-def _validate_public_http_url(url: str) -> str:
-    parsed_url = urlparse(url)
-    if parsed_url.scheme not in {"http", "https"}:
-        raise UnsupportedURLSchemeError(f"Unsupported URL scheme: {parsed_url.scheme}")
-
-    hostname = parsed_url.hostname
-    if not hostname:
-        raise MissingURLHostnameError("URL must include a hostname")
-
-    return resolve_public_hostname(hostname)
-
-
-async def resolve_public_hostname_async(hostname: str) -> str:
-    """Resolve a hostname to a public IP address asynchronously."""
-    _ensure_hostname_is_allowed(hostname)
-    try:
-        loop = asyncio.get_running_loop()
-        address_infos = cast(
-            list[AddressInfo],
-            await loop.getaddrinfo(hostname, None),
-        )
-    except socket.gaierror as exc:
-        raise HostnameResolutionError(
-            f"Unable to resolve hostname {hostname}: {exc}"
-        ) from exc
-
-    return _select_public_ip_address(hostname, address_infos)
-
-
-def is_public_ip_address(address: str) -> bool:
-    """Return whether an IP string is safe to use as a public network target."""
-    try:
-        ip_address = ipaddress.ip_address(address)
-    except ValueError:
-        return False
-    return _is_public_ip_address(ip_address)
-
-
-def _ensure_hostname_is_allowed(hostname: str) -> None:
-    if _is_blocked_hostname(hostname):
-        raise HostnameNotAllowedError(f"Hostname {hostname} failed validation")
-
-
-def _select_public_ip_address(hostname: str, address_infos: list[AddressInfo]) -> str:
-    resolved_addresses = _extract_resolved_addresses(address_infos)
-    if not resolved_addresses:
-        raise HostnameResolutionError(f"Unable to resolve hostname {hostname}")
-
-    selected_address: str | None = None
-    for address in resolved_addresses:
         try:
-            ip_address = ipaddress.ip_address(address)
-        except ValueError as exc:
-            raise InvalidResolvedAddressError(
-                f"Hostname {hostname} resolved to invalid IP {address}"
-            ) from exc
-        if not _is_public_ip_address(ip_address):
-            raise HostnameNotAllowedError(f"Hostname {hostname} failed validation")
-        if selected_address is None:
-            selected_address = address
+            address_infos = cast(list[AddressInfo], socket.getaddrinfo(hostname, None))
+        except socket.gaierror as exc:
+            return _build_url_validation_failure(
+                url,
+                f"Unable to resolve hostname {hostname}: {exc}",
+                "hostname_resolution_failed",
+            )
 
-    if selected_address:
-        return selected_address
-    raise HostnameNotAllowedError(f"Hostname {hostname} failed validation")
+        return _validate_resolved_addresses(
+            url,
+            hostname,
+            address_infos,
+            can_use_private_hosts=can_use_private_hosts,
+        )
+    except Exception as exc:
+        return _build_url_validation_failure(
+            url,
+            f"URL validation failed: {exc}",
+            "validation_failed",
+        )
+
+
+async def validate_http_url_and_resolve_ip_async(
+    url: str,
+) -> HTTPURLValidationResult:
+    """Validate an HTTP URL policy asynchronously and return the pinned IP address."""
+    try:
+        can_use_private_hosts = _can_use_private_hosts()
+        hostname_result = _validate_url_hostname(url)
+        if not hostname_result.is_valid:
+            return hostname_result
+
+        hostname = cast(str, hostname_result.hostname)
+        if not can_use_private_hosts and _is_blocked_hostname(hostname):
+            return _build_url_validation_failure(
+                url,
+                f"Hostname {hostname} failed validation",
+                "hostname_not_allowed",
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            address_infos = cast(
+                list[AddressInfo],
+                await loop.getaddrinfo(hostname, None),
+            )
+        except socket.gaierror as exc:
+            return _build_url_validation_failure(
+                url,
+                f"Unable to resolve hostname {hostname}: {exc}",
+                "hostname_resolution_failed",
+            )
+
+        return _validate_resolved_addresses(
+            url,
+            hostname,
+            address_infos,
+            can_use_private_hosts=can_use_private_hosts,
+        )
+    except Exception as exc:
+        return _build_url_validation_failure(
+            url,
+            f"URL validation failed: {exc}",
+            "validation_failed",
+        )
+
+
+def _can_use_private_hosts() -> bool:
+    from shared.core.config import app_config
+
+    return app_config.ENVIRONMENT.lower() in DEVELOPMENT_ENVIRONMENTS
 
 
 def _extract_resolved_addresses(address_infos: list[AddressInfo]) -> list[str]:
@@ -232,6 +140,8 @@ def _extract_resolved_addresses(address_infos: list[AddressInfo]) -> list[str]:
         if not socket_address:
             continue
         address = socket_address[0]
+        if not isinstance(address, str):
+            continue
         if address and address not in seen_addresses:
             resolved_addresses.append(address)
             seen_addresses.add(address)
@@ -240,11 +150,9 @@ def _extract_resolved_addresses(address_infos: list[AddressInfo]) -> list[str]:
 
 def _is_blocked_hostname(hostname: str) -> bool:
     normalized_hostname = hostname.rstrip(".").lower()
-    if normalized_hostname in {"localhost", "ip6-localhost", "ip6-loopback"}:
-        return True
-    if normalized_hostname.endswith(".localhost") or normalized_hostname.endswith(".local"):
-        return True
-    return False
+    return normalized_hostname in BLOCKED_HOSTNAMES or normalized_hostname.endswith(
+        (".localhost", ".local")
+    )
 
 
 def _is_public_ip_address(ip_address: AllowedIPAddress) -> bool:
@@ -262,8 +170,74 @@ def _is_blocked_ip_address(ip_address: AllowedIPAddress) -> bool:
     )
 
 
-def _build_url_validation_error(field: str, description: str) -> ValidationException:
-    return ValidationException(
-        user_message="Invalid URL",
-        violations=[{"field": field, "description": description}],
+def _validate_url_hostname(url: str) -> HTTPURLValidationResult:
+    parsed_url = urlparse(url)
+    if parsed_url.scheme not in HTTP_SCHEMES:
+        return _build_url_validation_failure(
+            url,
+            f"Unsupported URL scheme: {parsed_url.scheme}",
+            "unsupported_scheme",
+        )
+
+    hostname = parsed_url.hostname
+    if not hostname:
+        return _build_url_validation_failure(
+            url,
+            "URL must include a hostname",
+            "missing_hostname",
+        )
+
+    return HTTPURLValidationResult(is_valid=True, url=url, hostname=hostname)
+
+
+def _validate_resolved_addresses(
+    url: str,
+    hostname: str,
+    address_infos: list[AddressInfo],
+    *,
+    can_use_private_hosts: bool,
+) -> HTTPURLValidationResult:
+    resolved_addresses = _extract_resolved_addresses(address_infos)
+    if not resolved_addresses:
+        return _build_url_validation_failure(
+            url,
+            f"Unable to resolve hostname {hostname}",
+            "hostname_resolution_failed",
+        )
+
+    for address in resolved_addresses:
+        try:
+            ip_address = ipaddress.ip_address(address)
+        except ValueError:
+            return _build_url_validation_failure(
+                url,
+                f"Hostname {hostname} resolved to invalid IP {address}",
+                "invalid_resolved_address",
+            )
+
+        if not can_use_private_hosts and not _is_public_ip_address(ip_address):
+            return _build_url_validation_failure(
+                url,
+                f"Hostname {hostname} failed validation",
+                "hostname_not_allowed",
+            )
+
+    return HTTPURLValidationResult(
+        is_valid=True,
+        url=url,
+        hostname=hostname,
+        validated_ip=resolved_addresses[0],
+    )
+
+
+def _build_url_validation_failure(
+    url: str,
+    error_message: str,
+    failure_reason: URLValidationFailureReason,
+) -> HTTPURLValidationResult:
+    return HTTPURLValidationResult(
+        is_valid=False,
+        url=url,
+        error_message=error_message,
+        failure_reason=failure_reason,
     )

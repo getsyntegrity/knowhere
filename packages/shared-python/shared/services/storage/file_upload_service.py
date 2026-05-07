@@ -15,9 +15,7 @@ from shared.core.exceptions.domain_exceptions import (
 from shared.utils.pinned_outbound_http import (
     download_pinned_outbound_file_async,
 )
-from shared.utils.url_security import (
-    validate_public_http_url_and_resolve_ip_async,
-)
+from shared.utils.url_security import validate_http_url_and_resolve_ip_async
 
 
 class FileUploadService:
@@ -432,10 +430,13 @@ class FileUploadService:
         """Download a file from a URL into a temporary directory."""
         temp_file_path = ""
         try:
-            validation = await validate_public_http_url_and_resolve_ip_async(
-                file_url,
-                field="source_url",
-            )
+            validation = await validate_http_url_and_resolve_ip_async(file_url)
+            if not validation.is_valid or not validation.validated_ip:
+                raise StorageServiceException(
+                    internal_message=f"Invalid URL: {validation.error_message}",
+                    operation="download_from_url",
+                )
+
             temp_dir = getattr(settings, "TMP_PATH", "/tmp")
             os.makedirs(temp_dir, exist_ok=True)
             download_result = await download_pinned_outbound_file_async(
