@@ -232,9 +232,6 @@ make check
 
 If you use Knowhere in your research, please cite it as:
 
-<details>
-<summary>BibTeX</summary>
-
 ```bibtex
 @software{knowhere2026,
   author       = {Ontos AI},
@@ -246,8 +243,6 @@ If you use Knowhere in your research, please cite it as:
   license      = {Apache-2.0}
 }
 ```
-
-</details>
 
 ## Communication
 
