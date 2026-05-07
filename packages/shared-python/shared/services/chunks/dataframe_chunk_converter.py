@@ -59,7 +59,6 @@ class ChunkPayload(TypedDict):
     content: str
     path: str
     metadata: ChunkMetadata
-    text: str
     order: int
     know_id: str
     keywords: list[str]
@@ -289,7 +288,6 @@ def dataframe_to_chunks(df: _ParserDataFrame | None) -> list[Dict[str, JsonValue
                 "content": content,
                 "path": path,
                 "metadata": metadata,
-                "text": content,
                 "order": index,
                 "know_id": str(know_id),
                 "keywords": metadata["keywords"],
