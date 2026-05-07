@@ -43,6 +43,9 @@ Knowhere is the open-source infrastructure for unstructured data processing. It 
 
 ## How it Works
 
+> [!TIP]
+> **TL;DR**: Knowhere parses documents into structured units, maps them in a graph, and lets agents navigate that context to find and cite reliable evidence.
+
 Knowhere turns raw documents into a structured memory store that AI agents can navigate and cite. The process follows a three-stage pipeline:
 
 ```text
@@ -66,9 +69,6 @@ Retrieval combines traditional search with autonomous navigation:
 - **Hybrid Discovery**: Fuses keyword and semantic search (RRF) for broad coverage.
 - **Agent Navigation**: An agent "walks" the graph, reviewing previews to drill down into specific sections.
 - **Cited Evidence**: Results are returned as traceable evidence, including the source document, section, and any linked assets.
-
-> [!TIP]
-> **TL;DR**: Knowhere parses documents into structured units, maps them in a graph, and lets agents navigate that context to find and cite reliable evidence.
 
 ## Features
 
