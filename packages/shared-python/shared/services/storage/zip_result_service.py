@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 import zipfile
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 from PIL import Image
@@ -16,8 +16,7 @@ from PIL import Image
 from shared.utils.chunk_refs import extract_chunk_ref_spans
 from shared.utils.text_utils import truncate_content_preview
 
-if TYPE_CHECKING:
-    import pandas as pd
+import pandas as pd
 
 from shared.core.exceptions.domain_exceptions import (
     KnowhereException,

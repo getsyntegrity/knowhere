@@ -2,27 +2,33 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import os
-import secrets
 import sys
+from typing import TypedDict
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.core.billing import MicroDollar
-from shared.core.config import settings
 from shared.core.database import engine, get_db_context
 from shared.models.database.api_key import APIKey
 from shared.models.database.user import User
 from shared.models.database.user_balance import UserBalance
+from shared.services.billing.credits_service import CreditsService
 from shared.services.auth.user_table_bootstrap import ensure_better_auth_user_table
+from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
 _DEFAULT_API_KEY_NAME: str = "standalone-api-key"
-_DEFAULT_USER_TIER: str = "free"
+_DEFAULT_USER_TIER: str = "tier_5"
+
+
+class InitializedStandaloneUser(TypedDict):
+    user_id: str
+    email: str
+    api_key_name: str
+    api_key: str
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -32,6 +38,11 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--email", required=True, help="User email address.")
+    parser.add_argument(
+        "--user-id",
+        default="",
+        help="Optional user ID for deterministic local or test bootstrap.",
+    )
     parser.add_argument("--name", default="", help="Display name for new users.")
     parser.add_argument(
         "--key-name",
@@ -41,7 +52,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tier",
         default=_DEFAULT_USER_TIER,
-        help="Compatibility user tier to store in user_balances.",
+        help="Compatibility user tier to store in user_balances. Examples: tier_1, tier_2, tier_3, tier_4, tier_5, guest",
     )
     return parser
 
@@ -56,11 +67,13 @@ async def _find_or_create_user(
     *,
     email: str,
     name: str,
+    requested_user_id: str,
 ) -> User:
     normalized_email = email.strip().lower()
     if not normalized_email:
         raise ValueError("email must not be empty")
 
+    normalized_user_id = requested_user_id.strip()
     result = await session.execute(
         select(User).where(User.email == normalized_email).limit(1)
     )
@@ -68,8 +81,16 @@ async def _find_or_create_user(
     if user is not None:
         return user
 
+    if normalized_user_id:
+        existing_user = await session.get(User, normalized_user_id)
+        if existing_user is not None:
+            raise ValueError(
+                "requested user_id already exists for a different email: "
+                f"user_id={normalized_user_id}"
+            )
+
     user = User(
-        id=f"user_{uuid4().hex[:24]}",
+        id=normalized_user_id or f"user_{uuid4().hex[:24]}",
         name=name.strip() or normalized_email,
         email=normalized_email,
     )
@@ -78,24 +99,16 @@ async def _find_or_create_user(
     return user
 
 
-async def _ensure_user_balance(
+async def _initialize_user_credits(
     session: AsyncSession,
     *,
     user_id: str,
     tier: str,
 ) -> None:
-    balance = await session.get(UserBalance, user_id)
-    if balance is not None:
-        return
-
-    session.add(
-        UserBalance(
-            user_id=user_id,
-            user_tier=tier,
-            credits_balance=MicroDollar.from_dollars(
-                settings.FREE_PLAN_INITIAL_CREDITS
-            ).amount,
-        )
+    credits_service = CreditsService()
+    await credits_service.ensure_user_initialized(session, user_id)
+    await session.execute(
+        update(UserBalance).where(UserBalance.user_id == user_id).values(user_tier=tier)
     )
 
 
@@ -124,28 +137,18 @@ async def _resolve_key_name(
     return f"{key_name}-{suffix}"
 
 
-def _generate_api_key() -> str:
-    return f"sk_kn_{secrets.token_hex(16)}"
-
-
-def _mask_api_key(api_key: str) -> str:
-    if len(api_key) < 12:
-        return api_key
-    return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
-
-
 async def _create_api_key(
     session: AsyncSession,
     *,
     user_id: str,
     key_name: str,
 ) -> str:
-    api_key = _generate_api_key()
+    api_key = generate_api_key()
     session.add(
         APIKey(
             user_id=user_id,
-            key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
-            key_mask=_mask_api_key(api_key),
+            key_hash=hash_api_key(api_key),
+            key_mask=mask_api_key(api_key),
             name=key_name,
             enabled_modules=["all"],
         )
@@ -153,23 +156,31 @@ async def _create_api_key(
     return api_key
 
 
-async def _run(args: argparse.Namespace) -> int:
+async def initialize_standalone_user(
+    *,
+    email: str,
+    user_id: str = "",
+    name: str = "",
+    key_name: str = _DEFAULT_API_KEY_NAME,
+    tier: str = _DEFAULT_USER_TIER,
+) -> InitializedStandaloneUser:
     await _ensure_user_table()
     async with get_db_context() as session:
         user = await _find_or_create_user(
             session,
-            email=str(args.email),
-            name=str(args.name),
+            email=email,
+            name=name,
+            requested_user_id=user_id,
         )
-        await _ensure_user_balance(
+        await _initialize_user_credits(
             session,
             user_id=user.id,
-            tier=str(args.tier).strip() or _DEFAULT_USER_TIER,
+            tier=tier.strip() or _DEFAULT_USER_TIER,
         )
         key_name = await _resolve_key_name(
             session,
             user_id=user.id,
-            requested_name=str(args.key_name),
+            requested_name=key_name,
         )
         api_key = await _create_api_key(
             session,
@@ -177,10 +188,27 @@ async def _run(args: argparse.Namespace) -> int:
             key_name=key_name,
         )
 
-    print(f"user_id={user.id}")
-    print(f"email={user.email}")
-    print(f"api_key_name={key_name}")
-    print(f"api_key={api_key}")
+    return {
+        "user_id": str(user.id),
+        "email": str(user.email),
+        "api_key_name": key_name,
+        "api_key": api_key,
+    }
+
+
+async def _run(args: argparse.Namespace) -> int:
+    initialized_user = await initialize_standalone_user(
+        email=str(args.email),
+        user_id=str(args.user_id),
+        name=str(args.name),
+        key_name=str(args.key_name),
+        tier=str(args.tier),
+    )
+
+    print(f"user_id={initialized_user['user_id']}")
+    print(f"email={initialized_user['email']}")
+    print(f"api_key_name={initialized_user['api_key_name']}")
+    print(f"api_key={initialized_user['api_key']}")
     return 0
 
 

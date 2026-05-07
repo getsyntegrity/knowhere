@@ -5,7 +5,7 @@ Payment Record Data Model (for idempotency guarantee)
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -22,10 +22,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.core.database import Base
 from shared.utils.utc_now import utc_now_naive
-
-if TYPE_CHECKING:
-    pass
-
 
 class PaymentRecord(Base):
     """Payment Record Model (for idempotency guarantee)"""

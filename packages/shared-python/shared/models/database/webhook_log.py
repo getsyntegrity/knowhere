@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from shared.models.database.job import Job
     from shared.models.database.webhook import WebhookEvent
 
-
 class WebhookLog(Base):
     """Webhook Log Model - Records webhook delivery history."""
 

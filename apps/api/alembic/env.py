@@ -136,7 +136,7 @@ def run_migrations_online() -> None:
         return
 
     if isinstance(configured_connection, Engine):
-        with configured_connection.connect() as connection:
+        with configured_connection.begin() as connection:
             run_with_connection(connection)
         return
 
@@ -149,7 +149,7 @@ def run_migrations_online() -> None:
         connect_args=ssl_connect_args,
     )
 
-    with connectable.connect() as connection:
+    with connectable.begin() as connection:
         run_with_connection(connection)
 
 
