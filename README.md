@@ -69,11 +69,17 @@ Parsed content is organized into a lightweight graph. It’s designed as a pract
 - **Edges**: Map semantic relationships (keyword overlap, summaries) and structural links.
 This graph helps agents quickly understand what a document is about and which neighboring files might be relevant.
 
-### 3. Agentic Retrieval
-Retrieval combines traditional search with autonomous navigation:
-- **Hybrid Discovery**: Fuses keyword and semantic search (RRF) for broad coverage.
-- **Agent Navigation**: An agent "walks" the graph, reviewing previews to drill down into specific sections.
-- **Cited Evidence**: Results are returned as traceable evidence, including the source document, section, and any linked assets.
+### 3a. Agentic Retrieval
+An agent navigates the memory graph to find evidence rather than relying on a single vector lookup:
+- **Hybrid Discovery**: Fuses keyword and semantic search (RRF) for broad first-pass coverage.
+- **Agent Navigation**: The agent "walks" the graph, reviewing section previews to drill down into the most relevant paths.
+- **Cited Evidence**: Results are returned as traceable evidence — source document, section, chunk, and any linked image or table assets.
+
+### 3b. Vector-based RAG
+For teams that prefer a pure retrieval pipeline without agent overhead, Knowhere's parsed chunks plug directly into standard vector stacks:
+- **Dense Search**: Chunk embeddings stored in Qdrant, pgvector, or Milvus for fast ANN lookup.
+- **Sparse Search**: BM25 term index for keyword-sensitive queries.
+- **Multi-channel Fusion**: Dense and sparse results are fused with RRF before being returned, giving you the best of both signals.
 
 ## Features
 
