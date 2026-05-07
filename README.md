@@ -43,51 +43,31 @@ Knowhere is the open-source infrastructure for unstructured data processing. It 
 
 ## How it Works
 
-Knowhere has one simple goal: turn uploaded documents into a long-term memory store that agents can understand, navigate, and cite.
-
-The system can be understood as a three-stage pipeline:
+Knowhere turns raw documents into a structured memory store that AI agents can navigate and cite. The process follows a three-stage pipeline:
 
 ```text
-Document parsing -> Memory graph construction -> Agentic retrieval -> Cited results
+Parsing -> Graph Construction -> Agentic Retrieval
 ```
 
 ### 1. Document Parsing
+Knowhere routes files to specialized parsers for PDFs, Office docs, images, and more. We don't just extract text; we preserve the document's hierarchy:
+- **Hierarchical Paths**: Every chunk knows its exact location (e.g., `Section 2.1 > Table 4`).
+- **Multi-modal Units**: Tables and images are treated as distinct assets with their own metadata.
+- **Structural Awareness**: Heading levels and section boundaries are maintained to keep context intact.
 
-Knowhere first profiles each uploaded file and routes it to the right parser: regular PDF, scanned drawing, Word, PowerPoint, spreadsheet, image, Markdown, or plain text. The parser converts the original file into structured content units:
-
-- `text`: paragraphs, headings, and body content
-- `table`: table content and table asset references
-- `image`: image content, OCR, or visual summaries
-- `path`: the hierarchical location of each chunk in the source document
-- `metadata`: summaries, keywords, media references, and contextual links between knowledge chunks and documents of various formats
-
-The parser is designed to preserve document structure, not just extract raw text. Heading hierarchy, section paths, images, and tables are converted into chunks that can be searched, navigated, and cited.
-
-### 2. Memory Graph Construction
-
-After parsing, Knowhere publishes the chunks into a canonical retrieval state:
-
-- `Document` represents a user document.
-- `DocumentSection` stores the document's section hierarchy.
-- `DocumentChunk` stores the final content units returned to users or agents.
-- `GraphNode` stores document-level memory, including summaries, keywords, chunk counts, media types, and navigation sections.
-- `GraphEdge` stores relationships between documents.
-
-The graph is intentionally lightweight. Its purpose is not to create an overly complex ontology, but to help the system understand which documents may be related, what each document is about, and why neighboring documents might matter. The current graph centers on document-level nodes and builds connections from keyword overlap, summaries, and navigation structure, making it useful for fast routing and expansion during retrieval.
+### 2. Memory Graph
+Parsed content is organized into a lightweight graph. It’s designed as a practical map for agents, not a complex ontology.
+- **Nodes**: Represent documents, sections, and chunks.
+- **Edges**: Map semantic relationships (keyword overlap, summaries) and structural links.
+This graph helps agents quickly understand what a document is about and which neighboring files might be relevant.
 
 ### 3. Agentic Retrieval
+Retrieval combines traditional search with autonomous navigation:
+- **Hybrid Discovery**: Fuses keyword and semantic search (RRF) for broad coverage.
+- **Agent Navigation**: An agent "walks" the graph, reviewing previews to drill down into specific sections.
+- **Cited Evidence**: Results are returned as traceable evidence, including the source document, section, and any linked assets.
 
-At query time, Knowhere combines bottom-layer retrieval with agent-guided navigation:
-
-- **Bottom discovery**: retrieve candidate chunks from path, content, and term channels, then fuse them with RRF.
-- **Document selection**: the agent reads the memory graph overview and selects potentially relevant documents.
-- **Path selection**: the agent reviews compact chunk previews and selects the most relevant section or chunk paths.
-- **Hierarchical navigation**: for large documents, the agent takes a progressive strategy; it first inspects top-level and second-level sections, then expands selected sections to leaf chunks.
-- **Result merging**: agent-selected paths and bottom-layer candidates are merged, deduplicated, ranked, and returned with source citations.
-
-This gives Knowhere the stability of traditional retrieval and the structural awareness of agent navigation. The final output is not just a text snippet. It is cited evidence: the source document, section, chunk, and, when needed, linked image or table assets.
-
-> **TL;DR**: Knowhere parses documents into structured memory units, organizes them with a lightweight graph, and lets agents navigate through graph context and section paths to find evidence that can be reliably cited.
+**TL;DR**: Knowhere parses documents into structured units, maps them in a graph, and lets agents navigate that context to find and cite reliable evidence.
 
 ## Features
 
