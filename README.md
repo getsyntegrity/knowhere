@@ -262,3 +262,9 @@ Other useful references:
 - [SECURITY.md](SECURITY.md) — how to report vulnerabilities responsibly.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community behavior expectations.
 - [LICENSE](LICENSE) and [NOTICE](NOTICE) — Apache 2.0.
+
+---
+
+## We're Hiring
+
+We're building the knowledge layer for the Agent era. If that sounds like work you want to do, reach out at [team@knowhereto.ai](mailto:team@knowhereto.ai).
