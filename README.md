@@ -43,8 +43,6 @@ Knowhere is the open-source infrastructure for unstructured data processing. It 
 
 ## How it Works
 
-**TL;DR**: Knowhere parses documents into structured units, maps them in a graph, and lets agents navigate that context to find and cite reliable evidence.
-
 Knowhere turns raw documents into a structured memory store that AI agents can navigate and cite. The process follows a three-stage pipeline:
 
 ```text
