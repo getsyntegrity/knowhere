@@ -27,7 +27,8 @@
 <p align="center">
   🔗 <a href="https://knowhereto.ai">Website</a> |
   📄 <a href="https://docs.knowhereto.ai/">Docs</a> |
-  🏠 <a href="https://github.com/Ontos-AI/knowhere-self-hosted">Self-Host</a>
+  🏠 <a href="https://github.com/Ontos-AI/knowhere-self-hosted">Self-Host</a> |
+  🖥️ <a href="https://github.com/Ontos-AI/knowhere-dashboard">Dashboard</a>
 </p>
 
 Knowhere is the open-source infrastructure for unstructured data processing. It automates the complex pipeline of extracting, parsing, and transforming messy documents into structured, high-quality data optimized for *AI Agents*, *Agentic RAG*, and *traditional vector-based RAG workflows*.
@@ -159,6 +160,8 @@ with `--init-user`:
 cd apps/api && uv run main.py
 cd apps/worker && uv run worker.py
 ```
+
+The API is now running at `http://localhost:5005`. If you want the full product experience with a UI, run the [knowhere-dashboard](https://github.com/Ontos-AI/knowhere-dashboard) alongside it — it connects to this API out of the box.
 
 ## Quality Checks
 
