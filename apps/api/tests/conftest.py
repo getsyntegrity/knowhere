@@ -10,6 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pytest_postgresql import factories
 from pytest import MonkeyPatch
+from tests.support.import_environment import configure_import_environment, ensure_import_paths
 from shared.testing.contract_runtime import (
     CONTRACT_POSTGRESQL_PORT_RANGE,
     PostgreSQLProcess,
@@ -22,6 +23,9 @@ from shared.testing.contract_runtime import (
     seed_contract_developer,
 )
 from shared.testing.postgresql_environment import find_executable
+
+configure_import_environment()
+ensure_import_paths()
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 _API_ROOT: Path = _REPO_ROOT / "apps" / "api"

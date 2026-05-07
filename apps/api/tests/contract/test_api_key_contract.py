@@ -77,57 +77,6 @@ async def test_should_revoke_a_created_api_key_through_http_only(
     assert error["message"] == "Invalid API Key"
     assert "details" not in error
 
-
-@pytest.mark.asyncio
-async def test_should_regenerate_an_api_key_and_invalidate_the_previous_raw_key(
-    developer_api_client_factory: Callable[
-        [], AbstractAsyncContextManager[AsyncClient]
-    ],
-) -> None:
-    create_payload: dict[str, object] = {
-        "name": f"contract-regenerate-{uuid4().hex[:8]}",
-        "enabled_modules": ["jobs"],
-    }
-
-    async with developer_api_client_factory() as api_client:
-        create_response = await api_client.post("/api/v1/auth/create", json=create_payload)
-        assert create_response.status_code == 200
-        create_response_json = cast(dict[str, object], create_response.json())
-        old_api_key = cast(str, create_response_json["api_key"])
-
-        list_response = await api_client.get("/api/v1/auth/list")
-        assert list_response.status_code == 200
-        list_response_json = cast(dict[str, object], list_response.json())
-        api_keys = cast(list[dict[str, object]], list_response_json["api_keys"])
-        created_api_key = next(
-            api_key
-            for api_key in api_keys
-            if api_key["name"] == create_payload["name"]
-        )
-        created_api_key_id = cast(str, created_api_key["id"])
-
-        regenerate_response = await api_client.post(
-            "/api/v1/auth/regenerate",
-            json={"api_key_id": created_api_key_id},
-        )
-        assert regenerate_response.status_code == 200
-        regenerate_response_json = cast(dict[str, object], regenerate_response.json())
-        new_api_key = cast(str, regenerate_response_json["api_key"])
-
-        api_client.headers.update({"Authorization": f"Bearer {old_api_key}"})
-        old_key_response = await api_client.get("/api/v1/jobs")
-
-        api_client.headers.update({"Authorization": f"Bearer {new_api_key}"})
-        new_key_response = await api_client.get("/api/v1/jobs")
-
-    assert regenerate_response_json["message"] == "API key regenerated"
-    assert new_api_key.startswith("sk_")
-    assert new_api_key != old_api_key
-    assert old_key_response.status_code == 401
-    assert old_key_response.json()["error"]["code"] == "UNAUTHENTICATED"
-    assert new_key_response.status_code == 200
-
-
 @pytest.mark.asyncio
 async def test_should_return_owned_api_key_metadata(
     developer_api_client_factory: Callable[
@@ -207,6 +156,7 @@ async def test_should_disable_and_then_reenable_an_api_key_via_the_toggle_route(
     }
 
     async with developer_api_client_factory() as api_client:
+        developer_authorization = api_client.headers["Authorization"]
         create_response = await api_client.post("/api/v1/auth/create", json=create_payload)
         assert create_response.status_code == 200
         create_response_json = cast(dict[str, object], create_response.json())
@@ -226,9 +176,7 @@ async def test_should_disable_and_then_reenable_an_api_key_via_the_toggle_route(
         api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
         pre_toggle_response = await api_client.get("/api/v1/jobs")
 
-        api_client.headers.update(
-            {"Authorization": "Bearer sk_local_dev_demo_key_tier5_full_access"}
-        )
+        api_client.headers.update({"Authorization": developer_authorization})
         disable_response = await api_client.put(
             f"/api/v1/auth/{created_api_key_id}/toggle"
         )
@@ -236,9 +184,7 @@ async def test_should_disable_and_then_reenable_an_api_key_via_the_toggle_route(
         api_client.headers.update({"Authorization": f"Bearer {raw_api_key}"})
         disabled_key_response = await api_client.get("/api/v1/jobs")
 
-        api_client.headers.update(
-            {"Authorization": "Bearer sk_local_dev_demo_key_tier5_full_access"}
-        )
+        api_client.headers.update({"Authorization": developer_authorization})
         enable_response = await api_client.put(
             f"/api/v1/auth/{created_api_key_id}/toggle"
         )

@@ -27,6 +27,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from shared.core.database import Base
 from shared.utils.utc_now import utc_now_naive
 
+
 if TYPE_CHECKING:
     from shared.models.database.job_result import JobResult
     from shared.models.database.job_state_audit_log import JobStateAuditLog

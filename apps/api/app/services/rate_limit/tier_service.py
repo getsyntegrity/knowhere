@@ -1,7 +1,9 @@
 """
 Tier service.
-Determines and refreshes a user's tier based on lifetime payment history.
+Determines, caches, and refreshes a user's tier based on lifetime payment history.
 """
+
+from __future__ import annotations
 
 from typing import Optional
 
@@ -11,15 +13,39 @@ from loguru import logger
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.core.config import redis_pool_manager
+from shared.core.database import get_db_context
+from shared.core.exceptions.domain_exceptions import NotFoundException
 from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.tier_limit import TierLimit
 from shared.models.database.user_balance import UserBalance
 
+from shared.services.redis.redis_service import RedisService
+
 _DEFAULT_TIER: str = "free"
+_USER_TIER_TTL_SECONDS: int = 3600
 
 
 class TierService:
-    """Manages user tier assignment based on lifetime spend."""
+    """Manages user tier lookup, caching, and refresh."""
+
+    @staticmethod
+    async def get_tier(user_id: str) -> str:
+        """Return a user's tier from cache or database.
+
+        Missing user tier state is treated as invalid data and raises directly;
+        this method never falls back to a default tier for user lookup.
+        """
+        redis_service = redis_pool_manager.get_redis_service()
+        cached_tier = await TierService._get_cached_tier(redis_service, user_id)
+        if cached_tier is not None:
+            return cached_tier
+
+        async with get_db_context() as session:
+            user_tier = await TierService._get_tier_from_db(session, user_id)
+
+        await TierService._set_cached_tier(redis_service, user_id, user_tier)
+        return user_tier
 
     @staticmethod
     async def refresh_tier(user_id: str, session: AsyncSession) -> str:
@@ -61,6 +87,7 @@ class TierService:
             .values(user_tier=new_tier)
         )
         await session.execute(stmt_update)
+        await TierService._invalidate_user_tier_cache(user_id)
 
         logger.info(
             "Tier refreshed: user_id=%s total_micro=%d new_tier=%s",
@@ -78,3 +105,73 @@ class TierService:
         """
         config = RateLimitConfig.get_instance()
         return config.tier_map.get(user_tier)
+
+    @staticmethod
+    def _get_user_tier_key(user_id: str) -> str:
+        """Return the Redis key for a user's rate-limit tier."""
+        return f"tier:user:{user_id}"
+
+    @staticmethod
+    async def _get_tier_from_db(session: AsyncSession, user_id: str) -> str:
+        """Load a user's tier from user_balances or raise when missing."""
+        result = await session.execute(
+            select(UserBalance.user_tier).where(UserBalance.user_id == user_id).limit(1)
+        )
+        user_tier = result.scalar_one_or_none()
+        if user_tier is None:
+            raise NotFoundException(
+                resource="UserBalance",
+                resource_id=user_id,
+                internal_message=f"User tier not found for user_id={user_id}",
+            )
+        return str(user_tier)
+
+    @staticmethod
+    async def _get_cached_tier(
+        redis_service: RedisService,
+        user_id: str,
+    ) -> str | None:
+        """Return cached user tier, or None on miss/cache failure."""
+        cache_key = TierService._get_user_tier_key(user_id)
+        try:
+            cached_tier = await redis_service.get(cache_key)
+        except Exception:
+            logger.warning(
+                "tier_service: failed to read tier cache for user_id={}",
+                user_id,
+            )
+            return None
+
+        return cached_tier if isinstance(cached_tier, str) else None
+
+    @staticmethod
+    async def _set_cached_tier(
+        redis_service: RedisService,
+        user_id: str,
+        user_tier: str,
+    ) -> None:
+        """Cache a user's rate-limit tier."""
+        try:
+            await redis_service.set(
+                TierService._get_user_tier_key(user_id),
+                user_tier,
+                ttl=_USER_TIER_TTL_SECONDS,
+            )
+        except Exception:
+            logger.warning(
+                "tier_service: failed to write tier cache for user_id={}",
+                user_id,
+            )
+
+    @staticmethod
+    async def _invalidate_user_tier_cache(user_id: str) -> None:
+        """Invalidate cached tier data for a user."""
+        try:
+            await redis_pool_manager.get_redis_service().delete(
+                TierService._get_user_tier_key(user_id),
+            )
+        except Exception:
+            logger.warning(
+                "Tier refresh cache invalidation failed for user_id={}",
+                user_id,
+            )

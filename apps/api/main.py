@@ -137,12 +137,6 @@ def create_app() -> FastAPI:
     setup_cors(app)
     app.add_middleware(LoggingMiddleware)
 
-    # Moesif API monitoring middleware — disabled (broken SDK client, adds latency + log noise)
-    # app.add_middleware(MoesifMiddleware)
-
-    # Add API Key authentication middleware
-    # app.add_middleware(api_key_auth_middleware)
-
     @app.get("/", tags=["Root"])
     async def read_root():
         return {"message": f"Welcome to {app.title} - Knowledge Base API Service!"}

@@ -21,7 +21,7 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from pytest import MonkeyPatch
 from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 CONTRACT_DATABASE_NAME: str = "Knowhere_contract_test"
 DEFAULT_POSTGRESQL_PORT: int = 5432
@@ -70,8 +70,13 @@ _MODULE_NAMES_TO_CLEAR: tuple[str, ...] = (
     "shared.services.retrieval.publication_service",
     "shared.services.webhook",
     "shared.services.webhook.qstash_publisher",
-    "scripts.local_dev_bootstrap_service",
+    "scripts.init_user",
 )
+CONTRACT_DEVELOPER_USER_ID: str = "local-dev-user"
+CONTRACT_DEVELOPER_USER_NAME: str = "Local Development User"
+CONTRACT_DEVELOPER_USER_EMAIL: str = "local-dev-user@knowhere.local"
+CONTRACT_DEVELOPER_USER_TIER: str = "tier_5"
+CONTRACT_DEVELOPER_API_KEY_NAME: str = "contract-developer-api-key"
 _contract_storage_prepared: bool = False
 _contract_storage_database_url: str | None = None
 _contract_fake_redis_server: fakeredis.FakeServer = fakeredis.FakeServer()
@@ -103,12 +108,7 @@ def _ensure_import_paths() -> None:
 
 
 def _ensure_test_directories() -> None:
-    users_data_path: Path = _TEST_TMP_ROOT / "users"
-    chromedriver_path: Path = _TEST_TMP_ROOT / "chromedriver"
-
     _TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
-    users_data_path.mkdir(parents=True, exist_ok=True)
-    chromedriver_path.touch(exist_ok=True)
 
 
 def _reset_contract_storage_state(database_url: str) -> None:
@@ -302,9 +302,8 @@ def configure_contract_environment(
     _reset_contract_storage_state(database_url)
 
     environment: dict[str, str] = {
-        "ENVIRONMENT": "development",
-        "DEBUG": "true",
-        "SECRET_KEY": "test-secret-key",
+        "ENVIRONMENT": "production",
+        "API_STANDALONE_MODE_ENABLED": "true",
         "WEBHOOK_MASTER_KEY": CONTRACT_WEBHOOK_MASTER_KEY,
         "DATABASE_URL": database_url,
         "DB_SSL_MODE": "disable",
@@ -316,22 +315,17 @@ def configure_contract_environment(
             f"redis://{CONTRACT_REDIS_HOST}:{CONTRACT_REDIS_PORT}/{CONTRACT_REDIS_DATABASE}"
         ),
         "TMP_PATH": str(_TEST_TMP_ROOT),
-        "FONT_PATH": str(_TEST_TMP_ROOT),
-        "CHROMEDRIVER_PATH": str(_TEST_TMP_ROOT / "chromedriver"),
-        "USERS_DATA_PATH": str(_TEST_TMP_ROOT / "users"),
         "S3_BUCKET_NAME": "knowhere-test-bucket",
         "S3_ACCESS_KEY_ID": "test-access-key",
         "S3_SECRET_ACCESS_KEY": "test-secret-key",
         "S3_TEMP_PATH": str(_TEST_TMP_ROOT),
         "S3_ENDPOINT_URL": "http://127.0.0.1:4566",
         "S3_PRIVATE_DOMAIN": "http://127.0.0.1:4566",
-        "S3_UPLOADS_BUCKET": "knowhere-test-uploads",
         "S3_RESULTS_BUCKET": "knowhere-test-results",
         "S3_REGION": "us-west-1",
         "S3_USE_SSL": "false",
         "S3_ADDRESSING_STYLE": "path",
         "STRIPE_SECRET_KEY": "sk_test_contract_secret",
-        "STRIPE_PUBLISHABLE_KEY": "pk_test_contract_publishable",
         "STRIPE_WEBHOOK_SECRET": "whsec_contract_test_secret",
         "DS_KEY": "test-deepseek-key",
         "DS_URL": "https://example.com/v1",
@@ -339,6 +333,9 @@ def configure_contract_environment(
         "QSTASH_NEXT_SIGNING_KEY": "qstash-next-test-key",
         "QSTASH_CALLBACK_BASE_URL": "http://localhost:5005/api/v1",
     }
+
+    if "BILLING_ENABLED" not in os.environ:
+        environment["BILLING_ENABLED"] = "true"
 
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
@@ -511,6 +508,20 @@ def _ensure_contract_database_exists() -> None:
         connection.close()
 
 
+def _recreate_contract_database() -> None:
+    contract_database_url = get_contract_database_url()
+    contract_database_name = make_url(contract_database_url).database
+
+    if contract_database_name is None:
+        raise RuntimeError("Contract database URL does not include a database name.")
+
+    _drop_database(
+        database_name=contract_database_name,
+        admin_database_url=_build_admin_sync_database_url(contract_database_url),
+    )
+    _ensure_contract_database_exists()
+
+
 def _initialize_contract_database() -> None:
     contract_database_name: str = make_url(get_contract_database_url()).database or ""
 
@@ -585,28 +596,30 @@ def drop_contract_database(
         _contract_storage_prepared = False
 
 
-async def _ensure_contract_user_table() -> None:
-    _ensure_import_paths()
-    clear_application_modules()
-
-    try:
-        bootstrap_module: ModuleType = importlib.import_module(
-            "scripts.local_dev_bootstrap_service"
-        )
-        bootstrap_service = bootstrap_module.LocalDevelopmentBootstrapService()
-        await bootstrap_service.ensure_user_table_exists()
-    finally:
-        await _dispose_async_database_engine()
-        clear_application_modules()
-
-
 def _run_contract_migrations() -> None:
+    migration_environment = os.environ.copy()
+    python_path_entries = [
+        str(_API_ROOT),
+        str(_SHARED_ROOT),
+        migration_environment.get("PYTHONPATH", ""),
+    ]
+    migration_environment.update(
+        {
+            "API_STANDALONE_MODE_ENABLED": "true",
+            "DATABASE_URL": get_contract_database_url(),
+            "DB_SSL_MODE": "disable",
+            "PYTHONPATH": os.pathsep.join(
+                entry for entry in python_path_entries if entry
+            ),
+        }
+    )
+
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "heads"],
         cwd=str(_API_ROOT),
         capture_output=True,
         text=True,
-        env=os.environ.copy(),
+        env=migration_environment,
         check=False,
     )
 
@@ -614,6 +627,32 @@ def _run_contract_migrations() -> None:
         raise RuntimeError(
             "Contract database migration failed: "
             f"{result.stderr or result.stdout or 'unknown error'}"
+        )
+
+
+def _assert_contract_schema_ready() -> None:
+    connection = psycopg2.connect(_get_contract_sync_database_url())
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT tablename
+                FROM pg_tables
+                WHERE schemaname = 'public'
+                  AND tablename IN ('tier_limits', 'api_keys', 'user_balances')
+                """
+            )
+            migrated_tables = {row[0] for row in cursor.fetchall()}
+    finally:
+        connection.close()
+
+    expected_tables = {"tier_limits", "api_keys", "user_balances"}
+    missing_tables = expected_tables - migrated_tables
+    if missing_tables:
+        raise RuntimeError(
+            "Contract database migration did not create expected tables: "
+            f"{', '.join(sorted(missing_tables))}"
         )
 
 
@@ -627,10 +666,10 @@ async def prepare_contract_storage() -> None:
     _ensure_import_paths()
 
     if not _contract_storage_prepared:
-        _ensure_contract_database_exists()
+        _recreate_contract_database()
         _initialize_contract_database()
-        await _ensure_contract_user_table()
         _run_contract_migrations()
+        _assert_contract_schema_ready()
         _contract_storage_prepared = True
 
     await reset_contract_database()
@@ -640,21 +679,30 @@ async def prepare_contract_storage() -> None:
 async def seed_contract_developer() -> dict[str, str | int]:
     _ensure_import_paths()
 
-    bootstrap_module: ModuleType = importlib.import_module(
-        "scripts.local_dev_bootstrap_service"
+    init_user_module: ModuleType = importlib.import_module("scripts.init_user")
+    initialize_standalone_user = getattr(
+        init_user_module,
+        "initialize_standalone_user",
     )
-    bootstrap_service = bootstrap_module.LocalDevelopmentBootstrapService()
-    engine: AsyncEngine = await _create_contract_engine()
-    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
 
     try:
-        async with session_factory() as session:
-            await bootstrap_service.seed_local_developer(session)
-            await session.commit()
+        initialized_user = await initialize_standalone_user(
+            email=CONTRACT_DEVELOPER_USER_EMAIL,
+            user_id=CONTRACT_DEVELOPER_USER_ID,
+            name=CONTRACT_DEVELOPER_USER_NAME,
+            key_name=CONTRACT_DEVELOPER_API_KEY_NAME,
+            tier=CONTRACT_DEVELOPER_USER_TIER,
+        )
     finally:
-        await engine.dispose()
+        await _dispose_async_database_engine()
 
-    return bootstrap_module.LocalDevelopmentBootstrapService.get_local_developer_profile()
+    return {
+        "user_id": initialized_user["user_id"],
+        "name": CONTRACT_DEVELOPER_USER_NAME,
+        "email": initialized_user["email"],
+        "tier": CONTRACT_DEVELOPER_USER_TIER,
+        "api_key": initialized_user["api_key"],
+    }
 
 
 async def reset_contract_database() -> None:

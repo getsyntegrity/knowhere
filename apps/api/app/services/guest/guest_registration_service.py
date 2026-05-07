@@ -6,7 +6,6 @@ from typing import NoReturn
 from uuid import uuid4
 
 from app.repositories.guest_device_repository import GuestDeviceRepository
-from app.services.auth.api_key_service import APIKeyService
 from app.services.rate_limit.config import RateLimitConfig
 from app.services.rate_limit.data_structures import TierLimits
 from loguru import logger
@@ -25,6 +24,7 @@ from shared.models.schemas.guest import (
     GuestRegisterResponse,
 )
 from shared.services.billing.credits_service import CreditsService
+from shared.utils.api_keys import generate_api_key, hash_api_key, mask_api_key
 
 _GUEST_TIER: str = "guest"
 _GUEST_KEY_NAME_PREFIX: str = "guest-device"
@@ -39,7 +39,6 @@ class GuestRegistrationService:
 
     def __init__(self) -> None:
         self._device_repo = GuestDeviceRepository()
-        self._api_key_service = APIKeyService()
         self._credits_service = CreditsService()
 
     async def register_guest(
@@ -153,14 +152,11 @@ class GuestRegistrationService:
         This avoids the internal commit inside APIKeyService.create_api_key()
         which would make the key durable before the device row is inserted.
         """
-        import hashlib
-        import uuid
-
         from shared.models.database.api_key import APIKey
 
-        api_key = f"sk_{str(uuid.uuid4()).replace('-', '')}"
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        key_mask = self._api_key_service._mask_api_key(api_key)
+        api_key = generate_api_key()
+        key_hash = hash_api_key(api_key)
+        key_mask = mask_api_key(api_key)
 
         api_key_record = APIKey(
             user_id=user_id,
@@ -264,13 +260,11 @@ class GuestRegistrationService:
     @staticmethod
     async def _resolve_api_key_id(session: AsyncSession, api_key: str) -> str | None:
         """Resolve the DB id for a just-created API key by its hash."""
-        import hashlib
-
         from sqlalchemy import select
 
         from shared.models.database.api_key import APIKey
 
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_hash = hash_api_key(api_key)
         result = await session.execute(
             select(APIKey.id).where(APIKey.key_hash == key_hash).limit(1)
         )

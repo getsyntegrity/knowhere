@@ -21,7 +21,7 @@ async def test_should_return_version_payload_for_the_v1_version_endpoint(
     assert response_json["version"]
     assert "commit" in response_json
     assert "build_time" in response_json
-    assert response_json["environment"] == "development"
+    assert response_json["environment"] == "production"
 
 
 @pytest.mark.asyncio
