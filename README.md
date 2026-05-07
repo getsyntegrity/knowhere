@@ -88,22 +88,6 @@ For teams that prefer a pure retrieval pipeline without agent overhead, Knowhere
 - **Agentic RAG**: A hybrid retrieval engine combining traditional search (RRF) with autonomous agent navigation.
 - **Evidence-based Citations**: Every result is backed by traceable source paths, ensuring reliability for AI Agent decision-making.
 
-## Repository Layout
-
-```text
-knowhere-api/
-├── apps/
-│   ├── api/
-│   └── worker/
-├── packages/
-│   └── shared-python/
-├── deploy/
-│   ├── docker/
-│   └── local-dev/
-└── .github/workflows/
-    └── build-images.yml
-```
-
 ## Prerequisites
 
 - Python 3.11+
