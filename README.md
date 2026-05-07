@@ -107,7 +107,7 @@ For teams that prefer a pure retrieval pipeline without agent overhead, Knowhere
 | `.jpg` `.png` | `.mp4` `.mp3` |
 | `.md` `.txt` `.json` | `.skills.md` |
 
-Want to see a new format supported? Contributions are very welcome — adding a parser is a great first contribution. Check out [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+Want to see a new format supported? Adding a parser is a great first contribution. Check out [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
 ## Prerequisites
 
