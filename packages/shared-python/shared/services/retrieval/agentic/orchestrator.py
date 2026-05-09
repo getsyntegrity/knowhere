@@ -182,20 +182,107 @@ class RetrievalAgent:
                 f'docs={len(state.selected_docs)} paths={len(state.selected_paths)}'
             )
 
-        # ── Fixed terminal step: hydrate + rank ──
-        ranked_rows = await self._hydrate_and_rank(
-            db, state, user_id=user_id, namespace=namespace, top_k=top_k,
-        )
+        # ── Terminal: hydrate + rank + attempt_answer loop ──
+        while True:
+            ranked_rows = await self._hydrate_and_rank(
+                db, state, user_id=user_id, namespace=namespace, top_k=top_k,
+            )
+
+            # Include kept rows from prior revision rounds
+            if state.kept_path_rows:
+                ranked_rows = state.kept_path_rows + ranked_rows
+
+            # Check if we should attempt_answer (need LLM + results + revision budget)
+            if (
+                policy is None
+                or not ranked_rows
+                or state.revision_count >= config.max_revisions
+            ):
+                break
+
+            # KG-exhausted guard: if all selected docs have been explored,
+            # further revision won't find new content — skip attempt_answer
+            all_selected_ids = {d.document_id for d in state.selected_docs}
+            unexplored = all_selected_ids - state.ever_explored_doc_ids
+            kg_exhausted = len(unexplored) == 0 and len(all_selected_ids) > 0
+            if kg_exhausted:
+                logger.info(
+                    f'  agentic: KG exhausted — all {len(all_selected_ids)} docs explored, '
+                    f'skipping attempt_answer'
+                )
+                stop_reason = 'kg_exhausted'
+                break
+
+            # Three-state verdict from LLM
+            verdict, verdict_reason = await policy.attempt_answer(
+                state, config, ranked_rows,
+            )
+            logger.info(
+                f'  agentic attempt_answer: verdict={verdict} '
+                f'revision={state.revision_count}/{config.max_revisions} '
+                f'reason="{verdict_reason}"'
+            )
+
+            if verdict == 'DONE':
+                stop_reason = 'attempt_done'
+                break
+
+            if verdict in ('NOT_SUFFICIENT', 'NOT_FOUND'):
+                state.revision_count += 1
+                # Save current results as kept rows for next round
+                state.kept_path_rows = ranked_rows
+                # Record current selected paths as seen
+                for p in state.selected_paths:
+                    doc_id = p.get('document_id', '')
+                    path = p.get('path', '')
+                    if doc_id and path:
+                        state.seen_section_keys.add(f'{doc_id}::{path}')
+                # Reset navigation state for re-exploration
+                state.selected_paths.clear()
+                state.selected_docs.clear()  # Bug 1 fix: prevent doc accumulation
+                state.pending_doc_index = 0
+                state.kg_done = False
+                state.discovery_done = False
+
+                # Re-enter agent loop
+                while state.step_count < config.max_steps:
+                    if state.elapsed_ms >= config.latency_budget_ms:
+                        stop_reason = 'latency_budget'
+                        break
+
+                    action_type, decision_reason = await policy.decide(state, config)
+                    if action_type is None or action_type == ActionType.DONE:
+                        stop_reason = 'llm_done'
+                        break
+
+                    result = await self._execute_tool(
+                        db, action_type, state, config, **tool_kwargs,
+                    )
+                    state.apply(action_type, result)
+                    if trace_enabled:
+                        trace.record_step(action_type, result, decision_reason=decision_reason)
+                    state.step_count += 1
+                    logger.info(
+                        f'  agentic step {state.step_count} (rev {state.revision_count}): '
+                        f'action={action_type.value} status={result.status}'
+                    )
+
+                # Loop back to hydrate + attempt_answer
+                continue
+
+            # Unknown verdict — treat as DONE
+            break
 
         router_used = (
-            'agentic_llm' if state.selected_paths
+            'agentic_llm' if state.selected_paths or state.kept_path_rows
             else 'agentic_discovery_only'
         )
 
         logger.info(
             f'agentic retrieval DONE: {len(ranked_rows)} results, '
             f'router={router_used}, steps={state.step_count}, '
-            f'stop_reason={stop_reason}, {state.elapsed_ms}ms'
+            f'stop_reason={stop_reason}, revisions={state.revision_count}, '
+            f'{state.elapsed_ms}ms'
         )
 
         if trace_enabled:
@@ -244,6 +331,13 @@ class RetrievalAgent:
                         payload={'document_id': doc.document_id, 'reason': 'no job_result_id'},
                     )
 
+                # Build exclude_paths for this doc from seen_section_keys
+                doc_exclude = {
+                    key.split('::', 1)[1]
+                    for key in state.seen_section_keys
+                    if key.startswith(f'{doc.document_id}::')
+                } if state.seen_section_keys else None
+
                 return await tools.document_path_select(
                     db,
                     user_id=kwargs['user_id'],
@@ -253,6 +347,7 @@ class RetrievalAgent:
                     document_id=doc.document_id,
                     job_result_id=job_result_id,
                     doc_name=doc.source_file_name or state.doc_id_to_name.get(doc.document_id, ''),
+                    exclude_paths=doc_exclude,
                 )
 
             elif action_type == ActionType.GREP_DOCUMENT_DISCOVER:
@@ -299,6 +394,7 @@ class RetrievalAgent:
         a configurable LLM context window budget rather than a fixed count.
         """
         try:
+
             # Hydrate agent-selected paths
             navigated_paths: list[dict[str, Any]] = []
             if state.selected_paths:

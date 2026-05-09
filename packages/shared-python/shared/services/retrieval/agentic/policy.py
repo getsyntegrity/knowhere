@@ -232,3 +232,73 @@ class LLMPolicy:
             return None, f'unknown_action: {action_str}'
 
         return action_type, reason
+
+    async def attempt_answer(
+        self,
+        state: AgentState,
+        config: AgentRunConfig,
+        ranked_rows: list[dict[str, Any]],
+    ) -> tuple[str, str]:
+        """Three-state verdict: is the evidence sufficient?
+
+        Returns (verdict, reason) where verdict is one of:
+          - 'DONE': evidence is sufficient, stop searching
+          - 'NOT_SUFFICIENT': partial match, need more evidence
+          - 'NOT_FOUND': no relevant evidence found at all
+        """
+        # Build evidence summary (paths + previews, not full content)
+        evidence_lines: list[str] = []
+        for i, row in enumerate(ranked_rows[:20]):  # cap to avoid huge prompt
+            path = row.get('section_path') or row.get('source_chunk_path') or ''
+            content_preview = str(row.get('content', ''))[:150]
+            score = round(float(row.get('score', 0.0) or 0.0), 3)
+            evidence_lines.append(
+                f'  {i+1}. path="{path}" score={score}\n'
+                f'     preview: {content_preview}'
+            )
+        evidence_text = '\n'.join(evidence_lines) or '(no evidence collected)'
+
+        prompt = _ATTEMPT_ANSWER_PROMPT.format(
+            query=self._query,
+            evidence_count=len(ranked_rows),
+            evidence_summary=evidence_text,
+            revision_count=state.revision_count,
+            max_revisions=config.max_revisions,
+        )
+
+        raw_response = await self._llm_fn(prompt)
+        logger.info(f'  [LLMPolicy.attempt_answer] raw={repr(raw_response[:200])}')
+
+        parsed = _parse_action_from_response(raw_response)
+        if not parsed:
+            return 'DONE', 'parse_error — treating as done'
+
+        verdict = str(parsed.get('verdict', 'DONE')).strip().upper()
+        reason = str(parsed.get('reason', '')).strip()
+
+        if verdict not in ('DONE', 'NOT_SUFFICIENT', 'NOT_FOUND'):
+            verdict = 'DONE'
+
+        return verdict, reason
+
+
+_ATTEMPT_ANSWER_PROMPT = """\
+You are evaluating whether the collected evidence can answer the user's query.
+
+QUERY: "{query}"
+
+EVIDENCE ({evidence_count} items, showing top 20):
+{evidence_summary}
+
+REVISION: {revision_count} of {max_revisions} revisions used.
+
+Evaluate the evidence and return ONE verdict:
+- "DONE": The evidence is sufficient to answer the query. Use this if the main points are covered.
+- "NOT_SUFFICIENT": Partial match — some relevant info found but key aspects are missing. Only use if more searching could realistically help.
+- "NOT_FOUND": The evidence is completely irrelevant to the query. Only use if nothing matches at all.
+
+When in doubt, prefer DONE — avoid unnecessary extra search rounds.
+
+Return ONLY a JSON object:
+{{"verdict": "DONE", "reason": "one sentence explanation"}}
+"""

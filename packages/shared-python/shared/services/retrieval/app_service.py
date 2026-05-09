@@ -666,30 +666,49 @@ def _rank_candidates_by_path(
         if not candidate.get('section_path') and row.get('section_path'):
             candidate['section_path'] = row.get('section_path')
 
-    ranked_rows: list[dict[str, Any]] = []
+    # ── Dual-priority ranking ────────────────────────────────────────────
+    # When the agent produced results (routed_rows non-empty), rows with
+    # agent_score=0 are demoted to a fallback pool.  Primary sort is by
+    # agent_score (LLM confidence, 0-1, cross-round comparable), with
+    # discovery_score as tiebreaker only.  This avoids the old
+    # `max(agent, discovery)` which mixed incompatible score sources.
+    has_agent_results = len(routed_rows) > 0
+
+    primary_rows: list[dict[str, Any]] = []
+    fallback_rows: list[dict[str, Any]] = []
+
     for key, row in merged.items():
         discovery_score = float(row.get('discovery_score', 0.0) or 0.0)
         agent_score = float(row.get('agent_score', 0.0) or 0.0)
         row['dual_hit_flag'] = 1 if discovery_score > 0.0 and agent_score > 0.0 else 0
-        row['evidence_score'] = round(max(discovery_score, agent_score), 6)
+        row['evidence_score'] = round(agent_score if has_agent_results else max(discovery_score, agent_score), 6)
         row['score'] = row['evidence_score']
         row['_candidate_order'] = insertion_order[key]
-        ranked_rows.append(row)
 
-    ranked_rows.sort(
-        key=lambda row: (
-            float(row.get('evidence_score', 0.0) or 0.0),
-            int(row.get('dual_hit_flag', 0) or 0),
-            float(row.get('importance_norm_score', 0.0) or 0.0),
-            float(row.get('discovery_score', 0.0) or 0.0),
-            float(row.get('agent_score', 0.0) or 0.0),
-            -int(row.get('_candidate_order', 0) or 0),
-        ),
-        reverse=True,
+        if has_agent_results and agent_score <= 0.0:
+            fallback_rows.append(row)
+        else:
+            primary_rows.append(row)
+
+    _sort_key = lambda row: (
+        float(row.get('agent_score', 0.0) or 0.0),
+        float(row.get('discovery_score', 0.0) or 0.0),
+        int(row.get('dual_hit_flag', 0) or 0),
+        float(row.get('importance_norm_score', 0.0) or 0.0),
+        -int(row.get('_candidate_order', 0) or 0),
     )
+
+    primary_rows.sort(key=_sort_key, reverse=True)
+    ranked_rows = primary_rows[:top_k]
+
+    # Back-fill from fallback if primary results are insufficient
+    if len(ranked_rows) < top_k and fallback_rows:
+        fallback_rows.sort(key=_sort_key, reverse=True)
+        ranked_rows.extend(fallback_rows[:top_k - len(ranked_rows)])
+
     for row in ranked_rows:
         row.pop('_candidate_order', None)
-    return ranked_rows[:top_k]
+    return ranked_rows
 
 
 async def _count_scoped_chunks(
@@ -781,12 +800,19 @@ async def _hydrate_paths_to_rows(
 ) -> list[dict[str, Any]]:
     """Load full chunk rows by section_path or source_chunk_path.
 
-    Used to hydrate agent-selected paths into the standard row format
-    expected by assemble_retrieval_results().
+    Supports hydrate_mode branching:
+      - 'chunks' (default): all chunk types under the section subtree
+      - 'outline': synthetic row from section metadata, no real chunks
+      - 'assets_only': only image + table chunks
+      - 'image_only': only image chunks
+      - 'table_only': only table chunks
     """
     if not path_selections:
         return []
+
+    # Group selections by hydrate_mode
     confidence_by_path: dict[str, float] = {}
+    mode_by_path: dict[str, str] = {}
     ordered_paths: list[str] = []
     for item in path_selections:
         raw_path = str(item.get('path') or '').strip()
@@ -794,73 +820,145 @@ async def _hydrate_paths_to_rows(
         if not path:
             continue
         confidence = float(item.get('confidence', 0.0) or 0.0)
+        hydrate_mode = str(item.get('hydrate_mode') or 'chunks').strip().lower()
         if path not in confidence_by_path:
             ordered_paths.append(path)
             confidence_by_path[path] = confidence
+            mode_by_path[path] = hydrate_mode
         else:
             confidence_by_path[path] = max(confidence_by_path[path], confidence)
     if not ordered_paths:
         return []
 
-    section_path_filters = []
-    for path in ordered_paths:
-        section_path_filters.append(DocumentSection.section_path == path)
-        section_path_filters.append(DocumentSection.section_path.like(f'{path} / %'))
+    # Separate outline paths from chunk-loading paths
+    outline_paths = [p for p in ordered_paths if mode_by_path.get(p) == 'outline']
+    chunk_paths = [p for p in ordered_paths if mode_by_path.get(p) != 'outline']
 
-    stmt = (
-        select(Document, DocumentChunk, DocumentSection, JobResult)
-        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id)
-              & (DocumentChunk.job_result_id == Document.current_job_result_id))
-        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
-        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
-        .where(Document.user_id == user_id)
-        .where(Document.namespace == namespace)
-        .where(Document.status == 'active')
-        .where(
-            or_(
-                *section_path_filters,
-                DocumentChunk.source_chunk_path.in_(ordered_paths),
+    rows: list[dict[str, Any]] = []
+
+    # ── Outline mode: synthesize rows from section metadata ──────────────
+    if outline_paths:
+        outline_section_filters = []
+        for path in outline_paths:
+            outline_section_filters.append(DocumentSection.section_path == path)
+
+        outline_stmt = (
+            select(Document, DocumentSection)
+            .join(DocumentSection, (DocumentSection.document_id == Document.document_id)
+                  & (DocumentSection.job_result_id == Document.current_job_result_id))
+            .where(Document.user_id == user_id)
+            .where(Document.namespace == namespace)
+            .where(Document.status == 'active')
+            .where(or_(*outline_section_filters))
+        )
+        outline_result = await db.execute(outline_stmt)
+        for document, section in outline_result.all():
+            agent_score = confidence_by_path.get(section.section_path, 0.0)
+            summary_text = (section.summary or '').strip()
+            title_text = (section.section_title or '').strip()
+            content = f'[Outline] {title_text}'
+            if summary_text:
+                content += f'\n{summary_text}'
+            rows.append({
+                'document_id': document.document_id,
+                'chunk_id': f'outline_{section.section_id}',
+                'section_id': section.section_id,
+                'section_path': section.section_path,
+                'source_file_name': document.source_file_name,
+                'chunk_type': 'outline',
+                'content': content,
+                'score': agent_score,
+                'agent_score': agent_score,
+                'file_path': None,
+                'chunk_metadata': {},
+                'job_result_id': section.job_result_id,
+                'job_id': None,
+                'source_chunk_path': None,
+                'sort_order': section.sort_order,
+                'hydrate_mode': 'outline',
+            })
+
+    # ── Chunk modes: load real chunks with optional type filters ─────────
+    if chunk_paths:
+        section_path_filters = []
+        for path in chunk_paths:
+            section_path_filters.append(DocumentSection.section_path == path)
+            section_path_filters.append(DocumentSection.section_path.like(f'{path} / %'))
+
+        stmt = (
+            select(Document, DocumentChunk, DocumentSection, JobResult)
+            .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id)
+                  & (DocumentChunk.job_result_id == Document.current_job_result_id))
+            .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+            .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
+            .where(Document.user_id == user_id)
+            .where(Document.namespace == namespace)
+            .where(Document.status == 'active')
+            .where(
+                or_(
+                    *section_path_filters,
+                    DocumentChunk.source_chunk_path.in_(chunk_paths),
+                )
             )
         )
-    )
-    result = await db.execute(stmt)
+        result = await db.execute(stmt)
 
-    # Build rows, preserving agent-selected order
+        # Build a map of path → allowed chunk_types based on hydrate_mode
+        _MODE_ALLOWED_TYPES: dict[str, set[str] | None] = {
+            'chunks': None,                       # all types
+            'assets_only': {'image', 'table'},
+            'image_only': {'image'},
+            'table_only': {'table'},
+        }
+
+        seen_paths: set[str] = set()
+        for document, chunk, section, job_result in result.all():
+            row_path = (section.section_path if section else None) or chunk.source_chunk_path or ''
+            if row_path in seen_paths:
+                continue
+
+            # Find which ordered path this row belongs to
+            matched_path = row_path
+            if section and section.section_path not in confidence_by_path:
+                matched_path = next(
+                    (
+                        path for path in chunk_paths
+                        if section.section_path == path or section.section_path.startswith(f'{path} / ')
+                    ),
+                    row_path,
+                )
+
+            # Check chunk_type filter based on hydrate_mode
+            path_mode = mode_by_path.get(matched_path, 'chunks')
+            allowed_types = _MODE_ALLOWED_TYPES.get(path_mode)
+            if allowed_types is not None:
+                chunk_type_lower = (chunk.chunk_type or '').strip().lower()
+                if chunk_type_lower not in allowed_types:
+                    continue
+
+            seen_paths.add(row_path)
+            agent_score = confidence_by_path.get(matched_path, 0.0)
+            rows.append({
+                'document_id': document.document_id,
+                'chunk_id': chunk.chunk_id,
+                'section_id': chunk.section_id,
+                'section_path': section.section_path if section else None,
+                'source_file_name': document.source_file_name,
+                'chunk_type': chunk.chunk_type,
+                'content': chunk.content,
+                'score': agent_score,
+                'agent_score': agent_score,
+                'file_path': chunk.file_path,
+                'chunk_metadata': chunk.chunk_metadata or {},
+                'job_result_id': chunk.job_result_id,
+                'job_id': job_result.job_id if job_result else None,
+                'source_chunk_path': chunk.source_chunk_path,
+                'sort_order': chunk.sort_order,
+                'hydrate_mode': path_mode,
+            })
+
+    # ── Sort by agent-selected order ─────────────────────────────────────
     path_order = {p: idx for idx, p in enumerate(ordered_paths)}
-    rows: list[dict[str, Any]] = []
-    seen_paths: set[str] = set()
-    for document, chunk, section, job_result in result.all():
-        row_path = (section.section_path if section else None) or chunk.source_chunk_path or ''
-        if row_path in seen_paths:
-            continue
-        seen_paths.add(row_path)
-        matched_path = row_path
-        if section and section.section_path not in confidence_by_path:
-            matched_path = next(
-                (
-                    path for path in ordered_paths
-                    if section.section_path == path or section.section_path.startswith(f'{path} / ')
-                ),
-                row_path,
-            )
-        agent_score = confidence_by_path.get(matched_path, 0.0)
-        rows.append({
-            'document_id': document.document_id,
-            'chunk_id': chunk.chunk_id,
-            'section_id': chunk.section_id,
-            'section_path': section.section_path if section else None,
-            'source_file_name': document.source_file_name,
-            'chunk_type': chunk.chunk_type,
-            'content': chunk.content,
-            'score': agent_score,
-            'agent_score': agent_score,
-            'file_path': chunk.file_path,
-            'chunk_metadata': chunk.chunk_metadata or {},
-            'job_result_id': chunk.job_result_id,
-            'job_id': job_result.job_id if job_result else None,
-            'source_chunk_path': chunk.source_chunk_path,
-            'sort_order': chunk.sort_order,
-        })
 
     def _row_sort_key(row: dict[str, Any]) -> int:
         row_path = _get_row_path(row)
@@ -877,6 +975,8 @@ async def _hydrate_paths_to_rows(
         path for path in ordered_paths
         if path in hydrated_paths or any(row_path.startswith(f'{path} / ') for row_path in hydrated_paths)
     }
+    # Outline paths are always resolved (synthesized)
+    resolved_inputs |= set(outline_paths)
     missed = len(ordered_paths) - len(resolved_inputs)
     if missed > 0:
         missing_paths = [p for p in ordered_paths if p not in resolved_inputs]
