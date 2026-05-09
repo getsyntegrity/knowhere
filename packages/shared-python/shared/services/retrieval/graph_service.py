@@ -47,7 +47,9 @@ def is_excluded_section(
     for item in exclude_sections:
         if not isinstance(item, dict):
             continue
-        if document_id == str(item.get('document_id') or '').strip() and section_path == str(item.get('section_path') or '').strip():
+        exc_doc = str(item.get('document_id') or '').strip()
+        exc_path = str(item.get('section_path') or '').strip()
+        if document_id == exc_doc and (section_path == exc_path or section_path.startswith(exc_path + ' / ')):
             return True
     return False
 
@@ -368,7 +370,10 @@ class GraphQueryService:
                 exc_path = str(exc.get('section_path') or '').strip()
                 if exc_doc and exc_path:
                     stmt = stmt.where(
-                        ~((DocumentSection.document_id == exc_doc) & (DocumentSection.section_path == exc_path))
+                        ~((DocumentSection.document_id == exc_doc) & (
+                            (DocumentSection.section_path == exc_path) |
+                            DocumentSection.section_path.like(f'{exc_path} / %')
+                        ))
                     )
             result = await db.execute(stmt)
             seen = [row[0] for row in result.all()]

@@ -33,6 +33,10 @@ Return ONLY a JSON array of document IDs, e.g.: ["doc_abc123", "doc_def456"]
 Do not include any explanation.
 """
 
+_VALID_HYDRATE_MODES = frozenset({
+    'outline', 'chunks', 'assets_only', 'image_only', 'table_only',
+})
+
 _SCOPE_NAV_PROMPT = """\
 You are a document navigation assistant.
 
@@ -41,6 +45,7 @@ Current scope: {scope_label}
 
 Below are candidate section paths at this scope level (up to 2 depth levels).
 Indented items are sub-items of the item above.
+Each item shows text/image/table counts.
 Select section paths directly. A selected section path represents the chunks
 under that section subtree; do not ask to drill deeper.
 
@@ -51,9 +56,19 @@ under that section subtree; do not ask to drill deeper.
 User query: {query}
 
 Select the most relevant section paths (at most {max_select}).
+If NO section path is relevant to the query, you MUST return an empty array []. Do not force-select irrelevant sections.
 Prefer specific sub-items over broad parents when both are listed and the sub-item is sufficient.
+
+For each selected path, assign a confidence score (0.0 to 1.0) where 1.0 means exactly answers the query and 0.5 means tangentially related.
+Also choose a hydrate_mode:
+- "chunks"       (default) return all text/image/table chunks
+- "outline"      return only section title + summary, no chunk content
+- "assets_only"  return only image and table chunks
+- "image_only"   return only image chunks
+- "table_only"   return only table chunks
+
 Return ONLY a JSON array:
-[{{"path": "section/path", "confidence": 0.9}}, ...]
+[{{"path": "section/path", "confidence": <float>, "hydrate_mode": "chunks"}}, ...]
 Do not include any explanation.
 """
 
@@ -106,7 +121,7 @@ def _parse_chunk_path_selections(text: str) -> list[dict[str, Any]]:
     """Parse chunk path selections from LLM output.
 
     Accepts either a legacy JSON array of strings or a structured array of
-    objects with `path` and optional `confidence`.
+    objects with `path`, optional `confidence`, and optional `hydrate_mode`.
     """
     payload = _extract_json_array_payload(text)
     selections: list[dict[str, Any]] = []
@@ -114,16 +129,19 @@ def _parse_chunk_path_selections(text: str) -> list[dict[str, Any]]:
         if isinstance(item, str):
             path = item.strip()
             if path:
-                selections.append({'path': path, 'confidence': None})
+                selections.append({'path': path, 'confidence': None, 'hydrate_mode': 'chunks'})
             continue
         if not isinstance(item, dict):
             continue
         path = str(item.get('path') or item.get('chunk_path') or '').strip()
         if not path:
             continue
+        raw_mode = str(item.get('hydrate_mode') or '').strip().lower()
+        hydrate_mode = raw_mode if raw_mode in _VALID_HYDRATE_MODES else 'chunks'
         selections.append({
             'path': path,
             'confidence': _normalize_confidence(item.get('confidence')),
+            'hydrate_mode': hydrate_mode,
         })
     return selections
 
@@ -220,8 +238,8 @@ def _format_items_for_llm(
     Always shows ALL items (L1 + L2).  Overflow controls whether
     summaries are included — not which levels are shown.
 
-    Normal:   path + title + chunk_count + assets_count + summary
-    Overflow: path + title + chunk_count + assets_count  (no summary)
+    Normal:   path + title + text=N image=I table=T + summary
+    Overflow: path + title + text=N image=I table=T  (no summary)
 
     Returns (text, overflowed).
     """
@@ -238,10 +256,13 @@ def _format_items_for_llm(
         line = f'{indent}- path="{item["path"]}"  title="{item["title"]}"'
         chunk_count = item.get('chunk_count', 0)
         if chunk_count > 0:
-            line += f'  chunks={chunk_count}'
-        assets = item.get('assets_count', 0)
-        if assets > 0:
-            line += f'  assets={assets}'
+            line += f'  text={chunk_count}'
+        image_count = item.get('image_count', 0)
+        if image_count > 0:
+            line += f'  image={image_count}'
+        table_count = item.get('table_count', 0)
+        if table_count > 0:
+            line += f'  table={table_count}'
         if include_summary:
             summary = item.get('summary') or item.get('title', '')
             if summary:
@@ -410,16 +431,20 @@ async def _load_child_sections(
     document_id: str,
     job_result_id: str,
     scope_path: str | None = None,
+    exclude_paths: set[str] | None = None,
 ) -> list[dict]:
     """Load the next 2 available section depth bands under *scope_path*.
 
     Returns a flat list sorted by sort_order, each item:
-        {path, title, summary, chunk_count, assets_count, level}
+        {path, title, summary, chunk_count, image_count, table_count, level}
 
     - level=1: nearest available descendant depth under scope
     - level=2: second nearest available descendant depth under scope
     - chunk_count: text chunks under this section (excluding image/table)
-    - assets_count: image + table chunks under this section
+    - image_count: image chunks under this section
+    - table_count: table chunks under this section
+    - exclude_paths: paths already seen in prior revision rounds;
+      any path matching (exact or subtree) is skipped
     """
     # ── Fetch all sections for this document revision ────────────────────
     stmt = (
@@ -465,6 +490,7 @@ async def _load_child_sections(
     # round's relative L1/L2 instead of synthesizing missing ancestors.
     visible_sections: list[tuple[str, dict, int]] = []
     visible_depths: set[int] = set()
+    _excl = exclude_paths or set()
     for path, meta in all_sections.items():
         parts = meta['parts']
         if scope_parts and (
@@ -473,6 +499,12 @@ async def _load_child_sections(
             continue
         relative_depth = len(parts) - scope_depth
         if relative_depth < 1:
+            continue
+        # Skip paths already seen in prior revision rounds
+        if _excl and any(
+            path == ep or path.startswith(ep + ' / ') or ep.startswith(path + ' / ')
+            for ep in _excl
+        ):
             continue
         visible_sections.append((path, meta, relative_depth))
         visible_depths.add(relative_depth)
@@ -497,14 +529,15 @@ async def _load_child_sections(
                 'level': level,
                 'sort_order': meta['sort_order'],
                 'chunk_count': 0,
-                'assets_count': 0,
+                'image_count': 0,
+                'table_count': 0,
                 'section_id': meta['section_id'],
             }
 
     if not items_by_path:
         return []
 
-    # ── Count chunks per section (text vs assets) ───────────────────────
+    # ── Count chunks per section (text / image / table) ──────────────────
     section_ids = [meta['section_id'] for meta in all_sections.values()]
     if section_ids:
         from sqlalchemy import case, literal_column
@@ -518,9 +551,14 @@ async def _load_child_sections(
                 ).label('text_count'),
                 func.count(
                     case(
-                        (DocumentChunk.chunk_type.in_(['image', 'table']), literal_column('1')),
+                        (DocumentChunk.chunk_type == 'image', literal_column('1')),
                     )
-                ).label('asset_count'),
+                ).label('image_count'),
+                func.count(
+                    case(
+                        (DocumentChunk.chunk_type == 'table', literal_column('1')),
+                    )
+                ).label('table_count'),
             )
             .where(DocumentChunk.document_id == document_id)
             .where(DocumentChunk.job_result_id == job_result_id)
@@ -528,8 +566,8 @@ async def _load_child_sections(
             .group_by(DocumentChunk.section_id)
         )
         chunk_rows = (await db.execute(chunk_stmt)).all()
-        section_id_counts: dict[str, tuple[int, int]] = {
-            sid: (int(tc), int(ac)) for sid, tc, ac in chunk_rows
+        section_id_counts: dict[str, tuple[int, int, int]] = {
+            sid: (int(tc), int(ic), int(tbc)) for sid, tc, ic, tbc in chunk_rows
         }
     else:
         section_id_counts = {}
@@ -538,7 +576,7 @@ async def _load_child_sections(
     sid_to_path = {meta['section_id']: path for path, meta in all_sections.items()}
 
     # Aggregate chunk counts upward: each item gets counts from itself + descendants
-    for sid, (text_c, asset_c) in section_id_counts.items():
+    for sid, (text_c, img_c, tbl_c) in section_id_counts.items():
         chunk_path = sid_to_path.get(sid, '')
         if not chunk_path:
             continue
@@ -546,7 +584,8 @@ async def _load_child_sections(
         for item_path, item in items_by_path.items():
             if chunk_path == item_path or chunk_path.startswith(item_path + ' / '):
                 item['chunk_count'] += text_c
-                item['assets_count'] += asset_c
+                item['image_count'] += img_c
+                item['table_count'] += tbl_c
 
     # ── Sort: interleave L2 under their L1 parent ────────────────────────
     #

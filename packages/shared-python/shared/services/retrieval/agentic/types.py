@@ -29,6 +29,7 @@ class AgentRunConfig:
     max_docs: int = 0   # 0 = no limit, LLM decides autonomously
     max_path_expansions: int = 2
     max_doc_retries: int = 2
+    max_revisions: int = 2  # max attempt_answer → revise cycles
     latency_budget_ms: int = 12000
     min_evidence_paths: int = 1
 
@@ -89,6 +90,12 @@ class AgentState:
     doc_id_to_name: dict[str, str] = field(default_factory=dict)
     doc_job_map: dict[str, str] = field(default_factory=dict)
 
+    # Revision / three-state fields
+    revision_count: int = 0
+    ever_explored_doc_ids: set[str] = field(default_factory=set)
+    seen_section_keys: set[str] = field(default_factory=set)  # "{doc_id}::{section_path}"
+    kept_path_rows: list[dict[str, Any]] = field(default_factory=list)
+
     @property
     def elapsed_ms(self) -> int:
         return int((time.monotonic() - self.start_time) * 1000)
@@ -133,6 +140,9 @@ class AgentState:
             'selected_paths_count': len(self.selected_paths),
             'selected_paths': selected_path_summaries,
             'doc_retry_count': self.doc_retry_count,
+            'revision_count': self.revision_count,
+            'explored_doc_count': len(self.ever_explored_doc_ids),
+            'kept_rows_count': len(self.kept_path_rows),
             'last_observation': last_obs,
         }
 
@@ -179,11 +189,19 @@ class AgentState:
 
         elif action_type == ActionType.DOCUMENT_PATH_SELECT:
             if result.status == 'selected_paths':
+                doc_id = result.payload.get('document_id', '')
                 new_paths = result.payload.get('selected_paths', [])
+                for p in new_paths:
+                    p['document_id'] = doc_id
                 self.selected_paths.extend(new_paths)
                 self.pending_doc_index += 1
+                if doc_id:
+                    self.ever_explored_doc_ids.add(doc_id)
             elif result.status == 'no_items':
+                doc_id = result.payload.get('document_id', '')
                 self.pending_doc_index += 1
+                if doc_id:
+                    self.ever_explored_doc_ids.add(doc_id)
             elif result.status == 'need_more_docs':
                 failed_doc_id = result.payload.get('document_id', '')
                 if failed_doc_id:
@@ -191,9 +209,15 @@ class AgentState:
                 self.doc_retry_count += 1
                 self.kg_done = False  # allow re-entry to KG select
             elif result.status == 'no_confident_match':
+                doc_id = result.payload.get('document_id', '')
                 self.pending_doc_index += 1
+                if doc_id:
+                    self.ever_explored_doc_ids.add(doc_id)
             elif result.status == 'error':
+                doc_id = result.payload.get('document_id', '')
                 self.pending_doc_index += 1
+                if doc_id:
+                    self.ever_explored_doc_ids.add(doc_id)
 
         elif action_type == ActionType.GREP_DOCUMENT_DISCOVER:
             if result.status == 'discovered_docs':

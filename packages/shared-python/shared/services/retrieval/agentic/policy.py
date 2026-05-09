@@ -23,15 +23,11 @@ from shared.services.retrieval.llm_adapter import LLMFn
 
 # ── Available actions presented to the LLM ───────────────────────────────────
 
+# NOTE: BOTTOM_DISCOVERY is intentionally excluded from this list.
+# It is now a mandatory pre-step executed automatically by the orchestrator
+# before the LLM decision loop begins.  The LLM should never need to decide
+# whether to run it — doing so wastes one LLM call per run.
 _AVAILABLE_ACTIONS: list[dict[str, Any]] = [
-    {
-        'action': ActionType.BOTTOM_DISCOVERY.value,
-        'description': (
-            'Run BM25 3-channel bottom-layer discovery (path / content / term). '
-            'Always call this first to get candidate chunks and top document hints.'
-        ),
-        'when': 'discovery_done is false',
-    },
     {
         'action': ActionType.KG_DOCUMENT_SELECT.value,
         'description': (
@@ -94,12 +90,12 @@ AVAILABLE ACTIONS:
 {actions_block}
 
 RULES:
-1. Always run bottom_discovery first (if discovery_done is false).
-2. After discovery, run kg_document_select (if kg_done is false).
-3. After kg select, run document_path_select for each pending document.
-4. Call done when all pending documents are processed OR you have >= {min_evidence} evidence paths.
-5. Only use grep_document_discover if kg_document_select found 0 documents.
-6. Only use graph_expand_docs if you need more related docs after reviewing results.
+1. Run kg_document_select when discovery_done is true and kg_done is false.
+2. After kg select, run document_path_select for each pending document.
+3. Call done when all pending documents are processed OR you have >= {min_evidence} evidence paths.
+4. Only use grep_document_discover if kg_document_select found 0 documents.
+5. Only use graph_expand_docs if you need more related docs after reviewing results.
+Note: bottom_discovery is already executed automatically before this loop — do NOT attempt to call it.
 
 Return ONLY a JSON object, no markdown, no explanation:
 {{"action": "<action_name>", "reason": "<one sentence why>"}}
@@ -145,9 +141,26 @@ class LLMPolicy:
     def build_prompt(self, state: AgentState, config: AgentRunConfig) -> str:
         """Build the decision prompt.  Public for test inspection."""
         state_data = state.state_summary()
+        
+        has_pending_docs = state.pending_doc_index < len(state.selected_docs)
+        state_data['has_pending_docs'] = has_pending_docs
         state_json = json.dumps(state_data, ensure_ascii=False, indent=2)
 
-        # Count pending docs
+        allowed_actions = []
+        for action in _AVAILABLE_ACTIONS:
+            name = action['action']
+            if name == ActionType.KG_DOCUMENT_SELECT.value and (not state.discovery_done or state.kg_done):
+                continue
+            if name == ActionType.DOCUMENT_PATH_SELECT.value and (not state.kg_done or not has_pending_docs):
+                continue
+            if name == ActionType.GREP_DOCUMENT_DISCOVER.value and (not state.kg_done or len(state.selected_docs) > 0):
+                continue
+            allowed_actions.append(action)
+
+        actions_block = '\n'.join(
+            f"  {i+1}. \"{a['action']}\": {a['description']} [{a['when']}]"
+            for i, a in enumerate(allowed_actions)
+        )
 
         return _POLICY_PROMPT_TEMPLATE.format(
             query=self._query,
@@ -156,7 +169,7 @@ class LLMPolicy:
             budget_ms=config.latency_budget_ms,
             step=state.step_count,
             max_steps=config.max_steps,
-            actions_block=_ACTIONS_BLOCK,
+            actions_block=actions_block,
             min_evidence=config.min_evidence_paths,
         )
 
@@ -232,3 +245,73 @@ class LLMPolicy:
             return None, f'unknown_action: {action_str}'
 
         return action_type, reason
+
+    async def attempt_answer(
+        self,
+        state: AgentState,
+        config: AgentRunConfig,
+        ranked_rows: list[dict[str, Any]],
+    ) -> tuple[str, str]:
+        """Three-state verdict: is the evidence sufficient?
+
+        Returns (verdict, reason) where verdict is one of:
+          - 'DONE': evidence is sufficient, stop searching
+          - 'NOT_SUFFICIENT': partial match, need more evidence
+          - 'NOT_FOUND': no relevant evidence found at all
+        """
+        # Build evidence summary (paths + previews, not full content)
+        evidence_lines: list[str] = []
+        for i, row in enumerate(ranked_rows[:20]):  # cap to avoid huge prompt
+            path = row.get('section_path') or row.get('source_chunk_path') or ''
+            content_preview = str(row.get('content', ''))[:150]
+            score = round(float(row.get('score', 0.0) or 0.0), 3)
+            evidence_lines.append(
+                f'  {i+1}. path="{path}" score={score}\n'
+                f'     preview: {content_preview}'
+            )
+        evidence_text = '\n'.join(evidence_lines) or '(no evidence collected)'
+
+        prompt = _ATTEMPT_ANSWER_PROMPT.format(
+            query=self._query,
+            evidence_count=len(ranked_rows),
+            evidence_summary=evidence_text,
+            revision_count=state.revision_count,
+            max_revisions=config.max_revisions,
+        )
+
+        raw_response = await self._llm_fn(prompt)
+        logger.info(f'  [LLMPolicy.attempt_answer] raw={repr(raw_response[:200])}')
+
+        parsed = _parse_action_from_response(raw_response)
+        if not parsed:
+            return 'DONE', 'parse_error — treating as done'
+
+        verdict = str(parsed.get('verdict', 'DONE')).strip().upper()
+        reason = str(parsed.get('reason', '')).strip()
+
+        if verdict not in ('DONE', 'NOT_SUFFICIENT', 'NOT_FOUND'):
+            verdict = 'DONE'
+
+        return verdict, reason
+
+
+_ATTEMPT_ANSWER_PROMPT = """\
+You are evaluating whether the collected evidence can answer the user's query.
+
+QUERY: "{query}"
+
+EVIDENCE ({evidence_count} items, showing top 20):
+{evidence_summary}
+
+REVISION: {revision_count} of {max_revisions} revisions used.
+
+Evaluate the evidence and return ONE verdict:
+- "DONE": The evidence is sufficient to answer the query. Use this if the main points are covered.
+- "NOT_SUFFICIENT": Partial match — some relevant info found but key aspects are missing. Only use if more searching could realistically help.
+- "NOT_FOUND": The evidence is completely irrelevant to the query. Only use if nothing matches at all.
+
+When in doubt, prefer DONE — avoid unnecessary extra search rounds.
+
+Return ONLY a JSON object:
+{{"verdict": "DONE", "reason": "one sentence explanation"}}
+"""

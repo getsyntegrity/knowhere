@@ -276,6 +276,7 @@ async def document_path_select(
     job_result_id: str,
     doc_name: str = '',
     max_chunks_per_file: int = 15,
+    exclude_paths: set[str] | None = None,
     **_kwargs: Any,
 ) -> ToolResult:
     """Document entry point for agentic scope navigation."""
@@ -289,6 +290,7 @@ async def document_path_select(
         db, document_id=document_id, job_result_id=job_result_id,
         query=query, llm_fn=llm_fn, doc_name=doc_name,
         scope_path=None, max_select=max_chunks_per_file,
+        exclude_paths=exclude_paths,
     )
 
 
@@ -429,6 +431,7 @@ async def scope_navigate(
     doc_name: str = '',
     scope_path: str | None = None,
     max_select: int = 15,
+    exclude_paths: set[str] | None = None,
 ) -> ToolResult:
     """Unified document-internal navigation tool.
     
@@ -440,7 +443,10 @@ async def scope_navigate(
     """
     t0 = time.monotonic()
     try:
-        items = await _load_child_sections(db, document_id, job_result_id, scope_path)
+        items = await _load_child_sections(
+            db, document_id, job_result_id, scope_path,
+            exclude_paths=exclude_paths,
+        )
         if not items:
             latency = int((time.monotonic() - t0) * 1000)
             return ToolResult(
@@ -471,7 +477,8 @@ async def scope_navigate(
             confidence = item.get('confidence')
             if confidence is None:
                 confidence = _default_confidence_for_rank(len(accepted))
-            accepted.append({'path': path, 'confidence': confidence})
+            hydrate_mode = item.get('hydrate_mode', 'chunks')
+            accepted.append({'path': path, 'confidence': confidence, 'hydrate_mode': hydrate_mode})
             if len(accepted) >= max_select:
                 break
 

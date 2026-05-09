@@ -608,6 +608,21 @@ def iter_block_items(doc_data):
                 # <v:imagedata> piece-by-piece loses textual overlay and positioning. 
                 # Future plan: Use LibreOffice headless conversion to render the entire document 
                 # and map the perfectly rendered images back to the layout via text anchors.
+                #
+                # Temporary: detect VML-only paragraphs and inject a placeholder so the
+                # paragraph isn't silently swallowed, leaving its parent section empty.
+                if not text and not seen_rids:
+                    # No text and no DrawingML images — check for VML content
+                    vml_groups = elem.xpath(".//v:group", namespaces=ns)
+                    vml_images_check = elem.xpath(".//v:imagedata", namespaces=ns)
+                    if vml_groups or vml_images_check:
+                        vml_placeholder = "[VML graphic \u2014 extraction not yet supported]"
+                        yield ele_num, vml_placeholder, "PTXT", None
+                        ele_num += 1
+                        logger.debug(
+                            f"Injected VML placeholder for paragraph with "
+                            f"{len(vml_groups)} v:group, {len(vml_images_check)} v:imagedata"
+                        )
                 """
                 # images (VML: <v:imagedata>) — convert to PNG
                 from PIL import Image as PILImage
@@ -942,6 +957,13 @@ def convert_doc2dics(
     for _, row in leaf_dics.iterrows():
         key = row["path_identifier"]
 
+        # Skip leaf nodes with no actual content (empty heading-only sections)
+        content_lst = row["content_lst"]
+        joined = "\n".join(content_lst).strip()
+        if not joined:
+            logger.debug(f"Skipping empty leaf node: {key}")
+            continue
+
         # Build tentative path to check for duplicates
         tentative_path = doc_name + split_char + key
 
@@ -954,7 +976,7 @@ def convert_doc2dics(
             path_counter[tentative_path] = 1
 
         path_keys.append((doc_name + split_char + key))
-        bottom_content = "\n".join(row["content_lst"])
+        bottom_content = joined
         bottom_tokens = tokenize2stw_remove(
             [bottom_content], base_llm_paras["stopwords"]
         )
