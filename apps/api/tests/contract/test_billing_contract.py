@@ -1,4 +1,5 @@
 import importlib
+import json
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta, timezone
@@ -10,10 +11,49 @@ from httpx import AsyncClient
 from pytest import MonkeyPatch
 
 from tests.support.contract_database import ContractDatabase
+from shared.utils.api_keys import hash_api_key
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def _insert_api_key_for_user(user_id: str, api_key: str) -> None:
+    timestamp = _utc_now()
+    api_key_id = f"key_{uuid4().hex[:12]}"
+    await ContractDatabase.execute(
+        """
+        INSERT INTO api_keys (
+            id,
+            user_id,
+            key_hash,
+            key_mask,
+            name,
+            enabled_modules,
+            is_active,
+            created_at
+        ) VALUES (
+            :id,
+            :user_id,
+            :key_hash,
+            :key_mask,
+            :name,
+            CAST(:enabled_modules AS JSON),
+            :is_active,
+            :created_at
+        )
+        """,
+        {
+            "id": api_key_id,
+            "user_id": user_id,
+            "key_hash": hash_api_key(api_key),
+            "key_mask": f"{api_key[:8]}...{api_key[-4:]}",
+            "name": f"Contract API Key {user_id}",
+            "enabled_modules": json.dumps(["all"]),
+            "is_active": True,
+            "created_at": timestamp,
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -27,6 +67,60 @@ async def test_should_return_the_authenticated_users_initialized_credits_balance
 
     assert response.status_code == 200
     assert response.json() == {"credits_balance": 5.0}
+
+
+@pytest.mark.asyncio
+async def test_should_initialize_missing_user_balance_during_tier_lookup(
+    api_client_factory: Callable[[], AbstractAsyncContextManager[AsyncClient]],
+) -> None:
+    user_id = f"contract-missing-balance-{uuid4().hex[:12]}"
+    api_key = f"sk_contract_{uuid4().hex[:24]}"
+
+    async with api_client_factory() as api_client:
+        await ContractDatabase.insert_user(user_id=user_id)
+        await _insert_api_key_for_user(user_id, api_key)
+        api_client.headers.update({"Authorization": f"Bearer {api_key}"})
+
+        response = await api_client.get("/api/v1/billing/credits")
+        balance_row = await ContractDatabase.fetch_one(
+            """
+            SELECT credits_balance, user_tier
+            FROM user_balances
+            WHERE user_id = :user_id
+            """,
+            {"user_id": user_id},
+        )
+        transaction_row = await ContractDatabase.fetch_one(
+            """
+            SELECT credits_amount, transaction_type
+            FROM credits_transactions
+            WHERE user_id = :user_id
+              AND transaction_type = 'initial_grant'
+            """,
+            {"user_id": user_id},
+        )
+        payment_row = await ContractDatabase.fetch_one(
+            """
+            SELECT credits_amount, payment_type, status
+            FROM payment_records
+            WHERE user_id = :user_id
+              AND payment_type = 'system_grant'
+            """,
+            {"user_id": user_id},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"credits_balance": 5.0}
+    assert balance_row == {"credits_balance": 5_000_000, "user_tier": "free"}
+    assert transaction_row == {
+        "credits_amount": 5_000_000,
+        "transaction_type": "initial_grant",
+    }
+    assert payment_row == {
+        "credits_amount": 5_000_000,
+        "payment_type": "system_grant",
+        "status": "succeeded",
+    }
 
 
 @pytest.mark.asyncio

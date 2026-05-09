@@ -20,6 +20,7 @@ from shared.models.database.payment_record import PaymentRecord
 from shared.models.database.tier_limit import TierLimit
 from shared.models.database.user_balance import UserBalance
 
+from shared.services.billing.credits_service import CreditsService
 from shared.services.redis.redis_service import RedisService
 
 _DEFAULT_TIER: str = "free"
@@ -42,7 +43,13 @@ class TierService:
             return cached_tier
 
         async with get_db_context() as session:
-            user_tier = await TierService._get_tier_from_db(session, user_id)
+            try:
+                user_tier: str = await TierService._get_tier_from_db(session, user_id)
+            except NotFoundException:
+                user_tier = await TierService._initialize_missing_user_tier(
+                    session,
+                    user_id,
+                )
 
         await TierService._set_cached_tier(redis_service, user_id, user_tier)
         return user_tier
@@ -125,6 +132,21 @@ class TierService:
                 internal_message=f"User tier not found for user_id={user_id}",
             )
         return str(user_tier)
+
+    @staticmethod
+    async def _initialize_missing_user_tier(
+        session: AsyncSession,
+        user_id: str,
+    ) -> str:
+        """Create missing first-use billing state, then return the user's tier."""
+        credits_service: CreditsService = CreditsService()
+        await credits_service.ensure_user_initialized(session, user_id)
+        user_tier: str = await TierService._get_tier_from_db(session, user_id)
+        logger.info(
+            "Initialized missing user balance during tier lookup: user_id={}",
+            user_id,
+        )
+        return user_tier
 
     @staticmethod
     async def _get_cached_tier(
