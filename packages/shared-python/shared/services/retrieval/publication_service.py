@@ -309,28 +309,34 @@ class RetrievalPublicationService:
             section_path = section_path_from_chunk_path(source_path)
             section = sections_by_path.get(section_path)
             if section is None:
-                parent_section_id = None
                 path_parts = [p for p in section_path.split(" / ") if p]
-                if len(path_parts) > 1:
-                    parent_path = " / ".join(path_parts[:-1])
-                    parent = sections_by_path.get(parent_path)
-                    if parent is not None:
-                        parent_section_id = parent.section_id
-                section = DocumentSection(
-                    user_id=str(job.user_id),
-                    namespace=namespace,
-                    document_id=document_id,
-                    job_result_id=job_result_id,
-                    parent_section_id=parent_section_id,
-                    section_path=section_path,
-                    section_title=path_parts[-1] if path_parts else None,
-                    section_level=len(path_parts),
-                    section_metadata={},
-                    sort_order=len(sections_by_path),
-                )
-                db.add(section)
-                db.flush()
-                sections_by_path[section_path] = section
+                # Ensure all ancestor sections exist (top-down)
+                for depth in range(1, len(path_parts) + 1):
+                    ancestor_path = " / ".join(path_parts[:depth])
+                    if ancestor_path in sections_by_path:
+                        continue
+                    ancestor_parent_id = None
+                    if depth > 1:
+                        parent_path = " / ".join(path_parts[:depth - 1])
+                        parent = sections_by_path.get(parent_path)
+                        if parent is not None:
+                            ancestor_parent_id = parent.section_id
+                    ancestor_section = DocumentSection(
+                        user_id=str(job.user_id),
+                        namespace=namespace,
+                        document_id=document_id,
+                        job_result_id=job_result_id,
+                        parent_section_id=ancestor_parent_id,
+                        section_path=ancestor_path,
+                        section_title=path_parts[depth - 1],
+                        section_level=depth,
+                        section_metadata={},
+                        sort_order=len(sections_by_path),
+                    )
+                    db.add(ancestor_section)
+                    db.flush()
+                    sections_by_path[ancestor_path] = ancestor_section
+                section = sections_by_path[section_path]
 
             chunk_id = chunk.get("chunk_id") or f"chunk_{uuid4().hex[:12]}"
             section_summary = section.summary if section else None

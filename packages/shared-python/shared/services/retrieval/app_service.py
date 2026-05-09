@@ -251,89 +251,7 @@ async def assemble_retrieval_results(
     return assembled
 
 
-async def list_lexical_chunks(
-    db: AsyncSession,
-    *,
-    user_id: str,
-    namespace: str,
-    query: str,
-    top_k: int,
-    exclude_document_ids: list[str],
-    exclude_sections: list[dict[str, str]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Independent lexical retrieval: path + content channels via ILIKE."""
-    recall_k = top_k * _INTERNAL_RECALL_K_MULTIPLIER
-    excluded_docs = set(exclude_document_ids)
 
-    base_stmt = (
-        select(Document, DocumentChunk, DocumentSection, JobResult)
-        .join(DocumentChunk, (DocumentChunk.document_id == Document.document_id) & (DocumentChunk.job_result_id == Document.current_job_result_id))
-        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
-        .join(JobResult, JobResult.id == DocumentChunk.job_result_id)
-        .where(Document.user_id == user_id)
-        .where(Document.namespace == namespace)
-        .where(Document.status == 'active')
-    )
-    if excluded_docs:
-        base_stmt = base_stmt.where(Document.document_id.notin_(list(excluded_docs)))
-
-    like = f'%{query}%'
-    content_stmt = base_stmt.where(DocumentChunk.content_lexical_text.ilike(like)).order_by(DocumentChunk.sort_order).limit(recall_k)
-    path_stmt = base_stmt.where(DocumentChunk.path_lexical_text.ilike(like)).order_by(DocumentChunk.sort_order).limit(recall_k)
-
-    # AsyncSession is stateful and should not be shared across concurrent tasks.
-    content_result = await db.execute(content_stmt)
-    path_result = await db.execute(path_stmt)
-
-    def _to_rows(result, channel_score: float) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for document, chunk, section, job_result in result.all():
-            section_path = section.section_path if section else None
-            if is_excluded_section(document_id=document.document_id, section_path=section_path, exclude_sections=exclude_sections):
-                continue
-            rows.append({
-                'document_id': document.document_id,
-                'chunk_id': chunk.chunk_id,
-                'section_id': chunk.section_id,
-                'section_path': section_path,
-                'source_file_name': document.source_file_name,
-                'chunk_type': chunk.chunk_type,
-                'content': chunk.content,
-                'score': channel_score,
-                'file_path': chunk.file_path,
-                'chunk_metadata': chunk.chunk_metadata or {},
-                'job_result_id': chunk.job_result_id,
-                'job_id': job_result.job_id if job_result else None,
-            })
-        return rows
-
-    content_rows = _to_rows(content_result, _CHANNEL_WEIGHT_CONTENT)
-    path_rows = _to_rows(path_result, _CHANNEL_WEIGHT_PATH)
-    return content_rows, path_rows
-
-
-def _grep_search_rows(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
-    """Term/grep channel: exact substring matching with scoring from knowhere-kb."""
-    import re
-    query_lower = query.lower().strip()
-    if not query_lower:
-        return []
-
-    units = re.findall(r'[一-鿿]+|[a-zA-Z0-9]+', query_lower)
-    units = [u for u in units if len(u) > 1]
-
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for row in rows:
-        haystack = (str(row.get('content') or '') + ' ' + str(row.get('section_path') or '')).lower()
-        if query_lower in haystack:
-            scored.append((100.0, row))
-        elif units:
-            hit_count = sum(1 for u in units if u in haystack)
-            if hit_count > 0:
-                scored.append((float(hit_count), row))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [dict(row, score=score) for score, row in scored]
 
 
 def _merge_same_section_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -690,13 +608,14 @@ def _rank_candidates_by_path(
         else:
             primary_rows.append(row)
 
-    _sort_key = lambda row: (
-        float(row.get('agent_score', 0.0) or 0.0),
-        float(row.get('discovery_score', 0.0) or 0.0),
-        int(row.get('dual_hit_flag', 0) or 0),
-        float(row.get('importance_norm_score', 0.0) or 0.0),
-        -int(row.get('_candidate_order', 0) or 0),
-    )
+    def _sort_key(row):
+        return (
+            float(row.get('agent_score', 0.0) or 0.0),
+            float(row.get('discovery_score', 0.0) or 0.0),
+            int(row.get('dual_hit_flag', 0) or 0),
+            float(row.get('importance_norm_score', 0.0) or 0.0),
+            -int(row.get('_candidate_order', 0) or 0),
+        )
 
     primary_rows.sort(key=_sort_key, reverse=True)
     ranked_rows = primary_rows[:top_k]

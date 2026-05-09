@@ -318,7 +318,10 @@ def parse_md(
     os.makedirs(tb_dir, exist_ok=True)
     img_dir = os.path.join(output_dir, "images")
     if os.path.isdir(img_dir):
-        shutil.rmtree(img_dir)
+        # Only remove parse_md's own output (image-N-*) from previous runs
+        for fname in os.listdir(img_dir):
+            if re.match(r"^image-\d+", fname):
+                os.remove(os.path.join(img_dir, fname))
     os.makedirs(img_dir, exist_ok=True)
 
     # initialize vars

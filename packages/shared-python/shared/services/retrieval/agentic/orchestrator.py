@@ -130,7 +130,27 @@ class RetrievalAgent:
             'channel_weights': channel_weights,
         }
 
-        # ── Agent loop ──
+        # ── Mandatory pre-step: bottom discovery ─────────────────────────────
+        # bottom_discovery is always the first action; running it via the LLM
+        # policy wastes ~1-2s on a trivial LLM call.  We execute it directly
+        # and let the LLM loop start from step 2 (kg_document_select etc.).
+        logger.info('  agentic: running mandatory bottom_discovery pre-step')
+        discovery_result = await self._execute_tool(
+            db, ActionType.BOTTOM_DISCOVERY, state, config, **tool_kwargs,
+        )
+        state.apply(ActionType.BOTTOM_DISCOVERY, discovery_result)
+        if trace_enabled:
+            trace.record_step(
+                ActionType.BOTTOM_DISCOVERY, discovery_result,
+                decision_reason='mandatory_pre_step',
+            )
+        state.step_count += 1
+        logger.info(
+            f'  agentic step {state.step_count} (pre-step): action=bottom_discovery '
+            f'status={discovery_result.status} latency={discovery_result.latency_ms}ms'
+        )
+
+        # ── Agent loop (LLM decisions start from here) ────────────────────────
         stop_reason = 'max_steps'
         while state.step_count < config.max_steps:
             if state.elapsed_ms >= config.latency_budget_ms:
@@ -143,13 +163,9 @@ class RetrievalAgent:
                 break
 
             if policy is None:
-                # No LLM: run discovery once then stop
-                if not state.discovery_done:
-                    action_type = ActionType.BOTTOM_DISCOVERY
-                    decision_reason = 'no_llm_fn: discovery only'
-                else:
-                    stop_reason = 'no_llm_fn'
-                    break
+                # No LLM: discovery already ran — stop
+                stop_reason = 'no_llm_fn'
+                break
             else:
                 action_type, decision_reason = await policy.decide(state, config)
 
@@ -243,6 +259,26 @@ class RetrievalAgent:
                 state.pending_doc_index = 0
                 state.kg_done = False
                 state.discovery_done = False
+
+                # Mandatory bottom_discovery pre-step for revision round
+                logger.info(
+                    f'  agentic: running mandatory bottom_discovery pre-step '
+                    f'(revision {state.revision_count})'
+                )
+                rev_discovery = await self._execute_tool(
+                    db, ActionType.BOTTOM_DISCOVERY, state, config, **tool_kwargs,
+                )
+                state.apply(ActionType.BOTTOM_DISCOVERY, rev_discovery)
+                if trace_enabled:
+                    trace.record_step(
+                        ActionType.BOTTOM_DISCOVERY, rev_discovery,
+                        decision_reason=f'mandatory_pre_step (revision {state.revision_count})',
+                    )
+                state.step_count += 1
+                logger.info(
+                    f'  agentic step {state.step_count} (rev {state.revision_count} pre-step): '
+                    f'action=bottom_discovery status={rev_discovery.status}'
+                )
 
                 # Re-enter agent loop
                 while state.step_count < config.max_steps:

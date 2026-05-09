@@ -56,9 +56,11 @@ under that section subtree; do not ask to drill deeper.
 User query: {query}
 
 Select the most relevant section paths (at most {max_select}).
+If NO section path is relevant to the query, you MUST return an empty array []. Do not force-select irrelevant sections.
 Prefer specific sub-items over broad parents when both are listed and the sub-item is sufficient.
 
-For each selected path, choose a hydrate_mode:
+For each selected path, assign a confidence score (0.0 to 1.0) where 1.0 means exactly answers the query and 0.5 means tangentially related.
+Also choose a hydrate_mode:
 - "chunks"       (default) return all text/image/table chunks
 - "outline"      return only section title + summary, no chunk content
 - "assets_only"  return only image and table chunks
@@ -66,7 +68,7 @@ For each selected path, choose a hydrate_mode:
 - "table_only"   return only table chunks
 
 Return ONLY a JSON array:
-[{{"path": "section/path", "confidence": 0.9, "hydrate_mode": "chunks"}}, ...]
+[{{"path": "section/path", "confidence": <float>, "hydrate_mode": "chunks"}}, ...]
 Do not include any explanation.
 """
 
