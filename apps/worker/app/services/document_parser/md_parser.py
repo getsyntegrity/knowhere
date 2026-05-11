@@ -1,8 +1,8 @@
 # pyright: reportArgumentType=false, reportAssignmentType=false, reportOptionalIterable=false, reportOptionalMemberAccess=false, reportOptionalOperand=false, reportOptionalSubscript=false
-import hashlib
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 import gevent
@@ -22,6 +22,7 @@ from app.services.document_parser.image_parser import (
     _get_vision_client,
     ask_image,
     detect_summary_img_md,
+    perceptual_hash,
 )
 from app.services.document_parser.layout_parser import md_heading_match, pred_titles
 from app.services.document_parser.stage_profiler import stage_timer
@@ -309,10 +310,18 @@ def parse_md(
             json.dump(toc_hierarchies, f, ensure_ascii=False, indent=2)
         logger.info(f"Saved TOC hierarchies to {toc_json_path}")
 
-    # create local storage
+    # Clean old artifacts to prevent accumulation across debug runs.
+    # In production each job uses a fresh workspace so rmtree never triggers.
     tb_dir = os.path.join(output_dir, "tables")
+    if os.path.isdir(tb_dir):
+        shutil.rmtree(tb_dir)
     os.makedirs(tb_dir, exist_ok=True)
     img_dir = os.path.join(output_dir, "images")
+    if os.path.isdir(img_dir):
+        # Only remove parse_md's own output (image-N-*) from previous runs
+        for fname in os.listdir(img_dir):
+            if re.match(r"^image-\d+", fname):
+                os.remove(os.path.join(img_dir, fname))
     os.makedirs(img_dir, exist_ok=True)
 
     # initialize vars
@@ -332,6 +341,7 @@ def parse_md(
     img_count = 1
     path_counter = {}  # Track path occurrences for deduplication
     deferred_llm_tasks = []  # Collected during loop, executed in parallel after
+    _seen_images: dict[str, dict] = {}  # sha256_hex -> cached image info for dedup
 
     # Find layout.json path
     layout_json_path = os.path.join(output_dir, "layout.json")
@@ -474,6 +484,38 @@ def parse_md(
                     img_count += 1
                     continue
 
+                # Document-level dedup: perceptual hash for visual duplicates
+                with open(source_path, "rb") as f:
+                    img_binary_hash = perceptual_hash(f.read())
+
+                if img_binary_hash in _seen_images:
+                    cached = _seen_images[img_binary_hash]
+                    content_items.append(cached["img_content"])
+                    df_list.append(
+                        [
+                            cached["img_content"],
+                            cached["relative_img_path"],
+                            "image",
+                            len(cached["img_content"]),
+                            "",
+                            cached["img_summary_field"],
+                            cached["temp_uid"],
+                            "",
+                            "",
+                            time_stamp,
+                            str(current_pg_num) if current_pg_num > 0 else "",
+                        ]
+                    )
+                    logger.debug(
+                        f"Skipped duplicate image (hash={img_binary_hash[:12]}...)"
+                    )
+                    # Remove unused source file since we reuse the cached image
+                    try:
+                        source_path.unlink()
+                    except OSError:
+                        pass
+                    continue
+
                 os.rename(source_path, update_img_path)
 
                 # Image index (always present)
@@ -483,8 +525,6 @@ def parse_md(
                 effective_summary = img_summary or last_context or None
 
                 # Deterministic know_id: use image binary hash
-                with open(update_img_path, "rb") as img_f:
-                    img_binary_hash = hashlib.sha256(img_f.read()).hexdigest()
                 temp_uid = gen_str_codes(img_binary_hash)
                 relative_img_path = f"images/{img_name}{img_suffix}"
                 img_ref = build_chunk_ref(relative_img_path)
@@ -518,6 +558,15 @@ def parse_md(
                         str(current_pg_num) if current_pg_num > 0 else "",
                     ]
                 )
+
+                # Cache result for document-level dedup
+                _seen_images[img_binary_hash] = {
+                    "relative_img_path": relative_img_path,
+                    "img_content": img_content,
+                    "img_summary_field": img_summary_field,
+                    "temp_uid": temp_uid,
+                }
+
                 if base_llm_paras["summary_image"]:
                     # Store img_dir, img_name, img_suffix for post-loop rename (mirrors table deferred task)
                     deferred_llm_tasks.append(

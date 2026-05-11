@@ -1,8 +1,8 @@
 # pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportGeneralTypeIssues=false
-import hashlib
 import io
 import json
 import os
+import shutil
 import zipfile
 
 import pandas as pd
@@ -15,7 +15,11 @@ from app.services.common.kb_utils import (
     remove_spaces,
 )
 from app.services.document_parser.html_parser import table2html
-from app.services.document_parser.image_parser import _get_vision_client, ask_image
+from app.services.document_parser.image_parser import (
+    _get_vision_client,
+    ask_image,
+    perceptual_hash,
+)
 from app.services.document_parser.layout_parser import pred_titles
 from app.services.document_parser.table_parser import sanitize_table_name_from_header
 from app.services.document_parser.toc_parser import (
@@ -101,10 +105,35 @@ def handle_image(
     current_heading,
     img_count,
     smart_summary=False,
+    seen_images=None,
 ):
     time_stamp = get_str_time()
-    client = _get_vision_client()
 
+    # Document-level dedup: use perceptual hash to catch visually-identical
+    # images that differ only in compression/metadata
+    img_hash = perceptual_hash(img_file["data"])
+    if seen_images is not None and img_hash in seen_images:
+        cached = seen_images[img_hash]
+        headings_stack[-1]["content"].append(cached["image_ref"])
+        df_list.append(
+            [
+                cached["image_ref"],
+                cached["img_path"],
+                "image",
+                len(cached["image_ref"]),
+                "",
+                cached["img_summary_field"],
+                cached["temp_uid"],
+                "",
+                "",
+                time_stamp,
+                "",
+            ]
+        )
+        logger.debug(f"Skipped duplicate image (hash={img_hash[:12]}...)")
+        return headings_stack, df_list, False  # False = cache hit, don't increment
+
+    client = _get_vision_client()
     last_context = _find_img_context(headings_stack)
 
     # Image index (always present)
@@ -150,7 +179,7 @@ def handle_image(
     img_path = os.path.join(img_dir, f"{img_name}{img_ext}")
     os.rename(img_raw_path, img_path)  # if summary fails, renaming is not applied
 
-    temp_uid = gen_str_codes(hashlib.sha256(img_file["data"]).hexdigest())
+    temp_uid = gen_str_codes(img_hash)
 
     # Build img_summary_field for df_list: image-n + optional summary
     if img_summary:
@@ -183,7 +212,17 @@ def handle_image(
             "",
         ]
     )
-    return headings_stack, df_list
+
+    # Cache result for document-level dedup
+    if seen_images is not None:
+        seen_images[img_hash] = {
+            "img_path": img_path,
+            "image_ref": image_ref,
+            "img_summary_field": img_summary_field,
+            "temp_uid": temp_uid,
+        }
+
+    return headings_stack, df_list, True  # True = new image processed
 
 
 def _first_cols_rows(table_block, max_items=10, max_chars=20):
@@ -245,6 +284,7 @@ def handle_table(
     cell_images=None,
     img_dir=None,
     img_count=0,
+    seen_images=None,
 ):
     time_stamp = get_str_time()
 
@@ -256,6 +296,31 @@ def handle_table(
         for (row_idx, col_idx), images in cell_images.items():
             descriptions = []
             for img_data in images:
+                # Document-level dedup: perceptual hash for visual duplicates
+                cell_img_hash = perceptual_hash(img_data["data"])
+                if seen_images is not None and cell_img_hash in seen_images:
+                    cached = seen_images[cell_img_hash]
+                    descriptions.append(f"[{cached['img_summary_field']}]")
+                    table_img_entries.append(
+                        [
+                            cached["image_ref"],
+                            cached["img_path"],
+                            "image",
+                            len(cached["image_ref"]),
+                            "",
+                            cached["img_summary_field"],
+                            cached["temp_uid"],
+                            "",
+                            "",
+                            time_stamp,
+                            "",
+                        ]
+                    )
+                    logger.debug(
+                        f"Skipped duplicate table cell image (hash={cell_img_hash[:12]}...)"
+                    )
+                    continue
+
                 img_count += 1
                 img_ext = os.path.splitext(img_data["image_name"])[-1]
                 image_index = f"image-{img_count}"
@@ -286,7 +351,7 @@ def handle_table(
                 descriptions.append(f"[{effective_desc}]")
 
                 # Also add as IMAGE entry in df_list for indexing
-                temp_uid = gen_str_codes(hashlib.sha256(img_data["data"]).hexdigest())
+                temp_uid = gen_str_codes(cell_img_hash)
                 img_summary_field = (
                     f"{image_index}\n{img_summary}" if img_summary else image_index
                 )
@@ -312,11 +377,21 @@ def handle_table(
                     ]
                 )
 
+                # Cache result for document-level dedup
+                if seen_images is not None:
+                    seen_images[cell_img_hash] = {
+                        "img_path": relative_img_path,
+                        "image_ref": image_ref,
+                        "img_summary_field": img_summary_field,
+                        "temp_uid": temp_uid,
+                    }
+
             cell_image_map[(row_idx, col_idx)] = " ".join(descriptions)
 
         logger.info(
             f"Extracted {sum(len(v) for v in cell_images.values())} images from table-{table_count + 1} cells"
         )
+
 
     # Generate HTML with image descriptions embedded
     tb_html_str = table2html(
@@ -417,7 +492,10 @@ def iter_block_items(doc_data):
             "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
             "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
             "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            "v": "urn:schemas-microsoft-com:vml",
+            "o": "urn:schemas-microsoft-com:office:office",
         }
+        r_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
         root = etree.fromstring(xml)
         body = root.find(".//w:body", namespaces=ns)
@@ -500,15 +578,17 @@ def iter_block_items(doc_data):
                     yield ele_num, p_obj or text, label, meta
                     ele_num += 1
 
-                # images
+                # images (DrawingML: <a:blip>)
+                seen_rids = set()
                 blips = elem.xpath(".//a:blip", namespaces=ns)
                 for b in blips:
-                    rid = b.get(
-                        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
-                    )
+                    rid = b.get(f"{r_ns}embed")
+                    if not rid or rid in seen_rids:
+                        continue
                     target = rel_map.get(rid)
                     if not target or not target.startswith("media/"):
                         continue
+                    seen_rids.add(rid)
                     data = docx.read("word/" + target)
                     yield (
                         ele_num,
@@ -522,6 +602,65 @@ def iter_block_items(doc_data):
                         },
                     )
                     ele_num += 1
+
+                # TODO: Re-evaluate VML group extraction strategy. 
+                # Complex VML composite images (<v:group>) are currently skipped because extracting 
+                # <v:imagedata> piece-by-piece loses textual overlay and positioning. 
+                # Future plan: Use LibreOffice headless conversion to render the entire document 
+                # and map the perfectly rendered images back to the layout via text anchors.
+                #
+                # Temporary: detect VML-only paragraphs and inject a placeholder so the
+                # paragraph isn't silently swallowed, leaving its parent section empty.
+                if not text and not seen_rids:
+                    # No text and no DrawingML images — check for VML content
+                    vml_groups = elem.xpath(".//v:group", namespaces=ns)
+                    vml_images_check = elem.xpath(".//v:imagedata", namespaces=ns)
+                    if vml_groups or vml_images_check:
+                        vml_placeholder = "[VML graphic \u2014 extraction not yet supported]"
+                        yield ele_num, vml_placeholder, "PTXT", None
+                        ele_num += 1
+                        logger.debug(
+                            f"Injected VML placeholder for paragraph with "
+                            f"{len(vml_groups)} v:group, {len(vml_images_check)} v:imagedata"
+                        )
+                """
+                # images (VML: <v:imagedata>) — convert to PNG
+                from PIL import Image as PILImage
+
+                vml_images = elem.xpath(".//v:imagedata", namespaces=ns)
+                for v in vml_images:
+                    rid = v.get(f"{r_ns}id")
+                    if not rid or rid in seen_rids:
+                        continue
+                    target = rel_map.get(rid)
+                    if not target or not target.startswith("media/"):
+                        continue
+                    seen_rids.add(rid)
+                    raw_data = docx.read("word/" + target)
+                    # Convert to PNG for uniform downstream handling
+                    try:
+                        pil_img = PILImage.open(io.BytesIO(raw_data))
+                        png_buf = io.BytesIO()
+                        pil_img.save(png_buf, format="PNG")
+                        png_data = png_buf.getvalue()
+                    except Exception as e:
+                        logger.warning(f"Failed to convert VML image to PNG: {e}")
+                        continue
+                    orig_name = target.split("/")[-1]
+                    png_name = os.path.splitext(orig_name)[0] + ".png"
+                    yield (
+                        ele_num,
+                        None,
+                        "IMAGE",
+                        {
+                            "image_name": png_name,
+                            "from": "paragraph_vml",
+                            "size": len(png_data),
+                            "data": png_data,
+                        },
+                    )
+                    ele_num += 1
+                """
                 map_index += 1
 
                 if toc_info["is_field_end"]:
@@ -538,15 +677,18 @@ def iter_block_items(doc_data):
                 cell_images = {}  # {(row_idx, col_idx): [{'image_name', 'data', 'size'}]}
                 for row_idx, tr in enumerate(elem.findall(".//w:tr", namespaces=ns)):
                     for col_idx, tc in enumerate(tr.findall(".//w:tc", namespaces=ns)):
-                        blips = tc.xpath(".//a:blip", namespaces=ns)
+                        cell_seen_rids = set()
                         imgs_in_cell = []
+                        # DrawingML images in cell
+                        blips = tc.xpath(".//a:blip", namespaces=ns)
                         for b in blips:
-                            rid = b.get(
-                                "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
-                            )
+                            rid = b.get(f"{r_ns}embed")
+                            if not rid or rid in cell_seen_rids:
+                                continue
                             target = rel_map.get(rid)
                             if not target or not target.startswith("media/"):
                                 continue
+                            cell_seen_rids.add(rid)
                             data = docx.read("word/" + target)
                             if (
                                 len(data) < 10 * 1024
@@ -559,6 +701,44 @@ def iter_block_items(doc_data):
                                     "size": len(data),
                                 }
                             )
+                        # TODO: VML in tables is temporarily skipped to avoid extracting 
+                        # fragmented textless background images. (Same as paragraph VML logic)
+                        """
+                        # VML images in cell — convert to PNG
+                        from PIL import Image as PILImage
+
+                        vml_in_cell = tc.xpath(".//v:imagedata", namespaces=ns)
+                        for v in vml_in_cell:
+                            rid = v.get(f"{r_ns}id")
+                            if not rid or rid in cell_seen_rids:
+                                continue
+                            target = rel_map.get(rid)
+                            if not target or not target.startswith("media/"):
+                                continue
+                            cell_seen_rids.add(rid)
+                            raw_data = docx.read("word/" + target)
+                            try:
+                                pil_img = PILImage.open(io.BytesIO(raw_data))
+                                png_buf = io.BytesIO()
+                                pil_img.save(png_buf, format="PNG")
+                                png_data = png_buf.getvalue()
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to convert VML cell image to PNG: {e}"
+                                )
+                                continue
+                            if len(png_data) < 10 * 1024:
+                                continue
+                            orig_name = target.split("/")[-1]
+                            png_name = os.path.splitext(orig_name)[0] + ".png"
+                            imgs_in_cell.append(
+                                {
+                                    "image_name": png_name,
+                                    "data": png_data,
+                                    "size": len(png_data),
+                                }
+                            )
+                        """
                         if imgs_in_cell:
                             cell_images[(row_idx, col_idx)] = imgs_in_cell
 
@@ -607,9 +787,15 @@ def parse_docx(
     headings_stack = [{"level": -1, "content": doc_structure}]
     current_heading = ""
 
+    # Clean old artifacts to prevent accumulation across debug runs.
+    # In production each job uses a fresh workspace so rmtree never triggers.
     tb_dir = os.path.join(output_dir, "tables")
+    if os.path.isdir(tb_dir):
+        shutil.rmtree(tb_dir)
     os.makedirs(tb_dir, exist_ok=True)
     img_dir = os.path.join(output_dir, "images")
+    if os.path.isdir(img_dir):
+        shutil.rmtree(img_dir)
     os.makedirs(img_dir, exist_ok=True)
 
     block_tuples = list(iter_block_items(doc_data))
@@ -671,6 +857,7 @@ def parse_docx(
     df_list = []
     table_count = 0
     image_count = 0
+    _seen_images: dict[str, dict] = {}  # sha256_hex -> cached image info for dedup
 
     logger.debug("Parsing docx file... total_blocks={}", len(block_tuples))
     for block_tuple in block_tuples:
@@ -708,7 +895,7 @@ def parse_docx(
             if meta and meta.get("size", 0) < 10 * 1024:
                 continue
 
-            headings_stack, df_list = handle_image(
+            headings_stack, df_list, is_new = handle_image(
                 df_list,
                 meta,
                 img_dir,
@@ -716,8 +903,10 @@ def parse_docx(
                 current_heading,
                 image_count,
                 llm_paras["summary_image"],
+                seen_images=_seen_images,
             )
-            image_count += 1
+            if is_new:
+                image_count += 1
             current_heading = last_heading_before_block
 
         elif label == "TABLE":
@@ -734,6 +923,7 @@ def parse_docx(
                 cell_images=meta,
                 img_dir=img_dir,
                 img_count=image_count,
+                seen_images=_seen_images,
             )
             table_count += 1
             current_heading = last_heading_before_block
@@ -767,6 +957,13 @@ def convert_doc2dics(
     for _, row in leaf_dics.iterrows():
         key = row["path_identifier"]
 
+        # Skip leaf nodes with no actual content (empty heading-only sections)
+        content_lst = row["content_lst"]
+        joined = "\n".join(content_lst).strip()
+        if not joined:
+            logger.debug(f"Skipping empty leaf node: {key}")
+            continue
+
         # Build tentative path to check for duplicates
         tentative_path = doc_name + split_char + key
 
@@ -779,7 +976,7 @@ def convert_doc2dics(
             path_counter[tentative_path] = 1
 
         path_keys.append((doc_name + split_char + key))
-        bottom_content = "\n".join(row["content_lst"])
+        bottom_content = joined
         bottom_tokens = tokenize2stw_remove(
             [bottom_content], base_llm_paras["stopwords"]
         )

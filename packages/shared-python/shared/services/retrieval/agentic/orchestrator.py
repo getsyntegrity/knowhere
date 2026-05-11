@@ -1,6 +1,6 @@
 """Retrieval Agent orchestrator — the core agent loop.
 
-Runs the state/action/observation cycle using the rule-based policy
+Runs the state/action/observation cycle using the LLM-driven LLMPolicy
 and agentic tools.  The fixed terminal step (hydrate + rank) always
 executes, even if all tools fail — in that case it uses whatever
 discovery rows were collected.
@@ -16,7 +16,6 @@ from typing import Any
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.services.retrieval.agentic.policy import RuleBasedPolicy
 from shared.services.retrieval.agentic.trace import TraceRecorder
 from shared.services.retrieval.agentic.types import (
     ActionType,
@@ -46,18 +45,18 @@ def _build_config_from_env() -> AgentRunConfig:
 
 
 class RetrievalAgent:
-    """Agentic retrieval orchestrator.
+    """Agentic retrieval orchestrator using LLMPolicy.
 
     Usage::
 
         agent = RetrievalAgent()
         ranked_rows, router = await agent.run(
-            db, user_id=..., namespace=..., query=..., ...
+            db, user_id=..., namespace=..., query=..., llm_fn=..., ...
         )
-    """
 
-    def __init__(self, *, policy: RuleBasedPolicy | None = None) -> None:
-        self.policy = policy or RuleBasedPolicy()
+    The agent requires a valid ``llm_fn`` to run LLMPolicy.  If ``llm_fn``
+    is None, the run terminates immediately after bottom_discovery only.
+    """
 
     async def run(
         self,
@@ -82,6 +81,8 @@ class RetrievalAgent:
         Returns (ranked_rows, router_used).  Never raises — errors are
         captured in trace and the best available result is returned.
         """
+        from shared.services.retrieval.agentic.policy import LLMPolicy
+
         config = config or _build_config_from_env()
         exclude_document_ids = exclude_document_ids or []
         exclude_sections = exclude_sections or []
@@ -107,6 +108,12 @@ class RetrievalAgent:
             f'budget={config.latency_budget_ms}ms'
         )
 
+        if llm_fn is None:
+            logger.warning('agentic: no llm_fn provided — running discovery-only mode')
+
+        # Build LLMPolicy (needs llm_fn; gracefully handles None)
+        policy = LLMPolicy(llm_fn, query=query) if llm_fn else None
+
         # Shared kwargs for tool calls
         tool_kwargs: dict[str, Any] = {
             'user_id': user_id,
@@ -123,7 +130,28 @@ class RetrievalAgent:
             'channel_weights': channel_weights,
         }
 
-        # ── Agent loop ──
+        # ── Mandatory pre-step: bottom discovery ─────────────────────────────
+        # bottom_discovery is always the first action; running it via the LLM
+        # policy wastes ~1-2s on a trivial LLM call.  We execute it directly
+        # and let the LLM loop start from step 2 (kg_document_select etc.).
+        logger.info('  agentic: running mandatory bottom_discovery pre-step')
+        discovery_result = await self._execute_tool(
+            db, ActionType.BOTTOM_DISCOVERY, state, config, **tool_kwargs,
+        )
+        state.apply(ActionType.BOTTOM_DISCOVERY, discovery_result)
+        if trace_enabled:
+            trace.record_step(
+                ActionType.BOTTOM_DISCOVERY, discovery_result,
+                decision_reason='mandatory_pre_step',
+            )
+        state.step_count += 1
+        logger.info(
+            f'  agentic step {state.step_count} (pre-step): action=bottom_discovery '
+            f'status={discovery_result.status} latency={discovery_result.latency_ms}ms'
+        )
+
+        # ── Agent loop (LLM decisions start from here) ────────────────────────
+        stop_reason = 'max_steps'
         while state.step_count < config.max_steps:
             if state.elapsed_ms >= config.latency_budget_ms:
                 logger.info(
@@ -131,18 +159,36 @@ class RetrievalAgent:
                     f'stopping at step {state.step_count}'
                 )
                 trace.record_budget_stop('latency')
+                stop_reason = 'latency_budget'
                 break
 
-            action_type = self.policy.decide(state, config)
-            if action_type is None:
-                logger.info(f'  agentic: policy returned None at step {state.step_count}, stopping')
+            if policy is None:
+                # No LLM: discovery already ran — stop
+                stop_reason = 'no_llm_fn'
+                break
+            else:
+                action_type, decision_reason = await policy.decide(state, config)
+
+            if action_type is None or action_type == ActionType.DONE:
+                stop_reason = 'llm_done' if action_type == ActionType.DONE else 'llm_stop'
+                logger.info(
+                    f'  agentic: policy returned {action_type} at step {state.step_count} '
+                    f'(reason="{decision_reason}"), stopping'
+                )
+                # Record DONE as a trace step
+                if trace_enabled and action_type == ActionType.DONE:
+                    trace.record_step(
+                        ActionType.DONE,
+                        ToolResult(status='done', payload={'reason': decision_reason}),
+                        decision_reason=decision_reason,
+                    )
                 break
 
             result = await self._execute_tool(db, action_type, state, config, **tool_kwargs)
             state.apply(action_type, result)
 
             if trace_enabled:
-                trace.record_step(action_type, result)
+                trace.record_step(action_type, result, decision_reason=decision_reason)
 
             state.step_count += 1
 
@@ -152,21 +198,131 @@ class RetrievalAgent:
                 f'docs={len(state.selected_docs)} paths={len(state.selected_paths)}'
             )
 
-        # ── Fixed terminal step: hydrate + rank ──
-        ranked_rows = await self._hydrate_and_rank(
-            db, state, user_id=user_id, namespace=namespace, top_k=top_k,
+        # ── Terminal: hydrate + rank + attempt_answer loop ──
+        while True:
+            ranked_rows = await self._hydrate_and_rank(
+                db, state, user_id=user_id, namespace=namespace, top_k=top_k,
+            )
+
+            # Include kept rows from prior revision rounds
+            if state.kept_path_rows:
+                ranked_rows = state.kept_path_rows + ranked_rows
+
+            # Check if we should attempt_answer (need LLM + results + revision budget)
+            if (
+                policy is None
+                or not ranked_rows
+                or state.revision_count >= config.max_revisions
+            ):
+                break
+
+            # KG-exhausted guard: if all selected docs have been explored,
+            # further revision won't find new content — skip attempt_answer
+            all_selected_ids = {d.document_id for d in state.selected_docs}
+            unexplored = all_selected_ids - state.ever_explored_doc_ids
+            kg_exhausted = len(unexplored) == 0 and len(all_selected_ids) > 0
+            if kg_exhausted:
+                logger.info(
+                    f'  agentic: KG exhausted — all {len(all_selected_ids)} docs explored, '
+                    f'skipping attempt_answer'
+                )
+                stop_reason = 'kg_exhausted'
+                break
+
+            # Three-state verdict from LLM
+            verdict, verdict_reason = await policy.attempt_answer(
+                state, config, ranked_rows,
+            )
+            logger.info(
+                f'  agentic attempt_answer: verdict={verdict} '
+                f'revision={state.revision_count}/{config.max_revisions} '
+                f'reason="{verdict_reason}"'
+            )
+
+            if verdict == 'DONE':
+                stop_reason = 'attempt_done'
+                break
+
+            if verdict in ('NOT_SUFFICIENT', 'NOT_FOUND'):
+                state.revision_count += 1
+                # Save current results as kept rows for next round
+                state.kept_path_rows = ranked_rows
+                # Record current selected paths as seen
+                for p in state.selected_paths:
+                    doc_id = p.get('document_id', '')
+                    path = p.get('path', '')
+                    if doc_id and path:
+                        state.seen_section_keys.add(f'{doc_id}::{path}')
+                # Reset navigation state for re-exploration
+                state.selected_paths.clear()
+                state.selected_docs.clear()  # Bug 1 fix: prevent doc accumulation
+                state.pending_doc_index = 0
+                state.kg_done = False
+                state.discovery_done = False
+
+                # Mandatory bottom_discovery pre-step for revision round
+                logger.info(
+                    f'  agentic: running mandatory bottom_discovery pre-step '
+                    f'(revision {state.revision_count})'
+                )
+                rev_discovery = await self._execute_tool(
+                    db, ActionType.BOTTOM_DISCOVERY, state, config, **tool_kwargs,
+                )
+                state.apply(ActionType.BOTTOM_DISCOVERY, rev_discovery)
+                if trace_enabled:
+                    trace.record_step(
+                        ActionType.BOTTOM_DISCOVERY, rev_discovery,
+                        decision_reason=f'mandatory_pre_step (revision {state.revision_count})',
+                    )
+                state.step_count += 1
+                logger.info(
+                    f'  agentic step {state.step_count} (rev {state.revision_count} pre-step): '
+                    f'action=bottom_discovery status={rev_discovery.status}'
+                )
+
+                # Re-enter agent loop
+                while state.step_count < config.max_steps:
+                    if state.elapsed_ms >= config.latency_budget_ms:
+                        stop_reason = 'latency_budget'
+                        break
+
+                    action_type, decision_reason = await policy.decide(state, config)
+                    if action_type is None or action_type == ActionType.DONE:
+                        stop_reason = 'llm_done'
+                        break
+
+                    result = await self._execute_tool(
+                        db, action_type, state, config, **tool_kwargs,
+                    )
+                    state.apply(action_type, result)
+                    if trace_enabled:
+                        trace.record_step(action_type, result, decision_reason=decision_reason)
+                    state.step_count += 1
+                    logger.info(
+                        f'  agentic step {state.step_count} (rev {state.revision_count}): '
+                        f'action={action_type.value} status={result.status}'
+                    )
+
+                # Loop back to hydrate + attempt_answer
+                continue
+
+            # Unknown verdict — treat as DONE
+            break
+
+        router_used = (
+            'agentic_llm' if state.selected_paths or state.kept_path_rows
+            else 'agentic_discovery_only'
         )
 
-        router_used = 'agentic' if state.selected_paths else 'agentic_discovery_only'
+        logger.info(
+            f'agentic retrieval DONE: {len(ranked_rows)} results, '
+            f'router={router_used}, steps={state.step_count}, '
+            f'stop_reason={stop_reason}, revisions={state.revision_count}, '
+            f'{state.elapsed_ms}ms'
+        )
 
         if trace_enabled:
             await trace.complete(ranked_rows, router_used)
-
-        total_ms = state.elapsed_ms
-        logger.info(
-            f'agentic retrieval DONE: {len(ranked_rows)} results, '
-            f'router={router_used}, steps={state.step_count}, {total_ms}ms'
-        )
 
         return ranked_rows, router_used
 
@@ -211,6 +367,13 @@ class RetrievalAgent:
                         payload={'document_id': doc.document_id, 'reason': 'no job_result_id'},
                     )
 
+                # Build exclude_paths for this doc from seen_section_keys
+                doc_exclude = {
+                    key.split('::', 1)[1]
+                    for key in state.seen_section_keys
+                    if key.startswith(f'{doc.document_id}::')
+                } if state.seen_section_keys else None
+
                 return await tools.document_path_select(
                     db,
                     user_id=kwargs['user_id'],
@@ -220,6 +383,7 @@ class RetrievalAgent:
                     document_id=doc.document_id,
                     job_result_id=job_result_id,
                     doc_name=doc.source_file_name or state.doc_id_to_name.get(doc.document_id, ''),
+                    exclude_paths=doc_exclude,
                 )
 
             elif action_type == ActionType.GREP_DOCUMENT_DISCOVER:
@@ -238,54 +402,6 @@ class RetrievalAgent:
                     user_id=kwargs['user_id'],
                     namespace=kwargs['namespace'],
                     document_ids=doc_ids,
-                )
-
-            elif action_type == ActionType.NAV_SECTION_SELECT:
-                if not state.nav_drill_stack:
-                    return ToolResult(status='error', error='nav_drill_stack is empty')
-
-                import asyncio as _asyncio
-
-                # Concurrently navigate ALL pending documents in nav_drill_stack
-                drill_entries = list(state.nav_drill_stack)  # snapshot
-                nav_tasks = [
-                    tools.nav_section_select(
-                        db,
-                        user_id=kwargs['user_id'],
-                        namespace=kwargs['namespace'],
-                        query=kwargs['query'],
-                        llm_fn=kwargs.get('llm_fn'),
-                        document_id=entry['document_id'],
-                        job_result_id=state.doc_job_map.get(entry['document_id'], ''),
-                        doc_name=state.doc_id_to_name.get(entry['document_id'], ''),
-                        section_path=entry.get('section_path'),
-                    )
-                    for entry in drill_entries
-                ]
-                nav_results: list[ToolResult] = await _asyncio.gather(*nav_tasks)
-
-                # Merge all results into a single batch ToolResult consumed by state.apply
-                all_paths: list[dict] = []
-                any_selected = False
-                total_latency = 0
-                for res in nav_results:
-                    total_latency = max(total_latency, res.latency_ms)
-                    if res.status == 'selected_paths':
-                        any_selected = True
-                        all_paths.extend(res.payload.get('selected_paths', []))
-
-                logger.info(
-                    f'  agentic.nav_section_select (concurrent): '
-                    f'{len(drill_entries)} docs → {len(all_paths)} total paths, '
-                    f'{total_latency}ms'
-                )
-                return ToolResult(
-                    status='selected_paths' if any_selected else 'no_confident_match',
-                    payload={
-                        'selected_paths': all_paths,
-                        '_consumed_stack': [e['document_id'] for e in drill_entries],
-                    },
-                    latency_ms=total_latency,
                 )
 
             else:
@@ -307,12 +423,18 @@ class RetrievalAgent:
         """Fixed terminal step: hydrate selected paths + rank against discovery.
 
         Reuses _hydrate_paths_to_rows and _rank_candidates_by_path unchanged.
+
+        TODO (Token Budget): Replace `ranked_rows[:top_k]` in
+        `_rank_candidates_by_path` with token-accumulation truncation
+        (tiktoken or character estimate) so the final result set respects
+        a configurable LLM context window budget rather than a fixed count.
         """
         try:
+
             # Hydrate agent-selected paths
-            agent_rows: list[dict[str, Any]] = []
+            navigated_paths: list[dict[str, Any]] = []
             if state.selected_paths:
-                agent_rows = await _hydrate_paths_to_rows(
+                navigated_paths = await _hydrate_paths_to_rows(
                     db,
                     path_selections=state.selected_paths,
                     user_id=user_id,
@@ -320,7 +442,7 @@ class RetrievalAgent:
                 )
 
             # Load importance scores for all candidate rows
-            all_candidates = state.discovery_rows + agent_rows
+            all_candidates = state.discovery_paths + navigated_paths
             if all_candidates:
                 importance_map = await _load_chunk_importance_scores(
                     db, user_id=user_id, namespace=namespace,
@@ -339,8 +461,8 @@ class RetrievalAgent:
 
             # Rank: merge discovery + agent rows
             ranked = _rank_candidates_by_path(
-                discovery_rows=state.discovery_rows,
-                routed_rows=agent_rows,
+                discovery_rows=state.discovery_paths,
+                routed_rows=navigated_paths,
                 top_k=top_k,
             )
 
@@ -349,4 +471,4 @@ class RetrievalAgent:
         except Exception as e:
             logger.error(f'agentic hydrate_and_rank failed: {e}')
             # Last resort: return raw discovery rows
-            return state.discovery_rows[:top_k]
+            return state.discovery_paths[:top_k]

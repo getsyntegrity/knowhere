@@ -618,7 +618,6 @@ def build_knowledge_graph(
     kb_id: str = "",
     chunk_stats: Optional[Dict[str, Dict[str, Any]]] = None,
     file_summaries: Optional[Dict[str, str]] = None,
-    file_nav_sections: Optional[Dict[str, list]] = None,
 ) -> Dict[str, Any]:
     """Build a file-level knowledge graph (v2.0)."""
     if chunk_stats is None:
@@ -654,7 +653,6 @@ def build_knowledge_graph(
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
             "top_summary": (file_summaries or {}).get(fk, ""),
-            "nav_sections": (file_nav_sections or {}).get(fk, []),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -690,7 +688,6 @@ def update_knowledge_graph(
     chunk_stats: Optional[Dict[str, Dict[str, Any]]] = None,
     file_summaries: Optional[Dict[str, str]] = None,
     new_connections: Optional[Dict[str, List[Dict[str, Any]]]] = None,
-    file_nav_sections: Optional[Dict[str, list]] = None,
 ) -> Dict[str, Any]:
     """Incrementally update a file-level knowledge graph with new chunks."""
     if chunk_stats is None:
@@ -776,7 +773,6 @@ def update_knowledge_graph(
             "types": dict(types_count),
             "top_keywords": file_keywords.get(fk, []),
             "top_summary": (file_summaries or {}).get(fk, "") or existing_files.get(fk, {}).get("top_summary", ""),
-            "nav_sections": (file_nav_sections or {}).get(fk, []) or existing_files.get(fk, {}).get("nav_sections", []),
             "importance": _compute_file_importance(cids, chunk_stats),
             "created_at": created_at,
         }
@@ -822,6 +818,22 @@ def _get_kg_path(kb_id: str) -> str:
 def _get_stats_path(kb_id: str) -> str:
     """Get the chunk_stats.json path for a KB."""
     return os.path.join(_get_kb_dir(kb_id), "chunk_stats.json")
+
+
+def _empty_knowledge_graph(kb_id: str) -> Dict[str, Any]:
+    """Build an empty v2 knowledge graph for a KB with no local chunks."""
+    return {
+        "version": "2.0",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "kb_id": kb_id,
+        "stats": {
+            "total_files": 0,
+            "total_chunks": 0,
+            "total_cross_file_edges": 0,
+        },
+        "files": {},
+        "edges": [],
+    }
 
 
 # ─── Chunk Usage Tracking ─────────────────────────────────────────────────────
@@ -1040,6 +1052,106 @@ def _load_all_chunks_from_kb(kb_dir: str) -> List[Dict[str, Any]]:
     return all_chunks
 
 
+def _source_files_from_chunks(chunks: List[Dict[str, Any]]) -> set[str]:
+    """Return the source-file set represented by loaded KB chunks."""
+    return {
+        str(chunk.get("_source_file") or "").strip()
+        for chunk in chunks
+        if str(chunk.get("_source_file") or "").strip()
+    }
+
+
+def _prune_chunk_stats(kb_id: str, chunks: List[Dict[str, Any]]) -> None:
+    """Remove chunk_stats entries whose chunks no longer exist on disk."""
+    stats_path = _get_stats_path(kb_id)
+    if not os.path.exists(stats_path):
+        return
+
+    stats = load_chunk_stats(kb_id)
+    live_chunk_ids = {
+        str(chunk.get("chunk_id") or chunk.get("know_id", ""))
+        for chunk in chunks
+        if chunk.get("chunk_id") or chunk.get("know_id")
+    }
+    pruned = {cid: data for cid, data in stats.items() if cid in live_chunk_ids}
+    if len(pruned) == len(stats):
+        return
+
+    os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+    with open(stats_path, "w", encoding="utf-8") as f:
+        json.dump(pruned, f, ensure_ascii=False, indent=2)
+    logger.info(
+        f"📊 Chunk stats pruned: {len(stats) - len(pruned)} stale chunks removed"
+    )
+
+
+def sync_knowledge_graph_with_local_files(
+    kb_id: str,
+    connect_config: Optional[Dict[str, Any]] = None,
+    summary_use_llm: bool = False,
+) -> Dict[str, Any]:
+    """Synchronize knowledge_graph.json with current ~/.knowhere/{kb_id} files.
+
+    This is intentionally a no-op when graph files match on-disk document
+    directories. If a user manually deletes a local parsed document directory,
+    the graph is rebuilt from remaining chunks and stale chunk_stats entries are
+    removed.
+    """
+    from app.services.connect_builder.builder import build_connections
+    from app.services.connect_builder.summary_builder import enrich_doc_nav_summaries
+
+    kb_dir = _get_kb_dir(kb_id)
+    kg_path = _get_kg_path(kb_id)
+    os.makedirs(kb_dir, exist_ok=True)
+
+    existing_graph = load_knowledge_graph(kg_path)
+    chunks_on_disk = _load_all_chunks_from_kb(kb_dir)
+    disk_files = _source_files_from_chunks(chunks_on_disk)
+    graph_files = set((existing_graph or {}).get("files", {}).keys())
+
+    if existing_graph is not None and graph_files == disk_files:
+        _prune_chunk_stats(kb_id, chunks_on_disk)
+        return existing_graph
+
+    removed_files = sorted(graph_files - disk_files)
+    added_files = sorted(disk_files - graph_files)
+    logger.info(
+        "📊 Syncing Knowledge Graph with local files: "
+        f"removed={removed_files}, added={added_files}"
+    )
+
+    if not chunks_on_disk:
+        graph = _empty_knowledge_graph(kb_id)
+        save_knowledge_graph(graph, kg_path)
+        _prune_chunk_stats(kb_id, [])
+        return graph
+
+    try:
+        file_summaries = enrich_doc_nav_summaries(
+            kb_dir=kb_dir,
+            source_file=None,
+            use_llm=summary_use_llm,
+        )
+    except Exception as e:
+        logger.warning(f"sync enrich_doc_nav_summaries failed: {e}")
+        file_summaries = {}
+
+    stats = load_chunk_stats(kb_id)
+    connections = build_connections(chunks_on_disk, connect_config)
+    _merge_related_connections_into_chunks(chunks_on_disk, connections)
+    _save_chunks_by_source_file(kb_dir, chunks_on_disk)
+    graph = build_knowledge_graph(
+        all_chunks=chunks_on_disk,
+        connections=connections,
+        kb_id=kb_id,
+        chunk_stats=stats,
+        file_summaries=file_summaries,
+    )
+    save_knowledge_graph(graph, kg_path)
+    _prune_chunk_stats(kb_id, chunks_on_disk)
+    return graph
+
+
 # ─── MCP Auto-Registration ───────────────────────────────────────────────────
 
 
@@ -1138,63 +1250,7 @@ def _auto_register_mcp() -> None:
 # ─── doc_nav section extraction for GraphNode persistence ────────────────────
 
 
-def _extract_nav_sections_from_kb(
-    kb_dir: str,
-    source_file: Optional[str] = None,
-) -> Dict[str, list]:
-    """Extract top-level nav sections from doc_nav.json for GraphNode persistence.
 
-    Returns a dict mapping file_key → list of section summaries.
-    Each section summary has: title, path, summary (truncated), chunk_count, children_count.
-
-    If source_file is given, only processes that file. Otherwise processes all files.
-    """
-    result: Dict[str, list] = {}
-
-    if source_file:
-        file_dirs = [os.path.join(kb_dir, source_file)]
-    else:
-        file_dirs = [
-            os.path.join(kb_dir, d)
-            for d in os.listdir(kb_dir)
-            if os.path.isdir(os.path.join(kb_dir, d))
-        ]
-
-    for file_dir in file_dirs:
-        nav_path = os.path.join(file_dir, "doc_nav.json")
-        if not os.path.exists(nav_path):
-            continue
-
-        file_key = os.path.basename(file_dir)
-        try:
-            with open(nav_path, "r", encoding="utf-8") as f:
-                doc_nav = json.load(f)
-
-            sections = []
-            for section in doc_nav.get("sections", []):
-                title = section.get("title", "")
-                # Skip utility sections
-                if title.lower() in ("root", "__root__"):
-                    continue
-                from shared.utils.text_utils import truncate_content_preview
-                sections.append({
-                    "title": title,
-                    "path": section.get("path", ""),
-                    "summary": truncate_content_preview(
-                        section.get("summary") or "", head=80, tail=0
-                    ),
-                    "chunk_count": section.get("chunk_count", 0),
-                    "children_count": len(section.get("children", [])),
-                })
-
-            if sections:
-                result[file_key] = sections
-                logger.info(f"  nav_sections extracted: {file_key} → {len(sections)} sections")
-
-        except Exception as e:
-            logger.warning(f"  nav_sections extraction failed for {file_key}: {e}")
-
-    return result
 
 
 # ─── One-Stop API ─────────────────────────────────────────────────────────────
@@ -1264,8 +1320,31 @@ def build_and_deploy(
         else None
     )
     existing_graph = load_knowledge_graph(kg_path)
+
+    # Load chunks once and reuse — avoids the double-load where
+    # sync_knowledge_graph_with_local_files internally calls
+    # _load_all_chunks_from_kb and then we call it again.
+    all_on_disk: List[Dict[str, Any]] = []
     if existing_graph is not None:
         all_on_disk = _load_all_chunks_from_kb(kb_dir)
+        disk_files = _source_files_from_chunks(all_on_disk)
+        graph_files = set(existing_graph.get("files", {}).keys())
+
+        if graph_files != disk_files:
+            # Disk state diverged from graph → full sync rebuild.
+            # sync will reload chunks internally (it backfills connect_to
+            # metadata), so we reload afterwards to pick up changes.
+            existing_graph = sync_knowledge_graph_with_local_files(
+                kb_id=kb_id,
+                connect_config=connect_config,
+                summary_use_llm=summary_use_llm,
+            )
+            all_on_disk = _load_all_chunks_from_kb(kb_dir)
+        else:
+            # Files match — fast-path: just prune stale chunk_stats.
+            _prune_chunk_stats(kb_id, all_on_disk)
+
+    if existing_graph is not None:
         if not all_on_disk:
             existing_chunks = extract_chunks_from_graph(existing_graph)
         else:
@@ -1320,16 +1399,8 @@ def build_and_deploy(
         logger.warning(f"doc_nav summary enrichment failed: {e}")
         file_summaries = {}
 
-    # ── Extract nav_sections from doc_nav.json for GraphNode persistence ──
-    file_nav_sections: Dict[str, list] = {}
-    try:
-        file_nav_sections = _extract_nav_sections_from_kb(kb_dir, source_file)
-    except Exception as e:
-        logger.warning(f"doc_nav nav_sections extraction failed: {e}")
-
     # Load chunk_stats for importance calculation
     stats = load_chunk_stats(kb_id)
-    stats_chunks: List[Dict[str, Any]] = chunks
 
     if existing_graph is None:
         # ── First build: full ──
@@ -1384,7 +1455,6 @@ def build_and_deploy(
             kb_id=kb_id,
             chunk_stats=stats,
             file_summaries=file_summaries,
-            file_nav_sections=file_nav_sections,
         )
     else:
         # ── Incremental update ──
@@ -1398,10 +1468,8 @@ def build_and_deploy(
             )
             stats_chunks = existing_chunks
             graph = existing_graph
-            # Still inject nav_sections and summaries even if chunks unchanged
+            # Still inject summaries even if chunks unchanged
             for fk, fdata in graph.get("files", {}).items():
-                if file_nav_sections and fk in file_nav_sections:
-                    fdata["nav_sections"] = file_nav_sections[fk]
                 if file_summaries and fk in file_summaries and not fdata.get("top_summary"):
                     fdata["top_summary"] = file_summaries[fk]
         else:
@@ -1428,7 +1496,6 @@ def build_and_deploy(
                 chunk_stats=stats,
                 file_summaries=file_summaries,
                 new_connections=related_connections,
-                file_nav_sections=file_nav_sections,
             )
 
     # Save graph

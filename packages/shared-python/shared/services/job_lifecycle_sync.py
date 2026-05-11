@@ -60,6 +60,7 @@ class SyncJobLifecycleService:
         stored_count: int = 0,
         delivery_mode: str = "url",
         section_summaries: Optional[Dict[str, str]] = None,
+        chunk_dedup_stats: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Finalize a successful job in a single atomic transaction.
 
@@ -82,6 +83,7 @@ class SyncJobLifecycleService:
                     inline_payload=inline_payload,
                     result_s3_key=result_s3_key,
                     result_size=zip_size,
+                    chunk_dedup_stats=chunk_dedup_stats,
                 )
 
                 normalized_chunks = chunks or []
@@ -100,7 +102,7 @@ class SyncJobLifecycleService:
                         chunks=normalized_chunks,
                     )
                 )
-                if published_document_state is not None:
+                if published_document_state is not None and not published_document_state.get("skipped_all_duplicate"):
                     # Backfill DocumentSection.summary from enriched doc_nav data
                     if section_summaries:
                         self._backfill_section_summaries(
@@ -304,6 +306,7 @@ class SyncJobLifecycleService:
         inline_payload: Optional[Dict[str, Any]] = None,
         result_s3_key: Optional[str] = None,
         result_size: Optional[int] = None,
+        chunk_dedup_stats: Optional[Dict[str, Any]] = None,
     ) -> JobResult:
         """Create or update JobResult row."""
         result = db.execute(select(JobResult).where(JobResult.job_id == job_id))
@@ -311,17 +314,24 @@ class SyncJobLifecycleService:
 
         if existing:
             existing.delivery_mode = delivery_mode
-            existing.document_metadata = {}
+            doc_meta = existing.document_metadata or {}
+            if chunk_dedup_stats:
+                doc_meta["chunk_dedup"] = chunk_dedup_stats
+            existing.document_metadata = doc_meta
             existing.inline_payload = inline_payload
             existing.result_s3_key = result_s3_key
             existing.result_size = result_size
             db.flush()
             return existing
 
+        doc_meta = {}
+        if chunk_dedup_stats:
+            doc_meta["chunk_dedup"] = chunk_dedup_stats
+
         job_result = JobResult(
             job_id=job_id,
             delivery_mode=delivery_mode,
-            document_metadata={},
+            document_metadata=doc_meta,
             inline_payload=inline_payload,
             result_s3_key=result_s3_key,
             result_size=result_size,

@@ -36,6 +36,25 @@ MD_IMAGE_PATTERN = r"!\[[^\]]*?\]\((.*?\.(?:png|jpe?g|gif))\)"
 g_img_lock = threading.Lock()
 
 
+def perceptual_hash(data: bytes) -> str:
+    """Compute a normalized pixel-data hash for image dedup.
+
+    Word/PDF may embed the same visual image with different compression
+    or metadata, making raw-byte SHA256 differ.  This function decodes
+    the image, converts to RGBA, and hashes the raw pixel buffer so
+    that visually-identical images always produce the same digest.
+
+    Falls back to raw-bytes hash when PIL cannot decode the data.
+    """
+    try:
+        img = Image.open(io.BytesIO(data))
+        pixels = img.convert("RGBA").tobytes()
+        return hashlib.sha256(pixels).hexdigest()
+    except Exception:
+        return hashlib.sha256(data).hexdigest()
+
+
+
 def _get_vision_client() -> OpenAICompatibleClientSync:
     """Create OpenAI-compatible client for vision models, auto-routing by IMAGE_MODEL name."""
     image_model = settings.IMAGE_MODEL or "qwen-vl-plus"

@@ -7,7 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -47,7 +47,9 @@ def is_excluded_section(
     for item in exclude_sections:
         if not isinstance(item, dict):
             continue
-        if document_id == str(item.get('document_id') or '').strip() and section_path == str(item.get('section_path') or '').strip():
+        exc_doc = str(item.get('document_id') or '').strip()
+        exc_path = str(item.get('section_path') or '').strip()
+        if document_id == exc_doc and (section_path == exc_path or section_path.startswith(exc_path + ' / ')):
             return True
     return False
 
@@ -154,23 +156,6 @@ def _extract_document_top_summary(
     return ''
 
 
-def _extract_document_nav_sections(
-    chunk_metadata_list: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Extract document_nav_sections from chunk metadata.
-
-    The nav_sections list is injected by kb_tasks.py at parse time from
-    doc_nav.json.  Returns the first non-empty list found in chunk metadata.
-    Each section has: title, path, summary, chunk_count, children_count.
-    """
-    for meta in chunk_metadata_list:
-        if not isinstance(meta, dict):
-            continue
-        nav_sections = meta.get('document_nav_sections')
-        if isinstance(nav_sections, list) and nav_sections:
-            return nav_sections
-    return []
-
 @dataclass
 class GraphScope:
     user_id: str
@@ -226,9 +211,6 @@ class DocumentGraphService:
         ]
         top_summary = _extract_document_top_summary(chunk_metadata_list, sections)
 
-        # Extract nav_sections from chunk metadata (injected by kb_tasks.py)
-        nav_sections = _extract_document_nav_sections(chunk_metadata_list)
-
         # ── Clean up old graph data for this document ──
         self.remove_document_graph(db, scope=GraphScope(user_id=user_id, namespace=namespace), document_id=document_id)
 
@@ -250,7 +232,6 @@ class DocumentGraphService:
                     'chunks_count': chunks_count,
                     'types': dict(types_breakdown),
                     'top_summary': top_summary,
-                    'nav_sections': nav_sections,
                 },
             )
         )
@@ -327,11 +308,24 @@ class DocumentGraphService:
         )
 
     def remove_document_graph(self, db: Session, *, scope: GraphScope | None, document_id: str) -> None:
-        edge_delete = delete(GraphEdge).where(GraphEdge.owner_document_id == document_id)
+        document_node_id = f"doc:{document_id}"
+        edge_delete = delete(GraphEdge).where(
+            or_(
+                GraphEdge.owner_document_id == document_id,
+                GraphEdge.source_node_id == document_node_id,
+                GraphEdge.target_node_id == document_node_id,
+            )
+        )
         node_delete = delete(GraphNode).where(GraphNode.owner_document_id == document_id)
         if scope is not None:
-            edge_delete = edge_delete.where(GraphEdge.user_id == scope.user_id)
-            node_delete = node_delete.where(GraphNode.user_id == scope.user_id)
+            edge_delete = edge_delete.where(
+                GraphEdge.user_id == scope.user_id,
+                GraphEdge.namespace == scope.namespace,
+            )
+            node_delete = node_delete.where(
+                GraphNode.user_id == scope.user_id,
+                GraphNode.namespace == scope.namespace,
+            )
         db.execute(edge_delete)
         db.execute(node_delete)
         db.flush()
@@ -376,7 +370,10 @@ class GraphQueryService:
                 exc_path = str(exc.get('section_path') or '').strip()
                 if exc_doc and exc_path:
                     stmt = stmt.where(
-                        ~((DocumentSection.document_id == exc_doc) & (DocumentSection.section_path == exc_path))
+                        ~((DocumentSection.document_id == exc_doc) & (
+                            (DocumentSection.section_path == exc_path) |
+                            DocumentSection.section_path.like(f'{exc_path} / %')
+                        ))
                     )
             result = await db.execute(stmt)
             seen = [row[0] for row in result.all()]

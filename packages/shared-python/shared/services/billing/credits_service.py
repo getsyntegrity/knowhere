@@ -48,11 +48,10 @@ class CreditsService:
        not ensure the /billing/credits endpoint is called before any
        credit modification operation.
 
-    2. **Read-only endpoints** (e.g., GET /billing/credits):
-       MUST be called explicitly by the API route. This is necessary because
-       `get_balance()` is intentionally kept fast (no initialization check)
-       for performance. Without this call in the route, first-time users
-       would see 0 balance instead of their initial credits.
+    2. **First-use user flows**:
+       Called before reading balance data, either from an API route or from
+       the tier lookup path used by authenticated route guards. `get_balance()`
+       is intentionally kept fast (no initialization check) for performance.
 
     Usage:
     ------
