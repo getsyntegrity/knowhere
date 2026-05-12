@@ -877,6 +877,7 @@ async def _hydrate_paths_to_rows(
         # Build a map of path → allowed chunk_types based on hydrate_mode
         _MODE_ALLOWED_TYPES: dict[str, set[str] | None] = {
             'chunks': None,                       # all types
+            'self_only': None,                    # all types, but without descendant filtering
             'assets_only': {'image', 'table'},
             'image_only': {'image'},
             'table_only': {'table'},
