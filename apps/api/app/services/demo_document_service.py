@@ -6,10 +6,10 @@ import json
 import math
 import shutil
 import tempfile
-from hashlib import blake2b
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
+from hashlib import blake2b
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -288,9 +288,12 @@ class DemoDocumentService:
                 ],
             )
 
+        selected_sources = [
+            _require_source_definition(demo_source_id)
+            for demo_source_id in selected_demo_source_ids
+        ]
         results: list[MaterializedDemoSource] = []
-        for demo_source_id in selected_demo_source_ids:
-            source = _require_source_definition(demo_source_id)
+        for source in selected_sources:
             result = await self._materialize_source(
                 db,
                 user_id=user_id,

@@ -85,6 +85,7 @@ async def get_demo_source_original(demo_source_id: str) -> FileResponse:
         path=file_path,
         media_type="application/pdf",
         filename=file_path.name,
+        content_disposition_type="inline",
     )
 
 
@@ -101,7 +102,11 @@ async def get_demo_source_asset(
     if file_path is None:
         raise _demo_source_not_found(demo_source_id)
 
-    return FileResponse(path=file_path, filename=file_path.name)
+    return FileResponse(
+        path=file_path,
+        filename=file_path.name,
+        content_disposition_type="inline",
+    )
 
 
 @router.post("/materializations")

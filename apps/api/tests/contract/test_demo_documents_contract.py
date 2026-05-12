@@ -114,11 +114,17 @@ async def test_should_return_demo_catalog_with_resolvable_canonical_citations(
 
     async with api_client_factory() as api_client:
         asset_response = await api_client.get(asset_url)
+        original_response = await api_client.get(
+            f"/api/v1/demo/sources/{DEMO_SOURCE_ID}/original"
+        )
         internal_asset_response = await api_client.get(
             f"/api/v1/demo/sources/{DEMO_SOURCE_ID}/assets/full.md"
         )
 
     assert asset_response.status_code == 200
+    assert asset_response.headers["content-disposition"].startswith("inline")
+    assert original_response.status_code == 200
+    assert original_response.headers["content-disposition"].startswith("inline")
     assert internal_asset_response.status_code == 404
 
 
@@ -352,3 +358,48 @@ async def test_should_reject_blank_demo_materialization_selection(
         )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_should_reject_mixed_demo_materialization_selection_before_upload(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_result_storage = FakeResultStorage()
+    monkeypatch.setattr(
+        "shared.services.storage.result_storage.get_result_storage",
+        lambda: fake_result_storage,
+    )
+
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.post(
+            "/api/v1/demo/materializations",
+            json={
+                "namespace": "contract-demo-mixed-invalid",
+                "demo_source_ids": [DEMO_SOURCE_ID, "missing-demo-source"],
+            },
+        )
+
+    job_rows = await ContractDatabase.fetch_all(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE user_id = 'local-dev-user'
+          AND job_metadata ->> 'namespace' = 'contract-demo-mixed-invalid'
+        """,
+    )
+    materialization_rows = await ContractDatabase.fetch_all(
+        """
+        SELECT demo_source_id, document_id
+        FROM demo_materializations
+        WHERE user_id = 'local-dev-user'
+          AND namespace = 'contract-demo-mixed-invalid'
+        """,
+    )
+
+    assert response.status_code == 404
+    assert fake_result_storage.raw_files_by_job_id == {}
+    assert job_rows == []
+    assert materialization_rows == []
