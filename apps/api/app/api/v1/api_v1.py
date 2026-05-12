@@ -4,6 +4,7 @@ API v1 route registry.
 
 from app.api.v1.routes import (
     api_key,
+    demo,
     documents,
     guest,
     jobs,
@@ -35,6 +36,9 @@ if settings.BILLING_ENABLED:
 
 # Unified Jobs routes
 api_router.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
+
+# Demo documents
+api_router.include_router(demo.router, prefix="/demo", tags=["Demo Documents"])
 
 # Retrieval
 api_router.include_router(retrieval.router, prefix="/retrieval", tags=["Retrieval"])
