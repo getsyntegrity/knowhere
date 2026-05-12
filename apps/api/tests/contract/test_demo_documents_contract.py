@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
@@ -113,8 +114,12 @@ async def test_should_return_demo_catalog_with_resolvable_canonical_citations(
 
     async with api_client_factory() as api_client:
         asset_response = await api_client.get(asset_url)
+        internal_asset_response = await api_client.get(
+            f"/api/v1/demo/sources/{DEMO_SOURCE_ID}/assets/full.md"
+        )
 
     assert asset_response.status_code == 200
+    assert internal_asset_response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -254,3 +259,96 @@ async def test_should_materialize_demo_source_without_parse_or_credit_charge(
     uploaded_files = fake_result_storage.raw_files_by_job_id[str(job_row["job_id"])]
     assert any(file_path.startswith("images/") for file_path in uploaded_files)
     assert any(file_path.startswith("tables/") for file_path in uploaded_files)
+
+
+@pytest.mark.asyncio
+async def test_should_serialize_concurrent_first_demo_materialization(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_result_storage = FakeResultStorage()
+    monkeypatch.setattr(
+        "shared.services.storage.result_storage.get_result_storage",
+        lambda: fake_result_storage,
+    )
+
+    async with developer_api_client_factory() as api_client:
+        first_response, second_response = await asyncio.gather(
+            api_client.post(
+                "/api/v1/demo/materializations",
+                json={
+                    "namespace": "contract-demo-race",
+                    "demo_source_ids": [DEMO_SOURCE_ID],
+                },
+            ),
+            api_client.post(
+                "/api/v1/demo/materializations",
+                json={
+                    "namespace": "contract-demo-race",
+                    "demo_source_ids": [DEMO_SOURCE_ID],
+                },
+            ),
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+
+    first_source = cast(dict[str, Any], first_response.json()["sources"][0])
+    second_source = cast(dict[str, Any], second_response.json()["sources"][0])
+    document_ids = {
+        str(first_source["document_id"]),
+        str(second_source["document_id"]),
+    }
+    statuses = {str(first_source["status"]), str(second_source["status"])}
+
+    assert len(document_ids) == 1
+    assert statuses == {"created", "existing"}
+
+    materialization_rows = await ContractDatabase.fetch_all(
+        """
+        SELECT demo_source_id, document_id
+        FROM demo_materializations
+        WHERE user_id = 'local-dev-user'
+          AND namespace = 'contract-demo-race'
+          AND demo_source_id = :demo_source_id
+        """,
+        {"demo_source_id": DEMO_SOURCE_ID},
+    )
+    job_rows = await ContractDatabase.fetch_all(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE user_id = 'local-dev-user'
+          AND job_metadata ->> 'namespace' = 'contract-demo-race'
+          AND job_metadata ->> 'demo_source_id' = :demo_source_id
+        """,
+        {"demo_source_id": DEMO_SOURCE_ID},
+    )
+
+    assert materialization_rows == [
+        {
+            "demo_source_id": DEMO_SOURCE_ID,
+            "document_id": next(iter(document_ids)),
+        }
+    ]
+    assert len(job_rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_should_reject_blank_demo_materialization_selection(
+    developer_api_client_factory: Callable[
+        [], AbstractAsyncContextManager[AsyncClient]
+    ],
+) -> None:
+    async with developer_api_client_factory() as api_client:
+        response = await api_client.post(
+            "/api/v1/demo/materializations",
+            json={
+                "namespace": "contract-demo-blank",
+                "demo_source_ids": [" ", "\t"],
+            },
+        )
+
+    assert response.status_code == 400

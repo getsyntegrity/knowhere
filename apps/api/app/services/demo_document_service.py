@@ -6,6 +6,7 @@ import json
 import math
 import shutil
 import tempfile
+from hashlib import blake2b
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -14,9 +15,10 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.core.exceptions.domain_exceptions import ValidationException
 from shared.models.database.demo_materialization import DemoMaterialization
 from shared.models.database.document import Document
 from shared.models.database.job import Job
@@ -73,6 +75,7 @@ class MaterializedDemoSource:
 
 
 _DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "demo_documents"
+_ASSET_DIRECTORY_NAMES = frozenset({"images", "tables"})
 _DEMO_SOURCE_DEFINITIONS: tuple[DemoSourceDefinition, ...] = (
     DemoSourceDefinition(
         demo_source_id="demo-tsla-q4-2025",
@@ -254,7 +257,11 @@ class DemoDocumentService:
             return None
 
         source_directory = _source_directory(source).resolve()
-        candidate = (source_directory / asset_path).resolve()
+        normalized_asset_path = _normalize_asset_path(asset_path)
+        if normalized_asset_path is None:
+            return None
+
+        candidate = (source_directory / normalized_asset_path).resolve()
         if not candidate.is_relative_to(source_directory):
             return None
 
@@ -269,8 +276,20 @@ class DemoDocumentService:
         demo_source_ids: list[str],
     ) -> list[MaterializedDemoSource]:
         """Copy selected canonical demo sources into a user namespace."""
+        selected_demo_source_ids = _deduplicate_source_ids(demo_source_ids)
+        if not selected_demo_source_ids:
+            raise ValidationException(
+                user_message="At least one demo source must be selected.",
+                violations=[
+                    {
+                        "field": "demo_source_ids",
+                        "description": "Select one or more demo source IDs.",
+                    }
+                ],
+            )
+
         results: list[MaterializedDemoSource] = []
-        for demo_source_id in _deduplicate_source_ids(demo_source_ids):
+        for demo_source_id in selected_demo_source_ids:
             source = _require_source_definition(demo_source_id)
             result = await self._materialize_source(
                 db,
@@ -295,6 +314,12 @@ class DemoDocumentService:
         namespace: str,
         source: DemoSourceDefinition,
     ) -> MaterializedDemoSource:
+        await _lock_materialization_scope(
+            db,
+            user_id=user_id,
+            namespace=namespace,
+            demo_source_id=source.demo_source_id,
+        )
         existing = await self._get_existing_materialization(
             db,
             user_id=user_id,
@@ -477,6 +502,32 @@ def _deduplicate_source_ids(demo_source_ids: list[str]) -> list[str]:
     return selected
 
 
+async def _lock_materialization_scope(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    demo_source_id: str,
+) -> None:
+    lock_id = _materialization_lock_id(
+        user_id=user_id,
+        namespace=namespace,
+        demo_source_id=demo_source_id,
+    )
+    await db.execute(select(func.pg_advisory_xact_lock(lock_id)))
+
+
+def _materialization_lock_id(
+    *,
+    user_id: str,
+    namespace: str,
+    demo_source_id: str,
+) -> int:
+    lock_key = f"{user_id}\0{namespace}\0{demo_source_id}"
+    digest = blake2b(lock_key.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, byteorder="big", signed=True)
+
+
 def _materialized_source_payload(
     *,
     source: DemoSourceDefinition,
@@ -580,6 +631,16 @@ def _publication_path(
     if len(parts) >= 2 and parts[0] == "Default_Root":
         return raw
     return prefix
+
+
+def _normalize_asset_path(asset_path: str) -> Path | None:
+    normalized = str(asset_path or "").strip().replace("\\", "/").lstrip("/")
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if not parts or parts[0] not in _ASSET_DIRECTORY_NAMES:
+        return None
+    if any(part == ".." or part.startswith(".") for part in parts):
+        return None
+    return Path(*parts)
 
 
 def _citation_payload(
