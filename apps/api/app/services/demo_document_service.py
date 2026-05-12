@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -19,7 +21,9 @@ from shared.models.database.demo_materialization import DemoMaterialization
 from shared.models.database.document import Document
 from shared.models.database.job import Job
 from shared.models.database.job_result import JobResult
+from shared.services.retrieval.cache_service import invalidate_retrieval_cache_namespaces
 from shared.services.retrieval.publication_service import RetrievalPublicationService
+from shared.services.storage.result_storage import get_result_storage
 
 
 @dataclass(frozen=True)
@@ -277,6 +281,10 @@ class DemoDocumentService:
             results.append(result)
 
         await db.commit()
+        await invalidate_retrieval_cache_namespaces(
+            user_id=user_id,
+            namespaces=[namespace],
+        )
         return results
 
     async def _materialize_source(
@@ -307,6 +315,7 @@ class DemoDocumentService:
         job_id = f"job_demo_{uuid4().hex[:12]}"
         job_result_id = str(uuid4())
         timestamp = _utc_now()
+        result_bundle = _upload_demo_result_bundle(job_id=job_id, source=source)
 
         db.add(
             Job(
@@ -340,20 +349,27 @@ class DemoDocumentService:
                     "demo_source_id": source.demo_source_id,
                 },
                 inline_payload={"source": "canonical_demo"},
-                result_s3_key=None,
-                result_size=0,
+                result_s3_key=result_bundle["zip_key"],
+                result_size=result_bundle["zip_size"],
                 created_at=timestamp,
                 updated_at=timestamp,
             )
         )
         await db.flush()
-        chunks = _load_source_chunks(source)
+        chunks = _publication_chunks(source)
         await db.run_sync(
             lambda sync_db: self._publication_service.publish_document_state(
                 sync_db,
                 job_id=job_id,
                 job_result_id=job_result_id,
                 chunks=[dict(chunk) for chunk in chunks],
+            )
+        )
+        await db.run_sync(
+            lambda sync_db: self._publication_service.publish_document_graph(
+                sync_db,
+                job_id=job_id,
+                job_result_id=job_result_id,
             )
         )
         await db.flush()
@@ -476,6 +492,94 @@ def _materialized_source_payload(
         size_bytes=source.size_bytes,
         chunk_count=source.chunk_count,
     )
+
+
+def _upload_demo_result_bundle(
+    *,
+    job_id: str,
+    source: DemoSourceDefinition,
+) -> dict[str, int | str]:
+    """Upload canonical demo result files so copied media URLs resolve."""
+    source_directory = _source_directory(source)
+    with tempfile.TemporaryDirectory(prefix="knowhere-demo-result-") as temp_directory:
+        zip_base_path = Path(temp_directory) / job_id
+        zip_file_path = Path(
+            shutil.make_archive(
+                str(zip_base_path),
+                "zip",
+                root_dir=source_directory,
+            )
+        )
+        zip_size = zip_file_path.stat().st_size
+        bundle = get_result_storage().upload(
+            job_id=job_id,
+            result_dir=str(source_directory),
+            zip_file_path=str(zip_file_path),
+        )
+
+    return {
+        "zip_key": bundle.zip_key,
+        "zip_size": zip_size,
+    }
+
+
+def _publication_chunks(source: DemoSourceDefinition) -> list[dict[str, Any]]:
+    return [
+        _publication_chunk(source=source, chunk=chunk)
+        for chunk in _load_source_chunks(source)
+    ]
+
+
+def _publication_chunk(
+    *,
+    source: DemoSourceDefinition,
+    chunk: dict[str, Any],
+) -> dict[str, Any]:
+    materialized_chunk = dict(chunk)
+    metadata = _metadata(materialized_chunk)
+    raw_path = _first_string(metadata.get("path"), materialized_chunk.get("path"))
+    publication_path = _publication_path(source=source, raw_path=raw_path)
+    file_path = _first_string(
+        metadata.get("file_path"),
+        metadata.get("filePath"),
+        materialized_chunk.get("file_path"),
+        materialized_chunk.get("path") if _is_media_chunk(materialized_chunk) else None,
+    )
+
+    metadata["path"] = publication_path
+    if file_path:
+        metadata["file_path"] = file_path
+        materialized_chunk["file_path"] = file_path
+    materialized_chunk["path"] = publication_path
+    materialized_chunk["metadata"] = metadata
+    return materialized_chunk
+
+
+def _publication_path(
+    *,
+    source: DemoSourceDefinition,
+    raw_path: str | None,
+) -> str:
+    prefix = f"Default_Root/{source.title}"
+    raw = str(raw_path or "").strip()
+    if not raw:
+        return prefix
+
+    if "-->" in raw:
+        sections = [
+            part.strip()
+            for part in raw.split("-->")[1:]
+            if part.strip()
+        ]
+        return "/".join([prefix, *sections]) if sections else prefix
+
+    if raw.startswith("images/") or raw.startswith("tables/"):
+        return f"{prefix}/Assets/{raw}"
+
+    parts = [part.strip() for part in raw.split("/") if part.strip()]
+    if len(parts) >= 2 and parts[0] == "Default_Root":
+        return raw
+    return prefix
 
 
 def _citation_payload(

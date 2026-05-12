@@ -2,15 +2,69 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient
+from pytest import MonkeyPatch
 
 from tests.support.contract_database import ContractDatabase
 
 
 DEMO_SOURCE_ID = "demo-tsla-q4-2025"
+
+
+class FakeResultStorage:
+    def __init__(self) -> None:
+        self.raw_files_by_job_id: dict[str, set[str]] = {}
+
+    def upload(
+        self,
+        *,
+        job_id: str,
+        result_dir: str,
+        zip_file_path: str,
+    ) -> SimpleNamespace:
+        assert Path(zip_file_path).is_file()
+        result_path = Path(result_dir)
+        raw_files = {
+            file_path.relative_to(result_path).as_posix()
+            for file_path in result_path.rglob("*")
+            if file_path.is_file()
+        }
+        self.raw_files_by_job_id[job_id] = raw_files
+        return SimpleNamespace(
+            zip_key=f"results/{job_id}.zip",
+            raw_prefix=f"results/{job_id}/",
+            raw_files={
+                raw_file: f"results/{job_id}/{raw_file}"
+                for raw_file in sorted(raw_files)
+            },
+        )
+
+    def normalize_artifact_ref(self, artifact_ref: str | None) -> str | None:
+        if not artifact_ref:
+            return None
+        normalized = str(artifact_ref).strip().replace("\\", "/").lstrip("/")
+        if normalized.startswith("images/") or normalized.startswith("tables/"):
+            return normalized
+        return None
+
+    def generate_artifact_url(
+        self,
+        *,
+        job_id: str,
+        artifact_ref: str,
+        expires_in: int = 3600,
+    ) -> str | None:
+        normalized = self.normalize_artifact_ref(artifact_ref)
+        if not normalized:
+            return None
+        if normalized not in self.raw_files_by_job_id.get(job_id, set()):
+            return None
+        return f"https://assets.example.test/{job_id}/{normalized}"
 
 
 @pytest.mark.asyncio
@@ -68,8 +122,23 @@ async def test_should_materialize_demo_source_without_parse_or_credit_charge(
     developer_api_client_factory: Callable[
         [], AbstractAsyncContextManager[AsyncClient]
     ],
+    monkeypatch: MonkeyPatch,
 ) -> None:
+    fake_result_storage = FakeResultStorage()
+    monkeypatch.setattr(
+        "shared.services.storage.result_storage.get_result_storage",
+        lambda: fake_result_storage,
+    )
+
     async with developer_api_client_factory() as api_client:
+        empty_cached_response = await api_client.post(
+            "/api/v1/retrieval/query",
+            json={
+                "namespace": "contract-demo",
+                "query": "xAI investment",
+                "top_k": 5,
+            },
+        )
         first_response = await api_client.post(
             "/api/v1/demo/materializations",
             json={
@@ -92,10 +161,19 @@ async def test_should_materialize_demo_source_without_parse_or_credit_charge(
                 "top_k": 5,
             },
         )
+        document_chunks_response = await api_client.get(
+            f"/api/v1/documents/{first_response.json()['sources'][0]['document_id']}"
+            "/chunks?include_asset_urls=true&page_size=200"
+        )
 
+    assert empty_cached_response.status_code == 200
     assert first_response.status_code == 200
     assert retry_response.status_code == 200
     assert retrieval_response.status_code == 200
+    assert document_chunks_response.status_code == 200
+
+    empty_cached_body = cast(dict[str, Any], empty_cached_response.json())
+    assert cast(list[dict[str, Any]], empty_cached_body["results"]) == []
 
     first_source = cast(dict[str, Any], first_response.json()["sources"][0])
     retry_source = cast(dict[str, Any], retry_response.json()["sources"][0])
@@ -133,7 +211,7 @@ async def test_should_materialize_demo_source_without_parse_or_credit_charge(
     )
     job_rows = await ContractDatabase.fetch_all(
         """
-        SELECT status, job_type, credits_charged, billing_status
+        SELECT job_id, status, job_type, credits_charged, billing_status
         FROM jobs
         WHERE user_id = 'local-dev-user'
           AND job_metadata ->> 'demo_source_id' = :demo_source_id
@@ -150,18 +228,29 @@ async def test_should_materialize_demo_source_without_parse_or_credit_charge(
         "source_file_name": "TSLA-Q4-2025-Update.pdf",
     }
     assert len(chunk_rows) == 70
-    assert job_rows == [
-        {
-            "status": "done",
-            "job_type": "demo_materialization",
-            "credits_charged": 0,
-            "billing_status": "skipped",
-        }
-    ]
+    assert len(job_rows) == 1
+    job_row = job_rows[0]
+    assert job_row["status"] == "done"
+    assert job_row["job_type"] == "demo_materialization"
+    assert job_row["credits_charged"] == 0
+    assert job_row["billing_status"] == "skipped"
 
     retrieval_body = cast(dict[str, Any], retrieval_response.json())
     retrieval_results = cast(list[dict[str, Any]], retrieval_body["results"])
+    chunk_page_body = cast(dict[str, Any], document_chunks_response.json())
+    materialized_chunks = cast(list[dict[str, Any]], chunk_page_body["chunks"])
+    media_chunks = [
+        chunk
+        for chunk in materialized_chunks
+        if chunk["chunk_type"] in {"image", "table"}
+    ]
 
     assert retrieval_body["namespace"] == "contract-demo"
     assert retrieval_results
     assert retrieval_results[0]["source"]["document_id"] == document_id
+    assert retrieval_results[0]["source"]["section_path"] != "Root"
+    assert media_chunks
+    assert media_chunks[0]["asset_url"]
+    uploaded_files = fake_result_storage.raw_files_by_job_id[str(job_row["job_id"])]
+    assert any(file_path.startswith("images/") for file_path in uploaded_files)
+    assert any(file_path.startswith("tables/") for file_path in uploaded_files)
