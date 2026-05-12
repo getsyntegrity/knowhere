@@ -17,14 +17,16 @@ is called automatically — no separate verdict step needed.
 from __future__ import annotations
 
 import os
-from typing import Any
+import json
+from typing import Any, cast
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.models.database.document import Document
+from shared.models.database.document import Document, DocumentChunk, RetrievalHitStat
 
+from shared.services.retrieval.agentic.budget import BudgetExceeded, BudgetLedger, BudgetPoolName
 from shared.services.retrieval.agentic.trace import TraceRecorder
 from shared.services.retrieval.agentic.types import (
     AgentRunConfig,
@@ -34,18 +36,14 @@ from shared.services.retrieval.agentic.types import (
     DocTreeNode,
     ToolResult,
 )
-from shared.services.retrieval.agentic.result_rows import (
+from shared.services.retrieval.app_service import (
     generate_retrieval_asset_url,
-    is_client_result_artifact_ref,
+    _is_client_result_artifact_ref,
 )
 from shared.services.retrieval.llm_adapter import LLMFn
-from shared.services.retrieval.agentic.policy import attempt_answer
-from shared.services.retrieval.agentic.tools import (
-    bottom_discovery,
-    discovery_select_step,
-    kg_document_select,
-    scope_navigate_step,
-)
+from shared.services.retrieval.llm_adapter import current_llm_usage
+from shared.services.retrieval.hit_stats_service import compute_importance_score
+from shared.utils.token_estimate import estimate_tokens
 
 
 
@@ -65,6 +63,14 @@ def _collect_media_chunks(node: DocTreeNode) -> list[dict[str, Any]]:
     return media
 
 
+def _collect_media_chunks_all(doc_trees: dict[str, DocTreeNode]) -> list[dict[str, Any]]:
+    """Collect media chunks from all doc trees."""
+    media: list[dict[str, Any]] = []
+    for tree in doc_trees.values():
+        media.extend(_collect_media_chunks(tree))
+    return media
+
+
 async def _build_asset_url_map(
     media_chunks: list[dict[str, Any]],
 ) -> dict[str, str]:
@@ -80,7 +86,7 @@ async def _build_asset_url_map(
         job_id = chunk.get('job_id') or ''
         if not chunk_id or not file_path or not job_id:
             continue
-        if not is_client_result_artifact_ref(file_path):
+        if not _is_client_result_artifact_ref(file_path):
             continue
         try:
             url = await generate_retrieval_asset_url(
@@ -100,7 +106,21 @@ def _build_config_from_env() -> AgentRunConfig:
         max_revisions=int(os.environ.get('RETRIEVAL_AGENTIC_MAX_REVISIONS', '2')),
         max_nav_depth=int(os.environ.get('RETRIEVAL_AGENTIC_MAX_NAV_DEPTH', '3')),
         latency_budget_ms=int(os.environ.get('RETRIEVAL_AGENTIC_LATENCY_BUDGET_MS', '12000')),
+        token_budget_total=int(os.environ.get('RETRIEVAL_AGENTIC_TOKEN_BUDGET_TOTAL', '40000')),
+        planning_ratio=float(os.environ.get('RETRIEVAL_AGENTIC_PLANNING_RATIO', '0.5')),
+        bootstrap_budget=int(os.environ.get('RETRIEVAL_AGENTIC_BOOTSTRAP_BUDGET', '2000')),
+        per_doc_min_share=int(os.environ.get('RETRIEVAL_AGENTIC_PER_DOC_MIN_SHARE', '1500')),
+        inventory_aware=os.environ.get('RETRIEVAL_AGENTIC_INVENTORY_AWARE', 'true') == 'true',
     )
+
+
+def _stringify_llm_input(prompt: Any) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    try:
+        return json.dumps(prompt, ensure_ascii=False, default=str)
+    except Exception:
+        return str(prompt)
 
 
 async def _render_evidence(
@@ -134,6 +154,154 @@ async def _render_evidence(
     return '\n\n'.join(evidence_parts) if evidence_parts else '(no evidence collected)'
 
 
+async def _load_budget_inventory(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    exclude_document_ids: list[str],
+) -> tuple[int, int, dict[str, int]]:
+    stmt = (
+        select(Document.document_id, func.count(DocumentChunk.id))
+        .join(
+            DocumentChunk,
+            (DocumentChunk.document_id == Document.document_id)
+            & (DocumentChunk.job_result_id == Document.current_job_result_id),
+        )
+        .where(Document.user_id == user_id)
+        .where(Document.namespace == namespace)
+        .where(Document.status == 'active')
+        .group_by(Document.document_id)
+    )
+    if exclude_document_ids:
+        stmt = stmt.where(Document.document_id.notin_(list(exclude_document_ids)))
+
+    result = await db.execute(stmt)
+    doc_chunks = {str(doc_id): int(count or 0) for doc_id, count in result.all()}
+    return sum(doc_chunks.values()), len(doc_chunks), doc_chunks
+
+
+def _iter_leaf_content(node: DocTreeNode):
+    for path, chunks in node.leaf_content.items():
+        yield path, chunks
+    for child in node.children.values():
+        yield from _iter_leaf_content(child)
+
+
+def _collect_confidences(node: DocTreeNode) -> dict[str, float]:
+    values = dict(node.confidence)
+    for child in node.children.values():
+        for path, score in _collect_confidences(child).items():
+            values[path] = max(values.get(path, 0.0), score)
+    return values
+
+
+def _pop_leaf_path(node: DocTreeNode, path: str) -> bool:
+    if path in node.leaf_content:
+        node.leaf_content.pop(path)
+        return True
+    for child in node.children.values():
+        if _pop_leaf_path(child, path):
+            return True
+    return False
+
+
+def _estimate_chunks_tokens(chunks: list[dict[str, Any]]) -> int:
+    text = '\n'.join(str(chunk.get('content') or '') for chunk in chunks)
+    return estimate_tokens(text)
+
+
+async def _fetch_importance_norm_scores(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    namespace: str,
+    chunk_ids: list[str],
+) -> dict[str, float]:
+    if not chunk_ids:
+        return {}
+    stmt = (
+        select(
+            RetrievalHitStat.chunk_id,
+            RetrievalHitStat.hit_count,
+            RetrievalHitStat.last_hit_at,
+            RetrievalHitStat.created_at,
+        )
+        .where(RetrievalHitStat.user_id == user_id)
+        .where(RetrievalHitStat.namespace == namespace)
+        .where(RetrievalHitStat.hit_kind == 'chunk')
+        .where(RetrievalHitStat.chunk_id.in_(chunk_ids))
+    )
+    result = await db.execute(stmt)
+    scores: dict[str, float] = {}
+    for chunk_id, hit_count, last_hit_at, created_at in result.all():
+        if chunk_id and last_hit_at and created_at:
+            scores[str(chunk_id)] = compute_importance_score(hit_count, last_hit_at, created_at)
+    return scores
+
+
+async def _trim_evidence_to_budget(
+    db: AsyncSession,
+    *,
+    doc_trees: dict[str, DocTreeNode],
+    doc_id_to_name: dict[str, str],
+    context_remaining: int,
+    user_id: str,
+    namespace: str,
+    ledger: BudgetLedger | None,
+    safety_margin: float = 0.9,
+) -> str:
+    full_text = await _render_evidence(db, doc_trees, doc_id_to_name)
+    target = int(max(context_remaining, 0) * safety_margin)
+    if target <= 0 or estimate_tokens(full_text) <= target:
+        return full_text
+
+    candidates: list[tuple[str, str, tuple[float, float, float], int]] = []
+    for doc_id, tree in doc_trees.items():
+        confidence = _collect_confidences(tree)
+        for path, chunks in _iter_leaf_content(tree):
+            chunk_ids = [
+                str(chunk.get('chunk_id'))
+                for chunk in chunks
+                if chunk.get('chunk_id')
+            ]
+            importance = 0.0
+            importance_scores = await _fetch_importance_norm_scores(
+                db,
+                user_id=user_id,
+                namespace=namespace,
+                chunk_ids=chunk_ids,
+            )
+            if importance_scores:
+                importance = max(importance_scores.values())
+            discovery_score = (
+                float(chunks[0].get('discovery_score', 0.0) or 0.0)
+                if chunks else 0.0
+            )
+            score = (float(confidence.get(path, 0.0) or 0.0), discovery_score, importance)
+            candidates.append((doc_id, path, score, _estimate_chunks_tokens(chunks)))
+
+    current_estimate = estimate_tokens(full_text)
+    removed: list[dict[str, str]] = []
+    for doc_id, path, _score, token_estimate in sorted(
+        candidates,
+        key=lambda item: (item[2], -item[3]),
+    ):
+        if current_estimate <= target:
+            break
+        if _pop_leaf_path(doc_trees[doc_id], path):
+            removed.append({'document_id': doc_id, 'path': path})
+            current_estimate = max(current_estimate - token_estimate, 0)
+
+    if ledger is not None:
+        ledger.trimmed_paths.extend(removed)
+    logger.info(
+        f'  agentic.trim_evidence: removed={len(removed)} '
+        f'est_tokens={current_estimate} target={target}'
+    )
+    return await _render_evidence(db, doc_trees, doc_id_to_name)
+
+
 class RetrievalAgent:
     """Agentic retrieval orchestrator — navigate-then-answer loop.
 
@@ -150,6 +318,82 @@ class RetrievalAgent:
     The agent requires a valid ``llm_fn`` for LLM-driven navigation.
     If ``llm_fn`` is None, the run returns discovery-only results.
     """
+
+    async def _call_llm_with_budget(
+        self,
+        state: AgentState,
+        llm_fn: LLMFn,
+        prompt: Any,
+        *,
+        pool: BudgetPoolName,
+        doc_id: str | None = None,
+        priority: str = 'normal',
+    ) -> str:
+        ledger = state.ledger
+        if ledger is None:
+            return await llm_fn(prompt)
+
+        prompt_text = _stringify_llm_input(prompt)
+        est = estimate_tokens(prompt_text)
+        reserved = await ledger.try_reserve(
+            pool,
+            est,
+            doc_id=doc_id,
+            priority='low' if priority == 'low' else 'normal',
+        )
+        if not reserved:
+            raise BudgetExceeded(f'{pool} budget exhausted')
+
+        try:
+            response = await llm_fn(prompt)
+        except Exception:
+            await ledger.refund(pool, est=est, doc_id=doc_id)
+            raise
+
+        usage = current_llm_usage.get() or {}
+        actual = int(usage.get('prompt_tokens') or est)
+        await ledger.commit(pool, actual=actual, est=est, doc_id=doc_id)
+        return response
+
+    def _budgeted_doc_llm_fn(
+        self,
+        state: AgentState,
+        llm_fn: LLMFn,
+        *,
+        doc_id: str,
+        depth: int,
+    ) -> LLMFn:
+        async def _call(prompt):
+            return await self._call_llm_with_budget(
+                state,
+                llm_fn,
+                prompt,
+                pool='planning',
+                doc_id=doc_id,
+                priority='low' if depth >= 2 else 'normal',
+            )
+
+        return _call
+
+    def _budgeted_discovery_llm_fn(
+        self,
+        state: AgentState,
+        llm_fn: LLMFn,
+        *,
+        doc_id: str,
+        low_priority: bool,
+    ) -> LLMFn:
+        async def _call(prompt):
+            return await self._call_llm_with_budget(
+                state,
+                llm_fn,
+                prompt,
+                pool='planning',
+                doc_id=doc_id,
+                priority='low' if low_priority else 'normal',
+            )
+
+        return _call
 
     async def run(
         self,
@@ -176,11 +420,33 @@ class RetrievalAgent:
         errors are captured in trace and the best available result
         is returned.
         """
+        from shared.services.retrieval.agentic import tools
+        from shared.services.retrieval.agentic.policy import attempt_answer
+        from shared.services.retrieval.llm_adapter import create_retrieval_vlm_fn
+
+        vlm_fn = create_retrieval_vlm_fn()
+
         config = config or _build_config_from_env()
         exclude_document_ids = exclude_document_ids or []
         exclude_sections = exclude_sections or []
 
         state = AgentState()
+        state.ledger = BudgetLedger(
+            total=config.token_budget_total,
+            planning_ratio=config.planning_ratio,
+            bootstrap=config.bootstrap_budget,
+            per_doc_min_share=config.per_doc_min_share,
+        )
+        total_chunks, total_docs, chunks_count_by_doc = await _load_budget_inventory(
+            db,
+            user_id=user_id,
+            namespace=namespace,
+            exclude_document_ids=exclude_document_ids,
+        )
+        state.kg_total_chunks = total_chunks
+        state.kg_total_docs = total_docs
+        state.ledger.total_chunks = total_chunks
+        state.ledger.total_docs = total_docs
         trace = TraceRecorder(
             db, user_id=user_id, namespace=namespace, query=query,
             config=config, top_k=top_k, data_type=data_type,
@@ -197,11 +463,37 @@ class RetrievalAgent:
 
         logger.info(
             f'agentic retrieval START: query="{query[:60]}..." '
-            f'top_k={top_k} budget={config.latency_budget_ms}ms'
+            f'top_k={top_k} latency_budget={config.latency_budget_ms}ms '
+            f'token_budget={config.token_budget_total}'
         )
 
         if llm_fn is None:
             logger.warning('agentic: no llm_fn provided — running discovery-only mode')
+
+        planning_llm_fn: LLMFn | None = None
+        bootstrap_llm_fn: LLMFn | None = None
+        context_llm_fn: LLMFn | None = None
+        if llm_fn is not None:
+            base_llm_fn = llm_fn
+
+            async def _planning_llm_call(prompt):
+                return await self._call_llm_with_budget(
+                    state, base_llm_fn, prompt, pool='planning'
+                )
+
+            async def _bootstrap_llm_call(prompt):
+                return await self._call_llm_with_budget(
+                    state, base_llm_fn, prompt, pool='bootstrap'
+                )
+
+            async def _context_llm_call(prompt):
+                return await self._call_llm_with_budget(
+                    state, base_llm_fn, prompt, pool='context'
+                )
+
+            planning_llm_fn = _planning_llm_call
+            bootstrap_llm_fn = _bootstrap_llm_call
+            context_llm_fn = _context_llm_call
 
         # Shared kwargs for bottom_discovery
         discovery_kwargs: dict[str, Any] = {
@@ -224,7 +516,7 @@ class RetrievalAgent:
         logger.info('  agentic: Phase 1 — discovery + document selection')
 
         # 1a. Bottom discovery (always runs)
-        discovery_result = await bottom_discovery(db, **discovery_kwargs)
+        discovery_result = await tools.bottom_discovery(db, **discovery_kwargs)
         state.step_count += 1
         discovery_rows = discovery_result.payload.get('fused_rows', []) if discovery_result.status != 'error' else []
         state.discovery_top_doc_ids = discovery_result.payload.get('top_doc_ids', []) if discovery_result.status != 'error' else []
@@ -241,15 +533,25 @@ class RetrievalAgent:
         )
 
         # 1b. KG document selection (requires LLM)
-        if llm_fn is not None:
-            kg_result = await kg_document_select(
-                db,
-                user_id=user_id,
-                namespace=namespace,
-                query=query,
-                llm_fn=llm_fn,
-                exclude_document_ids=list(state.ever_explored_doc_ids | set(exclude_document_ids)),
-            )
+        if bootstrap_llm_fn is not None:
+            try:
+                kg_result = await tools.kg_document_select(
+                    db,
+                    user_id=user_id,
+                    namespace=namespace,
+                    query=query,
+                    llm_fn=bootstrap_llm_fn,
+                    exclude_document_ids=list(state.ever_explored_doc_ids | set(exclude_document_ids)),
+                    budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+                )
+            except BudgetExceeded:
+                logger.info('  agentic: bootstrap budget exhausted during document selection')
+                if trace_enabled:
+                    trace.record_budget_stop('bootstrap_exhausted')
+                kg_result = ToolResult(
+                    status='no_confident_doc',
+                    payload={'reason': 'bootstrap budget exhausted'},
+                )
             state.step_count += 1
 
             if trace_enabled:
@@ -312,7 +614,11 @@ class RetrievalAgent:
                 if r.get('chunk_id')
             ]
             if trace_enabled:
-                await trace.complete(discovery_rows, 'agentic_discovery_only')
+                await trace.complete(
+                    discovery_rows,
+                    'agentic_discovery_only',
+                    budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+                )
             return AgenticResult(
                 evidence_text='',
                 answer_text='',
@@ -353,6 +659,12 @@ class RetrievalAgent:
                     if jrid:
                         state.doc_job_map[did] = jrid
 
+        if state.ledger is not None:
+            await state.ledger.allocate_doc_caps({
+                doc.document_id: chunks_count_by_doc.get(doc.document_id, 1)
+                for doc in state.selected_docs
+            })
+
         # ══════════════════════════════════════════════════════════════════
         # Phase 2 + 3 Loop: Navigate → Render → Attempt Answer → (Revise)
         # ══════════════════════════════════════════════════════════════════
@@ -390,11 +702,14 @@ class RetrievalAgent:
 
                 if not is_b_class:
                     # Build exclude_paths for this doc from seen_section_keys
-                    doc_exclude = {
+                    # Starts with revision-carried paths, then accumulates
+                    # leaf paths hydrated during THIS BFS round to prevent
+                    # re-selection in deeper drill-downs.
+                    doc_exclude: set[str] = {
                         key.split('::', 1)[1]
                         for key in state.seen_section_keys
                         if key.startswith(f'{doc.document_id}::')
-                    } if state.seen_section_keys else None
+                    } if state.seen_section_keys else set()
 
                     # BFS queue: (scope_path, parent_node, depth)
                     root = DocTreeNode(scope_path=None)
@@ -408,34 +723,177 @@ class RetrievalAgent:
                         if depth >= config.max_nav_depth:
                             continue
 
-                        if llm_fn is None:
+                        if planning_llm_fn is None:
+                            break
+                        if state.ledger and state.ledger.status('planning') in ('CRITICAL', 'EXHAUSTED'):
+                            logger.info('  agentic: planning budget critical, ending BFS for current doc')
                             break
 
-                        step_node, drill_paths = await scope_navigate_step(
-                            db,
-                            document_id=doc.document_id,
-                            job_result_id=job_result_id,
-                            query=query,
-                            llm_fn=llm_fn,
-                            user_id=user_id,
-                            namespace=namespace,
-                            doc_name=doc_name,
-                            scope_path=scope,
-                            exclude_paths=doc_exclude,
-                            revision_hint=revision_hint if depth == 0 else None,
+                        doc_llm_fn = self._budgeted_doc_llm_fn(
+                            state,
+                            cast(LLMFn, llm_fn),
+                            doc_id=doc.document_id,
+                            depth=depth,
                         )
+
+                        # ★ Step 1: Tool selection (agent decides which asset tools)
+                        try:
+                            tool_choices = await tools.tool_select_step(
+                                db,
+                                document_id=doc.document_id,
+                                job_result_id=job_result_id,
+                                query=query,
+                                llm_fn=doc_llm_fn,
+                                doc_name=doc_name,
+                                scope_path=scope,
+                                exclude_paths=doc_exclude,
+                                revision_hint=revision_hint if depth == 0 else None,
+                                budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+                            )
+                        except BudgetExceeded:
+                            logger.info('  agentic: planning budget exhausted during tool selection')
+                            if trace_enabled:
+                                trace.record_budget_stop('planning_exhausted')
+                            break
+                        state.step_count += 1
+
+                        if trace_enabled:
+                            trace.record_step(
+                                'tool_select_step', ToolResult(
+                                    status='selected',
+                                    payload={
+                                        'document_id': doc.document_id,
+                                        'scope': scope or 'root',
+                                        'depth': depth,
+                                        'tool_choice': tool_choices or ['NAVIGATE'],
+                                    },
+                                ),
+                                decision_reason=f'tool_r{round_idx}_d{depth}_{doc.source_file_name}',
+                            )
+
+                        logger.info(
+                            f'  agentic step {state.step_count}: tool_select_step '
+                            f'doc="{doc.source_file_name}" scope={scope or "root"} '
+                            f'depth={depth} tools={tool_choices or ["NAVIGATE"]}'
+                        )
+
+                        pending_scope_assets: list[dict] = []
+                        for asset_tool in tool_choices:
+                            if asset_tool not in ('FIND_IMAGES', 'FIND_TABLES'):
+                                continue
+                            # ★ Asset collection (programmatic extraction)
+                            asset_type = 'image' if asset_tool == 'FIND_IMAGES' else 'table'
+                            asset_chunks = await tools.asset_filter_step(
+                                db,
+                                document_id=doc.document_id,
+                                job_result_id=job_result_id,
+                                scope_path=scope,
+                                asset_type=asset_type,
+                            )
+                            if asset_chunks:
+                                pending_scope_assets.extend(asset_chunks)
+
+                            if trace_enabled:
+                                trace.record_step(
+                                    'asset_filter_step', ToolResult(
+                                        status='filtered' if asset_chunks else 'empty',
+                                        payload={
+                                            'document_id': doc.document_id,
+                                            'scope': scope or 'root',
+                                            'asset_type': asset_type,
+                                            'chunks_found': len(asset_chunks) if asset_chunks else 0,
+                                        },
+                                    ),
+                                    decision_reason=f'asset_r{round_idx}_d{depth}_{doc.source_file_name}',
+                                )
+
+                            logger.info(
+                                f'  agentic step {state.step_count}: asset_filter_step '
+                                f'doc="{doc.source_file_name}" scope={scope or "root"} '
+                                f'type={asset_type} chunks={len(asset_chunks) if asset_chunks else 0}'
+                            )
+                        # ★ Fallthrough: always proceed to NAVIGATE.
+
+                        # ★ Step 2: NAVIGATE (existing scope_navigate_step)
+                        try:
+                            step_node, drill_paths = await tools.scope_navigate_step(
+                                db,
+                                document_id=doc.document_id,
+                                job_result_id=job_result_id,
+                                query=query,
+                                llm_fn=doc_llm_fn,
+                                user_id=user_id,
+                                namespace=namespace,
+                                doc_name=doc_name,
+                                scope_path=scope,
+                                exclude_paths=doc_exclude,
+                                revision_hint=revision_hint if depth == 0 else None,
+                                budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+                            )
+                        except BudgetExceeded:
+                            logger.info('  agentic: planning budget exhausted during navigation')
+                            if trace_enabled:
+                                trace.record_budget_stop('planning_exhausted')
+                            break
                         state.step_count += 1
 
                         # Merge step result into parent node
                         parent_node.outline_items = step_node.outline_items
-                        parent_node.leaf_content = step_node.leaf_content
+                        for leaf_path, chunks in step_node.leaf_content.items():
+                            parent_node.add_leaf_chunks(leaf_path, chunks)
                         parent_node.confidence = step_node.confidence
+
+                        # ★ Step 2.5: Reconcile pending assets with navigated leaf content
+                        if pending_scope_assets:
+                            # Collect all chunk_ids already present in any leaf_content
+                            existing_ids = {
+                                str(row.get('chunk_id') or '')
+                                for row in parent_node.flatten_chunk_rows()
+                                if row.get('chunk_id')
+                            }
+                            # Filter out assets already inlined
+                            supplementary = [
+                                a for a in pending_scope_assets
+                                if str(a.get('chunk_id') or '') not in existing_ids
+                            ]
+                            if supplementary:
+                                # Only place assets into sections already in the
+                                # navigated tree.  If the owner path isn't part of
+                                # the tree, fall back to the current scope.
+                                navigated_paths = set(parent_node.leaf_content.keys()) | set(parent_node.children.keys())
+                                for asset in supplementary:
+                                    owner_path = (
+                                        asset.get('owner_section_path')
+                                        or asset.get('section_path')
+                                        or scope
+                                    )
+                                    if owner_path and owner_path in navigated_paths:
+                                        parent_node.add_leaf_chunks(str(owner_path), [asset])
+                                    elif scope:
+                                        parent_node.add_leaf_chunks(str(scope), [asset])
+
+                        # Accumulate hydrated leaf paths into doc_exclude
+                        # so subsequent drill-downs don't re-show them as [SELECT].
+                        # Skip paths that are pending drill-down (non-leaf hybrid nodes
+                        # hydrated via self_only) — their children must remain selectable.
+                        drill_path_set = {sel['path'] for sel in drill_paths}
+                        for leaf_path in step_node.leaf_content:
+                            if leaf_path not in drill_path_set:
+                                doc_exclude.add(leaf_path)
 
                         # Queue non-leaf selections for further drill-down
                         for sel in drill_paths:
                             child = DocTreeNode(scope_path=sel['path'])
                             parent_node.children[sel['path']] = child
                             pending.append((sel['path'], child, depth + 1))
+
+                        # Re-parent leaf paths that belong to a child's subtree.
+                        # When the LLM selects both a parent section (non-leaf)
+                        # and one of its children (leaf) at the same depth, the
+                        # leaf chunks are stored on the parent node.  Move them
+                        # into the child node so render_unified_doc_tree nests
+                        # them correctly instead of rendering orphans at root.
+                        parent_node.reparent_leaf_content()
 
                         if trace_enabled:
                             trace.record_step(
@@ -460,23 +918,41 @@ class RetrievalAgent:
                             f'leaves={len(step_node.leaf_content)} '
                             f'drills={len(drill_paths)}'
                         )
+                        if state.ledger is not None:
+                            state.ledger.mark_explored(
+                                chunks=sum(len(chunks) for chunks in step_node.leaf_content.values()),
+                            )
                 else:
                     # B-class: no BFS, create empty root
                     root = DocTreeNode(scope_path=None)
 
                 # ── Post-BFS: Discovery selection step ─────────────────────
                 doc_hints = discovery_by_doc.get(doc.document_id, [])
-                if doc_hints and llm_fn is not None and state.elapsed_ms < config.latency_budget_ms:
-                    discovery_node = await discovery_select_step(
-                        db,
-                        document_id=doc.document_id,
-                        query=query,
-                        llm_fn=llm_fn,
-                        user_id=user_id,
-                        namespace=namespace,
-                        doc_name=doc_name,
-                        discovery_hints=doc_hints,
+                if doc_hints and planning_llm_fn is not None and state.elapsed_ms < config.latency_budget_ms:
+                    doc_discovery_llm_fn = self._budgeted_discovery_llm_fn(
+                        state,
+                        cast(LLMFn, llm_fn),
+                        doc_id=doc.document_id,
+                        low_priority=root.has_content(),
                     )
+                    try:
+                        discovery_node = await tools.discovery_select_step(
+                            db,
+                            document_id=doc.document_id,
+                            query=query,
+                            llm_fn=doc_discovery_llm_fn,
+                            user_id=user_id,
+                            namespace=namespace,
+                            doc_name=doc_name,
+                            discovery_hints=doc_hints,
+                            revision_hint=revision_hint,
+                            budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+                        )
+                    except BudgetExceeded:
+                        logger.info('  agentic: planning budget exhausted during discovery selection')
+                        if trace_enabled:
+                            trace.record_budget_stop('planning_exhausted')
+                        discovery_node = DocTreeNode(scope_path=None)
                     state.step_count += 1
 
                     if trace_enabled:
@@ -494,6 +970,10 @@ class RetrievalAgent:
 
                     # Merge discovery results into BFS tree
                     root.merge(discovery_node)
+                    if state.ledger is not None:
+                        state.ledger.mark_explored(
+                            chunks=sum(len(chunks) for chunks in discovery_node.leaf_content.values()),
+                        )
 
                 # Merge or store doc tree
                 if doc.document_id in state.doc_trees:
@@ -501,25 +981,58 @@ class RetrievalAgent:
                 else:
                     state.doc_trees[doc.document_id] = root
                 state.ever_explored_doc_ids.add(doc.document_id)
+                if state.ledger is not None:
+                    state.ledger.mark_explored(docs=1)
 
             # ── Phase 3: Render evidence + attempt_answer ────────────────
-            evidence_text = await _render_evidence(
+            evidence_text = await _trim_evidence_to_budget(
                 db,
-                state.doc_trees, state.doc_id_to_name,
+                doc_trees=state.doc_trees,
+                doc_id_to_name=state.doc_id_to_name,
+                context_remaining=state.ledger.remaining('context') if state.ledger else config.token_budget_total,
+                user_id=user_id,
+                namespace=namespace,
+                ledger=state.ledger,
             )
 
-            if llm_fn is None:
+            if context_llm_fn is None:
                 stop_reason = 'no_llm'
                 break
 
-            # Auto-trigger attempt_answer
-            status, answer_text, reason = await attempt_answer(
-                llm_fn,
-                query=query,
-                evidence_text=evidence_text,
-                state=state,
-                config=config,
-            )
+            # Collect image URLs from evidence for VLM switch
+            evidence_image_urls: list[str] = []
+            if vlm_fn:
+                asset_url_map = await _build_asset_url_map(
+                    _collect_media_chunks_all(state.doc_trees),
+                )
+                evidence_image_urls = [
+                    url for url in asset_url_map.values() if url
+                ]
+
+            async def vlm_context_call(prompt, _vlm_fn=vlm_fn):
+                return await self._call_llm_with_budget(
+                    state, cast(LLMFn, _vlm_fn), prompt, pool='context'
+                )
+
+            # Auto-trigger attempt_answer (VLM if images present)
+            try:
+                status, answer_text, reason = await attempt_answer(
+                    context_llm_fn,
+                    query=query,
+                    evidence_text=evidence_text,
+                    state=state,
+                    config=config,
+                    vlm_fn=vlm_context_call if vlm_fn else None,
+                    image_urls=evidence_image_urls or None,
+                    budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+                )
+            except BudgetExceeded:
+                logger.info('  agentic: context budget exhausted before attempt_answer')
+                if trace_enabled:
+                    trace.record_budget_stop('context_exhausted')
+                status, answer_text, reason = 'NOT_FOUND', '', 'context budget exhausted'
+                stop_reason = 'context_budget'
+                break
             state.step_count += 1
 
             if trace_enabled:
@@ -560,15 +1073,27 @@ class RetrievalAgent:
             # Clear doc selection for re-exploration (preserve doc_trees for merge)
             state.selected_docs.clear()
 
-            # Re-run KG select (allow re-exploring docs for different sections via path masking)
-            kg_result = await kg_document_select(
-                db,
-                user_id=user_id,
-                namespace=namespace,
-                query=query,
-                llm_fn=llm_fn,
-                exclude_document_ids=list(set(exclude_document_ids)),
-            )
+            # Re-run KG select with revision hint
+            if bootstrap_llm_fn is None:
+                stop_reason = 'no_llm'
+                break
+            try:
+                kg_result = await tools.kg_document_select(
+                    db,
+                    user_id=user_id,
+                    namespace=namespace,
+                    query=query,
+                    llm_fn=bootstrap_llm_fn,
+                    exclude_document_ids=list(set(exclude_document_ids)),
+                    revision_hint=revision_hint,
+                    budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+                )
+            except BudgetExceeded:
+                logger.info('  agentic: bootstrap budget exhausted during revision doc selection')
+                if trace_enabled:
+                    trace.record_budget_stop('bootstrap_exhausted')
+                stop_reason = 'bootstrap_budget'
+                break
             state.step_count += 1
 
             if kg_result.status == 'selected_docs':
@@ -587,6 +1112,12 @@ class RetrievalAgent:
                 logger.info('  agentic: revision found no new docs — stopping')
                 stop_reason = 'no_new_docs'
                 break
+
+            if state.ledger is not None:
+                await state.ledger.allocate_doc_caps({
+                    doc.document_id: chunks_count_by_doc.get(doc.document_id, 1)
+                    for doc in state.selected_docs
+                })
 
         # ══════════════════════════════════════════════════════════════════
         # Final Assembly
@@ -618,6 +1149,8 @@ class RetrievalAgent:
             answer_text=answer_text,
             referenced_chunks=all_refs,
             router_used=router_used,
+            budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+            stop_reason=stop_reason,
         )
 
         logger.info(
@@ -630,6 +1163,10 @@ class RetrievalAgent:
         )
 
         if trace_enabled:
-            await trace.complete(all_refs, router_used)
+            await trace.complete(
+                all_refs,
+                router_used,
+                budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+            )
 
         return result

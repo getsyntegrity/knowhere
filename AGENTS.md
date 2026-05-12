@@ -565,7 +565,9 @@ For each selected document, the agent performs a constrained Breadth-First Searc
 1. **Scope Navigation**: The document's section tree is dynamically rendered to the LLM. 
    - *Path-Based Hierarchy*: Child nodes are strictly filtered using structural path prefixes (e.g., `child_path.startswith(parent_path + ' / ')`) to maintain structural integrity and eliminate L2 duplicate rendering.
    - *Visual Constraints*: Actionable drill-down paths are explicitly prefixed with `[SELECT]` tags. The LLM system prompt tightly constrains the model to only pick paths with this tag, preventing redundant re-selection of the current scope.
-2. **Discovery Select**: The LLM reviews the specific paths flagged by Phase 1's Bottom Discovery for the current document. Selected discovery paths have their leaf chunks merged directly into the BFS document tree.
+2. **Discovery Select**: The LLM reviews the specific paths flagged by Phase 1's Bottom Discovery for the current document. Selected discovery paths are hydrated into leaf chunks (with `job_result_id` dynamically extracted from the chunks) and merged directly into the BFS document tree. 
+   - *Reparenting*: The `DocTreeNode.merge()` process reparents these discovered leaf chunks into the closest matching navigated child node. 
+   - *Orphan Leaves*: Discovered chunks whose paths are not explicitly covered by the BFS `outline_items` are rendered cleanly as `[Leaf]` items (orphans) beneath their appropriate parent, ensuring no relevant data is lost even if the BFS did not explicitly drill into that path.
 
 **Phase 3: Verdict & Revision**
 The combined document tree (BFS Navigation + Discovery) is rendered as unified evidence. The tree naturally displays structural context (outlines) alongside hydrated chunk rows (for selected leaf paths). The LLM attempts to answer the user's query:
