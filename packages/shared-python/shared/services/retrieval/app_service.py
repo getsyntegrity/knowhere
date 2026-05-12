@@ -850,9 +850,13 @@ async def _hydrate_paths_to_rows(
     # ── Chunk modes: load real chunks with optional type filters ─────────
     if chunk_paths:
         section_path_filters = []
+        # Separate self_only paths (exact match only, no descendant LIKE)
+        # from regular chunk paths (exact + descendant subtree match)
+        self_only_paths = {p for p in chunk_paths if mode_by_path.get(p) == 'self_only'}
         for path in chunk_paths:
             section_path_filters.append(DocumentSection.section_path == path)
-            section_path_filters.append(DocumentSection.section_path.like(f'{path} / %'))
+            if path not in self_only_paths:
+                section_path_filters.append(DocumentSection.section_path.like(f'{path} / %'))
 
         stmt = (
             select(Document, DocumentChunk, DocumentSection, JobResult)
