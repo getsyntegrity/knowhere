@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from shared.services.retrieval.agentic.budget import BudgetLedger
+
 
 @dataclass
 class AgentRunConfig:
@@ -17,6 +19,11 @@ class AgentRunConfig:
     max_revisions: int = 2  # max attempt_answer → revision cycles
     max_nav_depth: int = 3  # max scope_navigate recursion depth
     latency_budget_ms: int = 12000
+    token_budget_total: int = 40000
+    planning_ratio: float = 0.5
+    bootstrap_budget: int = 2000
+    per_doc_min_share: int = 1500
+    inventory_aware: bool = True
 
 
 @dataclass
@@ -30,6 +37,7 @@ class ToolResult:
     payload: dict[str, Any] = field(default_factory=dict)
     latency_ms: int = 0
     error: str | None = None
+    tokens_used: int = 0
 
 
 @dataclass
@@ -99,6 +107,33 @@ class DocTreeNode:
             rows.extend(child.flatten_chunk_rows())
         return rows
 
+    def add_leaf_chunks(self, path: str, chunks: list[dict[str, Any]]) -> None:
+        """Merge chunks into a leaf path, deduplicating by (chunk_id, path)."""
+        if not path or not chunks:
+            return
+        existing = self.leaf_content.setdefault(path, [])
+        seen: set[tuple[str, str]] = {
+            (str(row.get('chunk_id') or ''), path)
+            for row in existing
+            if row.get('chunk_id')
+        }
+        for chunk in chunks:
+            chunk_id = str(chunk.get('chunk_id') or '')
+            key = (chunk_id, path)
+            if chunk_id and key in seen:
+                continue
+            if chunk_id:
+                seen.add(key)
+            existing.append(chunk)
+
+    def reparent_leaf_content(self) -> None:
+        """Move descendant leaf paths into matching child nodes."""
+        for child_path, child in list(self.children.items()):
+            for leaf_path in list(self.leaf_content.keys()):
+                if leaf_path == child_path or leaf_path.startswith(child_path + ' / '):
+                    child.add_leaf_chunks(leaf_path, self.leaf_content.pop(leaf_path))
+            child.reparent_leaf_content()
+
     def collect_referenced_ids(self) -> list[dict[str, str]]:
         """Extract minimal chunk references from all hydrated leaves.
 
@@ -133,8 +168,7 @@ class DocTreeNode:
             if item.get('path', '') not in existing_paths:
                 self.outline_items.append(item)
         for path, chunks in other.leaf_content.items():
-            if path not in self.leaf_content:
-                self.leaf_content[path] = chunks
+            self.add_leaf_chunks(path, chunks)
         for path, child in other.children.items():
             if path in self.children:
                 self.children[path].merge(child)
@@ -142,6 +176,7 @@ class DocTreeNode:
                 self.children[path] = child
         for path, conf in other.confidence.items():
             self.confidence[path] = max(self.confidence.get(path, 0), conf)
+        self.reparent_leaf_content()
 
 
 @dataclass
@@ -166,11 +201,16 @@ class AgenticResult:
     - ``referenced_chunks``: minimal chunk references for hit stats
       and frontend display (chunk_id, document_id, chunk_type, etc.)
     - ``router_used``: routing path identifier
+    - ``budget_snapshot``: final budget ledger state at run completion
+    - ``stop_reason``: why the run terminated (answer_done / max_revisions /
+      latency_budget / context_budget / no_llm / etc.)
     """
     evidence_text: str
     answer_text: str = ''
     referenced_chunks: list[dict[str, str]] = field(default_factory=list)
     router_used: str = 'agentic_discovery_only'
+    budget_snapshot: dict[str, Any] | None = None
+    stop_reason: str = ''
 
 
 @dataclass
@@ -200,6 +240,12 @@ class AgentState:
     revision_count: int = 0
     ever_explored_doc_ids: set[str] = field(default_factory=set)
     seen_section_keys: set[str] = field(default_factory=set)  # "{doc_id}::{section_path}"
+
+    # Token budget + KG inventory
+    ledger: BudgetLedger | None = None
+    kg_total_chunks: int = 0
+    kg_total_docs: int = 0
+    explored_chunks: int = 0
 
     @property
     def elapsed_ms(self) -> int:

@@ -21,6 +21,7 @@ _MAX_OVERVIEW_FILES = 50
 _FILE_SELECT_PROMPT = """\
 You are a document routing assistant.
 
+{budget_block}
 Below is a knowledge base overview showing all available documents,
 their navigation summaries, chunk counts, and media counts.
 
@@ -41,8 +42,9 @@ _SCOPE_NAV_PROMPT = """\
 You are a document navigation assistant.
 
 Document: "{doc_name}" (id: {doc_id})
-{scope_header}
 
+{budget_block}
+{scope_header}
 Below is the document's section tree.
 Sections tagged [SELECT] are within the current scope and may be selected.
 Other sections are shown as structural context only (not selectable).
@@ -58,6 +60,8 @@ Select sections to drill into for more detailed content.
 - You may ONLY select sections marked with [SELECT]. Do NOT select any other sections.
 - Select sections whose content is needed to answer the query.
 - If the titles and summaries already visible are sufficient (e.g. the query asks for an outline or overview), return an EMPTY list [].
+- When budget is TIGHT, prefer fewer high-confidence selections over broad exploration.
+- When budget is CRITICAL, be very selective — only pick paths with strong relevance. Return [] if current evidence already suffices.
 
 Return ONLY a JSON object:
 {{"selections": [{{"path": "...", "confidence": <float>}}, ...]}}
@@ -70,6 +74,7 @@ You are a document navigation assistant.
 
 Document: "{doc_name}"
 
+{budget_block}
 After navigating the document's section tree, the following section paths
 were additionally discovered via keyword and semantic search.
 They may contain relevant evidence not found through hierarchical navigation.
@@ -82,11 +87,34 @@ User query: {query}
 {revision_context}
 Select section paths whose content is needed to answer the query.
 If none are relevant, return an EMPTY list [].
+When budget is TIGHT, prefer fewer high-confidence candidates.
+When budget is CRITICAL, be very selective — only pick paths with strong relevance. Return [] if evidence suffices.
 
 Return ONLY a JSON object:
 {{"selections": [{{"path": "...", "confidence": <float>}}, ...]}}
 Do not include any explanation.
 """
+
+
+def _format_budget_block(snapshot: dict | None) -> str:
+    if not snapshot:
+        return ""
+    planning = snapshot.get("planning") or {}
+    context = snapshot.get("context") or {}
+    return (
+        "=== Resource Status ===\n"
+        f"Planning Budget: {planning.get('status', 'HEALTHY')} "
+        f"({planning.get('used_pct', 0)}% used)\n"
+        f"Context Budget: {context.get('status', 'HEALTHY')} "
+        f"({context.get('used_pct', 0)}% used)\n"
+        f"KG Coverage: {snapshot.get('explored_chunks', 0)}/"
+        f"{snapshot.get('total_chunks', 0)} chunks explored\n"
+        f"Docs Explored: {snapshot.get('explored_docs', 0)}/"
+        f"{snapshot.get('total_docs', 0)}\n"
+        "When budget is TIGHT, prefer fewer high-confidence selections over broad exploration. "
+        "When CRITICAL, be very selective — only pick paths with strong relevance. Return empty if evidence suffices.\n"
+        "=== End Resource Status ===\n"
+    )
 
 
 def _extract_json_array_payload(text: str) -> list[Any]:
@@ -473,6 +501,12 @@ async def _load_child_sections(
     scope_parts = split_section_path(scope)
     scope_depth = len(scope_parts)
 
+    logger.debug(
+        f'  _load_child_sections: scope={scope!r} scope_parts={scope_parts} '
+        f'scope_depth={scope_depth} exclude_paths={_excl if (_excl := exclude_paths or set()) else "none"} '
+        f'total_sections={len(section_rows)}'
+    )
+
     # Build full section metadata index
     all_sections: dict[str, dict] = {}  # path → {title, summary, sort_order, section_id, parts, depth}
     for section_id, title, path, summary, sort_order in section_rows:
@@ -571,12 +605,16 @@ async def _load_child_sections(
             continue
 
         # Category 2: Descendants of scope_path (children to explore)
-        if parts[:scope_depth] == scope_parts and depth > scope_depth:
+        # depth > scope_depth is guaranteed by the continue at line above
+        is_descendant = parts[:scope_depth] == scope_parts
+        if is_descendant:
             # Skip excluded paths
-            if _excl and any(
+            is_excluded = _excl and any(
                 path == ep or path.startswith(ep + ' / ')
                 for ep in _excl
-            ):
+            )
+            if is_excluded:
+                logger.debug(f'  _load_child_sections: EXCLUDED descendant path={path!r}')
                 continue
             scope_child_depths.add(depth)
             items_by_path[path] = {
@@ -592,6 +630,11 @@ async def _load_child_sections(
                 'show_summary': True,
             }
             continue
+        else:
+            logger.debug(
+                f'  _load_child_sections: NOT descendant path={path!r} '
+                f'parts[:scope_depth]={parts[:scope_depth]} != scope_parts={scope_parts}'
+            )
 
         # Category 3: Everything else → pruned (not added)
 
@@ -944,57 +987,98 @@ def render_unified_doc_tree(
     if depth == 0:
         parts.append(f'【文档】{doc_name}\n')
 
-    # Track which paths have been rendered via outline_items
-    rendered_paths: set[str] = set()
-
     # Collect children keys for path-hierarchy dedup:
     child_prefixes = set(node.children.keys())
 
+    # Helper: min sort_order of a leaf_content entry
+    def _min_sort(path: str) -> float:
+        chunks = node.leaf_content.get(path, [])
+        return min((c.get('sort_order') or float('inf') for c in chunks), default=float('inf'))
+
+    # ── Build a unified render queue ──
+    # Each entry: (sort_key, render_type, data)
+    #   render_type: 'outline' | 'orphan_leaf' | 'orphan_child'
+    render_queue: list[tuple[float, str, dict | str]] = []
+
+    outline_paths: set[str] = set()
+    # Position counter for outline-only items (no leaf content) to preserve
+    # their relative ordering among themselves.
+    outline_position = 0.0
+
     for item in node.outline_items:
         path = item.get('path', '')
-        title = item.get('title', '')
-        is_leaf = item.get('is_leaf', False)
-        level = item.get('level', 1)
-        leaf_tag = ' [Leaf]' if is_leaf else ''
-
-        # Skip items that belong to a drilled-into child's subtree
+        # Skip items belonging to a drilled-into child's subtree
         if any(path.startswith(cp + ' / ') for cp in child_prefixes):
             continue
+        outline_paths.add(path)
 
-        rendered_paths.add(path)
-
-        # Section header (title only — summaries are navigation aids, not evidence)
-        level_tag = f'[L{level}] ' if level else ''
-        if level <= 1:
-            parts.append(f'{indent}▸ {level_tag}{title}{leaf_tag}')
+        # Determine sort_key: use chunk sort_order if content exists,
+        # else use a synthetic position to maintain outline ordering.
+        if path in node.leaf_content or path in node.children:
+            sort_key = _min_sort(path) if path in node.leaf_content else outline_position
         else:
-            parts.append(f'{indent}└ {level_tag}{title}{leaf_tag}')
+            sort_key = outline_position
+        outline_position = max(outline_position, sort_key) + 0.001
 
-        sub_indent = indent + '    '
+        render_queue.append((sort_key, 'outline', item))
 
-        # Case 1: This section was drilled into → show child tree inline
-        if path in node.children:
-            child = node.children[path]
-            child_text = render_unified_doc_tree(child, doc_name, depth + 1, asset_lookup=asset_lookup)
-            if child_text.strip():
-                parts.append(child_text)
-
-        # Case 2: This is a hydrated leaf → show chunk content inline
-        elif path in node.leaf_content:
-            _render_leaf_chunks(parts, node.leaf_content[path], sub_indent, asset_lookup=asset_lookup)
-
-        # Case 3: Unselected → title already rendered above, nothing more needed
-
-    # Render orphan paths: leaf_content and children not covered by outline_items
+    # Add orphan leaf_content paths (not covered by outline_items)
     for path in node.leaf_content:
-        if path not in rendered_paths:
+        if path not in outline_paths:
+            render_queue.append((_min_sort(path), 'orphan_leaf', path))
+
+    # Add orphan children (not covered by outline_items)
+    for path in node.children:
+        if path not in outline_paths:
+            render_queue.append((float('inf'), 'orphan_child', path))
+
+    # Sort by sort_key (stable sort preserves insertion order for ties)
+    render_queue.sort(key=lambda x: x[0])
+
+    from typing import cast
+
+    # ── Render the unified queue ──
+    for _sort_key, rtype, data in render_queue:
+        if rtype == 'outline':
+            item = cast(dict, data)
+            path = item.get('path', '')
+            title = item.get('title', '')
+            is_leaf = item.get('is_leaf', False)
+            level = item.get('level', 1)
+            leaf_tag = ' [Leaf]' if is_leaf else ''
+
+            level_tag = f'[L{level}] ' if level else ''
+            if level <= 1:
+                parts.append(f'{indent}▸ {level_tag}{title}{leaf_tag}')
+            else:
+                parts.append(f'{indent}└ {level_tag}{title}{leaf_tag}')
+
+            sub_indent = indent + '    '
+
+            # Case 1: drilled-into child → render child tree
+            if path in node.children:
+                child = node.children[path]
+                if path in node.leaf_content:
+                    _render_leaf_chunks(parts, node.leaf_content[path], sub_indent, asset_lookup=asset_lookup)
+                child_text = render_unified_doc_tree(child, doc_name, depth + 1, asset_lookup=asset_lookup)
+                if child_text.strip():
+                    parts.append(child_text)
+
+            # Case 2: hydrated leaf → show chunk content
+            elif path in node.leaf_content:
+                _render_leaf_chunks(parts, node.leaf_content[path], sub_indent, asset_lookup=asset_lookup)
+
+            # Case 3: unselected → title only (already rendered above)
+
+        elif rtype == 'orphan_leaf':
+            path = cast(str, data)
             title = path.rsplit(' / ', 1)[-1] if ' / ' in path else path
             parts.append(f'{indent}▸ [Leaf] {title}')
             sub_indent = indent + '    '
             _render_leaf_chunks(parts, node.leaf_content[path], sub_indent, asset_lookup=asset_lookup)
 
-    for path in node.children:
-        if path not in rendered_paths:
+        elif rtype == 'orphan_child':
+            path = cast(str, data)
             title = path.rsplit(' / ', 1)[-1] if ' / ' in path else path
             parts.append(f'{indent}▸ {title} [DrillDown]')
             child_text = render_unified_doc_tree(node.children[path], doc_name, depth + 1, asset_lookup=asset_lookup)

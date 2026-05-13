@@ -15,18 +15,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database.document import Document
+from shared.services.retrieval.agentic.budget import BudgetExceeded
 from shared.services.retrieval.agentic.types import DocTreeNode, ToolResult
 from shared.services.retrieval.agent_navigate import (
     _build_knowledge_map_overview,
-    _expand_by_edges,
     _format_items_for_llm,
-    _grep_discover_document_ids,
     _load_child_sections,
     _parse_json_array,
     _parse_scope_nav_response,
     _SCOPE_NAV_PROMPT,
     _DISCOVERY_SELECT_PROMPT,
     _FILE_SELECT_PROMPT,
+    _format_budget_block,
 )
 from shared.services.retrieval.app_service import (
     _CHANNEL_WEIGHT_CONTENT,
@@ -41,6 +41,104 @@ from shared.services.retrieval.app_service import (
 )
 from shared.services.retrieval.channels import content_channel, path_channel, term_channel
 from shared.services.retrieval.llm_adapter import LLMFn
+
+
+# ---------------------------------------------------------------------------
+# Helper: resolve connected asset → owner text chunk section_path
+# ---------------------------------------------------------------------------
+
+def _build_connected_owner_map(text_chunks: list[dict[str, Any]]) -> dict[str, str]:
+    """Build target_chunk_id → owner text chunk section_path mapping.
+
+    When text chunks reference images/tables via connect_to metadata,
+    the referenced assets live in Root section. This map lets us attribute
+    those assets back to the text chunk's section for correct tree placement.
+    """
+    owner_map: dict[str, str] = {}
+    for chunk in text_chunks:
+        if (chunk.get('chunk_type') or 'text') != 'text':
+            continue
+        section_path = chunk.get('section_path') or ''
+        if not section_path:
+            continue
+        metadata = chunk.get('chunk_metadata') or {}
+        if not isinstance(metadata, dict):
+            continue
+        for conn in metadata.get('connect_to') or []:
+            if not isinstance(conn, dict):
+                continue
+            target_id = str(conn.get('target') or '').strip()
+            if target_id and target_id not in owner_map:
+                owner_map[target_id] = section_path
+    return owner_map
+
+
+async def _resolve_root_asset_owners(
+    db: AsyncSession,
+    *,
+    document_id: str,
+    job_result_id: str,
+    chunks: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Resolve owner section_path for Root-stranded image/table chunks.
+
+    When Root is hydrated directly (e.g. via discovery selection), the
+    batch contains standalone image/table chunks whose section_path is
+    'Root'.  ``_build_connected_owner_map`` cannot help because the
+    referencing text chunks live in other sections outside the batch.
+
+    This function queries the *entire document* for text chunks with
+    connect_to metadata, using the same logic as
+    ``_build_connected_owner_map``, to resolve the true owner.
+
+    Returns target_chunk_id → owner_section_path for Root assets only.
+    Returns empty dict when there are no Root assets (zero DB overhead).
+    """
+    from shared.models.database.document import DocumentChunk, DocumentSection
+
+    root_asset_ids = [
+        str(c.get('chunk_id') or '')
+        for c in chunks
+        if not c.get('owner_section_path')  # skip if already resolved by batch-level owner map
+        and (c.get('section_path') or '') == 'Root'
+        and (c.get('chunk_type') or '').lower() in ('image', 'table')
+        and c.get('chunk_id')
+    ]
+    if not root_asset_ids:
+        return {}
+
+    root_asset_set = set(root_asset_ids)
+
+    # Query all text chunks in this document for connect_to metadata
+    text_stmt = (
+        select(
+            DocumentChunk.chunk_metadata,
+            DocumentSection.section_path,
+        )
+        .outerjoin(DocumentSection, DocumentSection.section_id == DocumentChunk.section_id)
+        .where(DocumentChunk.document_id == document_id)
+        .where(DocumentChunk.job_result_id == job_result_id)
+        .where(DocumentChunk.chunk_type == 'text')
+    )
+    result = await db.execute(text_stmt)
+
+    owner_map: dict[str, str] = {}
+    for metadata, section_path in result.all():
+        if not isinstance(metadata, dict) or not section_path:
+            continue
+        for conn in metadata.get('connect_to') or []:
+            if not isinstance(conn, dict):
+                continue
+            target_id = str(conn.get('target') or '').strip()
+            if target_id in root_asset_set and target_id not in owner_map:
+                owner_map[target_id] = section_path
+
+    if owner_map:
+        logger.info(
+            f'  _resolve_root_asset_owners: resolved {len(owner_map)}/{len(root_asset_ids)} '
+            f'Root assets to their owner sections'
+        )
+    return owner_map
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +305,7 @@ async def kg_document_select(
         file_prompt = _FILE_SELECT_PROMPT.format(
             overview=overview_text, query=query,
             revision_context=revision_context,
+            budget_block=_format_budget_block(_kwargs.get('budget_snapshot')),
         )
         file_response = await llm_fn(file_prompt)
         selected_ids = _parse_json_array(file_response)
@@ -255,124 +354,11 @@ async def kg_document_select(
             },
             latency_ms=latency,
         )
+    except BudgetExceeded:
+        raise
     except Exception as e:
         latency = int((time.monotonic() - t0) * 1000)
         logger.error(f'  agentic.kg_document_select failed: {e}')
-        return ToolResult(status='error', error=str(e), latency_ms=latency)
-
-
-# ---------------------------------------------------------------------------
-# Tool: grep_document_discover
-# ---------------------------------------------------------------------------
-
-async def grep_document_discover(
-    db: AsyncSession,
-    *,
-    user_id: str,
-    namespace: str,
-    query: str,
-    exclude_document_ids: list[str],
-    **_kwargs: Any,
-) -> ToolResult:
-    """Discover documents via term search (GREP)."""
-    t0 = time.monotonic()
-    try:
-        grep_doc_ids = await _grep_discover_document_ids(
-            db, user_id=user_id, namespace=namespace, query=query,
-            exclude_document_ids=exclude_document_ids,
-        )
-
-        if not grep_doc_ids:
-            latency = int((time.monotonic() - t0) * 1000)
-            return ToolResult(
-                status='no_docs_found',
-                payload={'reason': 'GREP found no matching documents'},
-                latency_ms=latency,
-            )
-
-        doc_stmt = (
-            select(Document.document_id, Document.source_file_name, Document.current_job_result_id)
-            .where(Document.document_id.in_(grep_doc_ids))
-        )
-        doc_result = await db.execute(doc_stmt)
-        doc_id_to_name: dict[str, str] = {}
-        doc_job_map: dict[str, str] = {}
-        for did, fname, jrid in doc_result.all():
-            doc_id_to_name[did] = fname or did
-            if jrid:
-                doc_job_map[did] = jrid
-
-        latency = int((time.monotonic() - t0) * 1000)
-        logger.info(f'  agentic.grep_document_discover: {len(grep_doc_ids)} docs found, {latency}ms')
-        return ToolResult(
-            status='discovered_docs',
-            payload={
-                'document_ids': grep_doc_ids,
-                'doc_id_to_name': doc_id_to_name,
-                'doc_job_map': doc_job_map,
-            },
-            latency_ms=latency,
-        )
-    except Exception as e:
-        latency = int((time.monotonic() - t0) * 1000)
-        logger.error(f'  agentic.grep_document_discover failed: {e}')
-        return ToolResult(status='error', error=str(e), latency_ms=latency)
-
-
-# ---------------------------------------------------------------------------
-# Tool: graph_expand_docs
-# ---------------------------------------------------------------------------
-
-async def graph_expand_docs(
-    db: AsyncSession,
-    *,
-    user_id: str,
-    namespace: str,
-    document_ids: list[str],
-    **_kwargs: Any,
-) -> ToolResult:
-    """Expand document set via KG edge traversal."""
-    t0 = time.monotonic()
-    try:
-        expanded_ids = await _expand_by_edges(
-            db, document_ids=document_ids, user_id=user_id, namespace=namespace,
-        )
-        new_ids = [did for did in expanded_ids if did not in document_ids]
-
-        if not new_ids:
-            latency = int((time.monotonic() - t0) * 1000)
-            return ToolResult(
-                status='no_expansion',
-                payload={'reason': 'no new neighbors found via edges'},
-                latency_ms=latency,
-            )
-
-        doc_stmt = (
-            select(Document.document_id, Document.source_file_name, Document.current_job_result_id)
-            .where(Document.document_id.in_(new_ids))
-        )
-        doc_result = await db.execute(doc_stmt)
-        doc_id_to_name: dict[str, str] = {}
-        doc_job_map: dict[str, str] = {}
-        for did, fname, jrid in doc_result.all():
-            doc_id_to_name[did] = fname or did
-            if jrid:
-                doc_job_map[did] = jrid
-
-        latency = int((time.monotonic() - t0) * 1000)
-        logger.info(f'  agentic.graph_expand_docs: {len(new_ids)} new docs from edges, {latency}ms')
-        return ToolResult(
-            status='expanded_docs',
-            payload={
-                'document_ids': new_ids,
-                'doc_id_to_name': doc_id_to_name,
-                'doc_job_map': doc_job_map,
-            },
-            latency_ms=latency,
-        )
-    except Exception as e:
-        latency = int((time.monotonic() - t0) * 1000)
-        logger.error(f'  agentic.graph_expand_docs failed: {e}')
         return ToolResult(status='error', error=str(e), latency_ms=latency)
 
 
@@ -384,73 +370,94 @@ _TOOL_SELECT_PROMPT = """\
 You are a document navigation agent.
 
 Document: "{doc_name}"
-{scope_header}
 
+{budget_block}
+{scope_header}
 Below is a summary of the current scope's sections:
 
 {tree_summary}
 
 User query: {query}
 
-=== Available Tools ===
+=== Available Actions ===
 
-NAVIGATE
+NAVIGATE (always performed)
   Drill into specific sections to explore detailed content.
-  Use when the query requires reading text content in sub-sections.
+  This action always runs — you do not need to select it.
 
-FIND_IMAGES
-  Extract all image/chart/diagram assets under this scope.
-  Use when the query asks about images, charts, figures, or visual content.
+FIND_IMAGES (optional, additive)
+  Also extract image/chart/diagram assets under this scope.
+  Select this when the query asks about images, charts, figures, or visual content.
 
-FIND_TABLES
-  Extract all table/data assets under this scope.
-  Use when the query asks about tables, tabular data, or structured data.
+FIND_TABLES (optional, additive)
+  Also extract table/data assets under this scope.
+  Select this when the query asks about tables, tabular data, or structured data.
 
-Choose exactly ONE tool. Return ONLY a JSON object:
-{{"tool": "NAVIGATE"}}
-or {{"tool": "FIND_IMAGES"}}
-or {{"tool": "FIND_TABLES"}}
+You may select ZERO, ONE, or BOTH optional actions.
+Navigation always happens regardless of your selection.
+
+Return ONLY a JSON object:
+{{"tools": []}}                         — navigate only, no extra assets
+{{"tools": ["FIND_IMAGES"]}}            — navigate + extract images
+{{"tools": ["FIND_TABLES"]}}            — navigate + extract tables
+{{"tools": ["FIND_IMAGES", "FIND_TABLES"]}} — navigate + extract both
+When budget is TIGHT, prefer fewer extra actions.
+When budget is CRITICAL, return empty tools unless assets directly answer the query.
 Do not include any explanation.
 """
 
 
-def _parse_tool_choice(text: str) -> str:
-    """Parse tool choice from LLM response. Returns one of NAVIGATE/FIND_IMAGES/FIND_TABLES."""
+def _parse_tool_choice(text: str) -> list[str]:
+    """Parse tool choices from LLM response.
+
+    Returns a list of selected tools (subset of FIND_IMAGES, FIND_TABLES).
+    NAVIGATE is always implicit — an empty list means "navigate only".
+    """
     import json as _json
     import re as _re
 
     text = text.strip()
-    _VALID_TOOLS = {'NAVIGATE', 'FIND_IMAGES', 'FIND_TABLES'}
+    _ASSET_TOOLS = {'FIND_IMAGES', 'FIND_TABLES'}
+
+    def _extract_from_data(data: dict) -> list[str]:
+        # New format: {"tools": [...]}
+        tools_val = data.get('tools')
+        if isinstance(tools_val, list):
+            return [str(t).strip().upper() for t in tools_val if str(t).strip().upper() in _ASSET_TOOLS]
+        # Legacy format: {"tool": "..."}
+        tool_val = str(data.get('tool', '')).strip().upper()
+        if tool_val in _ASSET_TOOLS:
+            return [tool_val]
+        if tool_val == 'NAVIGATE':
+            return []
+        return []
 
     # Try JSON parse
     try:
         data = _json.loads(text)
         if isinstance(data, dict):
-            tool = str(data.get('tool', '')).strip().upper()
-            if tool in _VALID_TOOLS:
-                return tool
+            return _extract_from_data(data)
     except (ValueError, _json.JSONDecodeError):
         pass
 
-    # Fallback: extract JSON from markdown wrapper
+    # Accept a JSON object wrapped in markdown
     match = _re.search(r'\{.*?\}', text, _re.DOTALL)
     if match:
         try:
             data = _json.loads(match.group())
             if isinstance(data, dict):
-                tool = str(data.get('tool', '')).strip().upper()
-                if tool in _VALID_TOOLS:
-                    return tool
+                return _extract_from_data(data)
         except (ValueError, _json.JSONDecodeError):
             pass
 
-    # Last resort: keyword match
+    # Fallback: scan for tool names in raw text
     upper = text.upper()
+    result: list[str] = []
     if 'FIND_IMAGES' in upper:
-        return 'FIND_IMAGES'
+        result.append('FIND_IMAGES')
     if 'FIND_TABLES' in upper:
-        return 'FIND_TABLES'
-    return 'NAVIGATE'
+        result.append('FIND_TABLES')
+    return result
 
 
 async def tool_select_step(
@@ -464,23 +471,22 @@ async def tool_select_step(
     scope_path: str | None = None,
     exclude_paths: set[str] | None = None,
     revision_hint: str | None = None,
-) -> str:
-    """Route to the appropriate tool for the current scope.
+    budget_snapshot: dict | None = None,
+) -> list[str]:
+    """Route to the appropriate tools for the current scope.
 
-    Returns one of: 'NAVIGATE', 'FIND_IMAGES', 'FIND_TABLES'.
-
-    This is the top-level agent decision — it picks WHICH tool
-    to invoke. Each tool then handles its own internal logic.
+    Returns a list of asset tools to run (FIND_IMAGES, FIND_TABLES).
+    NAVIGATE always runs implicitly after any asset extraction.
 
     Optimization: if the current scope has no image or table chunks,
-    skips the LLM call and returns 'NAVIGATE' directly.
+    skips the LLM call and returns an empty list (navigate only).
     """
     items = await _load_child_sections(
         db, document_id, job_result_id, scope_path,
         exclude_paths=exclude_paths,
     )
     if not items:
-        return 'NAVIGATE'  # fallback
+        return []
 
     # Build lightweight tree summary (titles + counts only, no summaries)
     summary_lines = []
@@ -504,7 +510,7 @@ async def tool_select_step(
     total_images = sum(i.get('image_count', 0) for i in items)
     total_tables = sum(i.get('table_count', 0) for i in items)
     if total_images == 0 and total_tables == 0:
-        return 'NAVIGATE'  # no assets → skip tool selection, go straight to navigate
+        return []  # no assets → skip tool selection, navigate only
 
     scope_header = (
         f'Current scope: "{scope_path}"' if scope_path
@@ -513,6 +519,7 @@ async def tool_select_step(
     prompt = _TOOL_SELECT_PROMPT.format(
         doc_name=doc_name or document_id,
         scope_header=scope_header,
+        budget_block=_format_budget_block(budget_snapshot),
         tree_summary=tree_summary,
         query=query,
     )
@@ -525,13 +532,13 @@ async def tool_select_step(
         )
     response = await llm_fn(prompt)
 
-    # Parse tool choice
-    tool = _parse_tool_choice(response)
+    # Parse tool choices
+    asset_tools = _parse_tool_choice(response)
     logger.info(
         f'  tool_select_step scope={scope_path or "root"}: '
-        f'tool={tool} images={total_images} tables={total_tables}'
+        f'tools={asset_tools or ["NAVIGATE"]} images={total_images} tables={total_tables}'
     )
-    return tool
+    return asset_tools
 
 
 # ---------------------------------------------------------------------------
@@ -600,10 +607,15 @@ async def asset_filter_step(
         asset_result = await db.execute(asset_stmt)
         asset_rows = asset_result.all()
 
-        # 3. Also find assets referenced via connect_to from text chunks
+        section_path_by_id = {section_id: section_path for section_id, section_path in section_rows}
+
+        # 3. Resolve media → owner text section via connect_to tracing
         text_stmt = (
             select(
+                DocumentChunk.section_id,
+                DocumentChunk.chunk_type,
                 DocumentChunk.chunk_metadata,
+                DocumentChunk.source_chunk_path,
             )
             .where(DocumentChunk.document_id == document_id)
             .where(DocumentChunk.job_result_id == job_result_id)
@@ -611,14 +623,20 @@ async def asset_filter_step(
             .where(DocumentChunk.chunk_type == 'text')
         )
         text_result = await db.execute(text_stmt)
-        connected_target_ids: set[str] = set()
-        for (metadata,) in text_result.all():
-            if not isinstance(metadata, dict):
-                continue
-            for conn in metadata.get('connect_to') or []:
-                target_id = conn.get('target', '')
-                if target_id:
-                    connected_target_ids.add(target_id)
+        text_row_dicts = [
+            {
+                'chunk_type': chunk_type,
+                'chunk_metadata': metadata or {},
+                'section_id': sid,
+                'section_path': section_path_by_id.get(sid, ''),
+                'source_chunk_path': scp,
+            }
+            for sid, chunk_type, metadata, scp in text_result.all()
+        ]
+        owner_by_target_id = _build_connected_owner_map(text_row_dicts)
+
+        # Collect connected target IDs for batch-loading
+        connected_target_ids: set[str] = set(owner_by_target_id.keys())
 
         # Load connected targets that match asset_type
         if connected_target_ids:
@@ -663,6 +681,29 @@ async def asset_filter_step(
             if chunk_id in seen_ids:
                 continue
             seen_ids.add(chunk_id)
+
+            # Owner resolution: prefer connect_to-based owner
+            owner_section_path = owner_by_target_id.get(chunk_id)
+
+            # Fallback: media's own section_id path, but guard against
+            # Root / top-level aggregation sections
+            if not owner_section_path:
+                own_section_path = section_path_by_id.get(row[4])
+                if own_section_path and ' / ' not in own_section_path:
+                    # Reject document-root level sections as fallback owners
+                    logger.warning(
+                        f'  asset_filter_step: rejecting root-level owner fallback '
+                        f'chunk_id={chunk_id} section_path={own_section_path}'
+                    )
+                    own_section_path = None
+                owner_section_path = own_section_path
+
+            if not owner_section_path:
+                logger.warning(
+                    f'  asset_filter_step unresolved owner: chunk_id={chunk_id} '
+                    f'file_path={row[3]} scope={scope_path or "root"}'
+                )
+                continue
             chunks.append({
                 'document_id': document_id,
                 'chunk_id': chunk_id,
@@ -670,6 +711,8 @@ async def asset_filter_step(
                 'content': row[2],
                 'file_path': row[3],
                 'section_id': row[4],
+                'section_path': owner_section_path,
+                'owner_section_path': owner_section_path,
                 'source_chunk_path': row[5],
                 'chunk_metadata': row[6] or {},
                 'sort_order': row[7],
@@ -707,6 +750,7 @@ async def scope_navigate_step(
     scope_path: str | None = None,
     exclude_paths: set[str] | None = None,
     revision_hint: str | None = None,
+    budget_snapshot: dict | None = None,
 ) -> tuple[DocTreeNode, list[dict]]:
     """Single navigation step — one LLM call, no recursion.
 
@@ -743,6 +787,7 @@ async def scope_navigate_step(
             doc_name=doc_name or document_id,
             doc_id=document_id,
             scope_header=scope_header,
+            budget_block=_format_budget_block(budget_snapshot),
             items_overview=text,
             query=query,
         )
@@ -772,6 +817,7 @@ async def scope_navigate_step(
         ]
 
         pending: list[dict] = []
+        path_selections = []
         for sel in valid_selections:
             path = sel['path']
             conf = sel.get('confidence', 0.7)
@@ -779,33 +825,63 @@ async def scope_navigate_step(
             node.confidence[path] = conf
 
             if item.get('is_leaf'):
-                # Leaf → hydrate all chunk types
-                chunks = await _hydrate_paths_to_rows(
-                    db,
-                    path_selections=[
-                        {'path': path, 'confidence': conf, 'hydrate_mode': 'chunks'}
-                    ],
-                    user_id=user_id,
-                    namespace=namespace,
-                    document_id=document_id,
-                )
-                # Also hydrate connected targets (image/table chunks referenced via connect_to)
-                if chunks:
-                    connected = await hydrate_connected_target_rows(
-                        db=db,
-                        rows=chunks,
-                        exclude_document_ids=[],
-                        exclude_sections=[],
-                    )
-                    if connected:
-                        chunks = chunks + connected
-                    node.leaf_content[path] = chunks
+                path_selections.append({'path': path, 'confidence': conf, 'hydrate_mode': 'chunks'})
             else:
-                # Non-leaf → return as pending for orchestrator to queue
                 pending.append(sel)
+                # ★ NEW: Also hydrate this node's OWN direct chunks (not descendants)
+                path_selections.append({'path': path, 'confidence': conf, 'hydrate_mode': 'self_only'})
+
+        if path_selections:
+            chunks = await _hydrate_paths_to_rows(
+                db,
+                path_selections=path_selections,
+                user_id=user_id,
+                namespace=namespace,
+                document_id=document_id,
+            )
+            if chunks:
+                connected = await hydrate_connected_target_rows(
+                    db=db,
+                    rows=chunks,
+                    exclude_document_ids=[],
+                    exclude_sections=[],
+                )
+                if connected:
+                    # Resolve owner_section_path for connected assets:
+                    # map target_chunk_id → the section_path of the text chunk
+                    # that references it via connect_to.
+                    _owner_map = _build_connected_owner_map(chunks)
+                    for c in connected:
+                        if not c.get('owner_section_path'):
+                            c['owner_section_path'] = _owner_map.get(str(c.get('chunk_id') or ''))
+                    chunks = chunks + connected
+
+                # Resolve Root-stranded assets to their true owner sections
+                # via document-wide connect_to lookup
+                _root_map = await _resolve_root_asset_owners(
+                    db,
+                    document_id=document_id,
+                    job_result_id=job_result_id,
+                    chunks=chunks,
+                )
+                if _root_map:
+                    for c in chunks:
+                        if c.get('owner_section_path'):
+                            continue  # already resolved by batch-level owner map
+                        cid = str(c.get('chunk_id') or '')
+                        if cid in _root_map:
+                            c['owner_section_path'] = _root_map[cid]
+
+                for chunk in chunks:
+                    # Distribute chunk to its real path or fallback to the selection path
+                    real_path = chunk.get('owner_section_path') or chunk.get('section_path') or chunk.get('source_chunk_path')
+                    if real_path:
+                        node.add_leaf_chunks(str(real_path), [chunk])
 
         return node, pending
 
+    except BudgetExceeded:
+        raise
     except Exception as e:
         logger.error(f'  scope_navigate_step failed for doc={document_id}: {e}')
         return empty, []
@@ -829,6 +905,7 @@ async def discovery_select_step(
     doc_name: str = '',
     discovery_hints: list[dict[str, Any]],
     revision_hint: str | None = None,
+    budget_snapshot: dict | None = None,
 ) -> DocTreeNode:
     """Post-navigation discovery selection step.
 
@@ -855,7 +932,7 @@ async def discovery_select_step(
         hint_by_path: dict[str, dict] = {}
         for h in hints:
             sp = h.get('section_path', '')
-            if not sp:
+            if not sp or sp == 'Root':
                 continue
             title = sp.rsplit(' / ', 1)[-1] if ' / ' in sp else sp
             summary = h.get('summary', '') or ''
@@ -882,6 +959,7 @@ async def discovery_select_step(
 
         prompt = _DISCOVERY_SELECT_PROMPT.format(
             doc_name=doc_name or document_id,
+            budget_block=_format_budget_block(budget_snapshot),
             items=items_text,
             query=query,
             revision_context=revision_context,
@@ -896,16 +974,17 @@ async def discovery_select_step(
 
         # 2. Hydrate selected paths
         valid_selections = [s for s in selections if s['path'] in hint_by_path]
+        path_selections = []
         for sel in valid_selections:
             path = sel['path']
             conf = sel.get('confidence', 0.7)
             node.confidence[path] = conf
+            path_selections.append({'path': path, 'confidence': conf})
 
+        if path_selections:
             chunks = await _hydrate_paths_to_rows(
                 db,
-                path_selections=[
-                    {'path': path, 'confidence': conf, 'hydrate_mode': 'chunks'}
-                ],
+                path_selections=path_selections,
                 user_id=user_id,
                 namespace=namespace,
                 document_id=document_id,
@@ -918,8 +997,36 @@ async def discovery_select_step(
                     exclude_sections=[],
                 )
                 if connected:
+                    _owner_map = _build_connected_owner_map(chunks)
+                    for c in connected:
+                        if not c.get('owner_section_path'):
+                            c['owner_section_path'] = _owner_map.get(str(c.get('chunk_id') or ''))
                     chunks = chunks + connected
-                node.leaf_content[path] = chunks
+
+                # Resolve Root-stranded assets to their true owner sections
+                _disc_job_result_id = next(
+                    (str(c['job_result_id']) for c in chunks if c.get('job_result_id')),
+                    None,
+                )
+                _root_map = await _resolve_root_asset_owners(
+                    db,
+                    document_id=document_id,
+                    job_result_id=_disc_job_result_id,
+                    chunks=chunks,
+                ) if _disc_job_result_id else {}
+                if _root_map:
+                    for c in chunks:
+                        if c.get('owner_section_path'):
+                            continue  # already resolved by batch-level owner map
+                        cid = str(c.get('chunk_id') or '')
+                        if cid in _root_map:
+                            c['owner_section_path'] = _root_map[cid]
+
+                for chunk in chunks:
+                    # Distribute chunk to its real path or fallback to the selection path
+                    real_path = chunk.get('owner_section_path') or chunk.get('section_path') or chunk.get('source_chunk_path')
+                    if real_path:
+                        node.add_leaf_chunks(str(real_path), [chunk])
 
         latency = int((time.monotonic() - t0) * 1000)
         logger.info(
@@ -928,6 +1035,8 @@ async def discovery_select_step(
         )
         return node
 
+    except BudgetExceeded:
+        raise
     except Exception as e:
         logger.error(f'  discovery_select_step failed for doc={document_id}: {e}')
         return node

@@ -22,6 +22,7 @@ from shared.utils.llm_mock import build_mock_chat_completion_response
 from shared.utils.security_utils import mask_api_key
 
 LOCAL_DEBUG = os.getenv("LOCAL_DEBUG", "0") == "1"
+LLMUsage = dict[str, int]
 
 _client_cache: Dict[tuple, "OpenAICompatibleClientSync"] = {}
 _client_cache_lock = threading.Lock()
@@ -35,6 +36,21 @@ def _is_ali_model(model_name: str) -> bool:
 def _should_mock_llm_calls() -> bool:
     """Whether all OpenAI-compatible LLM calls should short-circuit to mock responses."""
     return bool(getattr(settings, "LLM_MOCK_ENABLED", False))
+
+
+def _empty_usage() -> LLMUsage:
+    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def _extract_usage(response: Any) -> LLMUsage:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return _empty_usage()
+    return {
+        "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+        "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+    }
 
 
 def _summarize_exception_chain(exc: Exception, *, max_depth: int = 4) -> str:
@@ -167,7 +183,7 @@ class OpenAICompatibleClientSync:
         temperature: float,
         max_tokens: int,
         api_kwargs: Dict[str, Any],
-    ) -> str:
+    ) -> tuple[str, LLMUsage]:
         """Acquire a token, make the call, and retry inline on 429."""
         from shared.utils.ali_quota_manager import get_ali_quota_manager
 
@@ -198,7 +214,7 @@ class OpenAICompatibleClientSync:
                         internal_message="AI returned empty result",
                         provider=self.default_model,
                     )
-                return choices[0].message.content or ""
+                return choices[0].message.content or "", _extract_usage(response)
             except openai.RateLimitError as exc:
                 retry_after = _parse_retry_after(exc)
                 quota_manager.mark_rate_limited(lease.token_id, retry_after)
@@ -239,7 +255,7 @@ class OpenAICompatibleClientSync:
 
     # ------------------------------------------------------------------
 
-    def chat_completion(
+    def chat_completion_with_usage(
         self,
         messages: Union[str, List[ChatCompletionMessageParam]],
         model: Optional[str] = None,
@@ -248,7 +264,7 @@ class OpenAICompatibleClientSync:
         top_p: Optional[float] = None,
         timeout: Optional[int] = None,
         **kwargs,
-    ) -> str:
+    ) -> tuple[str, LLMUsage]:
         all_messages: List[ChatCompletionMessageParam]
         if isinstance(messages, list):
             all_messages = messages  # type: ignore[assignment]
@@ -285,7 +301,7 @@ class OpenAICompatibleClientSync:
             return build_mock_chat_completion_response(
                 messages=all_messages,
                 model_name=effective_model,
-            )
+            ), _empty_usage()
 
         # Route through Ali token pool when applicable
         if self._should_use_ali_pool():
@@ -332,7 +348,7 @@ class OpenAICompatibleClientSync:
                 )
 
             content = choices[0].message.content or ""
-            return content
+            return content, _extract_usage(response)
         except LLMServiceException:
             raise
         except Exception as exc:
@@ -347,6 +363,27 @@ class OpenAICompatibleClientSync:
                 provider=self.default_model,
                 original_exception=exc,
             ) from exc
+
+    def chat_completion(
+        self,
+        messages: Union[str, List[ChatCompletionMessageParam]],
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 4096,
+        top_p: Optional[float] = None,
+        timeout: Optional[int] = None,
+        **kwargs,
+    ) -> str:
+        content, _usage = self.chat_completion_with_usage(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            timeout=timeout,
+            **kwargs,
+        )
+        return content
 
 
 def _parse_retry_after(exc: openai.RateLimitError) -> int:

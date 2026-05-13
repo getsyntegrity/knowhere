@@ -6,6 +6,7 @@ to provide an async callable suitable for the agent navigation pipeline.
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from typing import Any, Callable, Coroutine, Union, Sequence, cast
 
 from loguru import logger
@@ -15,6 +16,11 @@ from shared.core.config import settings
 # LLMFn accepts either a plain string or a list of ChatCompletionMessageParam
 LLMFnInput = Union[str, Sequence[dict[str, Any]]]
 LLMFn = Callable[[LLMFnInput], Coroutine[Any, Any, str]]
+LLMUsage = dict[str, int]
+current_llm_usage: ContextVar[LLMUsage | None] = ContextVar(
+    'current_llm_usage',
+    default=None,
+)
 
 _RETRIEVAL_LLM_TEMPERATURE = 0.1
 _RETRIEVAL_LLM_MAX_TOKENS = 2048
@@ -69,24 +75,16 @@ def create_retrieval_llm_fn(
         from shared.utils.OpenAICompatibleClientSync import get_openai_client
 
         client = get_openai_client(model=effective_model)
-        try:
-            result = await asyncio.to_thread(
-                client.chat_completion,
-                cast(Any, prompt),
-                model=effective_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return result
-        except Exception as exc:
-            logger.warning(
-                "retrieval: agent LLM call failed (degrading gracefully): "
-                "model={} error_type={} error={}",
-                effective_model,
-                type(exc).__name__,
-                exc,
-            )
-            return ''
+        current_llm_usage.set(None)
+        result, usage = await asyncio.to_thread(
+            client.chat_completion_with_usage,
+            cast(Any, prompt),
+            model=effective_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        current_llm_usage.set(usage)
+        return result
 
     return llm_fn
 
@@ -118,23 +116,15 @@ def create_retrieval_vlm_fn(
         from shared.utils.OpenAICompatibleClientSync import get_openai_client
 
         client = get_openai_client(model=effective_model)
-        try:
-            result = await asyncio.to_thread(
-                client.chat_completion,
-                cast(Any, prompt),
-                model=effective_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return result
-        except Exception as exc:
-            logger.warning(
-                "retrieval: VLM call failed (degrading gracefully): "
-                "model={} error_type={} error={}",
-                effective_model,
-                type(exc).__name__,
-                exc,
-            )
-            return ''
+        current_llm_usage.set(None)
+        result, usage = await asyncio.to_thread(
+            client.chat_completion_with_usage,
+            cast(Any, prompt),
+            model=effective_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        current_llm_usage.set(usage)
+        return result
 
     return vlm_fn

@@ -20,6 +20,7 @@ from .document import (
     RetrievalRun,
     RetrievalStep,
 )
+from .demo_materialization import DemoMaterialization
 from .guest_device import GuestDevice
 from .job import Job
 from .job_result import JobChunk, JobResult
@@ -53,6 +54,7 @@ __all__ = [
     "Document",
     "DocumentSection",
     "DocumentChunk",
+    "DemoMaterialization",
     "GraphNode",
     "GraphEdge",
     "RetrievalHitStat",

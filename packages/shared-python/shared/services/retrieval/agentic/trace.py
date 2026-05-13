@@ -115,6 +115,7 @@ class TraceRecorder:
             'observation_payload_keys': list(result.payload.keys()) if result.payload else [],
             'latency_ms': result.latency_ms,
             'error': result.error,
+            'tokens_used': result.tokens_used,
             'created_at': _now_utc(),
         })
 
@@ -128,6 +129,7 @@ class TraceRecorder:
             'observation_payload_keys': [],
             'latency_ms': 0,
             'error': None,
+            'tokens_used': 0,
             'created_at': _now_utc(),
         })
 
@@ -135,6 +137,7 @@ class TraceRecorder:
         self,
         ranked_rows: list[dict[str, Any]],
         router_used: str,
+        budget_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Flush all step records and update the run row.  Best-effort."""
         if not self._created:
@@ -155,6 +158,7 @@ class TraceRecorder:
                     observation={
                         'status': step_data['observation_status'],
                         'payload_keys': step_data['observation_payload_keys'],
+                        'tokens_used': step_data.get('tokens_used', 0),
                     },
                     latency_ms=step_data['latency_ms'],
                     error=step_data.get('error'),
@@ -173,6 +177,8 @@ class TraceRecorder:
                 'step_count': len(self._steps),
                 'final_doc_ids': doc_ids_in_result,
             }
+            if budget_snapshot is not None:
+                provenance['budget_snapshot'] = budget_snapshot
 
             stmt = (
                 update(RetrievalRun)

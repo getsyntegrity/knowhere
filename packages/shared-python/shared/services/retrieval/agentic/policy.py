@@ -12,10 +12,13 @@ from __future__ import annotations
 import json
 import os
 import re
+from ipaddress import ip_address
 from typing import Any
+from urllib.parse import urlparse
 
 from loguru import logger
 
+from shared.services.retrieval.agentic.budget import BudgetExceeded
 from shared.services.retrieval.agentic.types import AgentRunConfig, AgentState
 from shared.services.retrieval.llm_adapter import LLMFn
 
@@ -36,6 +39,20 @@ def _parse_answer_response(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _is_external_http_url(url: str) -> bool:
+    parsed = urlparse(str(url))
+    if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
+        return False
+    host = parsed.hostname.strip().lower()
+    if host in {'localhost', 'ip6-localhost', 'ip6-loopback'} or host.endswith('.local'):
+        return False
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return True
+    return not (addr.is_private or addr.is_loopback or addr.is_link_local)
+
+
 async def attempt_answer(
     llm_fn: LLMFn,
     *,
@@ -45,6 +62,7 @@ async def attempt_answer(
     config: AgentRunConfig,
     vlm_fn: LLMFn | None = None,
     image_urls: list[str] | None = None,
+    budget_snapshot: dict | None = None,
 ) -> tuple[str, str, str]:
     """Attempt to answer the query using collected evidence.
 
@@ -67,6 +85,7 @@ async def attempt_answer(
         evidence_context=evidence_text,
         revision_count=state.revision_count,
         max_revisions=config.max_revisions,
+        context_status=((budget_snapshot or {}).get('context') or {}).get('status', 'HEALTHY'),
     )
 
     verbose = os.environ.get('RETRIEVAL_AGENTIC_VERBOSE', '') == 'true'
@@ -75,12 +94,19 @@ async def attempt_answer(
     effective_fn = llm_fn
     effective_input: Any = prompt_text
 
-    if vlm_fn and image_urls:
+    usable_image_urls = [url for url in image_urls or [] if _is_external_http_url(url)]
+    if image_urls and len(usable_image_urls) != len(image_urls):
+        logger.info(
+            f'  [attempt_answer] skipped {len(image_urls) - len(usable_image_urls)} '
+            'non-public image URLs for VLM'
+        )
+
+    if vlm_fn and usable_image_urls:
         # Build multimodal message: text evidence + image_url parts
         content_parts: list[dict[str, Any]] = [
             {'type': 'text', 'text': prompt_text},
         ]
-        for url in image_urls[:20]:  # Cap at 20 images to avoid token overflow
+        for url in usable_image_urls[:20]:  # Cap at 20 images to avoid token overflow
             content_parts.append({
                 'type': 'image_url',
                 'image_url': {'url': url},
@@ -88,8 +114,8 @@ async def attempt_answer(
         effective_input = [{'role': 'user', 'content': content_parts}]
         effective_fn = vlm_fn
         logger.info(
-            f'  [attempt_answer] using VLM with {len(image_urls)} image URLs '
-            f'(capped at {min(len(image_urls), 20)})'
+            f'  [attempt_answer] using VLM with {len(usable_image_urls)} image URLs '
+            f'(capped at {min(len(usable_image_urls), 20)})'
         )
 
     if verbose:
@@ -98,7 +124,15 @@ async def attempt_answer(
             f'{prompt_text}'
         )
 
-    raw_response = await effective_fn(effective_input)
+    try:
+        raw_response = await effective_fn(effective_input)
+    except BudgetExceeded:
+        raise
+    except Exception as exc:
+        if effective_fn is llm_fn:
+            raise
+        logger.warning(f'  [attempt_answer] VLM failed, falling back to text LLM: {exc}')
+        raw_response = await llm_fn(prompt_text)
     logger.info(f'  [attempt_answer] raw={repr(raw_response[:300])}')
 
     if verbose:
@@ -107,11 +141,8 @@ async def attempt_answer(
             f'{raw_response}'
         )
 
-    # If VLM returned empty (e.g. URL not reachable), fall back to text LLM
     if not raw_response.strip() and effective_fn is not llm_fn:
-        logger.info('  [attempt_answer] VLM returned empty, falling back to text LLM')
-        raw_response = await llm_fn(prompt_text)
-        logger.info(f'  [attempt_answer] text fallback raw={repr(raw_response[:300])}')
+        return 'NOT_FOUND', '', 'VLM returned empty response for multimodal evidence'
 
     parsed = _parse_answer_response(raw_response)
     if not parsed:
@@ -145,6 +176,7 @@ with retrieved content (┈ lines) inline under the relevant sections.
 {evidence_context}
 
 REVISION: {revision_count} of {max_revisions} revisions used.
+Context budget remaining is {context_status}; the evidence may have been trimmed.
 
 INSTRUCTIONS:
 1. If the evidence contains enough information to answer the query,
