@@ -381,9 +381,10 @@ User query: {query}
 
 === Available Actions ===
 
-NAVIGATE (always performed)
-  Drill into specific sections to explore detailed content.
-  This action always runs — you do not need to select it.
+NAVIGATE (separate step)
+  A separate navigation decision follows this step. The LLM may choose
+  specific sections to drill into, or decide not to drill deeper.
+  You do NOT need to select NAVIGATE here — it is handled separately.
 
 FIND_IMAGES (optional, additive)
   Also extract image/chart/diagram assets under this scope.
@@ -394,7 +395,7 @@ FIND_TABLES (optional, additive)
   Select this when the query asks about tables, tabular data, or structured data.
 
 You may select ZERO, ONE, or BOTH optional actions.
-Navigation always happens regardless of your selection.
+Navigation is decided separately and does not conflict with these actions.
 
 Return ONLY a JSON object:
 {{"tools": []}}                         — navigate only, no extra assets
@@ -927,13 +928,15 @@ async def discovery_select_step(
 
     t0 = time.monotonic()
     try:
-        # 1. Format hints for LLM
+        # 1. Format hints for LLM (deduplicate by section_path)
         hint_lines: list[str] = []
         hint_by_path: dict[str, dict] = {}
         for h in hints:
             sp = h.get('section_path', '')
             if not sp or sp == 'Root':
                 continue
+            if sp in hint_by_path:
+                continue  # skip duplicate section_path
             title = sp.rsplit(' / ', 1)[-1] if ' / ' in sp else sp
             summary = h.get('summary', '') or ''
             hint_lines.append(f'▸ path="{sp}"  {title}  [Leaf]')

@@ -35,6 +35,38 @@ class AIConfig(BaseModel):
         default="qwen3.5-flash",
         description="Higher-capability image model for OCR and ask-image Q&A",
     )
+    RETRIEVAL_DECOMPOSITION_ENABLED: bool = Field(
+        default=False,
+        description="Enable query-decomposition workflow before agentic retrieval.",
+    )
+    RETRIEVAL_PLANNER_MODEL: str = Field(
+        default="",
+        description="Reasoning-capable model used by the workflow query planner.",
+    )
+    RETRIEVAL_PLANNER_THINKING_BUDGET: int = Field(
+        default=4000,
+        description="Token budget for the query planner thinking call.",
+    )
+    RETRIEVAL_DECOMPOSITION_MAX_STEPS: int = Field(
+        default=5,
+        description="Maximum number of planned workflow steps.",
+    )
+    RETRIEVAL_WALLET_TOTAL_BUDGET: int = Field(
+        default=200000,
+        description="Total workflow token wallet for decomposed retrieval.",
+    )
+    RETRIEVAL_WALLET_PER_RETRIEVE_STEP_BUDGET: int = Field(
+        default=40000,
+        description="Default token budget issued to each retrieve step.",
+    )
+    RETRIEVAL_WALLET_PER_SYNTHESIZE_STEP_BUDGET: int = Field(
+        default=6000,
+        description="Default token budget issued to each synthesize step.",
+    )
+    RETRIEVAL_WORKFLOW_PARALLEL_MAX: int = Field(
+        default=3,
+        description="Maximum concurrent workflow steps in the same DAG batch.",
+    )
 
     # Runtime LLM controls.
     LLM_MOCK_ENABLED: bool = Field(

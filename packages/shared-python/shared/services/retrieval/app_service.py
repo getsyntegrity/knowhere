@@ -982,6 +982,7 @@ async def run_retrieval_query(
     rerank: bool = False,
     threshold: float = 0.0,
     internal_recall_k: int | None = None,
+    enable_decomposition: bool | None = None,  # deprecated: now always uses workflow
 ) -> dict[str, Any]:
     """Checkerboard retrieval: 3 independent channels -> RRF -> agent/graph union -> assembly."""
     t_start = time.monotonic()
@@ -1015,6 +1016,8 @@ async def run_retrieval_query(
         rerank=rerank,
         threshold=threshold,
         internal_recall_k=internal_recall_k,
+        # Always True: agentic mode now always routes through workflow
+        decomposition_enabled=True,
     )
 
     cache_version: int | None = None
@@ -1096,22 +1099,22 @@ async def run_retrieval_query(
         logger.info(f'  ✅ Small KB: {len(results)} results in {elapsed_total}ms')
         return await _to_public_response(response)
 
-    # ══ Route: agentic vs legacy ══
+    # ══ Route: agentic (unified workflow) vs legacy ══
     _agentic_enabled = os.environ.get('RETRIEVAL_AGENTIC_ENABLED', 'false') == 'true'
     if _agentic_enabled:
-        # ── AGENTIC path (all errors self-contained, no fallback to legacy) ──
-        from shared.services.retrieval.agentic.orchestrator import RetrievalAgent
-        from shared.services.retrieval.llm_adapter import create_retrieval_llm_fn as _create_llm
+        # ── Unified agentic path via WorkflowOrchestrator ──
+        # Simple queries: planner returns a single-step plan (no decomposition).
+        # Complex queries: planner returns a multi-step plan with synthesize.
+        # Both go through the same code path.
+        from shared.services.retrieval.workflow.orchestrator import WorkflowOrchestrator
 
-        llm_fn = _create_llm()
-        agent = RetrievalAgent()
-        agentic_result = await agent.run(
+        workflow = WorkflowOrchestrator()
+        workflow_result = await workflow.run(
             db,
             user_id=user_id,
             namespace=namespace,
             query=query,
             top_k=top_k,
-            llm_fn=llm_fn,
             exclude_document_ids=exclude_document_ids,
             exclude_sections=exclude_sections,
             data_type=data_type,
@@ -1120,11 +1123,10 @@ async def run_retrieval_query(
             channels=channels,
             channel_weights=channel_weights,
         )
-        router_used = agentic_result.router_used
 
-        # Generate asset URLs for media chunks in referenced_chunks
+        # Enrich referenced_chunks with asset URLs (images/tables)
         enriched_refs: list[dict[str, Any]] = []
-        for ref in agentic_result.referenced_chunks:
+        for ref in workflow_result.referenced_chunks:
             enriched = dict(ref)
             chunk_type = _normalize_chunk_type(ref.get('chunk_type'))
             artifact_ref = ref.get('file_path', '')
@@ -1140,30 +1142,9 @@ async def run_retrieval_query(
                     logger.warning(f'Failed to generate agentic asset URL (ignored): {e}')
             enriched_refs.append(enriched)
 
-        # Build backward-compatible results[] from referenced_chunks
-        # (minimal: chunk_id + document_id + chunk_type + section_path)
-        results = [
-            {
-                'chunk_id': ref.get('chunk_id'),
-                'document_id': ref.get('document_id'),
-                'chunk_type': ref.get('chunk_type'),
-                'source': {
-                    'document_id': ref.get('document_id'),
-                    'section_path': ref.get('section_path'),
-                },
-            }
-            for ref in enriched_refs
-        ]
-
-        response = {
-            "namespace": namespace,
-            "query": query,
-            "router_used": router_used,
-            "results": results,
-            "evidence_text": agentic_result.evidence_text,
-            "answer_text": agentic_result.answer_text,
-            "referenced_chunks": enriched_refs,
-        }
+        response = workflow_result.to_api_response()
+        # Override referenced_chunks with enriched versions
+        response['referenced_chunks'] = enriched_refs
 
         if cache_version is not None:
             try:
@@ -1180,7 +1161,7 @@ async def run_retrieval_query(
         try:
             schedule_retrieval_hit_stats_update(
                 user_id=user_id, namespace=namespace,
-                results=agentic_result.referenced_chunks,
+                results=enriched_refs,
             )
         except Exception as e:
             logger.warning(f"Failed to trigger retrieval hit stats update (ignored): {e}")
@@ -1190,14 +1171,15 @@ async def run_retrieval_query(
             f'\n{"█" * 70}\n'
             f'  ✅ AGENTIC RETRIEVAL COMPLETE: '
             f'{len(enriched_refs)} chunks | '
-            f'evidence={len(agentic_result.evidence_text)} chars | '
-            f'answer={len(agentic_result.answer_text)} chars | '
-            f'router={router_used} | {elapsed_total}ms\n'
+            f'answer={len(workflow_result.answer_text)} chars | '
+            f'router={workflow_result.router_used} | {elapsed_total}ms\n'
             f'{"█" * 70}'
         )
 
         return await _to_public_response(response)
+
     else:
+
         # ── LEGACY path (existing code, unchanged) ──
 
         # ── Channel execution ──

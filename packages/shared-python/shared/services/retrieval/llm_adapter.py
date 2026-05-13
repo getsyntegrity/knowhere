@@ -54,6 +54,21 @@ def _resolve_default_model() -> str:
     return getattr(settings, 'NORMOL_MODEL', None) or 'deepseek-chat'
 
 
+def _resolve_planner_model(*, thinking: bool) -> str:
+    configured = getattr(settings, 'RETRIEVAL_PLANNER_MODEL', '') or ''
+    if configured:
+        return configured
+    if getattr(settings, 'DS_KEY', ''):
+        return 'deepseek-reasoner' if thinking else 'deepseek-chat'
+    if getattr(settings, 'ALI_API_KEYS', ''):
+        return 'qwq-32b-preview' if thinking else 'qwen-plus'
+    if getattr(settings, 'GLM_API_KEY', ''):
+        return 'glm-4-plus' if thinking else 'glm-4-flash'
+    if getattr(settings, 'GPT_API_KEY', ''):
+        return 'o3-mini' if thinking else 'gpt-4o-mini'
+    return getattr(settings, 'NORMOL_MODEL', None) or 'deepseek-chat'
+
+
 def create_retrieval_llm_fn(
     *,
     model: str | None = None,
@@ -81,6 +96,37 @@ def create_retrieval_llm_fn(
             cast(Any, prompt),
             model=effective_model,
             temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        current_llm_usage.set(usage)
+        return result
+
+    return llm_fn
+
+
+def create_retrieval_planner_fn(
+    *,
+    thinking: bool = True,
+    model: str | None = None,
+    max_tokens: int = 8192,
+) -> LLMFn | None:
+    """Create a reasoning-capable LLM callable for query planning."""
+    if not _has_llm_credentials():
+        logger.debug('retrieval: no LLM credentials configured, workflow planner disabled')
+        return None
+
+    effective_model = model or _resolve_planner_model(thinking=thinking)
+
+    async def llm_fn(prompt: LLMFnInput) -> str:
+        from shared.utils.OpenAICompatibleClientSync import get_openai_client
+
+        client = get_openai_client(model=effective_model)
+        current_llm_usage.set(None)
+        result, usage = await asyncio.to_thread(
+            client.chat_completion_with_usage,
+            cast(Any, prompt),
+            model=effective_model,
+            temperature=0.0,
             max_tokens=max_tokens,
         )
         current_llm_usage.set(usage)

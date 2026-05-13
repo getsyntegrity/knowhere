@@ -100,6 +100,65 @@ async def _build_asset_url_map(
     return url_map
 
 
+def _collect_all_leaf_paths(node: DocTreeNode) -> set[str]:
+    """Recursively collect all leaf_content keys across the entire tree."""
+    paths = set(node.leaf_content.keys())
+    for child in node.children.values():
+        paths.update(_collect_all_leaf_paths(child))
+    return paths
+
+
+def _reconcile_deferred_assets(
+    tree: DocTreeNode,
+    pending_assets: list[dict],
+) -> None:
+    """Place collected assets into the tree based on final navigated paths.
+
+    Called ONCE after the entire BFS + discovery merge completes for a
+    document.  Only assets whose ``owner_section_path`` exactly matches
+    a final leaf_content key are retained — all others are discarded.
+    This implements the "subset refinement" strategy: assets fetched at
+    a broad scope are filtered down to the paths the LLM actually
+    selected across all BFS depths.
+    """
+    final_paths = _collect_all_leaf_paths(tree)
+    if not final_paths:
+        return
+
+    # Collect existing chunk_ids to avoid duplicates
+    existing_ids = {
+        str(row.get('chunk_id') or '')
+        for row in tree.flatten_chunk_rows()
+        if row.get('chunk_id')
+    }
+
+    placed = 0
+    for asset in pending_assets:
+        chunk_id = str(asset.get('chunk_id') or '')
+        if chunk_id and chunk_id in existing_ids:
+            continue  # already in tree via hydrate_connected_target_rows
+
+        owner_path = (
+            asset.get('owner_section_path')
+            or asset.get('section_path')
+        )
+        if not owner_path or owner_path not in final_paths:
+            continue  # owner not in any navigated path → discard
+
+        # Place into root; reparent_leaf_content will move to correct child
+        tree.add_leaf_chunks(owner_path, [asset])
+        if chunk_id:
+            existing_ids.add(chunk_id)
+        placed += 1
+
+    if placed:
+        tree.reparent_leaf_content()
+        logger.info(
+            f'  deferred asset reconcile: {placed}/{len(pending_assets)} '
+            f'assets placed into {len(final_paths)} navigated paths'
+        )
+
+
 def _build_config_from_env() -> AgentRunConfig:
     """Read agent config from environment, with sensible defaults."""
     return AgentRunConfig(
@@ -412,6 +471,9 @@ class RetrievalAgent:
         channels: list[str] | None = None,
         channel_weights: dict[str, float] | None = None,
         config: AgentRunConfig | None = None,
+        ledger: BudgetLedger | None = None,
+        parent_run_id: str | None = None,
+        workflow_step_id: str | None = None,
     ) -> AgenticResult:
         """Run the agentic retrieval pipeline.
 
@@ -431,7 +493,7 @@ class RetrievalAgent:
         exclude_sections = exclude_sections or []
 
         state = AgentState()
-        state.ledger = BudgetLedger(
+        state.ledger = ledger or BudgetLedger(
             total=config.token_budget_total,
             planning_ratio=config.planning_ratio,
             bootstrap=config.bootstrap_budget,
@@ -455,6 +517,8 @@ class RetrievalAgent:
                 'exclude_sections': exclude_sections,
                 'signal_paths': signal_paths,
             },
+            parent_run_id=parent_run_id,
+            workflow_step_id=workflow_step_id,
         )
 
         trace_enabled = os.environ.get('RETRIEVAL_AGENTIC_TRACE_ENABLED', 'true') == 'true'
@@ -714,6 +778,7 @@ class RetrievalAgent:
                     # BFS queue: (scope_path, parent_node, depth)
                     root = DocTreeNode(scope_path=None)
                     pending: list[tuple[str | None, DocTreeNode, int]] = [(None, root, 0)]
+                    doc_pending_assets: list[dict] = []  # deferred asset reconcile
 
                     while pending:
                         if state.elapsed_ms >= config.latency_budget_ms:
@@ -777,11 +842,10 @@ class RetrievalAgent:
                             f'depth={depth} tools={tool_choices or ["NAVIGATE"]}'
                         )
 
-                        pending_scope_assets: list[dict] = []
                         for asset_tool in tool_choices:
                             if asset_tool not in ('FIND_IMAGES', 'FIND_TABLES'):
                                 continue
-                            # ★ Asset collection (programmatic extraction)
+                            # ★ Asset collection → deferred reconcile
                             asset_type = 'image' if asset_tool == 'FIND_IMAGES' else 'table'
                             asset_chunks = await tools.asset_filter_step(
                                 db,
@@ -791,7 +855,7 @@ class RetrievalAgent:
                                 asset_type=asset_type,
                             )
                             if asset_chunks:
-                                pending_scope_assets.extend(asset_chunks)
+                                doc_pending_assets.extend(asset_chunks)
 
                             if trace_enabled:
                                 trace.record_step(
@@ -843,34 +907,7 @@ class RetrievalAgent:
                             parent_node.add_leaf_chunks(leaf_path, chunks)
                         parent_node.confidence = step_node.confidence
 
-                        # ★ Step 2.5: Reconcile pending assets with navigated leaf content
-                        if pending_scope_assets:
-                            # Collect all chunk_ids already present in any leaf_content
-                            existing_ids = {
-                                str(row.get('chunk_id') or '')
-                                for row in parent_node.flatten_chunk_rows()
-                                if row.get('chunk_id')
-                            }
-                            # Filter out assets already inlined
-                            supplementary = [
-                                a for a in pending_scope_assets
-                                if str(a.get('chunk_id') or '') not in existing_ids
-                            ]
-                            if supplementary:
-                                # Only place assets into sections already in the
-                                # navigated tree.  If the owner path isn't part of
-                                # the tree, fall back to the current scope.
-                                navigated_paths = set(parent_node.leaf_content.keys()) | set(parent_node.children.keys())
-                                for asset in supplementary:
-                                    owner_path = (
-                                        asset.get('owner_section_path')
-                                        or asset.get('section_path')
-                                        or scope
-                                    )
-                                    if owner_path and owner_path in navigated_paths:
-                                        parent_node.add_leaf_chunks(str(owner_path), [asset])
-                                    elif scope:
-                                        parent_node.add_leaf_chunks(str(scope), [asset])
+                        # (Asset reconcile is deferred until after BFS + discovery merge)
 
                         # Accumulate hydrated leaf paths into doc_exclude
                         # so subsequent drill-downs don't re-show them as [SELECT].
@@ -973,6 +1010,32 @@ class RetrievalAgent:
                     if state.ledger is not None:
                         state.ledger.mark_explored(
                             chunks=sum(len(chunks) for chunks in discovery_node.leaf_content.values()),
+                        )
+
+                # ── Deferred asset reconcile ──────────────────────────────
+                # Assets were collected across all BFS depths but NOT placed
+                # into the tree yet.  Now that the final navigated paths are
+                # known (BFS + discovery), filter and place only those assets
+                # whose owner path matches a navigated leaf.
+                if not is_b_class and doc_pending_assets:
+                    _reconcile_deferred_assets(root, doc_pending_assets)
+                    if trace_enabled:
+                        trace.record_step(
+                            'deferred_asset_reconcile', ToolResult(
+                                status='reconciled',
+                                payload={
+                                    'document_id': doc.document_id,
+                                    'pending_count': len(doc_pending_assets),
+                                    'placed_count': sum(
+                                        1 for a in doc_pending_assets
+                                        if str(a.get('chunk_id') or '') in {
+                                            str(r.get('chunk_id') or '')
+                                            for r in root.flatten_chunk_rows()
+                                        }
+                                    ),
+                                },
+                            ),
+                            decision_reason=f'deferred_reconcile_r{round_idx}_{doc.source_file_name}',
                         )
 
                 # Merge or store doc tree
