@@ -52,6 +52,11 @@ class RetrievalQueryRequest(BaseModel):
     internal_recall_k: int | None = Field(
         None, ge=1, description="Override per-channel recall count"
     )
+    enable_decomposition: bool | None = Field(
+        None,
+        description="Deprecated: agentic mode now always uses workflow decomposition. This field is ignored.",
+        deprecated=True,
+    )
 
     @field_validator("channels")
     @classmethod
@@ -63,7 +68,35 @@ class RetrievalQueryRequest(BaseModel):
         return v
 
 
-@router.post("/query")
+class WorkflowStepResponse(BaseModel):
+    step_id: str
+    sub_query: str
+    step_kind: Literal["retrieve", "synthesize"]
+    depends_on: list[str]
+    output_role: str
+    status: Literal["done", "skipped", "error", "budget_stop"]
+    answer_text: str
+    evidence_text: str | None = None
+    referenced_chunks: list[dict] = Field(default_factory=list)
+    budget_snapshot: dict | None = None
+    child_run_id: str | None = None
+
+
+class RetrievalQueryResponse(BaseModel):
+    namespace: str
+    query: str
+    router_used: str
+    answer_text: str | None = None
+    referenced_chunks: list[dict] = Field(default_factory=list)
+    results: list[dict] = Field(default_factory=list)
+    plan: dict | None = None
+    steps: list[WorkflowStepResponse] | None = None
+    final_strategy_used: str | None = None
+    wallet_snapshot: dict | None = None
+    planner_snapshot: dict | None = None
+
+
+@router.post("/query", response_model=RetrievalQueryResponse)
 async def query_retrieval(
     payload: RetrievalQueryRequest,
     current_user: CurrentUser = Depends(with_current_user),
@@ -85,4 +118,5 @@ async def query_retrieval(
         rerank=payload.rerank,
         threshold=payload.threshold,
         internal_recall_k=payload.internal_recall_k,
+        enable_decomposition=payload.enable_decomposition,
     )

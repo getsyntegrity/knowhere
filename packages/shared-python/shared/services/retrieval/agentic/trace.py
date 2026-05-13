@@ -50,6 +50,9 @@ class TraceRecorder:
         top_k: int = 10,
         data_type: int = 1,
         filters: dict[str, Any] | None = None,
+        parent_run_id: str | None = None,
+        workflow_step_id: str | None = None,
+        workflow_plan: dict[str, Any] | None = None,
     ) -> None:
         self._db = db
         self._run_id = f'aret_{uuid4().hex[:12]}'
@@ -60,6 +63,9 @@ class TraceRecorder:
         self._top_k = top_k
         self._data_type = data_type
         self._filters = filters or {}
+        self._parent_run_id = parent_run_id
+        self._workflow_step_id = workflow_step_id
+        self._workflow_plan = workflow_plan
         self._steps: list[dict[str, Any]] = []
         self._start_time = time.monotonic()
         self._created = False
@@ -86,6 +92,9 @@ class TraceRecorder:
                 agentic_enabled=True,
                 cache_hit=False,
                 result_count=0,
+                parent_run_id=self._parent_run_id,
+                workflow_step_id=self._workflow_step_id,
+                workflow_plan=self._workflow_plan,
                 latency_ms=0,
                 created_at=_now_utc(),
             )
@@ -179,6 +188,10 @@ class TraceRecorder:
             }
             if budget_snapshot is not None:
                 provenance['budget_snapshot'] = budget_snapshot
+            if self._parent_run_id:
+                provenance['parent_run_id'] = self._parent_run_id
+            if self._workflow_step_id:
+                provenance['workflow_step_id'] = self._workflow_step_id
 
             stmt = (
                 update(RetrievalRun)

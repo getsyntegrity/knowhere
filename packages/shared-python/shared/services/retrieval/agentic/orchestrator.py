@@ -2,7 +2,7 @@
 
 Flow:
   Phase 1: Document selection (bottom_discovery + kg_document_select)
-  Phase 2: Per-document navigation (iterative BFS scope_navigate_step)
+  Phase 2: Per-document navigation (iterative BFS via navigate_step)
   Phase 3: Render evidence → attempt_answer
     → DONE (has answer) → return answer + evidence
     → NOT_FOUND + reason → revision_hint → re-select docs + re-navigate
@@ -10,9 +10,10 @@ Flow:
     → max_revisions → return best available
 
 The orchestrator drives navigation via an iterative BFS queue per document,
-calling scope_navigate_step at each level. Navigation auto-terminates when
-the LLM returns empty selections. After navigation completes, attempt_answer
-is called automatically — no separate verdict step needed.
+calling navigate_step at each level. Each navigate_step is a single LLM call
+that decides action (NAVIGATE/STOP), asset tools (FIND_IMAGES/FIND_TABLES),
+and section selections. STOP terminates the drill-down for that scope.
+After navigation completes, attempt_answer is called automatically.
 """
 from __future__ import annotations
 
@@ -98,6 +99,117 @@ async def _build_asset_url_map(
         except Exception as e:
             logger.warning(f'Failed to generate asset URL for {chunk_id} (ignored): {e}')
     return url_map
+
+
+def _collect_all_leaf_paths(node: DocTreeNode) -> set[str]:
+    """Recursively collect all leaf_content keys across the entire tree."""
+    paths = set(node.leaf_content.keys())
+    for child in node.children.values():
+        paths.update(_collect_all_leaf_paths(child))
+    return paths
+
+
+def _collect_visible_paths(node: DocTreeNode) -> set[str]:
+    """Collect all outline_items paths across the entire tree.
+
+    These are sections that are "visible" in the rendered tree (shown to the
+    LLM during navigation) even if no chunks have been hydrated into them yet.
+    Used as fallback targets for asset reconciliation.
+    """
+    paths = {item['path'] for item in node.outline_items if item.get('path')}
+    for child in node.children.values():
+        paths.update(_collect_visible_paths(child))
+    return paths
+
+
+def _find_closest_ancestor(path: str, target_paths: set[str]) -> str | None:
+    """Walk up a section path to find the closest ancestor in target_paths.
+
+    Example: path="kb/file/Ch1/S1.1/S1.1.1", target_paths={"kb/file/Ch1/S1.1"}
+    → returns "kb/file/Ch1/S1.1"
+
+    Uses the ' / ' separator convention from the section path format.
+    """
+    parts = path.split(' / ')
+    # Walk from most specific to least specific (skip the full path itself)
+    for i in range(len(parts) - 1, 0, -1):
+        ancestor = ' / '.join(parts[:i])
+        if ancestor in target_paths:
+            return ancestor
+    return None
+
+
+def _reconcile_deferred_assets(
+    tree: DocTreeNode,
+    pending_assets: list[dict],
+) -> None:
+    """Place collected assets into the tree based on final navigated paths.
+
+    Called ONCE after the entire BFS + discovery merge completes for a
+    document.  Asset placement uses a two-tier strategy:
+
+    1. **Exact match**: If the asset's ``owner_section_path`` matches a
+       leaf_content key, place directly (existing behavior).
+    2. **Closest visible ancestor**: If exact match fails, walk up the
+       owner_section_path hierarchy to find the nearest ancestor that
+       appears in either leaf_content or outline_items.  This handles
+       the case where the LLM stopped navigation early (e.g. at root)
+       but still requested images/tables — assets at L3 get attributed
+       to the visible L2 section on their path.
+    """
+    final_paths = _collect_all_leaf_paths(tree)
+    visible_paths = _collect_visible_paths(tree)
+    all_target_paths = final_paths | visible_paths
+
+    if not all_target_paths:
+        return
+
+    # Collect existing chunk_ids to avoid duplicates
+    existing_ids = {
+        str(row.get('chunk_id') or '')
+        for row in tree.flatten_chunk_rows()
+        if row.get('chunk_id')
+    }
+
+    placed = 0
+    ancestor_placed = 0
+    for asset in pending_assets:
+        chunk_id = str(asset.get('chunk_id') or '')
+        if chunk_id and chunk_id in existing_ids:
+            continue  # already in tree via hydrate_connected_target_rows
+
+        owner_path = (
+            asset.get('owner_section_path')
+            or asset.get('section_path')
+        )
+        if not owner_path:
+            continue
+
+        # Tier 1: exact match in leaf_content or visible outline
+        target_path = owner_path if owner_path in all_target_paths else None
+
+        # Tier 2: closest visible ancestor fallback
+        if target_path is None:
+            target_path = _find_closest_ancestor(owner_path, all_target_paths)
+            if target_path:
+                ancestor_placed += 1
+
+        if target_path is None:
+            continue  # no visible ancestor → discard
+
+        # Place into root; reparent_leaf_content will move to correct child
+        tree.add_leaf_chunks(target_path, [asset])
+        if chunk_id:
+            existing_ids.add(chunk_id)
+        placed += 1
+
+    if placed:
+        tree.reparent_leaf_content()
+        logger.info(
+            f'  deferred asset reconcile: {placed}/{len(pending_assets)} '
+            f'assets placed into {len(final_paths)} leaf + {len(visible_paths)} visible paths '
+            f'(ancestor_fallback={ancestor_placed})'
+        )
 
 
 def _build_config_from_env() -> AgentRunConfig:
@@ -412,6 +524,9 @@ class RetrievalAgent:
         channels: list[str] | None = None,
         channel_weights: dict[str, float] | None = None,
         config: AgentRunConfig | None = None,
+        ledger: BudgetLedger | None = None,
+        parent_run_id: str | None = None,
+        workflow_step_id: str | None = None,
     ) -> AgenticResult:
         """Run the agentic retrieval pipeline.
 
@@ -431,7 +546,7 @@ class RetrievalAgent:
         exclude_sections = exclude_sections or []
 
         state = AgentState()
-        state.ledger = BudgetLedger(
+        state.ledger = ledger or BudgetLedger(
             total=config.token_budget_total,
             planning_ratio=config.planning_ratio,
             bootstrap=config.bootstrap_budget,
@@ -455,6 +570,8 @@ class RetrievalAgent:
                 'exclude_sections': exclude_sections,
                 'signal_paths': signal_paths,
             },
+            parent_run_id=parent_run_id,
+            workflow_step_id=workflow_step_id,
         )
 
         trace_enabled = os.environ.get('RETRIEVAL_AGENTIC_TRACE_ENABLED', 'true') == 'true'
@@ -711,9 +828,11 @@ class RetrievalAgent:
                         if key.startswith(f'{doc.document_id}::')
                     } if state.seen_section_keys else set()
 
-                    # BFS queue: (scope_path, parent_node, depth)
+                    # BFS queue: (scope_path(s), parent_node, depth)
+                    # scope can be: None (root), str, or list[str] (multi-scope)
                     root = DocTreeNode(scope_path=None)
-                    pending: list[tuple[str | None, DocTreeNode, int]] = [(None, root, 0)]
+                    pending: list[tuple[str | list[str] | None, DocTreeNode, int]] = [(None, root, 0)]
+                    doc_pending_assets: list[dict] = []  # deferred asset reconcile
 
                     while pending:
                         if state.elapsed_ms >= config.latency_budget_ms:
@@ -736,87 +855,9 @@ class RetrievalAgent:
                             depth=depth,
                         )
 
-                        # ★ Step 1: Tool selection (agent decides which asset tools)
+                        # ★ Unified navigate step (supports multi-scope batching)
                         try:
-                            tool_choices = await tools.tool_select_step(
-                                db,
-                                document_id=doc.document_id,
-                                job_result_id=job_result_id,
-                                query=query,
-                                llm_fn=doc_llm_fn,
-                                doc_name=doc_name,
-                                scope_path=scope,
-                                exclude_paths=doc_exclude,
-                                revision_hint=revision_hint if depth == 0 else None,
-                                budget_snapshot=state.ledger.snapshot() if state.ledger else None,
-                            )
-                        except BudgetExceeded:
-                            logger.info('  agentic: planning budget exhausted during tool selection')
-                            if trace_enabled:
-                                trace.record_budget_stop('planning_exhausted')
-                            break
-                        state.step_count += 1
-
-                        if trace_enabled:
-                            trace.record_step(
-                                'tool_select_step', ToolResult(
-                                    status='selected',
-                                    payload={
-                                        'document_id': doc.document_id,
-                                        'scope': scope or 'root',
-                                        'depth': depth,
-                                        'tool_choice': tool_choices or ['NAVIGATE'],
-                                    },
-                                ),
-                                decision_reason=f'tool_r{round_idx}_d{depth}_{doc.source_file_name}',
-                            )
-
-                        logger.info(
-                            f'  agentic step {state.step_count}: tool_select_step '
-                            f'doc="{doc.source_file_name}" scope={scope or "root"} '
-                            f'depth={depth} tools={tool_choices or ["NAVIGATE"]}'
-                        )
-
-                        pending_scope_assets: list[dict] = []
-                        for asset_tool in tool_choices:
-                            if asset_tool not in ('FIND_IMAGES', 'FIND_TABLES'):
-                                continue
-                            # ★ Asset collection (programmatic extraction)
-                            asset_type = 'image' if asset_tool == 'FIND_IMAGES' else 'table'
-                            asset_chunks = await tools.asset_filter_step(
-                                db,
-                                document_id=doc.document_id,
-                                job_result_id=job_result_id,
-                                scope_path=scope,
-                                asset_type=asset_type,
-                            )
-                            if asset_chunks:
-                                pending_scope_assets.extend(asset_chunks)
-
-                            if trace_enabled:
-                                trace.record_step(
-                                    'asset_filter_step', ToolResult(
-                                        status='filtered' if asset_chunks else 'empty',
-                                        payload={
-                                            'document_id': doc.document_id,
-                                            'scope': scope or 'root',
-                                            'asset_type': asset_type,
-                                            'chunks_found': len(asset_chunks) if asset_chunks else 0,
-                                        },
-                                    ),
-                                    decision_reason=f'asset_r{round_idx}_d{depth}_{doc.source_file_name}',
-                                )
-
-                            logger.info(
-                                f'  agentic step {state.step_count}: asset_filter_step '
-                                f'doc="{doc.source_file_name}" scope={scope or "root"} '
-                                f'type={asset_type} chunks={len(asset_chunks) if asset_chunks else 0}'
-                            )
-                        # ★ Fallthrough: always proceed to NAVIGATE.
-
-                        # ★ Step 2: NAVIGATE (existing scope_navigate_step)
-                        try:
-                            step_node, drill_paths = await tools.scope_navigate_step(
+                            action, asset_tools, step_node, drill_paths = await tools.navigate_step(
                                 db,
                                 document_id=doc.document_id,
                                 job_result_id=job_result_id,
@@ -837,72 +878,78 @@ class RetrievalAgent:
                             break
                         state.step_count += 1
 
+                        # ★ Asset collection (deferred reconcile) — runs if LLM selected tools
+                        # scope is passed directly: None (root), str, or list[str] (multi-scope).
+                        # asset_filter_step handles all forms natively.
+                        for asset_tool in asset_tools:
+                            if asset_tool not in ('FIND_IMAGES', 'FIND_TABLES'):
+                                continue
+                            asset_type = 'image' if asset_tool == 'FIND_IMAGES' else 'table'
+                            asset_chunks = await tools.asset_filter_step(
+                                db,
+                                document_id=doc.document_id,
+                                job_result_id=job_result_id,
+                                scope_path=scope,
+                                asset_type=asset_type,
+                            )
+                            if asset_chunks:
+                                doc_pending_assets.extend(asset_chunks)
+
+                            scope_display = scope if isinstance(scope, list) else (scope or 'root')
+                            if trace_enabled:
+                                trace.record_step(
+                                    'asset_filter_step', ToolResult(
+                                        status='filtered' if asset_chunks else 'empty',
+                                        payload={
+                                            'document_id': doc.document_id,
+                                            'scope': scope_display,
+                                            'asset_type': asset_type,
+                                            'chunks_found': len(asset_chunks) if asset_chunks else 0,
+                                        },
+                                    ),
+                                    decision_reason=f'asset_r{round_idx}_d{depth}_{doc.source_file_name}',
+                                )
+
+                            logger.info(
+                                f'  agentic step {state.step_count}: asset_filter_step '
+                                f'doc="{doc.source_file_name}" scope={scope_display} '
+                                f'type={asset_type} chunks={len(asset_chunks) if asset_chunks else 0}'
+                            )
+
                         # Merge step result into parent node
                         parent_node.outline_items = step_node.outline_items
                         for leaf_path, chunks in step_node.leaf_content.items():
                             parent_node.add_leaf_chunks(leaf_path, chunks)
                         parent_node.confidence = step_node.confidence
 
-                        # ★ Step 2.5: Reconcile pending assets with navigated leaf content
-                        if pending_scope_assets:
-                            # Collect all chunk_ids already present in any leaf_content
-                            existing_ids = {
-                                str(row.get('chunk_id') or '')
-                                for row in parent_node.flatten_chunk_rows()
-                                if row.get('chunk_id')
-                            }
-                            # Filter out assets already inlined
-                            supplementary = [
-                                a for a in pending_scope_assets
-                                if str(a.get('chunk_id') or '') not in existing_ids
-                            ]
-                            if supplementary:
-                                # Only place assets into sections already in the
-                                # navigated tree.  If the owner path isn't part of
-                                # the tree, fall back to the current scope.
-                                navigated_paths = set(parent_node.leaf_content.keys()) | set(parent_node.children.keys())
-                                for asset in supplementary:
-                                    owner_path = (
-                                        asset.get('owner_section_path')
-                                        or asset.get('section_path')
-                                        or scope
-                                    )
-                                    if owner_path and owner_path in navigated_paths:
-                                        parent_node.add_leaf_chunks(str(owner_path), [asset])
-                                    elif scope:
-                                        parent_node.add_leaf_chunks(str(scope), [asset])
-
                         # Accumulate hydrated leaf paths into doc_exclude
-                        # so subsequent drill-downs don't re-show them as [SELECT].
-                        # Skip paths that are pending drill-down (non-leaf hybrid nodes
-                        # hydrated via self_only) — their children must remain selectable.
                         drill_path_set = {sel['path'] for sel in drill_paths}
                         for leaf_path in step_node.leaf_content:
                             if leaf_path not in drill_path_set:
                                 doc_exclude.add(leaf_path)
 
-                        # Queue non-leaf selections for further drill-down
-                        for sel in drill_paths:
-                            child = DocTreeNode(scope_path=sel['path'])
-                            parent_node.children[sel['path']] = child
-                            pending.append((sel['path'], child, depth + 1))
+                        # Queue non-leaf selections as a SINGLE batched item
+                        # (all drill paths expand simultaneously in the next call)
+                        if drill_paths:
+                            for sel in drill_paths:
+                                child = DocTreeNode(scope_path=sel['path'])
+                                parent_node.children[sel['path']] = child
+                            batch_scope = [sel['path'] for sel in drill_paths]
+                            pending.append((batch_scope, parent_node, depth + 1))
 
-                        # Re-parent leaf paths that belong to a child's subtree.
-                        # When the LLM selects both a parent section (non-leaf)
-                        # and one of its children (leaf) at the same depth, the
-                        # leaf chunks are stored on the parent node.  Move them
-                        # into the child node so render_unified_doc_tree nests
-                        # them correctly instead of rendering orphans at root.
+                        # Re-parent leaf paths that belong to a child's subtree
                         parent_node.reparent_leaf_content()
 
                         if trace_enabled:
                             trace.record_step(
-                                'scope_navigate_step', ToolResult(
-                                    status='navigated' if step_node.has_content() else 'empty',
+                                'navigate_step', ToolResult(
+                                    status=f'{action.lower()}' + (' (content)' if step_node.has_content() else ''),
                                     payload={
                                         'document_id': doc.document_id,
-                                        'scope': scope or 'root',
+                                         'scope': scope if isinstance(scope, str) else (scope or 'root'),
                                         'depth': depth,
+                                        'action': action,
+                                        'asset_tools': asset_tools,
                                         'outline_count': len(step_node.outline_items),
                                         'leaf_count': len(step_node.leaf_content),
                                         'pending_drills': len(drill_paths),
@@ -911,10 +958,12 @@ class RetrievalAgent:
                                 decision_reason=f'nav_r{round_idx}_d{depth}_{doc.source_file_name}',
                             )
 
+                        scope_log = scope if isinstance(scope, str) else (', '.join(scope) if scope else 'root')
                         logger.info(
-                            f'  agentic step {state.step_count}: scope_navigate_step '
-                            f'doc="{doc.source_file_name}" scope={scope or "root"} '
-                            f'depth={depth} outline={len(step_node.outline_items)} '
+                            f'  agentic step {state.step_count}: navigate_step '
+                            f'doc="{doc.source_file_name}" scope={scope_log} '
+                            f'depth={depth} action={action} tools={asset_tools} '
+                            f'outline={len(step_node.outline_items)} '
                             f'leaves={len(step_node.leaf_content)} '
                             f'drills={len(drill_paths)}'
                         )
@@ -973,6 +1022,38 @@ class RetrievalAgent:
                     if state.ledger is not None:
                         state.ledger.mark_explored(
                             chunks=sum(len(chunks) for chunks in discovery_node.leaf_content.values()),
+                        )
+
+                # ── Deferred asset reconcile ──────────────────────────────
+                # Assets were collected across all BFS depths but NOT placed
+                # into the tree yet.  Now that the final navigated paths are
+                # known (BFS + discovery), filter and place only those assets
+                # whose owner path matches a navigated leaf.
+                if not is_b_class and doc_pending_assets:
+                    # Inject doc file name as a visible root-level path, but
+                    # ONLY when BFS stopped at root (no children = STOP action).
+                    if doc_name and not root.children and not any(
+                        item.get('path') == doc_name for item in root.outline_items
+                    ):
+                        root.outline_items.insert(0, {'path': doc_name, 'level': 0})
+                    _reconcile_deferred_assets(root, doc_pending_assets)
+                    if trace_enabled:
+                        trace.record_step(
+                            'deferred_asset_reconcile', ToolResult(
+                                status='reconciled',
+                                payload={
+                                    'document_id': doc.document_id,
+                                    'pending_count': len(doc_pending_assets),
+                                    'placed_count': sum(
+                                        1 for a in doc_pending_assets
+                                        if str(a.get('chunk_id') or '') in {
+                                            str(r.get('chunk_id') or '')
+                                            for r in root.flatten_chunk_rows()
+                                        }
+                                    ),
+                                },
+                            ),
+                            decision_reason=f'deferred_reconcile_r{round_idx}_{doc.source_file_name}',
                         )
 
                 # Merge or store doc tree

@@ -22,8 +22,8 @@ from shared.services.retrieval.agent_navigate import (
     _format_items_for_llm,
     _load_child_sections,
     _parse_json_array,
-    _parse_scope_nav_response,
-    _SCOPE_NAV_PROMPT,
+    _parse_action_response,
+    _ACTION_PROMPT,
     _DISCOVERY_SELECT_PROMPT,
     _FILE_SELECT_PROMPT,
     _format_budget_block,
@@ -362,184 +362,6 @@ async def kg_document_select(
         return ToolResult(status='error', error=str(e), latency_ms=latency)
 
 
-# ---------------------------------------------------------------------------
-# Tool: tool_select_step (lightweight LLM router)
-# ---------------------------------------------------------------------------
-
-_TOOL_SELECT_PROMPT = """\
-You are a document navigation agent.
-
-Document: "{doc_name}"
-
-{budget_block}
-{scope_header}
-Below is a summary of the current scope's sections:
-
-{tree_summary}
-
-User query: {query}
-
-=== Available Actions ===
-
-NAVIGATE (always performed)
-  Drill into specific sections to explore detailed content.
-  This action always runs — you do not need to select it.
-
-FIND_IMAGES (optional, additive)
-  Also extract image/chart/diagram assets under this scope.
-  Select this when the query asks about images, charts, figures, or visual content.
-
-FIND_TABLES (optional, additive)
-  Also extract table/data assets under this scope.
-  Select this when the query asks about tables, tabular data, or structured data.
-
-You may select ZERO, ONE, or BOTH optional actions.
-Navigation always happens regardless of your selection.
-
-Return ONLY a JSON object:
-{{"tools": []}}                         — navigate only, no extra assets
-{{"tools": ["FIND_IMAGES"]}}            — navigate + extract images
-{{"tools": ["FIND_TABLES"]}}            — navigate + extract tables
-{{"tools": ["FIND_IMAGES", "FIND_TABLES"]}} — navigate + extract both
-When budget is TIGHT, prefer fewer extra actions.
-When budget is CRITICAL, return empty tools unless assets directly answer the query.
-Do not include any explanation.
-"""
-
-
-def _parse_tool_choice(text: str) -> list[str]:
-    """Parse tool choices from LLM response.
-
-    Returns a list of selected tools (subset of FIND_IMAGES, FIND_TABLES).
-    NAVIGATE is always implicit — an empty list means "navigate only".
-    """
-    import json as _json
-    import re as _re
-
-    text = text.strip()
-    _ASSET_TOOLS = {'FIND_IMAGES', 'FIND_TABLES'}
-
-    def _extract_from_data(data: dict) -> list[str]:
-        # New format: {"tools": [...]}
-        tools_val = data.get('tools')
-        if isinstance(tools_val, list):
-            return [str(t).strip().upper() for t in tools_val if str(t).strip().upper() in _ASSET_TOOLS]
-        # Legacy format: {"tool": "..."}
-        tool_val = str(data.get('tool', '')).strip().upper()
-        if tool_val in _ASSET_TOOLS:
-            return [tool_val]
-        if tool_val == 'NAVIGATE':
-            return []
-        return []
-
-    # Try JSON parse
-    try:
-        data = _json.loads(text)
-        if isinstance(data, dict):
-            return _extract_from_data(data)
-    except (ValueError, _json.JSONDecodeError):
-        pass
-
-    # Accept a JSON object wrapped in markdown
-    match = _re.search(r'\{.*?\}', text, _re.DOTALL)
-    if match:
-        try:
-            data = _json.loads(match.group())
-            if isinstance(data, dict):
-                return _extract_from_data(data)
-        except (ValueError, _json.JSONDecodeError):
-            pass
-
-    # Fallback: scan for tool names in raw text
-    upper = text.upper()
-    result: list[str] = []
-    if 'FIND_IMAGES' in upper:
-        result.append('FIND_IMAGES')
-    if 'FIND_TABLES' in upper:
-        result.append('FIND_TABLES')
-    return result
-
-
-async def tool_select_step(
-    db: AsyncSession,
-    *,
-    document_id: str,
-    job_result_id: str,
-    query: str,
-    llm_fn: LLMFn,
-    doc_name: str = '',
-    scope_path: str | None = None,
-    exclude_paths: set[str] | None = None,
-    revision_hint: str | None = None,
-    budget_snapshot: dict | None = None,
-) -> list[str]:
-    """Route to the appropriate tools for the current scope.
-
-    Returns a list of asset tools to run (FIND_IMAGES, FIND_TABLES).
-    NAVIGATE always runs implicitly after any asset extraction.
-
-    Optimization: if the current scope has no image or table chunks,
-    skips the LLM call and returns an empty list (navigate only).
-    """
-    items = await _load_child_sections(
-        db, document_id, job_result_id, scope_path,
-        exclude_paths=exclude_paths,
-    )
-    if not items:
-        return []
-
-    # Build lightweight tree summary (titles + counts only, no summaries)
-    summary_lines = []
-    for item in items:
-        if not item.get('show_summary'):
-            continue
-        title = item.get('title', '')
-        img = item.get('image_count', 0)
-        tbl = item.get('table_count', 0)
-        txt = item.get('chunk_count', 0)
-        counts = f'text={txt}'
-        if img > 0:
-            counts += f' image={img}'
-        if tbl > 0:
-            counts += f' table={tbl}'
-        summary_lines.append(f'- {title}  [{counts}]')
-
-    tree_summary = '\n'.join(summary_lines) or '(empty)'
-
-    # Check if scope has ANY images or tables — skip prompt if none
-    total_images = sum(i.get('image_count', 0) for i in items)
-    total_tables = sum(i.get('table_count', 0) for i in items)
-    if total_images == 0 and total_tables == 0:
-        return []  # no assets → skip tool selection, navigate only
-
-    scope_header = (
-        f'Current scope: "{scope_path}"' if scope_path
-        else 'Current scope: root (document top level)'
-    )
-    prompt = _TOOL_SELECT_PROMPT.format(
-        doc_name=doc_name or document_id,
-        scope_header=scope_header,
-        budget_block=_format_budget_block(budget_snapshot),
-        tree_summary=tree_summary,
-        query=query,
-    )
-    if revision_hint:
-        prompt += (
-            f'\n\nIMPORTANT: This is a REVISION round. '
-            f'The previous search attempt failed because:\n'
-            f'"{revision_hint}"\n'
-            f'Adjust your tool selection accordingly.'
-        )
-    response = await llm_fn(prompt)
-
-    # Parse tool choices
-    asset_tools = _parse_tool_choice(response)
-    logger.info(
-        f'  tool_select_step scope={scope_path or "root"}: '
-        f'tools={asset_tools or ["NAVIGATE"]} images={total_images} tables={total_tables}'
-    )
-    return asset_tools
-
 
 # ---------------------------------------------------------------------------
 # Tool: asset_filter_step (programmatic asset extraction)
@@ -550,7 +372,7 @@ async def asset_filter_step(
     *,
     document_id: str,
     job_result_id: str,
-    scope_path: str | None,
+    scope_path: str | list[str] | None,
     asset_type: str,  # 'image' | 'table'
 ) -> list[dict[str, Any]]:
     """Extract assets from all descendants under scope_path.
@@ -561,22 +383,36 @@ async def asset_filter_step(
 
     Also collects standalone asset chunks (image/table) that exist directly
     under the scope but are not referenced via connect_to.
+
+    scope_path can be:
+      - None: root scope (entire document)
+      - str: single scope path
+      - list[str]: multiple scope paths (queried simultaneously)
     """
     from shared.models.database.document import DocumentChunk, DocumentSection
 
     t0 = time.monotonic()
     try:
-        # 1. Find all section_ids under scope_path
+        # 1. Find all section_ids under scope_path(s)
+        # Normalize scope to list for uniform handling
+        scope_list = (
+            scope_path if isinstance(scope_path, list)
+            else [scope_path] if scope_path
+            else []
+        )
+
         section_stmt = (
             select(DocumentSection.section_id, DocumentSection.section_path)
             .where(DocumentSection.document_id == document_id)
             .where(DocumentSection.job_result_id == job_result_id)
         )
-        if scope_path:
-            section_stmt = section_stmt.where(
-                (DocumentSection.section_path == scope_path) |
-                (DocumentSection.section_path.like(f'{scope_path} / %'))
-            )
+        if scope_list:
+            from sqlalchemy import or_
+            scope_filters = []
+            for sp in scope_list:
+                scope_filters.append(DocumentSection.section_path == sp)
+                scope_filters.append(DocumentSection.section_path.like(f'{sp} / %'))
+            section_stmt = section_stmt.where(or_(*scope_filters))
         section_result = await db.execute(section_stmt)
         section_rows = section_result.all()
         section_ids = {row[0] for row in section_rows}
@@ -635,6 +471,20 @@ async def asset_filter_step(
         ]
         owner_by_target_id = _build_connected_owner_map(text_row_dicts)
 
+        # Replace synthetic "Root" owner with the document's source_file_name.
+        # Root is a hybrid node whose real path is the file name (e.g.
+        # "32_安全大模型技术与市场研究报告_1.docx"); the DB stores the
+        # synthetic label "Root" which cannot match any outline node.
+        if any(v == 'Root' for v in owner_by_target_id.values()):
+            doc_stmt = select(Document.source_file_name).where(
+                Document.document_id == document_id
+            )
+            doc_file_name = (await db.execute(doc_stmt)).scalar() or ''
+            if doc_file_name:
+                for tid in list(owner_by_target_id):
+                    if owner_by_target_id[tid] == 'Root':
+                        owner_by_target_id[tid] = doc_file_name
+
         # Collect connected target IDs for batch-loading
         connected_target_ids: set[str] = set(owner_by_target_id.keys())
 
@@ -689,8 +539,9 @@ async def asset_filter_step(
             # Root / top-level aggregation sections
             if not owner_section_path:
                 own_section_path = section_path_by_id.get(row[4])
-                if own_section_path and ' / ' not in own_section_path:
-                    # Reject document-root level sections as fallback owners
+                if own_section_path and own_section_path == 'Root':
+                    # Reject only the synthetic Root aggregation label;
+                    # legitimate L1 sections (e.g. "前言") are valid owners.
                     logger.warning(
                         f'  asset_filter_step: rejecting root-level owner fallback '
                         f'chunk_id={chunk_id} section_path={own_section_path}'
@@ -731,13 +582,11 @@ async def asset_filter_step(
         logger.error(f'  asset_filter_step failed: {e}')
         return []
 
-
 # ---------------------------------------------------------------------------
-# Tool: scope_navigate_step (single-step navigation)
+# Tool: navigate_step (unified action — merges tool_select + scope_navigate)
 # ---------------------------------------------------------------------------
 
-
-async def scope_navigate_step(
+async def navigate_step(
     db: AsyncSession,
     *,
     document_id: str,
@@ -747,73 +596,149 @@ async def scope_navigate_step(
     user_id: str,
     namespace: str,
     doc_name: str = '',
-    scope_path: str | None = None,
+    scope_path: str | list[str] | None = None,
     exclude_paths: set[str] | None = None,
     revision_hint: str | None = None,
     budget_snapshot: dict | None = None,
-) -> tuple[DocTreeNode, list[dict]]:
-    """Single navigation step — one LLM call, no recursion.
+) -> tuple[str, list[str], DocTreeNode, list[dict]]:
+    """Unified navigation step — one LLM call for action + tools + selections.
+
+    scope_path can be:
+      - None: root scope
+      - str: single scope to drill into
+      - list[str]: multiple scopes to expand simultaneously
 
     Returns:
-      - node: DocTreeNode with outline_items (current scope local items only)
-              and leaf_content (hydrated leaf selections)
-      - pending: list of {path, confidence, mode} for non-leaf selections
-                 (orchestrator queues these for further drill-down)
+      - action: 'STOP' | 'NAVIGATE'
+      - asset_tools: list of asset tools to run (FIND_IMAGES, FIND_TABLES)
+      - node: DocTreeNode with outline_items and leaf_content
+      - pending: list of {path, confidence} for non-leaf drill-downs (empty when STOP)
     """
     from shared.services.retrieval.app_service import _hydrate_paths_to_rows
 
-    empty = DocTreeNode.empty(scope_path)
+    # Normalize scope for internal use
+    scope_paths: list[str] = (
+        scope_path if isinstance(scope_path, list)
+        else [scope_path] if scope_path
+        else []
+    )
+    # Set of scope path strings (for filtering selections)
+    scope_path_set = set(scope_paths)
+
+    empty = DocTreeNode.empty(scope_paths[0] if scope_paths else None)
 
     try:
-        # 1. Load continuous context tree
+        # 1. Load continuous context tree (supports multi-scope)
         items = await _load_child_sections(
             db, document_id, job_result_id, scope_path,
             exclude_paths=exclude_paths,
         )
         if not items:
-            return empty, []
+            return 'STOP', [], empty, []
 
-        # 2. Build selectable index (only current-scope items with summary)
-        selectable = {item['path']: item for item in items if item.get('show_summary', True)}
+        # 2. Build selectable index
+        selectable = {item['path']: item for item in items if item.get('selectable', False)}
 
-        # 3. Format full tree and call LLM
-        text, overflowed = _format_items_for_llm(items)
-        scope_header = (
-            f'Current scope: navigating into "{scope_path}"'
-            if scope_path else
-            'Current scope: root (document top level)'
+        # 3. Count ALL image/table chunks under the scope subtree(s)
+        from shared.models.database.document import DocumentChunk, DocumentSection
+        from sqlalchemy import func as sa_func
+
+        scope_section_stmt = (
+            select(DocumentSection.section_id)
+            .where(DocumentSection.document_id == document_id)
+            .where(DocumentSection.job_result_id == job_result_id)
         )
-        prompt = _SCOPE_NAV_PROMPT.format(
+        if scope_paths:
+            from sqlalchemy import or_
+            scope_filters = []
+            for sp in scope_paths:
+                scope_filters.append(DocumentSection.section_path == sp)
+                scope_filters.append(DocumentSection.section_path.like(f'{sp} / %'))
+            scope_section_stmt = scope_section_stmt.where(or_(*scope_filters))
+        scope_section_ids = await db.execute(scope_section_stmt)
+        all_section_ids = [r[0] for r in scope_section_ids.all()]
+
+        total_images = 0
+        total_tables = 0
+        if all_section_ids:
+            count_stmt = (
+                select(
+                    DocumentChunk.chunk_type,
+                    sa_func.count(DocumentChunk.id),
+                )
+                .where(DocumentChunk.document_id == document_id)
+                .where(DocumentChunk.job_result_id == job_result_id)
+                .where(DocumentChunk.section_id.in_(all_section_ids))
+                .where(DocumentChunk.chunk_type.in_(['image', 'table']))
+                .group_by(DocumentChunk.chunk_type)
+            )
+            count_result = await db.execute(count_stmt)
+            for chunk_type, cnt in count_result.all():
+                if chunk_type == 'image':
+                    total_images = cnt
+                elif chunk_type == 'table':
+                    total_tables = cnt
+
+        tools_block = ''
+        if total_images > 0 or total_tables > 0:
+            tools_lines = ['\nOptional asset tools (usable with NAVIGATE or STOP):\n']
+            if total_images > 0:
+                tools_lines.append(
+                    f'  FIND_IMAGES — Extract all image/chart assets under this scope ({total_images} available).\n'
+                )
+            if total_tables > 0:
+                tools_lines.append(
+                    f'  FIND_TABLES — Extract all table/data assets under this scope ({total_tables} available).\n'
+                )
+            tools_block = ''.join(tools_lines)
+
+        # 4. Format tree and build prompt
+        text, overflowed = _format_items_for_llm(items)
+        if not scope_paths:
+            scope_header = 'Current scope: root (document top level)'
+        elif len(scope_paths) == 1:
+            scope_header = f'Current scope: navigating into "{scope_paths[0]}"'
+        else:
+            scope_header = f'Current scope: navigating into {len(scope_paths)} sections'
+        prompt = _ACTION_PROMPT.format(
             doc_name=doc_name or document_id,
             doc_id=document_id,
             scope_header=scope_header,
             budget_block=_format_budget_block(budget_snapshot),
             items_overview=text,
             query=query,
+            tools_block=tools_block,
         )
         if revision_hint:
             prompt += (
                 f'\n\nIMPORTANT: Previous round feedback: '
-                f'"{revision_hint}". Select specific sections this time.'
+                f'"{revision_hint}". Adjust your selections accordingly.'
             )
-        response = await llm_fn(prompt)
-        selections = _parse_scope_nav_response(response)
 
+        # 5. Single LLM call
+        response = await llm_fn(prompt)
+        parsed = _parse_action_response(response)
+        action = parsed['action']
+        asset_tools = parsed['tools']
+        selections = parsed['selections']
+
+        scope_label = ', '.join(scope_paths) if scope_paths else 'root'
         logger.info(
-            f'  scope_navigate_step scope={scope_path or "root"}: '
-            f'selections={len(selections)}, selectable={len(selectable)}, '
+            f'  navigate_step scope={scope_label}: '
+            f'action={action} tools={asset_tools} '
+            f'selections={len(selections)} selectable={len(selectable)} '
             f'overflowed={overflowed}'
         )
 
-        # 4. Build node with LOCAL items only (no ancestors/siblings)
-        node = DocTreeNode(scope_path=scope_path)
+        # 6. Build node with LOCAL items only
+        node = DocTreeNode(scope_path=scope_paths[0] if scope_paths else None)
         local_items = [item for item in items if item.get('show_summary', True)]
         node.outline_items = local_items
 
-        # 5. Dispatch selections (guard: never re-select scope_path itself)
+        # 7. Dispatch selections (only present when action == NAVIGATE)
         valid_selections = [
             s for s in selections
-            if s['path'] in selectable and s['path'] != scope_path
+            if s['path'] in selectable and s['path'] not in scope_path_set
         ]
 
         pending: list[dict] = []
@@ -827,8 +752,8 @@ async def scope_navigate_step(
             if item.get('is_leaf'):
                 path_selections.append({'path': path, 'confidence': conf, 'hydrate_mode': 'chunks'})
             else:
-                pending.append(sel)
-                # ★ NEW: Also hydrate this node's OWN direct chunks (not descendants)
+                # Non-leaf → will be batched into a single next call
+                pending.append({'path': path, 'confidence': conf})
                 path_selections.append({'path': path, 'confidence': conf, 'hydrate_mode': 'self_only'})
 
         if path_selections:
@@ -847,17 +772,12 @@ async def scope_navigate_step(
                     exclude_sections=[],
                 )
                 if connected:
-                    # Resolve owner_section_path for connected assets:
-                    # map target_chunk_id → the section_path of the text chunk
-                    # that references it via connect_to.
                     _owner_map = _build_connected_owner_map(chunks)
                     for c in connected:
                         if not c.get('owner_section_path'):
                             c['owner_section_path'] = _owner_map.get(str(c.get('chunk_id') or ''))
                     chunks = chunks + connected
 
-                # Resolve Root-stranded assets to their true owner sections
-                # via document-wide connect_to lookup
                 _root_map = await _resolve_root_asset_owners(
                     db,
                     document_id=document_id,
@@ -867,24 +787,23 @@ async def scope_navigate_step(
                 if _root_map:
                     for c in chunks:
                         if c.get('owner_section_path'):
-                            continue  # already resolved by batch-level owner map
+                            continue
                         cid = str(c.get('chunk_id') or '')
                         if cid in _root_map:
                             c['owner_section_path'] = _root_map[cid]
 
                 for chunk in chunks:
-                    # Distribute chunk to its real path or fallback to the selection path
                     real_path = chunk.get('owner_section_path') or chunk.get('section_path') or chunk.get('source_chunk_path')
                     if real_path:
                         node.add_leaf_chunks(str(real_path), [chunk])
 
-        return node, pending
+        return action, asset_tools, node, pending
 
     except BudgetExceeded:
         raise
     except Exception as e:
-        logger.error(f'  scope_navigate_step failed for doc={document_id}: {e}')
-        return empty, []
+        logger.error(f'  navigate_step failed for doc={document_id}: {e}')
+        return 'STOP', [], empty, []
 
 
 # ---------------------------------------------------------------------------
@@ -927,13 +846,15 @@ async def discovery_select_step(
 
     t0 = time.monotonic()
     try:
-        # 1. Format hints for LLM
+        # 1. Format hints for LLM (deduplicate by section_path)
         hint_lines: list[str] = []
         hint_by_path: dict[str, dict] = {}
         for h in hints:
             sp = h.get('section_path', '')
             if not sp or sp == 'Root':
                 continue
+            if sp in hint_by_path:
+                continue  # skip duplicate section_path
             title = sp.rsplit(' / ', 1)[-1] if ' / ' in sp else sp
             summary = h.get('summary', '') or ''
             hint_lines.append(f'▸ path="{sp}"  {title}  [Leaf]')
@@ -965,7 +886,9 @@ async def discovery_select_step(
             revision_context=revision_context,
         )
         response = await llm_fn(prompt)
-        selections = _parse_scope_nav_response(response)
+        # Parse {"selections": [...]} response — reuse action parser's extraction
+        parsed = _parse_action_response(response)
+        selections = parsed.get('selections', [])
 
         logger.info(
             f'  discovery_select_step doc="{doc_name}": '

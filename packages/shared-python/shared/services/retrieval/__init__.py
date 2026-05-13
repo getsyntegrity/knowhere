@@ -8,10 +8,11 @@ from .cache_service import (
 )
 from .graph_service import DocumentGraphService, GraphQueryService, GraphScope
 from .hit_stats_service import record_retrieval_hits
-from .llm_adapter import create_retrieval_llm_fn
+from .llm_adapter import create_retrieval_llm_fn, create_retrieval_planner_fn
 
 __all__ = [
     "create_retrieval_llm_fn",
+    "create_retrieval_planner_fn",
     "run_retrieval_query",
     "merge_channels_rrf",
     "DocumentGraphService",
