@@ -667,7 +667,6 @@ async def test_should_list_current_document_chunks_by_document_id(
             "file_path": None,
             "sort_order": 0,
             "metadata": {"summary": "Intro", "page_nums": [1]},
-            "asset_url": None,
             "created_at": chunks[0]["created_at"],
         }
     ]
@@ -747,7 +746,6 @@ async def test_should_return_one_document_chunk_by_document_chunk_id(
     assert chunk["source_chunk_path"] == "Chapter 1/Figure"
     assert chunk["file_path"] == "images/figure-1.png"
     assert chunk["metadata"] == {"summary": "Figure", "page_nums": [3]}
-    assert chunk["asset_url"] is None
     assert chunk["created_at"]
 
 
