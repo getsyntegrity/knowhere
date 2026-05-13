@@ -25,6 +25,7 @@ def _get_tiktoken_encoding(model_hint: str | None):
         if model_hint:
             return tiktoken.encoding_for_model(model_hint)
     except Exception:
+        # Model hint lookup failed; fall through to cl100k_base default
         pass
 
     try:

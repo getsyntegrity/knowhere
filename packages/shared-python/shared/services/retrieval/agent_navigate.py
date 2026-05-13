@@ -605,7 +605,8 @@ async def _load_child_sections(
             continue
 
         # Category 2: Descendants of scope_path (children to explore)
-        is_descendant = parts[:scope_depth] == scope_parts and depth > scope_depth
+        # depth > scope_depth is guaranteed by the continue at line above
+        is_descendant = parts[:scope_depth] == scope_parts
         if is_descendant:
             # Skip excluded paths
             is_excluded = _excl and any(
@@ -630,11 +631,10 @@ async def _load_child_sections(
             }
             continue
         else:
-            if depth > scope_depth:
-                logger.debug(
-                    f'  _load_child_sections: NOT descendant path={path!r} '
-                    f'parts[:scope_depth]={parts[:scope_depth]} != scope_parts={scope_parts}'
-                )
+            logger.debug(
+                f'  _load_child_sections: NOT descendant path={path!r} '
+                f'parts[:scope_depth]={parts[:scope_depth]} != scope_parts={scope_parts}'
+            )
 
         # Category 3: Everything else → pruned (not added)
 

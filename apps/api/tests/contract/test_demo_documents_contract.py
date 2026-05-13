@@ -174,7 +174,7 @@ async def test_should_materialize_demo_source_without_parse_or_credit_charge(
         )
         document_chunks_response = await api_client.get(
             f"/api/v1/documents/{first_response.json()['sources'][0]['document_id']}"
-            "/chunks?include_asset_urls=true&page_size=200"
+            "/chunks?page_size=200"
         )
 
     assert empty_cached_response.status_code == 200
@@ -261,7 +261,7 @@ async def test_should_materialize_demo_source_without_parse_or_credit_charge(
     assert retrieval_results[0]["source"]["document_id"] == document_id
     assert retrieval_results[0]["source"]["section_path"] != "Root"
     assert media_chunks
-    assert media_chunks[0]["asset_url"]
+    assert media_chunks[0]["file_path"]
     uploaded_files = fake_result_storage.raw_files_by_job_id[str(job_row["job_id"])]
     assert any(file_path.startswith("images/") for file_path in uploaded_files)
     assert any(file_path.startswith("tables/") for file_path in uploaded_files)
