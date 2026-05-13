@@ -17,9 +17,6 @@ from shared.services.retrieval.cache_service import (
     invalidate_retrieval_cache_namespaces,
 )
 from shared.services.retrieval.graph_service import DocumentGraphService, GraphScope
-from shared.services.storage.result_storage import get_result_storage
-
-_MEDIA_CHUNK_TYPES = {"image", "table"}
 
 
 def document_payload(document) -> dict[str, Any]:
@@ -74,7 +71,6 @@ class DocumentService:
         page: int,
         page_size: int,
         chunk_type: str | None,
-        include_asset_urls: bool,
     ) -> dict[str, Any] | None:
         document = await self._repository.get_document(
             db,
@@ -119,8 +115,6 @@ class DocumentService:
             self._chunk_payload(
                 chunk=chunk,
                 section=section,
-                job_id=job_result.job_id,
-                include_asset_urls=include_asset_urls,
             )
             for chunk, section, job_result in rows
         ]
@@ -147,7 +141,6 @@ class DocumentService:
         user_id: str,
         document_id: str,
         document_chunk_id: str,
-        include_asset_urls: bool,
     ) -> dict[str, Any] | None:
         document = await self._repository.get_document(
             db,
@@ -175,8 +168,6 @@ class DocumentService:
             "chunk": self._chunk_payload(
                 chunk=chunk,
                 section=section,
-                job_id=job_result.job_id,
-                include_asset_urls=include_asset_urls,
             ),
         }
 
@@ -201,8 +192,6 @@ class DocumentService:
         *,
         chunk: DocumentChunk,
         section: DocumentSection | None,
-        job_id: str,
-        include_asset_urls: bool,
     ) -> dict[str, Any]:
         chunk_type = _normalize_chunk_type(chunk.chunk_type)
         file_path = chunk.file_path
@@ -217,39 +206,8 @@ class DocumentService:
             "file_path": file_path,
             "sort_order": chunk.sort_order,
             "metadata": chunk.chunk_metadata,
-            "asset_url": self._asset_url(
-                chunk_type=chunk_type,
-                file_path=file_path,
-                job_id=job_id,
-                include_asset_urls=include_asset_urls,
-            ),
             "created_at": _datetime_payload(chunk.created_at),
         }
-
-    def _asset_url(
-        self,
-        *,
-        chunk_type: str,
-        file_path: str | None,
-        job_id: str,
-        include_asset_urls: bool,
-    ) -> str | None:
-        if (
-            not include_asset_urls
-            or chunk_type not in _MEDIA_CHUNK_TYPES
-            or not file_path
-        ):
-            return None
-
-        try:
-            result_storage = get_result_storage()
-            return result_storage.generate_artifact_url(
-                job_id=job_id,
-                artifact_ref=file_path,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to generate document chunk asset URL: {e}")
-            return None
 
     async def archive_document(
         self,
