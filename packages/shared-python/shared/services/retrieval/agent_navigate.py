@@ -38,36 +38,6 @@ Do not include any explanation.
 """
 
 
-_SCOPE_NAV_PROMPT = """\
-You are a document navigation assistant.
-
-Document: "{doc_name}" (id: {doc_id})
-
-{budget_block}
-{scope_header}
-Below is the document's section tree.
-Sections tagged [SELECT] are within the current scope and may be selected.
-Other sections are shown as structural context only (not selectable).
-Nodes marked [Leaf] have no further sub-sections.
-
-=== Section Tree ===
-{items_overview}
-=== End Section Tree ===
-
-User query: {query}
-
-Select sections to drill into for more detailed content.
-- You may ONLY select sections marked with [SELECT]. Do NOT select any other sections.
-- Select sections whose content is needed to answer the query.
-- If the titles and summaries already visible are sufficient (e.g. the query asks for an outline or overview), return an EMPTY list [].
-- When budget is TIGHT, prefer fewer high-confidence selections over broad exploration.
-- When budget is CRITICAL, be very selective — only pick paths with strong relevance. Return [] if current evidence already suffices.
-
-Return ONLY a JSON object:
-{{"selections": [{{"path": "...", "confidence": <float>}}, ...]}}
-Do not include any explanation.
-"""
-
 
 _DISCOVERY_SELECT_PROMPT = """\
 You are a document navigation assistant.
@@ -87,13 +57,131 @@ User query: {query}
 {revision_context}
 Select section paths whose content is needed to answer the query.
 If none are relevant, return an EMPTY list [].
-When budget is TIGHT, prefer fewer high-confidence candidates.
-When budget is CRITICAL, be very selective — only pick paths with strong relevance. Return [] if evidence suffices.
 
 Return ONLY a JSON object:
 {{"selections": [{{"path": "...", "confidence": <float>}}, ...]}}
 Do not include any explanation.
 """
+
+
+_ACTION_PROMPT = """\
+You are a document navigation agent.
+
+Document: "{doc_name}" (id: {doc_id})
+
+{budget_block}
+{scope_header}
+Below is the document's section tree.
+Sections tagged [SELECT] are within the current scope and may be selected.
+Other sections are shown as structural context only (not selectable).
+Nodes marked [Leaf] have no further sub-sections.
+
+=== Section Tree ===
+{items_overview}
+=== End Section Tree ===
+
+User query: {query}
+
+=== Available Actions ===
+
+Choose ONE action:
+
+NAVIGATE — Drill into selected sections for detailed content.
+  Consider this when the query targets specific topics and you need deeper text evidence.
+  Select one or more [SELECT] sections.
+
+STOP — Current scope evidence is sufficient. No further drill-down.
+  Consider this when:
+  - The query asks for an outline, overview, or summary
+  - The query is broad/global, the tree section can fulfill it without drilling into individual sections.
+  - You have already collected enough evidence at this level.
+
+{tools_block}
+
+When action is NAVIGATE, provide selections:
+- You may ONLY select sections marked with [SELECT].
+
+When action is STOP, selections must be empty.
+
+Return ONLY a JSON object:
+{{"action": "NAVIGATE", "tools": [...], "selections": [{{"path": "...", "confidence": <float>}}, ...]}}
+or
+{{"action": "STOP", "tools": [...], "selections": []}}
+Do not include any explanation.
+"""
+
+
+def _parse_action_response(text: str) -> dict:
+    """Parse the unified action response from LLM.
+
+    Returns dict with keys:
+      action: 'NAVIGATE' | 'STOP'
+      tools: list[str]  (subset of FIND_IMAGES, FIND_TABLES)
+      selections: list[dict]  (each has 'path' and optional 'confidence')
+
+    When action is STOP, selections are forced to empty.
+    """
+    import json as _json
+    import re as _re
+
+    text = text.strip()
+    _ASSET_TOOLS = {'FIND_IMAGES', 'FIND_TABLES'}
+    default = {'action': 'NAVIGATE', 'tools': [], 'selections': []}
+
+    def _extract(data: dict) -> dict:
+        action = str(data.get('action', 'NAVIGATE')).strip().upper()
+        if action not in ('NAVIGATE', 'STOP'):
+            action = 'NAVIGATE'
+
+        tools_val = data.get('tools') or []
+        if isinstance(tools_val, list):
+            tools = [str(t).strip().upper() for t in tools_val if str(t).strip().upper() in _ASSET_TOOLS]
+        else:
+            tools = []
+
+        # STOP → no selections allowed
+        if action == 'STOP':
+            return {'action': action, 'tools': tools, 'selections': []}
+
+        selections_val = data.get('selections') or []
+        selections = []
+        if isinstance(selections_val, list):
+            for s in selections_val:
+                if isinstance(s, dict) and s.get('path'):
+                    conf = _normalize_confidence(s.get('confidence', 0.7))
+                    selections.append({'path': str(s['path']), 'confidence': conf or 0.7})
+
+        return {'action': action, 'tools': tools, 'selections': selections}
+
+    # Try JSON parse
+    try:
+        data = _json.loads(text)
+        if isinstance(data, dict):
+            return _extract(data)
+    except (ValueError, _json.JSONDecodeError):
+        pass
+
+    # Try extracting JSON from markdown fences
+    fence_match = _re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, _re.DOTALL)
+    if fence_match:
+        try:
+            data = _json.loads(fence_match.group(1).strip())
+            if isinstance(data, dict):
+                return _extract(data)
+        except (ValueError, _json.JSONDecodeError):
+            pass
+
+    # Try finding a JSON object anywhere
+    brace_match = _re.search(r'\{.*\}', text, _re.DOTALL)
+    if brace_match:
+        try:
+            data = _json.loads(brace_match.group())
+            if isinstance(data, dict):
+                return _extract(data)
+        except (ValueError, _json.JSONDecodeError):
+            pass
+
+    return default
 
 
 def _format_budget_block(snapshot: dict | None) -> str:
@@ -287,7 +375,7 @@ def _format_items_for_llm(
         indent = "    " * (level - 1)
         prefix = '▸' if level == 1 else '└'
         level_tag = f'[L{level}]'
-        select_tag = '[SELECT] ' if show else ''
+        select_tag = '[SELECT] ' if item.get('selectable', False) else ''
 
         lines: list[str] = []
         lines.append(f'{indent}{prefix} {select_tag}{level_tag} path="{path}"{counts_str}{leaf_tag}')
@@ -459,7 +547,7 @@ async def _load_child_sections(
     db: AsyncSession,
     document_id: str,
     job_result_id: str,
-    scope_path: str | None = None,
+    scope_path: str | list[str] | None = None,
     exclude_paths: set[str] | None = None,
 ) -> list[dict]:
     """Load the Continuous Context Tree for *scope_path*.
@@ -468,17 +556,16 @@ async def _load_child_sections(
         {path, title, summary, chunk_count, image_count, table_count,
          level, show_summary, is_leaf}
 
-    The tree contains three categories of nodes:
-      1. Ancestors of scope_path + their siblings → show_summary=False (title only)
-      2. Children of scope_path (2 depth bands) → show_summary=True (with summary)
-      3. Everything else → pruned (not returned)
-
-    When scope_path is None (root), all items are category 2.
+    scope_path can be:
+      - None: root scope, all items are selectable (2 depth bands).
+      - str: single scope, descendants are selectable.
+      - list[str]: multi-scope, descendants of ALL paths are selectable
+        simultaneously — used when the LLM selected multiple drill-down
+        paths in the previous step.
 
     - level: absolute depth in the document (1-based)
     - show_summary: controls whether _format_items_for_llm renders summary
-    - exclude_paths: paths already seen in prior revision rounds;
-      any path matching (exact or subtree) is skipped from category 2
+    - exclude_paths: paths already hydrated; skipped from selectable items
     """
     # ── Fetch all sections for this document revision ────────────────────
     stmt = (
@@ -497,12 +584,20 @@ async def _load_child_sections(
     if not section_rows:
         return []
 
-    scope = normalize_section_path(scope_path) if scope_path else ''
-    scope_parts = split_section_path(scope)
-    scope_depth = len(scope_parts)
+    # ── Normalize scope(s) ───────────────────────────────────────────────
+    # Multi-scope: list of paths to expand simultaneously
+    if isinstance(scope_path, list):
+        scope_list = [normalize_section_path(p) for p in scope_path]
+    elif scope_path:
+        scope_list = [normalize_section_path(scope_path)]
+    else:
+        scope_list = []  # root
+
+    # For logging, derive representative scope info
+    scope_depth = len(split_section_path(scope_list[0])) if scope_list else 0
 
     logger.debug(
-        f'  _load_child_sections: scope={scope!r} scope_parts={scope_parts} '
+        f'  _load_child_sections: scopes={scope_list or ["root"]} '
         f'scope_depth={scope_depth} exclude_paths={_excl if (_excl := exclude_paths or set()) else "none"} '
         f'total_sections={len(section_rows)}'
     )
@@ -524,134 +619,105 @@ async def _load_child_sections(
         }
 
     # ── Build the set of ancestor prefixes for pruning ────────────────────
-    # e.g. scope = "A / B / K" → ancestor_prefixes = {"A", "A / B", "A / B / K"}
+    # For multi-scope, union all ancestor prefixes from all scope paths
     ancestor_prefixes: set[str] = set()
-    for i in range(1, scope_depth + 1):
-        ancestor_prefixes.add(' / '.join(scope_parts[:i]))
+    for sp in scope_list:
+        sp_parts = split_section_path(sp)
+        for i in range(1, len(sp_parts) + 1):
+            ancestor_prefixes.add(' / '.join(sp_parts[:i]))
 
     # ── Classify each section ────────────────────────────────────────────
     _excl = exclude_paths or set()
     items_by_path: dict[str, dict] = {}
-    scope_child_depths: set[int] = set()
+    # Per-scope depth bands: track child depths separately per scope
+    per_scope_child_depths: dict[str, set[int]] = {sp: set() for sp in scope_list} if scope_list else {}
+    root_child_depths: set[int] = set()  # used when scope_list is empty (root)
+
+    def _make_item(path: str, meta: dict, show_summary: bool) -> dict:
+        return {
+            'path': path,
+            'title': meta['title'],
+            'summary': meta['summary'],
+            'level': meta['depth'],
+            'sort_order': meta['sort_order'],
+            'chunk_count': 0,
+            'image_count': 0,
+            'table_count': 0,
+            'section_id': meta['section_id'],
+            'show_summary': show_summary,
+        }
+
+    def _is_excluded(path: str) -> bool:
+        return bool(_excl and any(
+            path == ep or path.startswith(ep + ' / ') for ep in _excl
+        ))
 
     for path, meta in all_sections.items():
         parts = meta['parts']
         depth = meta['depth']
 
-        if scope_depth == 0:
+        if not scope_list:
             # Root scope: everything is a potential child
-            if depth < 1:
+            if depth < 1 or _is_excluded(path):
                 continue
-            # Skip excluded paths
-            if _excl and any(
-                path == ep or path.startswith(ep + ' / ')
-                for ep in _excl
-            ):
-                continue
-            scope_child_depths.add(depth)
-            items_by_path[path] = {
-                'path': path,
-                'title': meta['title'],
-                'summary': meta['summary'],
-                'level': depth,
-                'sort_order': meta['sort_order'],
-                'chunk_count': 0,
-                'image_count': 0,
-                'table_count': 0,
-                'section_id': meta['section_id'],
-                'show_summary': True,  # will be refined after depth band selection
-            }
+            root_child_depths.add(depth)
+            items_by_path[path] = _make_item(path, meta, show_summary=True)
             continue
 
-        # --- Non-root scope ---
+        # --- Non-root scope(s) ---
+        # Check if this path is a descendant of ANY scope in scope_list
+        matched_scope: str | None = None
+        for sp in scope_list:
+            sp_parts = split_section_path(sp)
+            sp_depth = len(sp_parts)
+            if depth > sp_depth and parts[:sp_depth] == sp_parts:
+                matched_scope = sp
+                break
 
-        # Category 1: Ancestors and their siblings (structural context)
-        # A node is an ancestor/sibling if its depth <= scope_depth AND
-        # its parent prefix matches the scope's ancestry chain.
-        if depth <= scope_depth:
-            # Check: is this node in the ancestry chain or a sibling of one?
+        if matched_scope:
+            # Category 2: descendant of a scope path → selectable
+            if _is_excluded(path):
+                continue
+            per_scope_child_depths[matched_scope].add(depth)
+            items_by_path[path] = _make_item(path, meta, show_summary=True)
+            continue
+
+        # Category 1: structural context (ancestors of scope paths only)
+        # Only show nodes that are on the ancestor chain of a scope path.
+        # Non-scope siblings (e.g. 法律声明, 前言 when navigating into
+        # chapters 一~六) are pruned to reduce token waste and prevent
+        # summary overflow in _format_items_for_llm.
+        max_scope_depth = max(len(split_section_path(sp)) for sp in scope_list)
+        if depth <= max_scope_depth:
             if depth == 1:
-                # All L1 nodes are either the ancestor or its siblings
-                items_by_path[path] = {
-                    'path': path,
-                    'title': meta['title'],
-                    'summary': meta['summary'],
-                    'level': depth,
-                    'sort_order': meta['sort_order'],
-                    'chunk_count': 0,
-                    'image_count': 0,
-                    'table_count': 0,
-                    'section_id': meta['section_id'],
-                    'show_summary': False,
-                }
-            elif depth <= scope_depth:
-                # For deeper ancestors/siblings: their parent must be in the
-                # ancestor chain. e.g. "A / C" is a sibling of "A / B" only
-                # if "A" is an ancestor of scope.
+                if path in ancestor_prefixes:
+                    items_by_path.setdefault(path, _make_item(path, meta, show_summary=False))
+            else:
                 parent_prefix = ' / '.join(parts[:-1])
                 if parent_prefix in ancestor_prefixes:
-                    items_by_path[path] = {
-                        'path': path,
-                        'title': meta['title'],
-                        'summary': meta['summary'],
-                        'level': depth,
-                        'sort_order': meta['sort_order'],
-                        'chunk_count': 0,
-                        'image_count': 0,
-                        'table_count': 0,
-                        'section_id': meta['section_id'],
-                        'show_summary': False,
-                    }
+                    items_by_path.setdefault(path, _make_item(path, meta, show_summary=False))
             continue
 
-        # Category 2: Descendants of scope_path (children to explore)
-        # depth > scope_depth is guaranteed by the continue at line above
-        is_descendant = parts[:scope_depth] == scope_parts
-        if is_descendant:
-            # Skip excluded paths
-            is_excluded = _excl and any(
-                path == ep or path.startswith(ep + ' / ')
-                for ep in _excl
-            )
-            if is_excluded:
-                logger.debug(f'  _load_child_sections: EXCLUDED descendant path={path!r}')
-                continue
-            scope_child_depths.add(depth)
-            items_by_path[path] = {
-                'path': path,
-                'title': meta['title'],
-                'summary': meta['summary'],
-                'level': depth,
-                'sort_order': meta['sort_order'],
-                'chunk_count': 0,
-                'image_count': 0,
-                'table_count': 0,
-                'section_id': meta['section_id'],
-                'show_summary': True,
-            }
-            continue
-        else:
-            logger.debug(
-                f'  _load_child_sections: NOT descendant path={path!r} '
-                f'parts[:scope_depth]={parts[:scope_depth]} != scope_parts={scope_parts}'
-            )
-
-        # Category 3: Everything else → pruned (not added)
+        # Category 3: pruned
 
     if not items_by_path:
         return []
 
-    # ── Limit children to 2 depth bands (relative to scope) ─────────────
-    if scope_child_depths:
-        if scope_depth == 0:
-            allowed_depths = sorted(scope_child_depths)[:2]
-        else:
-            allowed_depths = sorted(scope_child_depths)[:2]
-        allowed_set = set(allowed_depths)
-        to_remove = []
-        for path, item in items_by_path.items():
-            if item['show_summary'] and item['level'] not in allowed_set:
-                to_remove.append(path)
+    # ── Limit children to 2 depth bands (relative to each scope) ────────
+    allowed_set: set[int] = set()
+    if scope_list:
+        for sp, depths in per_scope_child_depths.items():
+            if depths:
+                allowed_set.update(sorted(depths)[:2])
+    else:
+        if root_child_depths:
+            allowed_set.update(sorted(root_child_depths)[:2])
+
+    if allowed_set:
+        to_remove = [
+            path for path, item in items_by_path.items()
+            if item['show_summary'] and item['level'] not in allowed_set
+        ]
         for path in to_remove:
             del items_by_path[path]
 
@@ -806,48 +872,30 @@ async def _load_child_sections(
         )
         item['is_leaf'] = not has_descendants
 
+    # ── Assign selectability ──────────────────────────────────────────────
+    # Rule: in the 2-band window, only the DEEPER band is selectable.
+    # Leaf nodes at the shallower band are still selectable (no children
+    # to drill into).  Structural context (show_summary=False) is never
+    # selectable.
+    if allowed_set:
+        shallowest_band = min(allowed_set)
+        for item in sorted_items:
+            if not item.get('show_summary', True):
+                # Structural context → never selectable
+                item['selectable'] = False
+            elif item['level'] == shallowest_band and not item.get('is_leaf', False):
+                # Shallowest band, non-leaf → grouping header, not selectable
+                item['selectable'] = False
+            else:
+                item['selectable'] = True
+    else:
+        for item in sorted_items:
+            item['selectable'] = item.get('show_summary', True)
+
     return sorted_items
 
 
 # ---------------------------------------------------------------------------
-# LLM response parser (for scope_navigate)
-# ---------------------------------------------------------------------------
-
-def _parse_scope_nav_response(text: str) -> list[dict[str, Any]]:
-    """Parse selections JSON from scope navigation LLM response.
-
-    Returns list of {"path": str, "confidence": float}.
-    """
-    text = text.strip()
-    # Try direct parse
-    try:
-        data = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        # Extract JSON object from markdown wrapper
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if not match:
-            return []
-        try:
-            data = json.loads(match.group())
-        except (json.JSONDecodeError, ValueError):
-            return []
-
-    if not isinstance(data, dict):
-        return []
-
-    selections: list[dict[str, Any]] = []
-    for item in (data.get('selections') or []):
-        if not isinstance(item, dict):
-            continue
-        path = str(item.get('path') or '').strip()
-        if not path:
-            continue
-        confidence = _normalize_confidence(item.get('confidence'))
-        if confidence is None:
-            confidence = 0.7
-        selections.append({'path': path, 'confidence': confidence})
-
-    return selections
 
 
 # ---------------------------------------------------------------------------

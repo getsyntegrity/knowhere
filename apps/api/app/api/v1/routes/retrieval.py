@@ -52,6 +52,10 @@ class RetrievalQueryRequest(BaseModel):
     internal_recall_k: int | None = Field(
         None, ge=1, description="Override per-channel recall count"
     )
+    use_agentic: bool | None = Field(
+        None,
+        description="Per-request agentic mode toggle. true=force agentic, false=force legacy, null=use server default.",
+    )
 
     @field_validator("channels")
     @classmethod
@@ -63,7 +67,16 @@ class RetrievalQueryRequest(BaseModel):
         return v
 
 
-@router.post("/query")
+class RetrievalQueryResponse(BaseModel):
+    namespace: str
+    query: str
+    router_used: str
+    answer_text: str | None = None
+    referenced_chunks: list[dict] = Field(default_factory=list)
+    results: list[dict] = Field(default_factory=list)
+
+
+@router.post("/query", response_model=RetrievalQueryResponse)
 async def query_retrieval(
     payload: RetrievalQueryRequest,
     current_user: CurrentUser = Depends(with_current_user),
@@ -85,4 +98,5 @@ async def query_retrieval(
         rerank=payload.rerank,
         threshold=payload.threshold,
         internal_recall_k=payload.internal_recall_k,
+        use_agentic=payload.use_agentic,
     )

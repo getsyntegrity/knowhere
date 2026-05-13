@@ -182,6 +182,8 @@ async def test_should_return_empty_results_for_an_empty_query(
         "query": "",
         "router_used": "empty_query_filtered",
         "results": [],
+        "answer_text": None,
+        "referenced_chunks": [],
     }
 
 
