@@ -44,7 +44,7 @@ class ToolResult:
 class DocTreeNode:
     """Unified navigation result tree for one document.
 
-    Produced by ``scope_navigate_step``. Captures the full
+    Produced by ``navigate_step``. Captures the full
     navigation outcome for rendering as a single hierarchy:
 
     - ``outline_items``: section tree items at this scope level
@@ -218,7 +218,7 @@ class AgentState:
     """Mutable state carried through the 2-phase orchestrator.
 
     Phase 1: Document selection (discovery + KG)
-    Phase 2: Per-document navigation (scope_navigate_step per doc)
+    Phase 2: Per-document navigation (navigate_step per doc)
     Phase 3: Assembly + final verdict
     """
     # Timing
