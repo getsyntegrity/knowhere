@@ -1,3 +1,5 @@
+<img width="1000" height="233" alt="20260506-102713" src="https://github.com/user-attachments/assets/896e64d2-e50e-4158-b71c-bc69e11c7c65" />
+
 <h1 align="center">Build AI Agent Memory from Real-World Documents</h1>
 
 <p align="center">
