@@ -95,6 +95,8 @@ Agents using Knowhere outperform those working from raw documents or MinerU-pars
   <img alt="Benchmark Performance: Agent + Knowhere vs Others" src="docs/assets/benchmark.png" width="900">
 </p>
 
+> **We're not developing the next MinerU — we're building document memory infrastructure that agents can effectively consume.**
+
 ### Key Advantages
 
 - **Accuracy**: +36% first-try accuracy and +10% recall over raw documents.
