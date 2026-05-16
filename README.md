@@ -73,15 +73,19 @@ Knowhere runs in two steps: build memory from documents, then let agents retriev
 ## FAQ
 
 **Q: What is Knowhere's relationship with MinerU?**
+
 A: Knowhere uses MinerU as its default parser because it performs best in our tests. Any parser only gets you raw Markdown. Knowhere's value is what comes after: hierarchy reconstruction, multi-modal normalization, and cross-document graph construction. Any Markdown-outputting tool works.
 
 **Q: What LLM / VLM dependencies does Knowhere have?**
+
 A: By default, DeepSeek (`deepseek-chat`) handles text and table summarization, and Qwen-VL (`qwen3.5-flash`) handles image OCR and descriptions. Knowhere is model-agnostic. Swap in OpenAI, DashScope, Zhipu, or Volcengine via environment variables.
 
 **Q: How is Agentic Retrieval different from traditional RAG?**
+
 A: Traditional RAG does a flat vector lookup and returns isolated snippets. Knowhere's agents navigate the document's section tree and cross-document graph, drilling into the most relevant regions the way a human reader would, returning traceable, well-contextualized evidence.
 
 **Q: Does it handle images and tables?**
+
 A: Yes. Knowhere extracts them, runs them through VLMs for summarization and feature extraction, and links them back to their source chunks so agents can retrieve and cite multi-modal assets at inference time.
 
 ## Performance Benchmark
