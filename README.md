@@ -1,6 +1,6 @@
 <img width="1000" height="233" alt="20260506-102713" src="https://github.com/user-attachments/assets/896e64d2-e50e-4158-b71c-bc69e11c7c65" />
 
-<h1 align="center">Build AI Agent Memory from Real-World Documents</h1>
+<h1 align="center">Prepare unstructured data for AI Agents</h1>
 
 <p align="center">
   <a href="https://www.python.org/downloads/">
@@ -33,12 +33,9 @@
 
 ## What We Are
 
-**We're not developing the next MinerU, instead, we're building document memory infrastructure that agents can effectively consume.**
+**Knowhere is the memory layer between raw documents and AI agents.**
 
-Knowhere turns unstructured documents into persistent, navigable memory for AI agents. It handles parsing, hierarchy extraction, multi-modal structuring, and graph construction, giving your agents structured, high-quality context for *Agentic RAG*, *traditional RAG*, or any LLM workflow.
-
-> [!TIP]
-> Knowhere stands on the shoulders of giants like MinerU and Pymupdf. We take their output, optimize it, and then build **hierarchical structure** and **multi-modal cross-document graphs** on top. The result is a persistent, citable memory layer purpose-built for agent consumption.
+It ingests unstructured documents and produces persistent, navigable memory: parsing, hierarchy extraction, multi-modal structuring, and graph construction in a single pipeline. The output is structured, high-quality context ready for *Agentic RAG*, *traditional RAG*, or any LLM workflow.
 
 > [!NOTE]
 > **Get started in seconds with Knowhere Cloud.**
@@ -51,15 +48,13 @@ Knowhere turns unstructured documents into persistent, navigable memory for AI a
 
 ## How it Works
 
-Knowhere turns raw documents into a structured memory store that AI agents can navigate and cite. The process follows two steps:
+The pipeline runs in two steps.
 
 ### Step 1: Parse and Build Memory
 
 <p align="center">
   <img alt="Step 1: Parse and Build Memory" src="docs/assets/step-1-parse-build-memory.png" width="900">
 </p>
-
-Parsing, chunking, hierarchy extraction, and graph construction are unified into one outcome: a navigable memory layer for AI agents.
 
 - **Parse**: Route PDFs, Office files, images, tables, Markdown, and text to specialized parsers.
 - **Structure**: Preserve headings, section paths, multi-modal assets, and chunk relationships.
@@ -71,15 +66,13 @@ Parsing, chunking, hierarchy extraction, and graph construction are unified into
   <img alt="Step 2: Agentic Retrieval" src="docs/assets/step-2-agentic-retrieval.png" width="900">
 </p>
 
-Agents retrieve by navigating memory instead of depending on a single flat vector lookup.
-
 - **Discover**: Fuse keyword, path, content, and semantic signals for broad first-pass coverage.
 - **Navigate**: Walk section trees and graph links to drill into the most relevant document regions.
-- **Cite Evidence**: Return traceable results with source document, section, chunk, and linked image or table assets.
+- **Cite Evidence**: Return traceable results with source document, section, chunk, and linked assets.
 
 ## Performance Benchmark
 
-Knowhere enhances the accuracy of AI agents when performing tasks (e.g., searching, modifying, and answering) in real-world data. Compared to providing raw documents directly to agents or .md/.json files produced by other parsers, Knowhere achieves higher success rates with fewer resources.
+Agents using Knowhere outperform those working from raw documents or MinerU-parsed output on real-world tasks: searching, modifying, and answering questions.
 
 <p align="center">
   <img alt="Benchmark Performance: Agent + Knowhere vs Others" src="docs/assets/benchmark.png" width="900">
@@ -87,20 +80,20 @@ Knowhere enhances the accuracy of AI agents when performing tasks (e.g., searchi
 
 ### Key Advantages
 
-- **Superior Accuracy**: Knowhere drastically improves both **First-time Accuracy** (+36% over raw docs) and **Recall** (+10%), ensuring agents find the right evidence faster.
-- **Enhanced Reliability**: With user feedback, agents using Knowhere hit **79% accuracy**—a significant jump compared to the ~53% ceiling of raw documents.
-- **Higher Efficiency**: Agents require **fewer loops**, consume **fewer tokens**, and spend **less time** searching. By navigating a structured memory graph instead of reading monolithic texts, the token overhead drops while precision increases.
+- **Accuracy**: +36% first-try accuracy and +10% recall over raw documents.
+- **Reliability**: 79% accuracy with feedback, vs. a ~53% ceiling on raw docs.
+- **Efficiency**: Fewer loops, fewer tokens, less time. Agents navigate a structured graph instead of reading monolithic text.
 
-*(Data generated from internal evaluation across identical agentic RAG tasks.)*
+*(Internal evaluation across identical agentic RAG tasks. Baseline: MinerU output fed directly to agents.)*
 
 > [!NOTE]
-> **📊 Benchmarks are actively expanding.** The comparison above currently covers MinerU as the baseline parser. We are continuously adding more parsing tools and retrieval baselines — stay tuned for updated results.
+> **📊 Benchmarks are actively expanding.** More parsers and retrieval baselines coming soon.
 
 ## Ecosystem
 
 | Repository | Description |
 |---|---|
-| [knowhere](https://github.com/Ontos-AI/knowhere) | **This repo.** Backend API and worker — document ingestion, parsing, graph construction, and retrieval. |
+| [knowhere](https://github.com/Ontos-AI/knowhere) | **This repo.** Backend API and worker: document ingestion, parsing, graph construction, and retrieval. |
 | 🖥️ [knowhere-dashboard](https://github.com/Ontos-AI/knowhere-dashboard) | The web UI. Connects to the API for the full product experience. |
 | 🐳 [knowhere-self-hosted](https://github.com/Ontos-AI/knowhere-self-hosted) | Docker Compose stack for self-hosted deployments. Packages the API, worker, and dashboard together. |
 | 🐍 [knowhere-python-sdk](https://github.com/Ontos-AI/knowhere-python-sdk) | Official Python SDK for the Knowhere Cloud API. |
@@ -115,17 +108,17 @@ Knowhere enhances the accuracy of AI agents when performing tasks (e.g., searchi
 
 ## Frequently Asked Questions (FAQ)
 
-**Q: Is MinerU strictly required for Knowhere to work?**
-A: No. While MinerU is currently our default choice for parsing PDFs and PPT, because it performs the best in our experiments, any tool that can convert documents to Markdown works. Knowhere's real value lies in what happens *alongside and after* the initial conversion: memory-oriented parsing optimizations (fixing real-world parser deficiencies), reconstructing the hierarchical structure, normalizing multi-modal assets, and building the cross-document navigation graph.
+**Q: What is Knowhere's relationship with MinerU?**
+A: Knowhere uses MinerU as its default parser because it performs best in our tests. Any parser only gets you raw Markdown. Knowhere's value is what comes after: hierarchy reconstruction, multi-modal normalization, and cross-document graph construction. Any Markdown-outputting tool works.
 
-**Q: What are the LLM / VLM dependencies?**
-A: Knowhere requires standard language models to structure the document memory. By default, it uses DeepSeek (`deepseek-chat`) for text/table summarization and hierarchy generation, and Qwen-VL (`qwen3.5-flash`) for image OCR and visual descriptions. However, it is entirely model-agnostic—you can easily configure it to use OpenAI, DashScope (Ali), Zhipu (GLM), or Volcengine (ARK) via environment variables.
+**Q: What LLM / VLM dependencies does Knowhere have?**
+A: By default, DeepSeek (`deepseek-chat`) handles text and table summarization, and Qwen-VL (`qwen3.5-flash`) handles image OCR and descriptions. Knowhere is model-agnostic. Swap in OpenAI, DashScope, Zhipu, or Volcengine via environment variables.
 
-**Q: How does Agentic Retrieval differ from traditional RAG?**
-A: Traditional RAG relies on flat vector similarity, which often retrieves isolated, out-of-context text snippets. Knowhere's Agentic Retrieval instead uses a multi-agent workflow to actively navigate the hierarchical section tree and cross-document graph. Agents read the document structure like a human would, drilling down into relevant sections to find precise, well-contextualized evidence.
+**Q: How is Agentic Retrieval different from traditional RAG?**
+A: Traditional RAG does a flat vector lookup and returns isolated snippets. Knowhere's agents navigate the document's section tree and cross-document graph, drilling into the most relevant regions the way a human reader would, returning traceable, well-contextualized evidence.
 
-**Q: Can it handle multi-modal data like images and tables?**
-A: Yes. Knowhere extracts inline images and tables, passes them through Vision-Language Models (VLMs) for summarization and feature extraction, and explicitly links them back to their original text chunks. This ensures that agents can retrieve and cite multi-modal assets accurately during inference.
+**Q: Does it handle images and tables?**
+A: Yes. Knowhere extracts them, runs them through VLMs for summarization and feature extraction, and links them back to their source chunks so agents can retrieve and cite multi-modal assets at inference time.
 
 ## Supported Formats
 
@@ -205,7 +198,7 @@ uv run scripts/init_user.py --email you@example.com
 If you plan to use the dashboard, register through the dashboard instead of
 using `scripts/init_user.py`.
 
-The API is now running at `http://localhost:5005`. If you want the full product experience with a UI, run the [knowhere-dashboard](https://github.com/Ontos-AI/knowhere-dashboard) alongside it — it connects to this API out of the box.
+The API is now running at `http://localhost:5005`. If you want the full product experience with a UI, run the [knowhere-dashboard](https://github.com/Ontos-AI/knowhere-dashboard) alongside it; it connects to this API out of the box.
 
 ## Quality Checks
 
@@ -277,13 +270,13 @@ For general guidelines on branching, commit conventions, and the review process,
 
 Other useful references:
 
-- [SECURITY.md](SECURITY.md) — how to report vulnerabilities responsibly.
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community behavior expectations.
-- [LICENSE](LICENSE) and [NOTICE](NOTICE) — Apache 2.0.
+- [SECURITY.md](SECURITY.md): how to report vulnerabilities responsibly.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): community behavior expectations.
+- [LICENSE](LICENSE) and [NOTICE](NOTICE): Apache 2.0.
 
 ## 👋 We're Hiring!
 
-We're building the knowledge layer for the Agent era. If that sounds like work you want to do, reach out — decode the address below and drop us a line:
+We're building the knowledge layer for the Agent era. If that sounds like work you want to do, reach out. Decode the address below and drop us a line:
 
 ```bash
 echo 'dGVhbUBrbm93aGVyZXRvLmFp' | base64 --decode
