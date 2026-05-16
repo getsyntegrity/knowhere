@@ -35,7 +35,7 @@
 
 **Knowhere is the memory layer between complex, dirty documents and AI agents.**
 
-It ingests unstructured documents and produces persistent, navigable memory: parsing, hierarchy extraction, multi-modal structuring, and graph construction in a single pipeline. The output is structured, high-quality context ready for *Agentic RAG*, *traditional RAG*, or any LLM workflow.
+It ingests unstructured documents and produces persistent, navigable memory: parsing, hierarchy extraction, multi-modal structuring, and graph construction in a single pipeline. Every chunk retains full semantic context, making the output a natural fit for *Agentic RAG*, *vector-based RAG*, or any LLM workflow.
 
 > [!NOTE]
 > **Get started in seconds with Knowhere Cloud.**
