@@ -33,7 +33,7 @@
 
 ## What We Are
 
-**Knowhere is the memory layer between raw documents and AI agents.**
+**Knowhere is the memory layer between complex, dirty documents and AI agents.**
 
 It ingests unstructured documents and produces persistent, navigable memory: parsing, hierarchy extraction, multi-modal structuring, and graph construction in a single pipeline. The output is structured, high-quality context ready for *Agentic RAG*, *traditional RAG*, or any LLM workflow.
 
@@ -57,7 +57,7 @@ Knowhere runs in two steps: build memory from documents, then let agents retriev
 </p>
 
 - **Parse**: Route PDFs, Office files, images, tables, Markdown, and text to specialized parsers.
-- **Structure**: Preserve headings, section paths, multi-modal assets, and chunk relationships.
+- **Structure**: Our proprietary Tree-like algorithm reconstructs the full document hierarchy instead of flattening it into a sequence, preventing semantic fragmentation across chunks.
 - **Build Memory**: Store chunks, navigation trees, summaries, and graph links as agent-ready context.
 
 ### Step 2: Agentic Retrieval
