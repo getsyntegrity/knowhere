@@ -31,7 +31,7 @@
   🖥️ <a href="https://github.com/Ontos-AI/knowhere-dashboard">Dashboard</a>
 </p>
 
-## What We Are
+## Overview
 
 **Knowhere is the memory layer between complex, dirty documents and AI agents.**
 
