@@ -48,7 +48,7 @@ It ingests unstructured documents and produces persistent, navigable memory: par
 
 ## How it Works
 
-The pipeline runs in two steps.
+Knowhere runs in two steps: build memory from documents, then let agents retrieve from it.
 
 ### Step 1: Parse and Build Memory
 
@@ -69,6 +69,20 @@ The pipeline runs in two steps.
 - **Discover**: Fuse keyword, path, content, and semantic signals for broad first-pass coverage.
 - **Navigate**: Walk section trees and graph links to drill into the most relevant document regions.
 - **Cite Evidence**: Return traceable results with source document, section, chunk, and linked assets.
+
+## FAQ
+
+**Q: What is Knowhere's relationship with MinerU?**
+A: Knowhere uses MinerU as its default parser because it performs best in our tests. Any parser only gets you raw Markdown. Knowhere's value is what comes after: hierarchy reconstruction, multi-modal normalization, and cross-document graph construction. Any Markdown-outputting tool works.
+
+**Q: What LLM / VLM dependencies does Knowhere have?**
+A: By default, DeepSeek (`deepseek-chat`) handles text and table summarization, and Qwen-VL (`qwen3.5-flash`) handles image OCR and descriptions. Knowhere is model-agnostic. Swap in OpenAI, DashScope, Zhipu, or Volcengine via environment variables.
+
+**Q: How is Agentic Retrieval different from traditional RAG?**
+A: Traditional RAG does a flat vector lookup and returns isolated snippets. Knowhere's agents navigate the document's section tree and cross-document graph, drilling into the most relevant regions the way a human reader would, returning traceable, well-contextualized evidence.
+
+**Q: Does it handle images and tables?**
+A: Yes. Knowhere extracts them, runs them through VLMs for summarization and feature extraction, and links them back to their source chunks so agents can retrieve and cite multi-modal assets at inference time.
 
 ## Performance Benchmark
 
@@ -105,20 +119,6 @@ Agents using Knowhere outperform those working from raw documents or MinerU-pars
 - **Lightweight Memory Graph**: Context-aware organization that links documents and chunks for better relationship understanding.
 - **Agentic RAG**: A hybrid retrieval engine combining traditional search (RRF) with autonomous agent navigation.
 - **Evidence-based Citations**: Every result is backed by traceable source paths, ensuring reliability for AI Agent decision-making.
-
-## Frequently Asked Questions (FAQ)
-
-**Q: What is Knowhere's relationship with MinerU?**
-A: Knowhere uses MinerU as its default parser because it performs best in our tests. Any parser only gets you raw Markdown. Knowhere's value is what comes after: hierarchy reconstruction, multi-modal normalization, and cross-document graph construction. Any Markdown-outputting tool works.
-
-**Q: What LLM / VLM dependencies does Knowhere have?**
-A: By default, DeepSeek (`deepseek-chat`) handles text and table summarization, and Qwen-VL (`qwen3.5-flash`) handles image OCR and descriptions. Knowhere is model-agnostic. Swap in OpenAI, DashScope, Zhipu, or Volcengine via environment variables.
-
-**Q: How is Agentic Retrieval different from traditional RAG?**
-A: Traditional RAG does a flat vector lookup and returns isolated snippets. Knowhere's agents navigate the document's section tree and cross-document graph, drilling into the most relevant regions the way a human reader would, returning traceable, well-contextualized evidence.
-
-**Q: Does it handle images and tables?**
-A: Yes. Knowhere extracts them, runs them through VLMs for summarization and feature extraction, and links them back to their source chunks so agents can retrieve and cite multi-modal assets at inference time.
 
 ## Supported Formats
 
@@ -246,7 +246,7 @@ If you use Knowhere in your research, please cite it as:
 ```bibtex
 @software{knowhere2026,
   author       = {Ontos AI},
-  title        = {Knowhere: Build AI Agent Memory from Real-World Documents},
+  title        = {Knowhere: Prepare Unstructured Data for AI Agents},
   year         = {2026},
   publisher    = {GitHub},
   url          = {https://github.com/Ontos-AI/knowhere},
