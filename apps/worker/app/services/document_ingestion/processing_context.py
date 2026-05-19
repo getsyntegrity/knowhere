@@ -1,24 +1,21 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from shared.core.config import settings
 from shared.core.database_sync import get_sync_db_context
 from shared.core.exceptions.domain_exceptions import (
     NotFoundException,
-    ValidationException,
 )
 from shared.models.database.job import Job
 from shared.services.redis.redis_sync_service import (
     SyncJobInfoRedisService,
     SyncJobMetadataService,
 )
-from shared.services.storage.job_file_storage import JobFileStorage
 
 
 @dataclass(frozen=True)
@@ -37,15 +34,13 @@ def load_parse_job_context(
 ) -> ParseJobContext:
     job_info_service = SyncJobInfoRedisService(redis_service)
     job_info = job_info_service.get_job_info(job_id)
+    job_row: Job | None = None
 
     if not job_info:
         logger.warning(
             f"JobInfo not found in Redis for job_id={job_id}; falling back to database"
         )
-        with get_sync_db_context() as fallback_db:
-            job_row = fallback_db.execute(
-                select(Job).where(Job.job_id == job_id)
-            ).scalar_one_or_none()
+        job_row = _load_job_row(job_id)
 
         if not job_row or not job_row.s3_key:
             raise NotFoundException(
@@ -57,6 +52,17 @@ def load_parse_job_context(
         s3_key: str = job_row.s3_key
         job_user_id: str | None = (
             str(job_row.user_id) if job_row.user_id else requested_user_id
+        )
+        job_info_service.save_job_info(
+            job_id,
+            {
+                "job_id": job_id,
+                "s3_key": s3_key,
+                "user_id": job_user_id,
+                "webhook_enabled": bool(job_row.webhook_enabled),
+                "job_type": "document_ingestion",
+                "source_type": job_row.source_type,
+            },
         )
         logger.info(f"Recovered JobInfo from database: job_id={job_id}, s3_key={s3_key}")
     else:
@@ -77,11 +83,17 @@ def load_parse_job_context(
     metadata_service = SyncJobMetadataService(redis_service)
     raw_job_metadata = metadata_service.get_metadata(job_id)
     if not isinstance(raw_job_metadata, dict) or not raw_job_metadata:
-        raise NotFoundException(
-            resource="JobMetadata",
-            resource_id=job_id,
-            internal_message=f"Job metadata not found for job_id={job_id}",
-        )
+        job_row = job_row or _load_job_row(job_id)
+        raw_job_metadata = job_row.job_metadata if job_row else None
+        if isinstance(raw_job_metadata, dict) and raw_job_metadata:
+            metadata_service.save_metadata(job_id, raw_job_metadata)
+            logger.info(f"Recovered JobMetadata from database: job_id={job_id}")
+        else:
+            raise NotFoundException(
+                resource="JobMetadata",
+                resource_id=job_id,
+                internal_message=f"Job metadata not found for job_id={job_id}",
+            )
 
     return ParseJobContext(
         job_metadata=dict(raw_job_metadata),
@@ -92,30 +104,10 @@ def load_parse_job_context(
     )
 
 
-def assert_source_file_within_size_limit(s3_key: str) -> None:
-    file_info = JobFileStorage().verify_upload_exists(s3_key)
-    if not file_info.get("exists"):
-        raise NotFoundException(
-            resource="S3File",
-            resource_id=s3_key,
-            internal_message=f"S3 file not found: {s3_key}",
-        )
+def _load_job_row(job_id: str) -> Job | None:
+    with get_sync_db_context() as fallback_db:
+        return _select_job_row(fallback_db, job_id)
 
-    logger.info(f"S3 file verified: {s3_key}")
 
-    file_size = file_info.get("size", 0)
-    file_extension = os.path.splitext(s3_key)[1].lower()
-    if file_size > settings.MAX_FILE_SIZE:
-        limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
-        raise ValidationException(
-            user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
-            violations=[
-                {
-                    "field": "file_size",
-                    "description": (
-                        f"Size {file_size} bytes exceeds limit of "
-                        f"{settings.MAX_FILE_SIZE} bytes"
-                    ),
-                }
-            ],
-        )
+def _select_job_row(db: Session, job_id: str) -> Job | None:
+    return db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()

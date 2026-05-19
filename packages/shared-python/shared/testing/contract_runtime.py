@@ -41,6 +41,9 @@ _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _API_ROOT: Path = _REPO_ROOT / "apps" / "api"
 _SHARED_ROOT: Path = _REPO_ROOT / "packages" / "shared-python"
 _TEST_TMP_ROOT: Path = Path("/tmp/knowhere-api-tests")
+_TEST_OBJECT_STORAGE_ROOT: Path = _TEST_TMP_ROOT / "object-storage"
+_CONTRACT_UPLOADS_BUCKET: str = "knowhere-test-bucket"
+_CONTRACT_RESULTS_BUCKET: str = "knowhere-test-results"
 _STATIC_TABLES_TO_PRESERVE: frozenset[str] = frozenset(
     {
         "alembic_version",
@@ -328,16 +331,19 @@ def configure_contract_environment(
             f"redis://{CONTRACT_REDIS_HOST}:{CONTRACT_REDIS_PORT}/{CONTRACT_REDIS_DATABASE}"
         ),
         "TMP_PATH": str(_TEST_TMP_ROOT),
-        "S3_BUCKET_NAME": "knowhere-test-bucket",
+        "S3_TYPE": "filesystem",
+        "S3_BUCKET_NAME": _CONTRACT_UPLOADS_BUCKET,
         "S3_ACCESS_KEY_ID": "test-access-key",
         "S3_SECRET_ACCESS_KEY": "test-secret-key",
         "S3_TEMP_PATH": str(_TEST_TMP_ROOT),
-        "S3_ENDPOINT_URL": "http://127.0.0.1:4566",
-        "S3_PRIVATE_DOMAIN": "http://127.0.0.1:4566",
-        "S3_RESULTS_BUCKET": "knowhere-test-results",
+        "S3_ENDPOINT_URL": "",
+        "S3_PRIVATE_DOMAIN": "",
+        "S3_RESULTS_BUCKET": _CONTRACT_RESULTS_BUCKET,
+        "OBJECT_STORAGE_LOCAL_ROOT": str(_TEST_OBJECT_STORAGE_ROOT),
         "S3_REGION": "us-west-1",
         "S3_USE_SSL": "false",
         "S3_ADDRESSING_STYLE": "path",
+        "BILLING_ENABLED": "false",
         "STRIPE_SECRET_KEY": "sk_test_contract_secret",
         "STRIPE_WEBHOOK_SECRET": "whsec_contract_test_secret",
         "DS_KEY": "test-deepseek-key",
@@ -346,9 +352,6 @@ def configure_contract_environment(
         "QSTASH_NEXT_SIGNING_KEY": "qstash-next-test-key",
         "QSTASH_CALLBACK_BASE_URL": "http://localhost:5005/api/v1",
     }
-
-    if "BILLING_ENABLED" not in os.environ:
-        environment["BILLING_ENABLED"] = "true"
 
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
@@ -377,9 +380,25 @@ def clear_application_modules() -> None:
             sys.modules.pop(module_name, None)
             continue
 
+        if module_name == "shared.services.billing" or module_name.startswith(
+            "shared.services.billing."
+        ):
+            sys.modules.pop(module_name, None)
+            continue
+
         if module_name == "shared.services.jobs" or module_name.startswith(
             "shared.services.jobs."
         ):
+            sys.modules.pop(module_name, None)
+            continue
+
+        if module_name == "app.services.document_ingestion" or module_name.startswith(
+            "app.services.document_ingestion."
+        ):
+            sys.modules.pop(module_name, None)
+            continue
+
+        if module_name == "app.core.tasks.document_ingestion_tasks":
             sys.modules.pop(module_name, None)
             continue
 
@@ -702,6 +721,7 @@ async def prepare_contract_storage() -> None:
 
     await reset_contract_database()
     await reset_contract_redis()
+    reset_contract_object_storage()
 
 
 async def seed_contract_developer() -> dict[str, str | int]:
@@ -779,3 +799,15 @@ async def reset_contract_redis() -> None:
         await redis_client.flushdb()
     finally:
         await redis_client.aclose()
+
+
+def reset_contract_object_storage() -> None:
+    shutil.rmtree(_TEST_OBJECT_STORAGE_ROOT, ignore_errors=True)
+    (_TEST_OBJECT_STORAGE_ROOT / _CONTRACT_UPLOADS_BUCKET).mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    (_TEST_OBJECT_STORAGE_ROOT / _CONTRACT_RESULTS_BUCKET).mkdir(
+        parents=True,
+        exist_ok=True,
+    )

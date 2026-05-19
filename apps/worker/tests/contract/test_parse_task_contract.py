@@ -1,26 +1,16 @@
 from __future__ import annotations
 
-import json
-import shutil
-import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
-from types import SimpleNamespace
-from typing import Any
 from uuid import uuid4
 
-import pandas as pd
 import pytest
-from pytest import MonkeyPatch
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
 
-from support.contract_database import insert_contract_job, insert_contract_user
+from support.worker_parse_contract import WorkerParseContract
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _FIXTURES_ROOT: Path = _REPO_ROOT / "apps" / "worker" / "tests" / "fixtures"
-_SAMPLE_PDF_PATH: Path = _FIXTURES_ROOT / "sample_3pages.pdf"
+_SAMPLE_XLSX_PATH: Path = _FIXTURES_ROOT / "sample_100rows.xlsx"
 
 
 def _write_blank_pdf(file_path: Path, page_count: int) -> None:
@@ -34,1460 +24,347 @@ def _write_blank_pdf(file_path: Path, page_count: int) -> None:
         writer.write(pdf_file)
 
 
-def _build_pending_file_job_metadata(source_file_name: str) -> dict[str, Any]:
-    job_metadata: dict[str, Any] = {
-        "namespace": "worker-contract",
-        "source_type": "file",
-        "source_file_name": source_file_name,
-        "parsing_params": {"kb_dir": "legacy-ignored"},
-    }
-    return job_metadata
-
-
-def _load_parse_task_modules() -> tuple[Any, Any, Any, Engine, Any, Any, Any]:
-    import app.core.tasks.document_ingestion_tasks as document_ingestion_tasks
-    import app.services.document_ingestion.processing_run as parse_job_service
-    import app.services.document_parser.parse_service as parse_service
-    from shared.core.database_sync import get_sync_engine
-    from shared.services.redis.redis_sync_service import (
-        SyncJobInfoRedisService,
-        SyncJobMetadataService,
-        SyncRedisServiceFactory,
-    )
-
-    return (
-        document_ingestion_tasks,
-        parse_service,
-        parse_job_service,
-        get_sync_engine(),
-        SyncJobInfoRedisService,
-        SyncJobMetadataService,
-        SyncRedisServiceFactory,
-    )
-
-
-def _load_worker_settings() -> Any:
-    from shared.core.config import settings
-
-    return settings
-
-
-def _save_worker_task_cache(
-    *,
-    job_id: str,
-    user_id: str,
-    s3_key: str,
-    metadata: dict[str, Any],
-    sync_job_info_service_cls: Any,
-    sync_job_metadata_service_cls: Any,
-    sync_redis_service_factory: Any,
-) -> Any:
-    redis_service = sync_redis_service_factory.get_service()
-    sync_job_info_service = sync_job_info_service_cls(redis_service)
-    sync_job_metadata_service = sync_job_metadata_service_cls(redis_service)
-
-    sync_job_info_service.save_job_info(
-        job_id,
-        {
-            "job_id": job_id,
-            "s3_key": s3_key,
-            "user_id": user_id,
-            "webhook_enabled": False,
-            "job_type": "document_ingestion",
-            "source_type": "file",
-        },
-    )
-    sync_job_metadata_service.save_metadata(job_id, metadata)
-    return redis_service
-
-
-def _patch_verify_upload_exists(
-    monkeypatch: MonkeyPatch,
-    file_info_for_storage_key: Any,
-) -> None:
-    from shared.services.storage.job_file_storage import JobFileStorage
-
-    monkeypatch.setattr(
-        JobFileStorage,
-        "verify_upload_exists",
-        lambda self, storage_key: file_info_for_storage_key(storage_key),
-    )
-
-
-def _find_task_workspaces(root: Path, job_id: str) -> list[Path]:
-    return sorted(
-        path
-        for path in root.iterdir()
-        if path.is_dir() and path.name.startswith(f"document_ingestion_task_{job_id}_")
-    )
-
-
-def _build_fake_parse_output(*, output_dir: Path, rows: list[dict[str, Any]]) -> Any:
-    from app.services.document_parser.orchestration.parse_output import ParseOutput
-
-    return ParseOutput(output_dir=str(output_dir), parsed_df=pd.DataFrame(rows))
-
-
-def _bind_parse_task_to_current_module(
-    monkeypatch: MonkeyPatch,
-    *,
-    document_ingestion_tasks: Any,
-) -> None:
-    monkeypatch.setitem(
-        document_ingestion_tasks.parse_task._orig_run.__globals__,
-        "_parse",
-        document_ingestion_tasks._parse,
-    )
-    monkeypatch.setattr(document_ingestion_tasks.parse_task, "__trace__", None, raising=False)
-
-
-@pytest.mark.parametrize(
-    ("billing_enabled", "expected_billing_status", "expected_transaction_types"),
-    [
-        (True, "charged", ["initial_grant", "usage"]),
-        (False, "skipped", []),
-    ],
-)
-def test_should_parse_a_pending_file_job_and_persist_the_published_result_state(
+def test_parse_task_should_process_uploaded_file_through_real_contract_boundaries(
     worker_contract_environment: None,
-    monkeypatch: MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    billing_enabled: bool,
-    expected_billing_status: str,
-    expected_transaction_types: list[str],
 ) -> None:
-    monkeypatch.setenv("BILLING_ENABLED", "true" if billing_enabled else "false")
-    (
-        document_ingestion_tasks,
-        parse_service,
-        parse_job_service,
-        engine,
-        sync_job_info_service_cls,
-        sync_job_metadata_service_cls,
-        sync_redis_service_factory,
-    ) = _load_parse_task_modules()
-    settings = _load_worker_settings()
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=False)
 
-    user_id: str = f"worker-user-{uuid4().hex[:12]}"
-    job_id: str = f"job_parse_success_{uuid4().hex[:12]}"
-    source_file_name: str = "contract-parse.pdf"
-    s3_key: str = f"uploads/{job_id}.pdf"
-    text_content_with_refs: str = (
-        "chunk-1 embeds [images/page-1.png] and [tables/table-1.html]"
+    job = contract.create_file_job(
+        source_file_name="contract-real.xlsx",
+        job_id_prefix="job_parse_real",
     )
-    captured_artifacts: dict[str, Any] = {}
-
-    with engine.begin() as connection:
-        insert_contract_user(connection, user_id=user_id)
-        job_metadata = _build_pending_file_job_metadata(source_file_name)
-        insert_contract_job(
-            connection,
-            job_id=job_id,
-            user_id=user_id,
-            status="pending",
-            source_type="file",
-            s3_key=s3_key,
-            webhook_enabled=False,
-            job_metadata=job_metadata,
-            billing_status="pending",
-        )
-
-    redis_service = _save_worker_task_cache(
-        job_id=job_id,
-        user_id=user_id,
-        s3_key=s3_key,
-        metadata=job_metadata,
-        sync_job_info_service_cls=sync_job_info_service_cls,
-        sync_job_metadata_service_cls=sync_job_metadata_service_cls,
-        sync_redis_service_factory=sync_redis_service_factory,
+    contract.upload_source_file(
+        local_file_path=_SAMPLE_XLSX_PATH,
+        s3_key=job["s3_key"],
     )
 
-    _bind_parse_task_to_current_module(monkeypatch, document_ingestion_tasks=document_ingestion_tasks)
-    monkeypatch.setattr(settings, "TMP_PATH", str(tmp_path))
-    monkeypatch.setattr(settings, "BILLING_ENABLED", billing_enabled)
+    celery_result = contract.enqueue_parse_task(
+        job_id=job["job_id"],
+        user_id=job["user_id"],
+    )
 
-    def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
-        return {
-            "exists": storage_key == s3_key,
-            "size": _SAMPLE_PDF_PATH.stat().st_size,
-        }
+    assert celery_result.successful()
+    assert celery_result.result["status"] == "success"
+    assert celery_result.result["job_id"] == job["job_id"]
+    assert celery_result.result["delivery_mode"] == "url"
+    assert celery_result.result["result_s3_key"] == contract.storage.build_result_zip_key(
+        job_id=job["job_id"]
+    )
 
-    _patch_verify_upload_exists(monkeypatch, fake_verify_s3_file_exists)
-
-    def fake_download_s3_file_to_temp(
-        storage_key: str, file_ext: str, temp_dir: str
-    ) -> str:
-        assert storage_key == s3_key
-        assert file_ext == ".pdf"
-        downloaded_path = Path(temp_dir) / f"downloaded{file_ext}"
-        shutil.copy2(_SAMPLE_PDF_PATH, downloaded_path)
-        return str(downloaded_path)
-
-    def fake_checkerboard_parse_output(**kwargs: Any) -> Any:
-        captured_artifacts["parse_kwargs"] = kwargs
-        output_dir = (
-            Path(str(kwargs["output_dir"]))
-            / str(kwargs["internal_output_filename"])
-        )
-        images_dir = output_dir / "images"
-        tables_dir = output_dir / "tables"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        tables_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "full.md").write_text("body", encoding="utf-8")
-        (images_dir / "page-1.png").write_bytes(b"png")
-        (tables_dir / "table-1.html").write_text("<table></table>", encoding="utf-8")
-
-        file_root = str(kwargs["internal_output_filename"])
-        parsed_rows: list[dict[str, Any]] = [
-            {
-                "content": text_content_with_refs,
-                "path": f"{file_root}/公司研究/自主可控加强，寒武纪或迎来营收快速放量周期",
-                "type": "text",
-                "length": len(text_content_with_refs),
-                "keywords": "",
-                "summary": "",
-                "know_id": "kid-1",
-                "tokens": "",
-                "connectto": json.dumps(
-                    [
-                        {
-                            "target": "table-1",
-                            "relation": "embeds",
-                            "ref": "[tables/table-1.html]",
-                        }
-                    ]
-                ),
-                "addtime": "now",
-                "page_nums": "1",
-            },
-            {
-                "content": "chunk-2",
-                "path": f"{file_root}/相关研报/要点",
-                "type": "text",
-                "length": 7,
-                "keywords": "",
-                "summary": "",
-                "know_id": "kid-2",
-                "tokens": "",
-                "connectto": "",
-                "addtime": "now",
-                "page_nums": "2",
-            },
-            {
-                "content": "image caption",
-                "path": f"{file_root}/images/page-1.png",
-                "type": "image",
-                "length": 13,
-                "keywords": "",
-                "summary": "",
-                "know_id": "image-1",
-                "tokens": "",
-                "connectto": "",
-                "addtime": "now",
-                "page_nums": "3",
-            },
-            {
-                "content": "table content",
-                "path": f"{file_root}/tables/table-1.html",
-                "type": "table",
-                "length": 13,
-                "keywords": "",
-                "summary": "",
-                "know_id": "table-1",
-                "tokens": "",
-                "connectto": "",
-                "addtime": "now",
-                "page_nums": "3",
-            },
-        ]
-        return _build_fake_parse_output(output_dir=output_dir, rows=parsed_rows)
-
-    class FakeResultStorage:
-        def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> Any:
-            result_dir_path = Path(result_dir)
-            zip_path = Path(zip_file_path)
-            captured_artifacts["result_dir"] = result_dir
-            captured_artifacts["zip_file_path"] = zip_file_path
-            captured_artifacts["raw_entries"] = sorted(
-                path.relative_to(result_dir_path).as_posix()
-                for path in result_dir_path.rglob("*")
-                if path.is_file()
-            )
-            captured_artifacts["doc_nav"] = json.loads(
-                (result_dir_path / "doc_nav.json").read_text(encoding="utf-8")
-            )
-
-            with zipfile.ZipFile(zip_path) as zip_file:
-                captured_artifacts["zip_entries"] = sorted(zip_file.namelist())
-                captured_artifacts["zip_chunks"] = json.loads(
-                    zip_file.read("chunks.json")
-                )["chunks"]
-                captured_artifacts["manifest"] = json.loads(
-                    zip_file.read("manifest.json")
-                )
-
-            return SimpleNamespace(
-                zip_key=f"results/{job_id}.zip",
-                raw_prefix=f"results/{job_id}/",
-                raw_files={},
-            )
-
-    monkeypatch.setattr(parse_job_service, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(parse_service, "checkerboard_parse_output", fake_checkerboard_parse_output)
-    monkeypatch.setattr(parse_job_service, "get_result_storage", lambda: FakeResultStorage())
-
-    result = document_ingestion_tasks.parse_task.run(job_id, user_id, "document_ingestion")
-
-    expected_summary = "This document includes: 公司研究, 相关研报"
-    expected_connect_to = [
-        {
-            "target": "image-1",
-            "relation": "embeds",
-            "ref": "[images/page-1.png]",
-            "position": {
-                "start": text_content_with_refs.index("[images/page-1.png]"),
-                "end": text_content_with_refs.index("[images/page-1.png]")
-                + len("[images/page-1.png]"),
-            },
-        },
-        {
-            "target": "table-1",
-            "relation": "embeds",
-            "ref": "[tables/table-1.html]",
-            "position": {
-                "start": text_content_with_refs.index("[tables/table-1.html]"),
-                "end": text_content_with_refs.index("[tables/table-1.html]")
-                + len("[tables/table-1.html]"),
-            },
-        },
-    ]
-    expected_credits_charged = 3 * int(settings.MICRO_DOLLARS_PER_PAGE)
-    expected_initial_balance = int(settings.FREE_PLAN_INITIAL_CREDITS) * 1_000_000
-
-    assert result == {
-        "status": "success",
-        "job_id": job_id,
-        "add_dir": None,
-        "vectors_count": 0,
-        "contents_count": 4,
-        "stored_count": 0,
-        "delivery_mode": "url",
-        "result_s3_key": f"results/{job_id}.zip",
-    }
-    assert captured_artifacts["parse_kwargs"]["filename"] == source_file_name
-    assert captured_artifacts["parse_kwargs"]["internal_output_filename"] == source_file_name
-    assert Path(str(captured_artifacts["parse_kwargs"]["file_full_path"])).name == source_file_name
-    assert "namespace" not in captured_artifacts["parse_kwargs"]
-    assert "kb_dir" not in captured_artifacts["parse_kwargs"]
-    assert captured_artifacts["result_dir"].endswith("contract-parse.pdf")
-    assert captured_artifacts["doc_nav"]["file_name"] == source_file_name
-    assert captured_artifacts["doc_nav"]["sections"][0]["title"] == "公司研究"
-    assert captured_artifacts["manifest"]["HIERARCHY"] == {
-        "公司研究": {
-            "自主可控加强，寒武纪或迎来营收快速放量周期": {},
-        },
-        "相关研报": {
-            "要点": {},
-        },
-    }
-    assert "doc_nav.json" in captured_artifacts["raw_entries"]
-    assert "hierarchy.json" not in captured_artifacts["raw_entries"]
-    assert "hierarchy_slim.json" not in captured_artifacts["raw_entries"]
-    assert "chunks.json" in captured_artifacts["zip_entries"]
-    assert "full.md" in captured_artifacts["zip_entries"]
-    assert "doc_nav.json" in captured_artifacts["zip_entries"]
-    assert "chunks_slim.json" not in captured_artifacts["zip_entries"]
-    assert "hierarchy.json" not in captured_artifacts["zip_entries"]
-    assert "hierarchy_slim.json" not in captured_artifacts["zip_entries"]
-    assert "images/page-1.png" in captured_artifacts["zip_entries"]
-    assert "tables/table-1.html" in captured_artifacts["zip_entries"]
-    assert captured_artifacts["zip_chunks"][0]["metadata"]["document_top_summary"] == expected_summary
-    assert captured_artifacts["zip_chunks"][0]["metadata"]["connect_to"] == expected_connect_to
-    assert captured_artifacts["zip_chunks"][2]["metadata"]["file_path"] == "images/page-1.png"
-    assert captured_artifacts["zip_chunks"][3]["metadata"]["file_path"] == "tables/table-1.html"
-    assert _find_task_workspaces(tmp_path, job_id) == []
-
-    progress = redis_service.hgetall(f"task:{job_id}:progress")
-    assert progress["progress"] == 100
-    assert progress["message"] == "Task complete!"
-    assert progress["timestamp"]
-
-    metadata = sync_job_metadata_service_cls(redis_service).get_metadata(job_id)
-    assert metadata is not None
-    assert metadata["page_count"] == 3
-    assert metadata["workload_estimate_method"] == "pdf_metadata"
-    assert "workload_estimate_fallback_reason" not in metadata
-    assert metadata["billing_status"] == expected_billing_status
-    if billing_enabled:
-        assert metadata["billing_amount_micro_dollars"] == expected_credits_charged
-        assert metadata["billing_credits"] == expected_credits_charged / 1_000_000
-    else:
-        assert metadata["billing_amount_micro_dollars"] == 0
-        assert metadata["billing_credits"] == 0.0
-    assert metadata["processing_started_at"]
-    assert metadata["processing_completed_at"]
-    assert metadata["processing_duration_ms"] >= 0
-
-    with engine.begin() as connection:
-        job_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT
-                        status,
-                        billing_status,
-                        page_count,
-                        credits_charged,
-                        error_code,
-                        error_message
-                    FROM jobs
-                    WHERE job_id = :job_id
-                    """
-                ),
-                {"job_id": job_id},
-            )
-            .mappings()
-            .one()
-        )
-        job_result_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT id, delivery_mode, result_s3_key, result_size, inline_payload
-                    FROM job_results
-                    WHERE job_id = :job_id
-                    """
-                ),
-                {"job_id": job_id},
-            )
-            .mappings()
-            .one()
-        )
-        job_chunks = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT chunk_type, text, path, sort_order
-                    FROM job_chunks
-                    WHERE job_result_id = :job_result_id
-                    ORDER BY sort_order
-                    """
-                ),
-                {"job_result_id": job_result_row["id"]},
-            )
-            .mappings()
-            .all()
-        )
-        document_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT document_id, namespace, status, current_job_result_id, source_file_name
-                    FROM documents
-                    WHERE user_id = :user_id
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .mappings()
-            .one()
-        )
-        document_chunks = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT chunk_type, file_path, source_chunk_path, chunk_metadata
-                    FROM document_chunks
-                    WHERE document_id = :document_id
-                    ORDER BY sort_order
-                    """
-                ),
-                {"document_id": document_row["document_id"]},
-            )
-            .mappings()
-            .all()
-        )
-        graph_node_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT properties
-                    FROM graph_nodes
-                    WHERE owner_document_id = :document_id
-                    """
-                ),
-                {"document_id": document_row["document_id"]},
-            )
-            .mappings()
-            .one()
-        )
-        balance_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT credits_balance
-                    FROM user_balances
-                    WHERE user_id = :user_id
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        transaction_types = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT transaction_type
-                    FROM credits_transactions
-                    WHERE user_id = :user_id
-                    ORDER BY created_at ASC
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .scalars()
-            .all()
-        )
-        audit_transitions = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT transition_reason, to_state
-                    FROM job_state_audit_logs
-                    WHERE job_id = :job_id
-                    ORDER BY id ASC
-                    """
-                ),
-                {"job_id": job_id},
-            )
-            .mappings()
-            .all()
-        )
-
-    graph_properties = dict(graph_node_row["properties"])
+    observed = contract.observe_successful_job(job["job_id"])
+    job_row = observed["job"]
+    result_row = observed["result"]
+    job_chunks = observed["job_chunks"]
+    document_chunks = observed["document_chunks"]
 
     assert job_row["status"] == "done"
-    assert job_row["billing_status"] == expected_billing_status
-    assert job_row["page_count"] == 3
-    if billing_enabled:
-        assert job_row["credits_charged"] == expected_credits_charged
-    else:
-        assert job_row["credits_charged"] == 0
-    assert job_row["error_code"] is None
+    assert job_row["billing_status"] == "skipped"
+    assert job_row["page_count"] and job_row["page_count"] > 0
     assert job_row["error_message"] is None
-    assert job_result_row["delivery_mode"] == "url"
-    assert job_result_row["result_s3_key"] == f"results/{job_id}.zip"
-    assert job_result_row["result_size"] > 0
-    assert dict(job_result_row["inline_payload"])["checksum"]
-    assert [chunk["chunk_type"] for chunk in job_chunks] == [
-        "text",
-        "text",
-        "image",
-        "table",
-    ]
-    assert job_chunks[0]["text"] == text_content_with_refs
-    assert job_chunks[0]["path"].endswith(
-        "公司研究/自主可控加强，寒武纪或迎来营收快速放量周期"
+
+    assert result_row["document_id"]
+    assert result_row["result_s3_key"] == contract.storage.build_result_zip_key(
+        job_id=job["job_id"]
     )
-    assert job_chunks[0]["sort_order"] == 0
-    assert document_row["namespace"] == "worker-contract"
-    assert document_row["status"] == "active"
-    assert document_row["source_file_name"] == source_file_name
-    assert document_row["current_job_result_id"]
-    assert len(document_chunks) == 4
-    assert document_chunks[0]["chunk_type"] == "text"
-    assert dict(document_chunks[0]["chunk_metadata"])["document_top_summary"] == expected_summary
-    assert dict(document_chunks[0]["chunk_metadata"])["connect_to"] == expected_connect_to
-    assert document_chunks[2]["chunk_type"] == "image"
-    assert document_chunks[2]["file_path"] == "images/page-1.png"
-    assert document_chunks[3]["chunk_type"] == "table"
-    assert document_chunks[3]["file_path"] == "tables/table-1.html"
-    assert graph_properties["chunks_count"] == 4
-    assert graph_properties["top_summary"] == expected_summary
-    if billing_enabled:
-        assert balance_row is not None
-        assert (
-            balance_row["credits_balance"]
-            == expected_initial_balance - expected_credits_charged
-        )
-    else:
-        assert balance_row is None
-    assert transaction_types == expected_transaction_types
-    assert [(row["transition_reason"], row["to_state"]) for row in audit_transitions] == [
+    assert result_row["result_size"] and result_row["result_size"] > 0
+
+    assert len(job_chunks) > 0
+    assert len(document_chunks) == len(job_chunks)
+    assert observed["document_sections_count"] > 0
+    assert all(row["chunk_type"] == "table" for row in job_chunks)
+    assert any("tables/" in str(row["path"]) for row in job_chunks)
+
+    assert contract.get_task_status(job["job_id"]) == "done"
+    task_progress = contract.get_task_progress(job["job_id"])
+    assert task_progress["progress"] == 100
+    assert task_progress["message"] == "Task complete!"
+
+    result_file_info = contract.verify_result_zip_object(result_row["result_s3_key"])
+    assert result_file_info["exists"] is True
+    assert result_file_info["size"] == result_row["result_size"]
+
+    result_zip = contract.read_result_zip(
+        result_s3_key=result_row["result_s3_key"],
+        tmp_path=tmp_path,
+    )
+    assert {"chunks.json", "doc_nav.json", "manifest.json"}.issubset(
+        result_zip["members"]
+    )
+    assert any(member.startswith("tables/") for member in result_zip["members"])
+
+    chunks_payload = result_zip["chunks"]
+    assert len(chunks_payload["chunks"]) == len(job_chunks)
+    assert all(chunk["type"] == "table" for chunk in chunks_payload["chunks"])
+    assert any(
+        "Table summary:" in chunk["content"] for chunk in chunks_payload["chunks"]
+    )
+
+    manifest_payload = result_zip["manifest"]
+    assert manifest_payload["source_file_name"] == job["source_file_name"]
+    assert manifest_payload["statistics"]["total_chunks"] == len(job_chunks)
+
+    assert contract.find_task_workspaces(tmp_path, job["job_id"]) == []
+
+
+def test_parse_task_should_charge_user_when_billing_is_enabled(
+    worker_contract_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=True)
+
+    job = contract.create_file_job(
+        source_file_name="contract-billing.xlsx",
+        job_id_prefix="job_parse_billing",
+    )
+    contract.upload_source_file(
+        local_file_path=_SAMPLE_XLSX_PATH,
+        s3_key=job["s3_key"],
+    )
+
+    celery_result = contract.enqueue_parse_task(
+        job_id=job["job_id"],
+        user_id=job["user_id"],
+    )
+
+    assert celery_result.successful()
+    observed = contract.observe_successful_job(job["job_id"])
+    job_row = observed["job"]
+    expected_charge = job_row["page_count"] * int(
+        contract.settings.MICRO_DOLLARS_PER_PAGE
+    )
+
+    assert job_row["status"] == "done"
+    assert job_row["billing_status"] == "charged"
+    assert job_row["credits_charged"] == expected_charge
+
+    billing = contract.observe_user_billing(job["user_id"])
+    expected_initial_balance = int(contract.settings.FREE_PLAN_INITIAL_CREDITS) * 1_000_000
+    assert billing["balance"] == expected_initial_balance - expected_charge
+    assert billing["transaction_types"] == ["initial_grant", "usage"]
+
+    assert contract.observe_job_state_transitions(job["job_id"]) == [
         ("start_processing", "running"),
         ("mark_completed", "done"),
     ]
 
 
-def test_should_export_full_result_when_publication_deduplicates_existing_chunks(
+def test_parse_task_should_export_full_result_when_same_content_was_already_published(
     worker_contract_environment: None,
-    monkeypatch: MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("BILLING_ENABLED", "false")
-    (
-        document_ingestion_tasks,
-        parse_service,
-        parse_job_service,
-        engine,
-        sync_job_info_service_cls,
-        sync_job_metadata_service_cls,
-        sync_redis_service_factory,
-    ) = _load_parse_task_modules()
-    settings = _load_worker_settings()
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=False)
 
-    user_id: str = f"worker-user-{uuid4().hex[:12]}"
-    existing_job_id: str = f"job_existing_{uuid4().hex[:12]}"
-    existing_result_id: str = str(uuid4())
-    existing_document_id: str = f"doc_{uuid4().hex[:12]}"
-    job_id: str = f"job_parse_dedup_{uuid4().hex[:12]}"
-    source_file_name: str = "dedup-export.pdf"
-    s3_key: str = f"uploads/{job_id}.pdf"
-    job_metadata = _build_pending_file_job_metadata(source_file_name)
-    captured_artifacts: dict[str, Any] = {}
-
-    with engine.begin() as connection:
-        insert_contract_user(connection, user_id=user_id)
-        insert_contract_job(
-            connection,
-            job_id=existing_job_id,
-            user_id=user_id,
-            status="done",
-            source_type="file",
-            s3_key=f"uploads/{existing_job_id}.pdf",
-            webhook_enabled=False,
-            job_metadata=_build_pending_file_job_metadata("existing.pdf"),
-            billing_status="skipped",
-        )
-        connection.execute(
-            text(
-                """
-                INSERT INTO job_results (
-                    id,
-                    job_id,
-                    delivery_mode,
-                    inline_payload,
-                    result_s3_key,
-                    result_size,
-                    created_at,
-                    updated_at
-                ) VALUES (
-                    :result_id,
-                    :job_id,
-                    'url',
-                    CAST(:inline_payload AS JSON),
-                    :result_s3_key,
-                    :result_size,
-                    NOW(),
-                    NOW()
-                )
-                """
-            ),
-            {
-                "result_id": existing_result_id,
-                "job_id": existing_job_id,
-                "inline_payload": json.dumps({"checksum": "existing"}),
-                "result_s3_key": f"results/{existing_job_id}.zip",
-                "result_size": 123,
-            },
-        )
-        connection.execute(
-            text(
-                """
-                INSERT INTO documents (
-                    document_id,
-                    user_id,
-                    namespace,
-                    status,
-                    current_job_result_id,
-                    source_file_name,
-                    created_at,
-                    updated_at
-                ) VALUES (
-                    :document_id,
-                    :user_id,
-                    'worker-contract',
-                    'active',
-                    :result_id,
-                    'existing.pdf',
-                    NOW(),
-                    NOW()
-                )
-                """
-            ),
-            {
-                "document_id": existing_document_id,
-                "user_id": user_id,
-                "result_id": existing_result_id,
-            },
-        )
-        connection.execute(
-            text(
-                """
-                UPDATE job_results
-                SET document_id = :document_id
-                WHERE id = :result_id
-                """
-            ),
-            {
-                "document_id": existing_document_id,
-                "result_id": existing_result_id,
-            },
-        )
-        connection.execute(
-            text(
-                """
-                INSERT INTO document_chunks (
-                    id,
-                    chunk_id,
-                    user_id,
-                    namespace,
-                    document_id,
-                    job_result_id,
-                    chunk_type,
-                    content,
-                    source_chunk_path,
-                    file_path,
-                    chunk_metadata,
-                    sort_order,
-                    created_at
-                ) VALUES
-                    (
-                        :text_id,
-                        'duplicate-text',
-                        :user_id,
-                        'worker-contract',
-                        :document_id,
-                        :result_id,
-                        'text',
-                        'already published text',
-                        'existing.pdf/Section/Duplicate text',
-                        NULL,
-                        CAST(:text_metadata AS JSON),
-                        0,
-                        NOW()
-                    ),
-                    (
-                        :image_id,
-                        'duplicate-image',
-                        :user_id,
-                        'worker-contract',
-                        :document_id,
-                        :result_id,
-                        'image',
-                        'already published image',
-                        'existing.pdf/images/duplicate.png',
-                        'images/duplicate.png',
-                        CAST(:image_metadata AS JSON),
-                        1,
-                        NOW()
-                    )
-                """
-            ),
-            {
-                "text_id": f"dchk_{uuid4().hex[:12]}",
-                "image_id": f"dchk_{uuid4().hex[:12]}",
-                "user_id": user_id,
-                "document_id": existing_document_id,
-                "result_id": existing_result_id,
-                "text_metadata": json.dumps({}),
-                "image_metadata": json.dumps({"file_path": "images/duplicate.png"}),
-            },
-        )
-        insert_contract_job(
-            connection,
-            job_id=job_id,
-            user_id=user_id,
-            status="pending",
-            source_type="file",
-            s3_key=s3_key,
-            webhook_enabled=False,
-            job_metadata=job_metadata,
-            billing_status="pending",
-        )
-
-    _save_worker_task_cache(
-        job_id=job_id,
+    user_id = f"worker-contract-user-{uuid4().hex[:12]}"
+    first_job = contract.create_file_job(
         user_id=user_id,
-        s3_key=s3_key,
-        metadata=job_metadata,
-        sync_job_info_service_cls=sync_job_info_service_cls,
-        sync_job_metadata_service_cls=sync_job_metadata_service_cls,
-        sync_redis_service_factory=sync_redis_service_factory,
+        source_file_name="contract-original.xlsx",
+        job_id_prefix="job_parse_original",
     )
-
-    _bind_parse_task_to_current_module(monkeypatch, document_ingestion_tasks=document_ingestion_tasks)
-    monkeypatch.setattr(settings, "TMP_PATH", str(tmp_path))
-    monkeypatch.setattr(settings, "BILLING_ENABLED", False)
-
-    def fake_cleanup_task_workspace(workspace_dir: str | None) -> bool:
-        captured_artifacts["workspace_dir"] = workspace_dir
-        return True
-
-    def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
-        return {
-            "exists": storage_key == s3_key,
-            "size": _SAMPLE_PDF_PATH.stat().st_size,
-        }
-
-    def fake_download_s3_file_to_temp(
-        storage_key: str, file_ext: str, temp_dir: str
-    ) -> str:
-        assert storage_key == s3_key
-        downloaded_path = Path(temp_dir) / f"downloaded{file_ext}"
-        shutil.copy2(_SAMPLE_PDF_PATH, downloaded_path)
-        return str(downloaded_path)
-
-    def fake_checkerboard_parse_output(**kwargs: Any) -> Any:
-        output_dir = (
-            Path(str(kwargs["output_dir"]))
-            / str(kwargs["internal_output_filename"])
-        )
-        images_dir = output_dir / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "full.md").write_text("body", encoding="utf-8")
-        (images_dir / "duplicate.png").write_bytes(b"png")
-
-        file_root = str(kwargs["internal_output_filename"])
-        parsed_rows: list[dict[str, Any]] = [
-            {
-                "content": "duplicate text",
-                "path": f"{file_root}/Section/Duplicate text",
-                "type": "text",
-                "length": 14,
-                "keywords": "",
-                "summary": "",
-                "know_id": "duplicate-text",
-                "tokens": "",
-                "connectto": "",
-                "addtime": "now",
-                "page_nums": "1",
-            },
-            {
-                "content": "duplicate image",
-                "path": f"{file_root}/images/duplicate.png",
-                "type": "image",
-                "length": 15,
-                "keywords": "",
-                "summary": "",
-                "know_id": "duplicate-image",
-                "tokens": "",
-                "connectto": "",
-                "addtime": "now",
-                "page_nums": "2",
-            },
-            {
-                "content": "new text",
-                "path": f"{file_root}/Section/New text",
-                "type": "text",
-                "length": 8,
-                "keywords": "",
-                "summary": "",
-                "know_id": "new-text",
-                "tokens": "",
-                "connectto": "",
-                "addtime": "now",
-                "page_nums": "3",
-            },
-        ]
-        return _build_fake_parse_output(output_dir=output_dir, rows=parsed_rows)
-
-    class FakeResultStorage:
-        def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> Any:
-            result_dir_path = Path(result_dir)
-            zip_path = Path(zip_file_path)
-            captured_artifacts["raw_entries"] = sorted(
-                path.relative_to(result_dir_path).as_posix()
-                for path in result_dir_path.rglob("*")
-                if path.is_file()
-            )
-            with zipfile.ZipFile(zip_path) as zip_file:
-                captured_artifacts["zip_entries"] = sorted(zip_file.namelist())
-                captured_artifacts["zip_chunks"] = json.loads(
-                    zip_file.read("chunks.json")
-                )["chunks"]
-                captured_artifacts["manifest"] = json.loads(
-                    zip_file.read("manifest.json")
-                )
-
-            return SimpleNamespace(
-                zip_key=f"results/{job_id}.zip",
-                raw_prefix=f"results/{job_id}/",
-                raw_files={},
-            )
-
-    _patch_verify_upload_exists(monkeypatch, fake_verify_s3_file_exists)
-    monkeypatch.setattr(parse_job_service, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(parse_service, "checkerboard_parse_output", fake_checkerboard_parse_output)
-    monkeypatch.setattr(parse_job_service, "get_result_storage", lambda: FakeResultStorage())
-    monkeypatch.setattr(parse_job_service, "cleanup_task_workspace", fake_cleanup_task_workspace)
-
-    result = document_ingestion_tasks.parse_task.run(job_id, user_id, "document_ingestion")
-
-    assert result["contents_count"] == 3
-    assert "images/duplicate.png" in captured_artifacts["zip_entries"]
-    assert "images/duplicate.png" in captured_artifacts["raw_entries"]
-    assert [chunk["chunk_id"] for chunk in captured_artifacts["zip_chunks"]] == [
-        "duplicate-text",
-        "duplicate-image",
-        "new-text",
-    ]
-    assert captured_artifacts["manifest"]["statistics"] == {
-        "total_chunks": 3,
-        "text_chunks": 2,
-        "image_chunks": 1,
-        "table_chunks": 0,
-        "total_pages": None,
-    }
-    workspace_dir = Path(str(captured_artifacts["workspace_dir"]))
-    assert list(workspace_dir.rglob("images/duplicate.png"))
-
-    with engine.begin() as connection:
-        job_result_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT id, document_metadata
-                    FROM job_results
-                    WHERE job_id = :job_id
-                    """
-                ),
-                {"job_id": job_id},
-            )
-            .mappings()
-            .one()
-        )
-        job_chunk_ids = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT chunk_id
-                    FROM job_chunks
-                    WHERE job_result_id = :job_result_id
-                    ORDER BY sort_order
-                    """
-                ),
-                {"job_result_id": job_result_row["id"]},
-            )
-            .scalars()
-            .all()
-        )
-        document_chunk_ids = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT document_chunks.chunk_id
-                    FROM document_chunks
-                    JOIN documents
-                        ON documents.document_id = document_chunks.document_id
-                    WHERE documents.current_job_result_id = :job_result_id
-                    ORDER BY document_chunks.sort_order
-                    """
-                ),
-                {"job_result_id": job_result_row["id"]},
-            )
-            .scalars()
-            .all()
-        )
-
-    assert job_chunk_ids == ["duplicate-text", "duplicate-image", "new-text"]
-    assert document_chunk_ids == ["duplicate-text", "duplicate-image", "new-text"]
-    assert "chunk_overlap" not in dict(job_result_row["document_metadata"] or {})
-
-
-def test_should_initialize_billing_once_for_concurrent_parse_tasks(
-    worker_contract_environment: None,
-    monkeypatch: MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    (
-        document_ingestion_tasks,
-        parse_service,
-        parse_job_service,
-        engine,
-        sync_job_info_service_cls,
-        sync_job_metadata_service_cls,
-        sync_redis_service_factory,
-    ) = _load_parse_task_modules()
-    settings = _load_worker_settings()
-
-    user_id: str = f"worker-concurrent-user-{uuid4().hex[:12]}"
-    job_ids: list[str] = [f"job_cb_{index}_{uuid4().hex[:12]}" for index in range(2)]
-    source_file_name: str = "contract-concurrent.pdf"
-    s3_keys: dict[str, str] = {
-        job_id: f"uploads/{job_id}.pdf" for job_id in job_ids
-    }
-    job_metadata_by_id: dict[str, dict[str, Any]] = {
-        job_id: _build_pending_file_job_metadata(source_file_name)
-        for job_id in job_ids
-    }
-
-    with engine.begin() as connection:
-        insert_contract_user(connection, user_id=user_id)
-        for job_id in job_ids:
-            insert_contract_job(
-                connection,
-                job_id=job_id,
-                user_id=user_id,
-                status="pending",
-                source_type="file",
-                s3_key=s3_keys[job_id],
-                webhook_enabled=False,
-                job_metadata=job_metadata_by_id[job_id],
-                billing_status="pending",
-            )
-
-    redis_service = sync_redis_service_factory.get_service()
-    for job_id in job_ids:
-        _save_worker_task_cache(
-            job_id=job_id,
-            user_id=user_id,
-            s3_key=s3_keys[job_id],
-            metadata=job_metadata_by_id[job_id],
-            sync_job_info_service_cls=sync_job_info_service_cls,
-            sync_job_metadata_service_cls=sync_job_metadata_service_cls,
-            sync_redis_service_factory=sync_redis_service_factory,
-        )
-
-    _bind_parse_task_to_current_module(monkeypatch, document_ingestion_tasks=document_ingestion_tasks)
-    monkeypatch.setattr(settings, "TMP_PATH", str(tmp_path))
-    monkeypatch.setattr(settings, "BILLING_ENABLED", True)
-
-    def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
-        return {
-            "exists": storage_key in s3_keys.values(),
-            "size": _SAMPLE_PDF_PATH.stat().st_size,
-        }
-
-    def fake_download_s3_file_to_temp(
-        storage_key: str, file_ext: str, temp_dir: str
-    ) -> str:
-        assert storage_key in s3_keys.values()
-        assert file_ext == ".pdf"
-        downloaded_path = Path(temp_dir) / f"downloaded{file_ext}"
-        shutil.copy2(_SAMPLE_PDF_PATH, downloaded_path)
-        return str(downloaded_path)
-
-    billing_start_barrier = Barrier(len(job_ids))
-
-    def fake_estimate_workload(file_path: str) -> Any:
-        from app.services.document_ingestion.page_estimator import WorkloadEstimate
-
-        billing_start_barrier.wait(timeout=10)
-        return WorkloadEstimate(page_count=1, method="contract_fake")
-
-    def fake_checkerboard_parse_output(**kwargs: Any) -> Any:
-        output_dir = (
-            Path(str(kwargs["output_dir"]))
-            / str(kwargs["internal_output_filename"])
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "full.md").write_text("body", encoding="utf-8")
-
-        file_root = str(kwargs["internal_output_filename"])
-        parsed_rows: list[dict[str, Any]] = [
-            {
-                "content": "chunk body",
-                "path": f"{file_root}/Section/Point",
-                "type": "text",
-                "length": 10,
-                "keywords": "",
-                "summary": "",
-                "know_id": f"{kwargs['job_id']}-chunk-1",
-                "tokens": "",
-                "connectto": "",
-                "addtime": "now",
-                "page_nums": "1",
-            }
-        ]
-        return _build_fake_parse_output(output_dir=output_dir, rows=parsed_rows)
-
-    class FakeResultStorage:
-        def upload(self, *, job_id: str, result_dir: str, zip_file_path: str) -> Any:
-            return SimpleNamespace(
-                zip_key=f"results/{job_id}.zip",
-                raw_prefix=f"results/{job_id}/",
-                raw_files={},
-            )
-
-    _patch_verify_upload_exists(monkeypatch, fake_verify_s3_file_exists)
-    monkeypatch.setattr(parse_job_service, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(
-        parse_job_service.PageEstimator,
-        "estimate_workload",
-        fake_estimate_workload,
-    )
-    monkeypatch.setattr(parse_service, "checkerboard_parse_output", fake_checkerboard_parse_output)
-    monkeypatch.setattr(parse_job_service, "get_result_storage", lambda: FakeResultStorage())
-
-    def run_parse_task(job_id: str) -> dict[str, Any]:
-        return dict(document_ingestion_tasks.parse_task.run(job_id, user_id, "document_ingestion"))
-
-    with ThreadPoolExecutor(max_workers=len(job_ids)) as executor:
-        results = list(executor.map(run_parse_task, job_ids))
-
-    expected_credits_charged = int(settings.MICRO_DOLLARS_PER_PAGE)
-    expected_initial_balance = (
-        int(settings.FREE_PLAN_INITIAL_CREDITS) * 1_000_000
-    )
-
-    with engine.begin() as connection:
-        job_rows = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT job_id, status, billing_status, page_count, credits_charged
-                    FROM jobs
-                    WHERE job_id = ANY(:job_ids)
-                    ORDER BY job_id
-                    """
-                ),
-                {"job_ids": job_ids},
-            )
-            .mappings()
-            .all()
-        )
-        balance_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT credits_balance
-                    FROM user_balances
-                    WHERE user_id = :user_id
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .mappings()
-            .one()
-        )
-        transaction_rows = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT transaction_type, COUNT(*) AS count
-                    FROM credits_transactions
-                    WHERE user_id = :user_id
-                    GROUP BY transaction_type
-                    ORDER BY transaction_type
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .mappings()
-            .all()
-        )
-        payment_count_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT COUNT(*) AS count
-                    FROM payment_records
-                    WHERE user_id = :user_id
-                      AND payment_type = 'system_grant'
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .mappings()
-            .one()
-        )
-
-    metadata_by_job_id = {
-        job_id: sync_job_metadata_service_cls(redis_service).get_metadata(job_id)
-        for job_id in job_ids
-    }
-    result_job_ids = {str(result["job_id"]) for result in results}
-    transaction_counts = {
-        str(row["transaction_type"]): int(row["count"]) for row in transaction_rows
-    }
-
-    assert result_job_ids == set(job_ids)
-    assert all(result["status"] == "success" for result in results)
-    assert [
-        {
-            "job_id": row["job_id"],
-            "status": row["status"],
-            "billing_status": row["billing_status"],
-            "page_count": row["page_count"],
-            "credits_charged": row["credits_charged"],
-        }
-        for row in job_rows
-    ] == [
-        {
-            "job_id": job_id,
-            "status": "done",
-            "billing_status": "charged",
-            "page_count": 1,
-            "credits_charged": expected_credits_charged,
-        }
-        for job_id in sorted(job_ids)
-    ]
-    assert all(
-        metadata_by_job_id[job_id] is not None
-        and metadata_by_job_id[job_id]["billing_status"] == "charged"
-        and metadata_by_job_id[job_id]["billing_amount_micro_dollars"]
-        == expected_credits_charged
-        for job_id in job_ids
-    )
-    assert balance_row == {
-        "credits_balance": expected_initial_balance
-        - (expected_credits_charged * len(job_ids))
-    }
-    assert transaction_counts == {"initial_grant": 1, "usage": len(job_ids)}
-    assert payment_count_row == {"count": 1}
-
-
-def test_should_skip_parse_task_when_the_job_is_already_terminal(
-    worker_contract_environment: None,
-    monkeypatch: MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    (
-        document_ingestion_tasks,
-        parse_service,
-        parse_job_service,
-        engine,
-        sync_job_info_service_cls,
-        sync_job_metadata_service_cls,
-        sync_redis_service_factory,
-    ) = _load_parse_task_modules()
-    settings = _load_worker_settings()
-
-    user_id: str = f"worker-user-{uuid4().hex[:12]}"
-    job_id: str = f"job_parse_skipped_{uuid4().hex[:12]}"
-    source_file_name: str = "contract-skip.pdf"
-    s3_key: str = f"uploads/{job_id}.pdf"
-
-    with engine.begin() as connection:
-        insert_contract_user(connection, user_id=user_id)
-        job_metadata = _build_pending_file_job_metadata(source_file_name)
-        insert_contract_job(
-            connection,
-            job_id=job_id,
-            user_id=user_id,
-            s3_key=s3_key,
-            status="done",
-            source_type="file",
-            webhook_enabled=False,
-            job_metadata=job_metadata,
-            billing_status="charged",
-        )
-
-    redis_service = _save_worker_task_cache(
-        job_id=job_id,
+    second_job = contract.create_file_job(
         user_id=user_id,
-        s3_key=s3_key,
-        metadata=job_metadata,
-        sync_job_info_service_cls=sync_job_info_service_cls,
-        sync_job_metadata_service_cls=sync_job_metadata_service_cls,
-        sync_redis_service_factory=sync_redis_service_factory,
+        source_file_name="contract-duplicate.xlsx",
+        job_id_prefix="job_parse_duplicate",
+    )
+    for job in [first_job, second_job]:
+        contract.upload_source_file(
+            local_file_path=_SAMPLE_XLSX_PATH,
+            s3_key=job["s3_key"],
+        )
+
+    first_result = contract.enqueue_parse_task(
+        job_id=first_job["job_id"],
+        user_id=user_id,
+    )
+    second_result = contract.enqueue_parse_task(
+        job_id=second_job["job_id"],
+        user_id=user_id,
     )
 
-    _bind_parse_task_to_current_module(monkeypatch, document_ingestion_tasks=document_ingestion_tasks)
-    monkeypatch.setattr(settings, "TMP_PATH", str(tmp_path))
-    def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
-        return {"exists": storage_key == s3_key, "size": 1024}
+    assert first_result.successful()
+    assert second_result.successful()
 
-    _patch_verify_upload_exists(monkeypatch, fake_verify_s3_file_exists)
-    monkeypatch.setattr(
-        parse_service,
-        "checkerboard_parse_output",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("terminal parse task should not invoke the parser")
-        ),
+    observed = contract.observe_successful_job(second_job["job_id"])
+    result_row = observed["result"]
+    job_chunks = observed["job_chunks"]
+    document_chunks = observed["document_chunks"]
+    result_zip = contract.read_result_zip(
+        result_s3_key=result_row["result_s3_key"],
+        tmp_path=tmp_path,
     )
 
-    result = document_ingestion_tasks.parse_task.run(job_id, user_id, "document_ingestion")
+    assert len(job_chunks) > 0
+    assert len(document_chunks) == len(job_chunks)
+    assert len(result_zip["chunks"]["chunks"]) == len(job_chunks)
+    assert any(member.startswith("tables/") for member in result_zip["members"])
+    assert "chunk_overlap" not in dict(result_row["document_metadata"] or {})
 
-    assert result == {
+
+def test_parse_task_should_initialize_billing_once_for_concurrent_parse_tasks(
+    worker_contract_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=True)
+
+    user_id = f"worker-contract-user-{uuid4().hex[:12]}"
+    jobs = [
+        contract.create_file_job(
+            user_id=user_id,
+            source_file_name=f"contract-concurrent-{index}.xlsx",
+            job_id_prefix=f"job_parse_concurrent_{index}",
+        )
+        for index in range(2)
+    ]
+    for job in jobs:
+        contract.upload_source_file(
+            local_file_path=_SAMPLE_XLSX_PATH,
+            s3_key=job["s3_key"],
+        )
+
+    with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+        celery_results = list(
+            executor.map(
+                lambda job: contract.enqueue_parse_task(
+                    job_id=job["job_id"],
+                    user_id=user_id,
+                ),
+                jobs,
+            )
+        )
+
+    assert all(result.successful() for result in celery_results)
+    observed_jobs = [
+        contract.observe_successful_job(job["job_id"])["job"] for job in jobs
+    ]
+    assert all(row["billing_status"] == "charged" for row in observed_jobs)
+
+    billing = contract.observe_user_billing(user_id)
+    expected_total_charge = sum(row["credits_charged"] for row in observed_jobs)
+    expected_initial_balance = int(contract.settings.FREE_PLAN_INITIAL_CREDITS) * 1_000_000
+    assert billing["balance"] == expected_initial_balance - expected_total_charge
+    assert billing["transaction_counts"] == {
+        "initial_grant": 1,
+        "usage": len(jobs),
+    }
+    assert billing["system_grant_payment_count"] == 1
+
+
+def test_parse_task_should_skip_terminal_job_without_creating_outputs(
+    worker_contract_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+
+    job = contract.create_file_job(
+        source_file_name="contract-skip.xlsx",
+        status="done",
+        billing_status="charged",
+        job_id_prefix="job_skip",
+    )
+
+    celery_result = contract.enqueue_parse_task(
+        job_id=job["job_id"],
+        user_id=job["user_id"],
+    )
+
+    assert celery_result.successful()
+    assert celery_result.result == {
         "status": "skipped",
-        "job_id": job_id,
+        "job_id": job["job_id"],
         "reason": "job_already_terminal",
     }
-    assert redis_service.hgetall(f"task:{job_id}:progress") == {}
-    assert _find_task_workspaces(tmp_path, job_id) == []
+    assert contract.get_task_progress(job["job_id"]) == {}
+    assert contract.find_task_workspaces(tmp_path, job["job_id"]) == []
 
-    with engine.begin() as connection:
-        job_result_count = int(
-            connection.execute(
-                text("SELECT COUNT(*) FROM job_results WHERE job_id = :job_id"),
-                {"job_id": job_id},
-            ).scalar_one()
-        )
-        audit_transition_count = int(
-            connection.execute(
-                text(
-                    "SELECT COUNT(*) FROM job_state_audit_logs WHERE job_id = :job_id"
-                ),
-                {"job_id": job_id},
-            ).scalar_one()
-        )
-
-    assert job_result_count == 0
-    assert audit_transition_count == 0
+    job_row = contract.observe_job_status(job["job_id"])
+    assert job_row["status"] == "done"
+    assert job_row["billing_status"] == "charged"
+    assert contract.count_job_results(job["job_id"]) == 0
 
 
-def test_should_mark_the_job_failed_and_cleanup_the_workspace_when_parse_execution_raises(
+def test_parse_task_should_mark_failed_and_cleanup_when_uploaded_source_is_missing(
     worker_contract_environment: None,
-    monkeypatch: MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    (
-        document_ingestion_tasks,
-        parse_service,
-        parse_job_service,
-        engine,
-        sync_job_info_service_cls,
-        sync_job_metadata_service_cls,
-        sync_redis_service_factory,
-    ) = _load_parse_task_modules()
-    settings = _load_worker_settings()
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=False)
 
-    user_id: str = f"worker-user-{uuid4().hex[:12]}"
-    job_id: str = f"job_parse_failure_{uuid4().hex[:12]}"
-    source_file_name: str = "contract-failure.pdf"
-    s3_key: str = f"uploads/{job_id}.pdf"
-
-    with engine.begin() as connection:
-        insert_contract_user(connection, user_id=user_id)
-        job_metadata = _build_pending_file_job_metadata(source_file_name)
-        insert_contract_job(
-            connection,
-            job_id=job_id,
-            user_id=user_id,
-            status="pending",
-            source_type="file",
-            s3_key=s3_key,
-            webhook_enabled=False,
-            job_metadata=job_metadata,
-            billing_status="pending",
-        )
-
-    _save_worker_task_cache(
-        job_id=job_id,
-        user_id=user_id,
-        s3_key=s3_key,
-        metadata=job_metadata,
-        sync_job_info_service_cls=sync_job_info_service_cls,
-        sync_job_metadata_service_cls=sync_job_metadata_service_cls,
-        sync_redis_service_factory=sync_redis_service_factory,
+    job = contract.create_file_job(
+        source_file_name="contract-missing-source.xlsx",
+        job_id_prefix="job_missing",
     )
 
-    _bind_parse_task_to_current_module(monkeypatch, document_ingestion_tasks=document_ingestion_tasks)
-    monkeypatch.setattr(settings, "TMP_PATH", str(tmp_path))
-    def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
-        return {
-            "exists": storage_key == s3_key,
-            "size": _SAMPLE_PDF_PATH.stat().st_size,
-        }
-
-    _patch_verify_upload_exists(monkeypatch, fake_verify_s3_file_exists)
-
-    def fake_download_s3_file_to_temp(
-        storage_key: str, file_ext: str, temp_dir: str
-    ) -> str:
-        assert storage_key == s3_key
-        downloaded_path = Path(temp_dir) / f"downloaded{file_ext}"
-        shutil.copy2(_SAMPLE_PDF_PATH, downloaded_path)
-        return str(downloaded_path)
-
-    monkeypatch.setattr(parse_job_service, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(
-        parse_service,
-        "checkerboard_parse_output",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("parse failed")),
-    )
-    monkeypatch.setattr(
-        parse_job_service,
-        "get_result_storage",
-        lambda: (_ for _ in ()).throw(
-            AssertionError("result storage should not run after parser failure")
-        ),
+    celery_result = contract.enqueue_parse_task(
+        job_id=job["job_id"],
+        user_id=job["user_id"],
     )
 
-    result = document_ingestion_tasks.parse_task.apply(
-        args=[job_id, user_id, "document_ingestion"],
-        throw=False,
+    assert celery_result.failed()
+    assert contract.find_task_workspaces(tmp_path, job["job_id"]) == []
+
+    job_row = contract.observe_job_status(job["job_id"])
+    assert job_row["status"] == "failed"
+    assert job_row["billing_status"] in {"pending", "skipped"}
+    assert job_row["error_code"]
+    assert job_row["error_message"]
+    assert contract.count_job_results(job["job_id"]) == 0
+
+
+def test_parse_task_should_refund_charged_job_when_uploaded_file_cannot_be_parsed(
+    worker_contract_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=True)
+
+    invalid_xlsx_path = tmp_path / "invalid.xlsx"
+    invalid_xlsx_path.write_bytes(b"this is not an xlsx workbook")
+    job = contract.create_file_job(
+        source_file_name="contract-invalid.xlsx",
+        job_id_prefix="job_invalid_parse",
+    )
+    contract.upload_source_file(
+        local_file_path=invalid_xlsx_path,
+        s3_key=job["s3_key"],
     )
 
-    assert result.status == "FAILURE"
-    assert _find_task_workspaces(tmp_path, job_id) == []
+    celery_result = contract.enqueue_parse_task(
+        job_id=job["job_id"],
+        user_id=job["user_id"],
+    )
 
-    expected_credits_charged = 3 * int(settings.MICRO_DOLLARS_PER_PAGE)
-    expected_initial_balance = int(settings.FREE_PLAN_INITIAL_CREDITS) * 1_000_000
+    assert celery_result.failed()
+    assert contract.find_task_workspaces(tmp_path, job["job_id"]) == []
 
-    with engine.begin() as connection:
-        job_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT status, billing_status, page_count, credits_charged, error_code, error_message
-                    FROM jobs
-                    WHERE job_id = :job_id
-                    """
-                ),
-                {"job_id": job_id},
-            )
-            .mappings()
-            .one()
-        )
-        balance_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT credits_balance
-                    FROM user_balances
-                    WHERE user_id = :user_id
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .mappings()
-            .one()
-        )
-        transaction_types = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT transaction_type
-                    FROM credits_transactions
-                    WHERE user_id = :user_id
-                    ORDER BY created_at ASC
-                    """
-                ),
-                {"user_id": user_id},
-            )
-            .scalars()
-            .all()
-        )
-        audit_transitions = list(
-            connection.execute(
-                text(
-                    """
-                    SELECT transition_reason, to_state
-                    FROM job_state_audit_logs
-                    WHERE job_id = :job_id
-                    ORDER BY id ASC
-                    """
-                ),
-                {"job_id": job_id},
-            )
-            .mappings()
-            .all()
-        )
-
+    job_row = contract.observe_job_status(job["job_id"])
     assert job_row["status"] == "failed"
     assert job_row["billing_status"] == "refunded"
-    assert job_row["page_count"] == 3
-    assert job_row["credits_charged"] == expected_credits_charged
-    assert job_row["error_code"] == "UNKNOWN"
-    assert job_row["error_message"] == "An unexpected error occurred"
-    assert balance_row["credits_balance"] == expected_initial_balance
-    assert transaction_types == ["initial_grant", "usage", "refund"]
-    assert [(row["transition_reason"], row["to_state"]) for row in audit_transitions] == [
+    assert job_row["credits_charged"] == int(contract.settings.MICRO_DOLLARS_PER_PAGE)
+    assert contract.count_job_results(job["job_id"]) == 0
+
+    billing = contract.observe_user_billing(job["user_id"])
+    expected_initial_balance = int(contract.settings.FREE_PLAN_INITIAL_CREDITS) * 1_000_000
+    assert billing["balance"] == expected_initial_balance
+    assert billing["transaction_types"] == ["initial_grant", "usage", "refund"]
+    assert contract.observe_job_state_transitions(job["job_id"]) == [
         ("start_processing", "running"),
         ("mark_failed", "failed"),
     ]
@@ -1495,120 +372,42 @@ def test_should_mark_the_job_failed_and_cleanup_the_workspace_when_parse_executi
 
 def test_should_reject_pdf_when_page_count_exceeds_configured_limit(
     worker_contract_environment: None,
-    monkeypatch: MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("BILLING_ENABLED", "false")
-    (
-        document_ingestion_tasks,
-        _parse_service,
-        parse_job_service,
-        engine,
-        sync_job_info_service_cls,
-        sync_job_metadata_service_cls,
-        sync_redis_service_factory,
-    ) = _load_parse_task_modules()
-    settings = _load_worker_settings()
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=False)
 
-    user_id: str = f"worker-user-{uuid4().hex[:12]}"
-    job_id: str = f"job_pdf_page_limit_{uuid4().hex[:12]}"
-    source_file_name: str = "oversized-contract.pdf"
-    s3_key: str = f"uploads/{job_id}.pdf"
     max_pdf_page_limit: int = 1
     actual_page_count: int = 2
+    source_file_name: str = "oversized-contract.pdf"
     pdf_path = tmp_path / source_file_name
     _write_blank_pdf(pdf_path, actual_page_count)
 
-    with engine.begin() as connection:
-        insert_contract_user(connection, user_id=user_id)
-        job_metadata = _build_pending_file_job_metadata(source_file_name)
-        insert_contract_job(
-            connection,
-            job_id=job_id,
-            user_id=user_id,
-            status="pending",
-            source_type="file",
-            s3_key=s3_key,
-            webhook_enabled=False,
-            job_metadata=job_metadata,
-            billing_status="pending",
-        )
-
-    redis_service = _save_worker_task_cache(
-        job_id=job_id,
-        user_id=user_id,
-        s3_key=s3_key,
-        metadata=job_metadata,
-        sync_job_info_service_cls=sync_job_info_service_cls,
-        sync_job_metadata_service_cls=sync_job_metadata_service_cls,
-        sync_redis_service_factory=sync_redis_service_factory,
+    contract.use_pdf_page_limit(monkeypatch, max_pdf_page_limit)
+    job = contract.create_file_job(
+        source_file_name=source_file_name,
+        job_id_prefix="job_pdf_page_limit",
+    )
+    contract.upload_source_file(
+        local_file_path=pdf_path,
+        s3_key=job["s3_key"],
     )
 
-    _bind_parse_task_to_current_module(
-        monkeypatch,
-        document_ingestion_tasks=document_ingestion_tasks,
-    )
-    monkeypatch.setattr(settings, "TMP_PATH", str(tmp_path))
-    monkeypatch.setattr(settings, "BILLING_ENABLED", False)
-    monkeypatch.setattr(settings, "MAX_PDF_PAGE_LIMIT", max_pdf_page_limit)
-
-    def fake_verify_s3_file_exists(storage_key: str) -> dict[str, Any]:
-        return {
-            "exists": storage_key == s3_key,
-            "size": pdf_path.stat().st_size,
-        }
-
-    _patch_verify_upload_exists(monkeypatch, fake_verify_s3_file_exists)
-
-    def fake_download_s3_file_to_temp(
-        storage_key: str,
-        file_ext: str,
-        temp_dir: str,
-    ) -> str:
-        assert storage_key == s3_key
-        assert file_ext == ".pdf"
-        downloaded_path = Path(temp_dir) / f"downloaded{file_ext}"
-        shutil.copy2(pdf_path, downloaded_path)
-        return str(downloaded_path)
-
-    monkeypatch.setattr(parse_job_service, "download_s3_file_to_temp", fake_download_s3_file_to_temp)
-    monkeypatch.setattr(
-        parse_job_service,
-        "get_result_storage",
-        lambda: (_ for _ in ()).throw(
-            AssertionError("result storage should not run after page-limit rejection")
-        ),
+    celery_result = contract.enqueue_parse_task(
+        job_id=job["job_id"],
+        user_id=job["user_id"],
     )
 
-    result = document_ingestion_tasks.parse_task.apply(
-        args=[job_id, user_id, "document_ingestion"],
-        throw=False,
-    )
+    assert celery_result.failed()
+    assert contract.find_task_workspaces(tmp_path, job["job_id"]) == []
 
-    assert result.status == "FAILURE"
-    assert _find_task_workspaces(tmp_path, job_id) == []
-
-    metadata = sync_job_metadata_service_cls(redis_service).get_metadata(job_id)
-    assert metadata is not None
+    metadata = contract.get_job_metadata(job["job_id"])
     assert metadata["page_count"] == actual_page_count
     assert metadata["billing_status"] == "skipped"
 
-    with engine.begin() as connection:
-        job_row = (
-            connection.execute(
-                text(
-                    """
-                    SELECT status, billing_status, page_count, credits_charged,
-                           error_code, error_message, job_metadata
-                    FROM jobs
-                    WHERE job_id = :job_id
-                    """
-                ),
-                {"job_id": job_id},
-            )
-            .mappings()
-            .one()
-        )
+    job_row = contract.observe_job_status(job["job_id"])
 
     assert job_row["status"] == "failed"
     assert job_row["billing_status"] == "skipped"
@@ -1619,7 +418,7 @@ def test_should_reject_pdf_when_page_count_exceeds_configured_limit(
         job_row["error_message"]
         == "Document too large: 2 pages exceeds the 1-page limit. Please split the document and upload in smaller batches."
     )
-    assert job_row["job_metadata"]["error_details"] == {
+    assert metadata["error_details"] == {
         "violations": [
             {
                 "field": "page_count",

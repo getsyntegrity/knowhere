@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import sys
 from collections.abc import Generator
@@ -57,6 +58,13 @@ def worker_contract_environment(
         sys.path.remove(worker_root_value)
     sys.path.insert(0, worker_root_value)
     contract_runtime.clear_application_modules()
+
+    from shared.core.celery_app import get_celery_app
+
+    celery_app = get_celery_app()
+    monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
+    monkeypatch.setattr(celery_app.conf, "task_eager_propagates", False)
+    importlib.import_module("app.core.tasks.document_ingestion_tasks")
 
     try:
         yield
