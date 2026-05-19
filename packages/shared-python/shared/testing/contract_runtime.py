@@ -343,7 +343,6 @@ def configure_contract_environment(
         "S3_REGION": "us-west-1",
         "S3_USE_SSL": "false",
         "S3_ADDRESSING_STYLE": "path",
-        "BILLING_ENABLED": "false",
         "STRIPE_SECRET_KEY": "sk_test_contract_secret",
         "STRIPE_WEBHOOK_SECRET": "whsec_contract_test_secret",
         "DS_KEY": "test-deepseek-key",
@@ -352,6 +351,9 @@ def configure_contract_environment(
         "QSTASH_NEXT_SIGNING_KEY": "qstash-next-test-key",
         "QSTASH_CALLBACK_BASE_URL": "http://localhost:5005/api/v1",
     }
+
+    if "BILLING_ENABLED" not in os.environ:
+        environment["BILLING_ENABLED"] = "true"
 
     for key, value in environment.items():
         monkeypatch.setenv(key, value)

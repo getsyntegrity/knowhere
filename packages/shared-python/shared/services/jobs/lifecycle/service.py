@@ -126,20 +126,21 @@ class SyncJobLifecycleService:
         job_id: str,
         progress: int,
         message: str = "",
+        redis_service: Any | None = None,
     ) -> bool:
         """Write job progress directly to Redis (replaces publish_progress_update).
 
         Best-effort — failures are logged but do not raise.
         """
         try:
-            redis_service = SyncRedisServiceFactory.get_service()
-            task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
-            progress_key = redis_service._build_key(
-                redis_key_builder.task_progress(job_id)
+            active_redis_service = (
+                redis_service
+                if redis_service is not None
+                else SyncRedisServiceFactory.get_service()
             )
-
-            pipe = redis_service.pipeline()
-            pipe.hset(
+            task_ttl = redis_key_builder.get_key_ttl(RedisKeyType.TASK)
+            progress_key = redis_key_builder.task_progress(job_id)
+            active_redis_service.hset(
                 progress_key,
                 mapping={
                     "progress": str(progress),
@@ -147,8 +148,7 @@ class SyncJobLifecycleService:
                     "timestamp": str(int(time.time())),
                 },
             )
-            pipe.expire(progress_key, task_ttl)
-            pipe.execute()
+            active_redis_service.expire(progress_key, task_ttl)
             return True
         except Exception as exc:
             logger.warning(f"Failed to update progress for job {job_id}: {exc}")
