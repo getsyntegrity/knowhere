@@ -377,7 +377,7 @@ def test_should_reject_pdf_when_page_count_exceeds_configured_limit(
 ) -> None:
     contract = WorkerParseContract.create()
     contract.use_workspace_root(monkeypatch, tmp_path)
-    contract.use_billing(monkeypatch, is_enabled=False)
+    contract.use_billing(monkeypatch, is_enabled=True)
 
     max_pdf_page_limit: int = 1
     actual_page_count: int = 2
@@ -426,3 +426,9 @@ def test_should_reject_pdf_when_page_count_exceeds_configured_limit(
             }
         ]
     }
+
+    billing = contract.observe_user_billing(job["user_id"])
+    assert billing["balance"] is None
+    assert billing["transaction_types"] == []
+    assert billing["transaction_counts"] == {}
+    assert billing["system_grant_payment_count"] == 0
