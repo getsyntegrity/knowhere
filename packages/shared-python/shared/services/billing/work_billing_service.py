@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from shared.core.billing import BillingCalculator
-from shared.core.config import settings
 from shared.services.billing.credits_sync_service import SyncCreditsService
 
 _SKIPPED_BILLING_STATUS: str = "skipped"
@@ -51,6 +50,8 @@ class WorkBillingService:
         filename: str,
     ) -> WorkBillingResult:
         """Authorize and charge per-page work if billing is enabled."""
+        from shared.core.config import settings
+
         if not settings.BILLING_ENABLED:
             return WorkBillingResult.skipped()
 

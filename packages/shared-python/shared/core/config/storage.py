@@ -23,7 +23,10 @@ class StorageConfig(BaseModel):
     """Storage configuration."""
 
     # Storage backend selection.
-    S3_TYPE: str = Field(default="s3", description="Storage backend: s3, oss, or minio")
+    S3_TYPE: str = Field(
+        default="s3",
+        description="Storage backend: s3, oss, minio, or filesystem",
+    )
 
     # Shared S3-style configuration used by S3, OSS, and MinIO.
     S3_BUCKET_NAME: str = Field(..., description="Bucket name")
@@ -34,6 +37,10 @@ class StorageConfig(BaseModel):
     )
     S3_PRIVATE_DOMAIN: str = Field(default="", description="Private asset domain")
     S3_TEMP_PATH: str = Field(..., description="Temporary path")
+    OBJECT_STORAGE_LOCAL_ROOT: str = Field(
+        default="",
+        description="Local root directory used when S3_TYPE=filesystem",
+    )
 
     # Advanced S3 client configuration.
     S3_REGION: str = Field(
@@ -145,6 +152,15 @@ class StorageConfig(BaseModel):
         or the explicit config value.
         """
         storage_type = os.getenv("S3_TYPE", self.S3_TYPE).lower()
+
+        if storage_type == "filesystem":
+            from shared.services.storage.adapters import FileSystemStorageAdapter
+
+            local_root = self.OBJECT_STORAGE_LOCAL_ROOT or os.path.join(
+                self.S3_TEMP_PATH,
+                "object-storage",
+            )
+            return FileSystemStorageAdapter(local_root, self.S3_BUCKET_NAME)
 
         if storage_type == "oss":
             # OSS storage adapter (imported lazily).

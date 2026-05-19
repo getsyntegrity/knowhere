@@ -30,18 +30,27 @@ def upload_url_file(
     upload_context = load_url_upload_context(job_id, redis_service)
 
     lifecycle_service.update_progress(
-        job_id, progress=3, message="Validating URL file type..."
+        job_id,
+        progress=3,
+        message="Validating URL file type...",
+        redis_service=redis_service,
     )
     file_extension = resolve_supported_url_extension(source_url)
 
     lifecycle_service.update_progress(
-        job_id, progress=10, message="Downloading file from URL..."
+        job_id,
+        progress=10,
+        message="Downloading file from URL...",
+        redis_service=redis_service,
     )
     temp_file_path = download_source_url_to_temp(source_url)
 
     try:
         lifecycle_service.update_progress(
-            job_id, progress=30, message="Validating file size..."
+            job_id,
+            progress=30,
+            message="Validating file size...",
+            redis_service=redis_service,
         )
         assert_temp_file_within_size_limit(
             temp_file_path=temp_file_path,
@@ -49,7 +58,10 @@ def upload_url_file(
         )
 
         lifecycle_service.update_progress(
-            job_id, progress=50, message="Uploading file to S3..."
+            job_id,
+            progress=50,
+            message="Uploading file to S3...",
+            redis_service=redis_service,
         )
         upload_temp_file_to_source_storage(
             temp_file_path=temp_file_path,
@@ -60,7 +72,10 @@ def upload_url_file(
         cleanup_temp_file(temp_file_path)
 
     lifecycle_service.update_progress(
-        job_id, progress=80, message="Verifying upload result..."
+        job_id,
+        progress=80,
+        message="Verifying upload result...",
+        redis_service=redis_service,
     )
     file_info = verify_source_upload(upload_context.s3_key)
 
@@ -68,6 +83,7 @@ def upload_url_file(
         job_id,
         progress=100,
         message="URL file upload complete, waiting for processing...",
+        redis_service=redis_service,
     )
     logger.info(
         "URL file upload complete, waiting for S3 webhook: "

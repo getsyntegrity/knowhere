@@ -11,22 +11,21 @@ from app.services.document_ingestion.parse_result_package import (
 from app.services.document_ingestion.parse_execution import execute_document_parse
 from app.services.document_ingestion.processing_billing import (
     charge_parse_job_pages,
+    record_skipped_parse_job_billing,
     record_processing_start,
 )
 from app.services.document_ingestion.processing_context import (
     ParseJobContext,
-    assert_source_file_within_size_limit,
     load_parse_job_context,
 )
 from app.services.document_ingestion.source_preparation import prepare_source_file
 from app.services.document_ingestion.success_finalization import finalize_parse_success
 from app.services.document_ingestion.workspace import (
     TemporaryParseWorkspace,
-    cleanup_task_workspace,
-    download_s3_file_to_temp,
 )
 from loguru import logger
 
+from shared.core.exceptions.domain_exceptions import ValidationException
 from shared.services.jobs.lifecycle.service import get_sync_job_lifecycle_service
 from shared.services.redis.distributed_lock import RedisJobLock
 from shared.services.redis.redis_sync_service import (
@@ -44,7 +43,6 @@ class DocumentProcessingRun:
 
         redis_service = SyncRedisServiceFactory.get_service()
         job_context = load_parse_job_context(job_id, user_id, redis_service)
-        assert_source_file_within_size_limit(job_context.s3_key)
 
         should_process = mark_job_running(job_id, job_context.redis_service)
         if not should_process:
@@ -65,7 +63,7 @@ class DocumentProcessingRun:
                     task_workspace=task_workspace,
                 )
             finally:
-                task_workspace.cleanup(cleanup_task_workspace)
+                task_workspace.cleanup()
 
         return result
 
@@ -83,7 +81,6 @@ def _run_parse_job(
         job_id=job_id,
         job_context=job_context,
         input_dir=task_workspace.input_dir,
-        download_source_file=download_s3_file_to_temp,
     )
 
     workload_estimate = PageEstimator.estimate_workload(prepared_source.local_file_path)
@@ -96,6 +93,23 @@ def _run_parse_job(
     )
 
     processing_started_at = datetime.now(timezone.utc)
+    if _is_pdf_page_limit_exceeded(
+        file_extension=prepared_source.file_extension,
+        page_count=page_count,
+    ):
+        billing_snapshot = record_skipped_parse_job_billing(
+            job_id=job_id,
+            workload_estimate=workload_estimate,
+        )
+        record_processing_start(
+            job_id=job_id,
+            job_context=job_context,
+            billing_snapshot=billing_snapshot,
+            processing_started_at=processing_started_at,
+            workload_estimate=workload_estimate,
+        )
+        _raise_pdf_page_limit_exceeded(page_count)
+
     billing_snapshot = charge_parse_job_pages(
         job_id=job_id,
         filename=prepared_source.source_file_name,
@@ -145,4 +159,28 @@ def _run_parse_job(
         processing_started_at=processing_started_at,
         task_workspace_dir=task_workspace.root_dir,
         result_storage_factory=get_result_storage,
+    )
+
+
+def _is_pdf_page_limit_exceeded(*, file_extension: str, page_count: int) -> bool:
+    from shared.core.config import settings
+
+    return file_extension == ".pdf" and page_count > settings.MAX_PDF_PAGE_LIMIT
+
+
+def _raise_pdf_page_limit_exceeded(page_count: int) -> None:
+    from shared.core.config import settings
+
+    pdf_page_limit = settings.MAX_PDF_PAGE_LIMIT
+    raise ValidationException(
+        user_message=(
+            f"Document too large: {page_count} pages exceeds the {pdf_page_limit}-page limit. "
+            "Please split the document and upload in smaller batches."
+        ),
+        violations=[
+            {
+                "field": "page_count",
+                "description": f"PDF has {page_count} pages, limit is {pdf_page_limit}",
+            }
+        ],
     )

@@ -17,7 +17,7 @@ def execute_document_parse(
     prepared_source: PreparedSourceFile,
     output_dir: str,
 ) -> ParseOutput:
-    """Run the parser adapter for a prepared source file."""
+    """Run worker document parsing for a prepared local source file."""
     doc_type = JobMetadataHelper.get_parsing_param(
         job_context.job_metadata,
         "doc_type",

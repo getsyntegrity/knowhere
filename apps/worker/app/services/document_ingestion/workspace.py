@@ -3,7 +3,6 @@
 import os
 import shutil
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from loguru import logger
@@ -14,9 +13,6 @@ from shared.core.exceptions.domain_exceptions import (
     SystemSettingInvalidException,
     SystemSettingMissingException,
 )
-from shared.services.storage.job_file_storage import JobFileStorage
-
-CleanupTaskWorkspace = Callable[[str | None], bool]
 
 
 @dataclass(frozen=True)
@@ -37,12 +33,8 @@ class TemporaryParseWorkspace:
         logger.info(f"Task workspace ready: job_id={job_id}, workspace={root_dir}")
         return cls(root_dir=root_dir, input_dir=input_dir, output_dir=output_dir)
 
-    def cleanup(
-        self,
-        cleanup_workspace: CleanupTaskWorkspace | None = None,
-    ) -> bool:
-        resolved_cleanup = cleanup_workspace or cleanup_task_workspace
-        return resolved_cleanup(self.root_dir)
+    def cleanup(self) -> bool:
+        return cleanup_task_workspace(self.root_dir)
 
 
 def cleanup_temp_file(file_path: str | None) -> None:
@@ -99,13 +91,3 @@ def create_task_workspace(job_id: str) -> str:
             internal_message=f"Failed to create task workspace in {temp_root}",
             original_exception=exc,
         ) from exc
-
-
-def download_s3_file_to_temp(s3_key: str, file_ext: str, temp_dir: str) -> str:
-    """Download the source file from object storage into the task workspace."""
-    storage = JobFileStorage()
-    return storage.download_upload_to_temp(
-        s3_key,
-        suffix=file_ext,
-        temp_dir=temp_dir,
-    )
