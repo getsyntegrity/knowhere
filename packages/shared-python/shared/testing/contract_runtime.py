@@ -64,8 +64,6 @@ _MODULE_NAMES_TO_CLEAR: tuple[str, ...] = (
     "shared.core.config.qstash",
     "shared.core.config.redis",
     "shared.core.config.storage",
-    "shared.core.celery_app",
-    "shared.core.tasks.celery_tasks",
     "shared.core.database",
     "shared.core.database_sync",
     "shared.core.state_machine.service_sync",

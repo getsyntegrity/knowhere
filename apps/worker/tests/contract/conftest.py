@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from pytest_postgresql import factories
+from celery import Celery
 from pytest import MonkeyPatch
 from shared.testing import contract_runtime
 from shared.testing.contract_runtime import PostgreSQLProcess
@@ -16,6 +17,12 @@ from shared.testing.postgresql_environment import find_executable
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[4]
 _WORKER_ROOT: Path = _REPO_ROOT / "apps" / "worker"
+_DOCUMENT_INGESTION_TASK_NAMES: tuple[str, ...] = (
+    "app.core.tasks.document_ingestion_tasks.upload_url_file_task",
+    "app.core.tasks.kb_tasks.upload_url_file_task",
+    "app.core.tasks.document_ingestion_tasks.parse_task",
+    "app.core.tasks.kb_tasks.parse_task",
+)
 
 
 def _resolve_postgresql_executable() -> str | None:
@@ -26,6 +33,11 @@ def _resolve_postgresql_executable() -> str | None:
 
     executable_path = find_executable("pg_ctl")
     return str(executable_path) if executable_path is not None else None
+
+
+def _clear_document_ingestion_task_registrations(celery_app: Celery) -> None:
+    for task_name in _DOCUMENT_INGESTION_TASK_NAMES:
+        celery_app.tasks.pop(task_name, None)
 
 
 _contract_postgresql_proc = factories.postgresql_proc(
@@ -64,6 +76,7 @@ def worker_contract_environment(
     celery_app = get_celery_app()
     monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
     monkeypatch.setattr(celery_app.conf, "task_eager_propagates", False)
+    _clear_document_ingestion_task_registrations(celery_app)
     importlib.import_module("app.core.tasks.document_ingestion_tasks")
 
     try:
