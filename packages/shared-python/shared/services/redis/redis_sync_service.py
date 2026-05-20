@@ -195,13 +195,15 @@ class SyncRedisService:
         try:
             client = self._get_client()
             full_key = self._build_key(key)
-            result: Dict[str, str] = client.hgetall(full_key)  # type: ignore[assignment]
-            parsed_result = {}
+            result: Dict[Any, Any] = client.hgetall(full_key)  # type: ignore[assignment]
+            parsed_result: Dict[str, Any] = {}
             for field, value in result.items():
+                parsed_field = _decode_redis_value(field)
+                parsed_value = _decode_redis_value(value)
                 try:
-                    parsed_result[field] = json.loads(value)
+                    parsed_result[parsed_field] = json.loads(parsed_value)
                 except (json.JSONDecodeError, TypeError):
-                    parsed_result[field] = value
+                    parsed_result[parsed_field] = parsed_value
             return parsed_result
         except Exception as e:
             logger.error(f"Redis HGETALL failed: key={key}, error={e}")
@@ -260,6 +262,12 @@ class SyncRedisService:
             self._client.close()
             self._client = None
             logger.info("Sync Redis client closed")
+
+
+def _decode_redis_value(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
 
 
 class SyncRedisServiceFactory:
