@@ -129,8 +129,9 @@ def record_processing_start(
     billing_snapshot: ParseJobBillingSnapshot,
     processing_started_at: datetime,
     workload_estimate: WorkloadEstimate,
+    extra_metadata: dict[str, object] | None = None,
 ) -> None:
-    metadata_updates = {
+    metadata_updates: dict[str, object] = {
         "page_count": workload_estimate.page_count,
         "billing_status": billing_snapshot.billing_status,
         "billing_amount_micro_dollars": billing_snapshot.billing_amount_micro_dollars,
@@ -142,6 +143,8 @@ def record_processing_start(
         metadata_updates["workload_estimate_fallback_reason"] = (
             workload_estimate.fallback_reason
         )
+    if extra_metadata is not None:
+        metadata_updates.update(extra_metadata)
     with get_sync_db_context() as db:
         job_result = db.execute(select(Job).where(Job.job_id == job_id).with_for_update())
         job = job_result.scalar_one_or_none()

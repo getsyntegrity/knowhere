@@ -261,7 +261,6 @@ class SyncRedisService:
             self._client = None
             logger.info("Sync Redis client closed")
 
-
 class SyncRedisServiceFactory:
     """Factory for sync Redis service instances."""
 

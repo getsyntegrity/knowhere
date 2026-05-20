@@ -25,7 +25,7 @@ from app.services.document_ingestion.workspace import (
 )
 from loguru import logger
 
-from shared.core.exceptions.domain_exceptions import ValidationException
+from shared.core.exceptions.domain_exceptions import ValidationException, Violation
 from shared.services.jobs.lifecycle.service import get_sync_job_lifecycle_service
 from shared.services.redis.distributed_lock import RedisJobLock
 from shared.services.redis.redis_sync_service import (
@@ -97,6 +97,7 @@ def _run_parse_job(
         file_extension=prepared_source.file_extension,
         page_count=page_count,
     ):
+        violations = _build_pdf_page_limit_violations(page_count)
         billing_snapshot = record_skipped_parse_job_billing(
             job_id=job_id,
             workload_estimate=workload_estimate,
@@ -107,8 +108,9 @@ def _run_parse_job(
             billing_snapshot=billing_snapshot,
             processing_started_at=processing_started_at,
             workload_estimate=workload_estimate,
+            extra_metadata={"error_details": {"violations": violations}},
         )
-        _raise_pdf_page_limit_exceeded(page_count)
+        _raise_pdf_page_limit_exceeded(page_count, violations)
 
     billing_snapshot = charge_parse_job_pages(
         job_id=job_id,
@@ -168,7 +170,21 @@ def _is_pdf_page_limit_exceeded(*, file_extension: str, page_count: int) -> bool
     return file_extension == ".pdf" and page_count > settings.MAX_PDF_PAGE_LIMIT
 
 
-def _raise_pdf_page_limit_exceeded(page_count: int) -> None:
+def _build_pdf_page_limit_violations(page_count: int) -> list[Violation]:
+    from shared.core.config import settings
+
+    pdf_page_limit = settings.MAX_PDF_PAGE_LIMIT
+    return [
+        {
+            "field": "page_count",
+            "description": f"PDF has {page_count} pages, limit is {pdf_page_limit}",
+        }
+    ]
+
+
+def _raise_pdf_page_limit_exceeded(
+    page_count: int, violations: list[Violation]
+) -> None:
     from shared.core.config import settings
 
     pdf_page_limit = settings.MAX_PDF_PAGE_LIMIT
@@ -177,10 +193,5 @@ def _raise_pdf_page_limit_exceeded(page_count: int) -> None:
             f"Document too large: {page_count} pages exceeds the {pdf_page_limit}-page limit. "
             "Please split the document and upload in smaller batches."
         ),
-        violations=[
-            {
-                "field": "page_count",
-                "description": f"PDF has {page_count} pages, limit is {pdf_page_limit}",
-            }
-        ],
+        violations=violations,
     )
