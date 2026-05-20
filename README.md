@@ -101,7 +101,7 @@ Agents using Knowhere outperform those working from raw documents, MinerU-parsed
 
 - **Accuracy**: +36% first-try accuracy and +11% recall over raw documents.
 - **Reliability**: 79% accuracy with feedback, vs. a ~53% ceiling on raw docs.
-- **Efficiency**: Fewer agent loops than every baseline, with lower token and time costs than raw documents or Unstructured output.
+- **Efficiency**: Fewer loops, fewer tokens, less time. Agents navigate a structured graph instead of reading monolithic text.
 
 *(Internal evaluation across identical agentic RAG tasks. Baselines: raw documents, MinerU output, and Unstructured output fed directly to agents.)*
 
