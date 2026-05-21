@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.services.document_ingestion.processing_context import ParseJobContext
-from app.services.document_ingestion.workspace import download_s3_file_to_temp
 from app.services.document_parser.support.internal_parse_name import (
     prepare_internal_parse_input,
 )
 from loguru import logger
 
+from shared.core.config import settings
+from shared.core.exceptions.domain_exceptions import (
+    NotFoundException,
+    ValidationException,
+)
 from shared.models.schemas.job_metadata import JobMetadataHelper
-
-DownloadSourceFile = Callable[[str, str, str], str]
+from shared.services.storage.job_file_storage import JobFileStorage
 
 
 @dataclass(frozen=True)
@@ -29,9 +31,8 @@ def prepare_source_file(
     job_id: str,
     job_context: ParseJobContext,
     input_dir: str,
-    download_source_file: DownloadSourceFile = download_s3_file_to_temp,
 ) -> PreparedSourceFile:
-    """Download and normalize the source file before parser execution."""
+    """Verify, download, and normalize the uploaded source file."""
     source_file_name = JobMetadataHelper.get_source_file_name(
         job_context.job_metadata,
     ) or os.path.basename(job_context.s3_key)
@@ -39,10 +40,12 @@ def prepare_source_file(
         os.path.splitext(job_context.s3_key)[1].lower() if job_context.s3_key else ""
     )
 
-    local_file_path = download_source_file(
+    storage = JobFileStorage()
+    _assert_source_file_within_size_limit(storage, job_context.s3_key)
+    local_file_path = storage.download_upload_to_temp(
         job_context.s3_key,
-        file_extension,
-        input_dir,
+        suffix=file_extension,
+        temp_dir=input_dir,
     )
     logger.info(f"File downloaded: job_id={job_id}, local_path={local_file_path}")
 
@@ -64,3 +67,36 @@ def prepare_source_file(
         local_file_path=prepared_parse_input.file_path,
         file_extension=file_extension,
     )
+
+
+def _assert_source_file_within_size_limit(
+    storage: JobFileStorage,
+    s3_key: str,
+) -> None:
+    file_info = storage.verify_upload_exists(s3_key)
+    if not file_info.get("exists"):
+        raise NotFoundException(
+            resource="S3File",
+            resource_id=s3_key,
+            internal_message=f"S3 file not found: {s3_key}",
+        )
+
+    logger.info(f"S3 file verified: {s3_key}")
+
+    raw_file_size = file_info.get("size", 0)
+    file_size = raw_file_size if isinstance(raw_file_size, int) else 0
+    file_extension = os.path.splitext(s3_key)[1].lower()
+    if file_size > settings.MAX_FILE_SIZE:
+        limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
+        raise ValidationException(
+            user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
+            violations=[
+                {
+                    "field": "file_size",
+                    "description": (
+                        f"Size {file_size} bytes exceeds limit of "
+                        f"{settings.MAX_FILE_SIZE} bytes"
+                    ),
+                }
+            ],
+        )

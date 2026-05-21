@@ -261,7 +261,6 @@ class SyncRedisService:
             self._client = None
             logger.info("Sync Redis client closed")
 
-
 class SyncRedisServiceFactory:
     """Factory for sync Redis service instances."""
 
@@ -359,11 +358,9 @@ class SyncJobMetadataService:
 
     def update_metadata(self, job_id: str, updates: Dict[str, Any]) -> bool:
         try:
-            metadata = self.get_metadata(job_id)
-            if metadata:
-                metadata.update(updates)
-                return self.save_metadata(job_id, metadata)
-            return False
+            metadata = self.get_metadata(job_id) or {}
+            metadata.update(updates)
+            return self.save_metadata(job_id, metadata)
         except Exception as e:
             logger.error(f"Failed to update metadata: {e}")
             return False
