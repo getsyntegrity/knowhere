@@ -101,7 +101,7 @@ Agents using Knowhere outperform those working from raw documents, Markitdown, U
 
 - **Accuracy**: +36% first-try accuracy and +11% recall over raw documents.
 - **Reliability**: 79% accuracy with feedback, vs. a ~53% ceiling on raw docs.
-- **Efficiency**: Fewer loops than every baseline, lower latency than raw documents, Unstructured, and MinerU, and fewer tokens than raw documents, Unstructured, and MinerU.
+- **Efficiency**: Fewer loops, fewer tokens, less time. Agents navigate a structured graph instead of reading monolithic text.
 
 *(Internal evaluation across identical agentic RAG tasks. Baselines: raw documents and parser output fed directly to agents.)*
 
