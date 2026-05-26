@@ -89,7 +89,7 @@ A: Yes. Knowhere extracts them, runs them through VLMs for summarization and fea
 
 ## Performance Benchmark
 
-Agents using Knowhere outperform those working from raw documents, MinerU-parsed output, or Unstructured output on real-world tasks: searching, modifying, and answering questions.
+Agents using Knowhere outperform those working from raw documents, Markitdown, Unstructured, or MinerU output on real-world tasks: searching, modifying, and answering questions.
 
 <p align="center">
   <img alt="Benchmark Performance: Agent + Knowhere vs Others" src="docs/assets/benchmark.png" width="900">
@@ -101,9 +101,9 @@ Agents using Knowhere outperform those working from raw documents, MinerU-parsed
 
 - **Accuracy**: +36% first-try accuracy and +11% recall over raw documents.
 - **Reliability**: 79% accuracy with feedback, vs. a ~53% ceiling on raw docs.
-- **Efficiency**: Fewer loops, fewer tokens, less time. Agents navigate a structured graph instead of reading monolithic text.
+- **Efficiency**: Fewer loops than every baseline, lower latency than raw documents, Unstructured, and MinerU, and fewer tokens than raw documents, Unstructured, and MinerU.
 
-*(Internal evaluation across identical agentic RAG tasks. Baselines: raw documents, MinerU output, and Unstructured output fed directly to agents.)*
+*(Internal evaluation across identical agentic RAG tasks. Baselines: raw documents and parser output fed directly to agents.)*
 
 > [!NOTE]
 > **📊 Benchmarks are actively expanding.** More parsers and retrieval baselines coming soon.
