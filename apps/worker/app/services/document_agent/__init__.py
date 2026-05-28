@@ -1,15 +1,17 @@
-"""Phase 1 document split-agent utilities."""
+"""Page anatomy agent for hierarchy-first PDF profiling."""
 
 from app.services.document_agent.manifest import (
-    GlobalSignals,
-    ShardManifest,
-    ShardSignal,
-    SpecialPage,
+    PageAnatomyMap,
+    PageFeature,
+    PageLabel,
+    ShardPlan,
 )
+from app.services.document_agent.profile_agent import ProfileAgent
 
 __all__ = [
-    "GlobalSignals",
-    "ShardManifest",
-    "ShardSignal",
-    "SpecialPage",
+    "PageAnatomyMap",
+    "PageFeature",
+    "PageLabel",
+    "ProfileAgent",
+    "ShardPlan",
 ]
