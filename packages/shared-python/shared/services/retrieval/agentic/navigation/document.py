@@ -1,4 +1,20 @@
-"""Per-document navigation for agentic retrieval."""
+"""Per-document navigation for agentic retrieval.
+
+Collector Agent architecture
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The navigation loop uses a Collector Agent model where each step
+independently produces two decisions:
+
+1. **collect**: paths to add to the evidence collection
+2. **action**: navigation direction (DRILL/BACK/STOP)
+
+The ``collected_paths`` list accumulates across all steps.  After
+navigation completes (or is interrupted), a single batch hydration
+pass loads content for all collected paths.
+
+Asset collection (images/tables) still runs during navigation so LLM
+tool requests are honoured, but assets are reconciled after hydration.
+"""
 from __future__ import annotations
 
 from typing import Any, cast
@@ -18,6 +34,9 @@ from shared.services.retrieval.agentic.core.types import (
     DocTreeNode,
     NavigateStepResult,
     ToolResult,
+)
+from shared.services.retrieval.agentic.navigation.selection_hydration import (
+    hydrate_path_selections_into_node,
 )
 from shared.services.retrieval.llm_adapter import LLMFn
 
@@ -80,20 +99,34 @@ class DocumentNavigationRunner:
         root = DocTreeNode(scope_path=None)
         doc_pending_assets: list[dict[str, Any]] = []
 
+        # Phase 2A: Collector Agent navigation (summary-only, no content hydration)
+        collected_paths: list[dict[str, Any]] = []
         if not is_discovery_only_doc:
-            doc_pending_assets = await self._navigate_bfs(
+            doc_pending_assets, collected_paths = await self._navigate_collector(
                 doc=doc,
                 root=root,
                 doc_name=doc_name,
                 job_result_id=job_result_id,
             )
 
+        # Phase 2B: Discovery hints (independent hydration path)
         await self._hydrate_discovery_hints(
             doc=doc,
             root=root,
             doc_name=doc_name,
+            collected_paths=collected_paths,
         )
 
+        # Phase 2C: Batch hydrate all collected paths
+        if not is_discovery_only_doc and collected_paths:
+            await self._hydrate_collected(
+                doc=doc,
+                root=root,
+                job_result_id=job_result_id,
+                collected_paths=collected_paths,
+            )
+
+        # Phase 2D: Reconcile assets into hydrated tree
         if not is_discovery_only_doc and doc_pending_assets:
             self._reconcile_pending_assets(
                 doc=doc,
@@ -110,35 +143,43 @@ class DocumentNavigationRunner:
         if self._state.ledger is not None:
             self._state.ledger.mark_explored(docs=1)
 
-    async def _navigate_bfs(
+    async def _navigate_collector(
         self,
         *,
         doc: CandidateDoc,
         root: DocTreeNode,
         doc_name: str,
         job_result_id: str,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Collector Agent navigation loop.
+
+        Returns (doc_pending_assets, collected_paths).
+        """
         doc_exclude: set[str] = set()
-        pending: list[tuple[str | list[str] | None, DocTreeNode, int]] = [(None, root, 0)]
+        nav_trace: list[dict[str, Any]] = []
+        collected_paths: list[dict[str, Any]] = []
         doc_pending_assets: list[dict[str, Any]] = []
 
-        while pending:
+        # Scope stack for BACK support: each entry is a scope path (None = root)
+        scope_stack: list[str | None] = [None]
+        step_count = 0
+
+        while step_count < self._config.max_nav_steps:
             if self._state.elapsed_ms >= self._config.latency_budget_ms:
                 break
-
-            scope, parent_node, depth = pending.pop(0)
-            if depth >= self._config.max_nav_depth:
-                continue
             if self._llm_fn is None:
                 break
             if self._state.ledger and self._state.ledger.status("planning") in ("CRITICAL", "EXHAUSTED"):
-                logger.info("  agentic: planning budget critical, ending BFS for current doc")
+                logger.info("  agentic: planning budget critical, ending navigation for current doc")
                 break
+
+            current_scope = scope_stack[-1]
+            step_count += 1
 
             doc_llm_fn = self._llm_budget.for_document(
                 cast(LLMFn, self._llm_fn),
                 doc_id=doc.document_id,
-                depth=depth,
+                step=step_count,
             )
             try:
                 nav_result = await tools.navigate_step(
@@ -150,9 +191,11 @@ class DocumentNavigationRunner:
                     user_id=self._user_id,
                     namespace=self._namespace,
                     doc_name=doc_name,
-                    scope_path=scope,
+                    scope_path=current_scope,
                     exclude_paths=doc_exclude,
                     budget_snapshot=self._state.ledger.snapshot() if self._state.ledger else None,
+                    nav_trace=nav_trace if nav_trace else None,
+                    collected_paths=collected_paths,
                 )
             except BudgetExceeded:
                 logger.info("  agentic: planning budget exhausted during navigation")
@@ -161,43 +204,162 @@ class DocumentNavigationRunner:
                 break
             self._state.step_count += 1
 
+            # Asset collection runs during navigation (images/tables).
             await self._collect_assets(
                 doc=doc,
-                scope=scope,
+                scope=current_scope,
                 step_node=nav_result.node,
                 asset_tools=nav_result.tools,
                 pending_assets=doc_pending_assets,
                 round_scope="nav",
             )
-            _merge_step_node(parent_node, nav_result.node)
-            _update_excluded_leaf_paths(doc_exclude, nav_result.node, nav_result.pending)
-            _queue_drill_paths(pending, parent_node, nav_result.pending, depth)
-            parent_node.reparent_leaf_content()
+
+            # Merge outline + confidence into root tree
+            _merge_step_node(root, nav_result.node)
+
+            # ── Process COLLECT ──────────────────────────────────────────
+            collected_in_step: list[str] = []
+            for coll_item in nav_result.collect:
+                path = coll_item["path"]
+                coll_item["collected_at_step"] = step_count
+                coll_item["scope_context"] = current_scope or "root"
+                collected_paths.append(coll_item)
+                collected_in_step.append(path)
+                # Collected paths should be excluded from future navigation
+                doc_exclude.add(path)
+
+            # ── Build trace entry ────────────────────────────────────────
+            trace_entry: dict[str, Any] = {
+                "step": step_count,
+                "scope": current_scope or "root",
+                "action": nav_result.action,
+                "drill_into": nav_result.drill_into,
+                "collected": collected_in_step,
+                "reason": nav_result.reason,
+            }
+            nav_trace.append(trace_entry)
+
+            # ── Record decision step ─────────────────────────────────────
             self._record_navigation_step(
                 doc=doc,
-                scope=scope,
-                depth=depth,
+                scope=current_scope,
+                step_num=step_count,
                 nav_result=nav_result,
+                collected_in_step=collected_in_step,
             )
-            if self._state.ledger is not None:
-                self._state.ledger.mark_explored(
-                    chunks=sum(len(chunks) for chunks in nav_result.node.leaf_content.values()),
-                )
 
-        return doc_pending_assets
+            # ── Process navigation action ────────────────────────────────
+            if nav_result.action == "DRILL" and nav_result.drill_into:
+                drill_path = nav_result.drill_into
+                # Create child node in tree for the drill target
+                target_parent = _find_target_node(root, drill_path)
+                target_parent.children.setdefault(drill_path, DocTreeNode(scope_path=drill_path))
+                scope_stack.append(drill_path)
+
+            elif nav_result.action == "BACK":
+                if len(scope_stack) > 1:
+                    scope_stack.pop()
+                else:
+                    # Already at root, treat as STOP
+                    logger.info("  agentic: BACK at root scope, treating as STOP")
+                    break
+
+            elif nav_result.action == "STOP" or nav_result.is_terminal:
+                break
+
+        return doc_pending_assets, collected_paths
+
+    async def _hydrate_collected(
+        self,
+        *,
+        doc: CandidateDoc,
+        root: DocTreeNode,
+        job_result_id: str,
+        collected_paths: list[dict[str, Any]],
+    ) -> None:
+        """Batch-hydrate all collected paths after navigation completes."""
+        if not collected_paths:
+            return
+
+        # Deduplicate: keep highest confidence per path
+        deduped: dict[str, dict[str, Any]] = {}
+        for item in collected_paths:
+            path = item["path"]
+            if path not in deduped or item.get("confidence", 0) > deduped[path].get("confidence", 0):
+                deduped[path] = item
+        unique_selections = list(deduped.values())
+
+        # Ensure child nodes exist for each collected path so reparent can
+        # correctly route descendant chunks into the right subtree.
+        for item in unique_selections:
+            path = item["path"]
+            _ensure_child_node(root, path)
+
+        await hydrate_path_selections_into_node(
+            self._db,
+            node=root,
+            path_selections=unique_selections,
+            user_id=self._user_id,
+            namespace=self._namespace,
+            document_id=doc.document_id,
+            job_result_id=job_result_id,
+        )
+
+        # Single reparent pass — tree structure is final.
+        root.reparent_leaf_content()
+
+        # Load section tree outline for each collected child node, then
+        # build a proper sub-tree so the renderer can nest L3 under L2 etc.
+        from shared.services.retrieval.agentic.navigation.section_tree import load_child_sections
+        for item in unique_selections:
+            path = item["path"]
+            child_node = root.children.get(path)
+            if child_node is None or child_node.outline_items:
+                continue  # Skip if no child or already has outline
+            try:
+                section_items = await load_child_sections(
+                    self._db, doc.document_id, job_result_id, path,
+                    limit_depth=False,
+                )
+                if section_items:
+                    # Filter out the scope node itself to avoid duplicate
+                    # title rendering (parent outline already shows it).
+                    child_node.outline_items = [
+                        si for si in section_items
+                        if si.get("path") != path
+                    ]
+                    # Build sub-tree from outline hierarchy and re-reparent
+                    # so chunks are correctly nested (e.g. L3 under L2).
+                    _build_outline_subtree(child_node)
+            except Exception as exc:
+                logger.warning(f"  hydrate_collected: failed to load outline for '{path}': {exc}")
+
+        # Also organize any discovery chunks sitting in root.leaf_content.
+        # Same path-based tree building; pre-existing children are protected.
+        if root.leaf_content:
+            _build_outline_subtree(root)
+
+        # Accurate budget accounting — count only actually-hydrated chunks.
+        if self._state.ledger is not None:
+            total_chunks = len(root.flatten_chunk_rows())
+            self._state.ledger.mark_explored(chunks=total_chunks)
+            logger.info(
+                f"  agentic: hydrate_collected doc={doc.document_id} "
+                f"collected={len(unique_selections)} hydrated_chunks={total_chunks}"
+            )
 
     async def _collect_assets(
         self,
         *,
         doc: CandidateDoc,
-        scope: str | list[str] | None,
+        scope: str | None,
         step_node: DocTreeNode,
         asset_tools: list[str],
         pending_assets: list[dict[str, Any]],
         round_scope: str,
     ) -> None:
         selected_asset_scopes = list(step_node.confidence.keys())
-        asset_scope = selected_asset_scopes or scope
+        asset_scope: str | list[str] | None = selected_asset_scopes or scope
         for asset_tool in asset_tools:
             if asset_tool not in ("FIND_IMAGES", "FIND_TABLES"):
                 continue
@@ -225,7 +387,7 @@ class DocumentNavigationRunner:
                         payload={
                             "document_id": doc.document_id,
                             "scope": scope_display,
-                            "navigation_scope": scope if isinstance(scope, str) else (scope or "root"),
+                            "navigation_scope": scope or "root",
                             "asset_type": asset_type,
                             "chunks_found": len(asset_chunks) if asset_chunks else 0,
                         },
@@ -244,6 +406,7 @@ class DocumentNavigationRunner:
         doc: CandidateDoc,
         root: DocTreeNode,
         doc_name: str,
+        collected_paths: list[dict[str, Any]] | None = None,
     ) -> None:
         doc_hints = self._discovery_by_doc.get(doc.document_id, [])
         if not doc_hints or self._llm_fn is None:
@@ -251,7 +414,9 @@ class DocumentNavigationRunner:
         if self._state.elapsed_ms >= self._config.latency_budget_ms:
             return
 
-        discovery_exclude_paths = _collect_leaf_paths(root)
+        discovery_exclude_paths = _build_discovery_exclude_set(
+            root, collected_paths or []
+        )
         doc_discovery_llm_fn = self._llm_budget.for_discovery(
             cast(LLMFn, self._llm_fn),
             doc_id=doc.document_id,
@@ -343,41 +508,34 @@ class DocumentNavigationRunner:
         self,
         *,
         doc: CandidateDoc,
-        scope: str | list[str] | None,
-        depth: int,
+        scope: str | None,
+        step_num: int,
         nav_result: NavigateStepResult,
+        collected_in_step: list[str],
     ) -> None:
         action = nav_result.action
-        step_node = nav_result.node
-        asset_tools = nav_result.tools
-        drill_paths = nav_result.pending
         reason = nav_result.reason
-        stop_type = nav_result.stop_type
-        selected_paths = list(step_node.confidence.keys())
-        hydrated_paths = list(step_node.leaf_content.keys())
+        drill_into = nav_result.drill_into
 
         if self._trace_enabled:
             self._trace.record_step(
                 "navigate_step",
                 ToolResult(
-                    status=f"{action.lower()}" + (" (content)" if step_node.has_content() else ""),
+                    status=f"{action.lower()}",
                     payload={
                         "document_id": doc.document_id,
-                        "scope": scope if isinstance(scope, str) else (scope or "root"),
-                        "depth": depth,
+                        "scope": scope or "root",
+                        "step": step_num,
                         "action": action,
                         "reason": reason,
-                        "stop_type": stop_type,
-                        "asset_tools": asset_tools,
-                        "selected_paths": selected_paths,
-                        "hydrated_paths": hydrated_paths,
-                        "outline_count": len(step_node.outline_items),
-                        "leaf_count": len(step_node.leaf_content),
-                        "hydrated_count": sum(len(c) for c in step_node.leaf_content.values()),
-                        "pending_drills": len(drill_paths),
+                        "drill_into": drill_into,
+                        "collected_count": len(collected_in_step),
+                        "collected_paths": collected_in_step,
+                        "asset_tools": nav_result.tools,
+                        "outline_count": len(nav_result.node.outline_items),
                     },
                 ),
-                decision_reason=f"nav_d{depth}_{doc.source_file_name}",
+                decision_reason=f"nav_s{step_num}_{doc.source_file_name}",
             )
 
         doc_name = doc.source_file_name or self._state.doc_id_to_name.get(doc.document_id, "")
@@ -387,60 +545,176 @@ class DocumentNavigationRunner:
             "document_id": doc.document_id,
             "action": action,
             "reason": reason,
-            "stop_type": stop_type,
-            "depth": depth,
-            "selected_paths": selected_paths,
-            "hydrated_paths": hydrated_paths,
-            "hydrated_count": sum(len(c) for c in step_node.leaf_content.values()),
+            "step": step_num,
+            "drill_into": drill_into,
+            "collected_paths": collected_in_step,
+            "collected_count": len(collected_in_step),
         })
 
-        scope_log = scope if isinstance(scope, str) else (", ".join(scope) if scope else "root")
+        scope_log = scope or "root"
         logger.info(
             f"  agentic step {self._state.step_count}: navigate_step "
             f'doc="{doc.source_file_name}" scope={scope_log} '
-            f"depth={depth} action={action} tools={asset_tools} "
-            f"reason=\"{reason[:80]}\" stop_type={stop_type} "
-            f"outline={len(step_node.outline_items)} "
-            f"leaves={len(step_node.leaf_content)} "
-            f"drills={len(drill_paths)}"
+            f"step={step_num} action={action} tools={nav_result.tools} "
+            f'reason="{reason[:80]}" '
+            f"collected={len(collected_in_step)} "
+            f"drill_into={drill_into} "
+            f"outline={len(nav_result.node.outline_items)}"
         )
 
 
-def _merge_step_node(parent_node: DocTreeNode, step_node: DocTreeNode) -> None:
-    parent_node.outline_items = step_node.outline_items
-    for leaf_path, chunks in step_node.leaf_content.items():
-        parent_node.add_leaf_chunks(leaf_path, chunks)
-    parent_node.confidence = step_node.confidence
+def _find_target_node(node: DocTreeNode, path: str) -> DocTreeNode:
+    """Walk the tree to find the deepest existing node that owns *path*.
+
+    Only recurse when *path* is a true descendant of a child (prefix match).
+    An exact match means the item belongs to the section itself, which is
+    managed by the *parent* node — the renderer already handles the case
+    where a path appears in both ``children`` and ``leaf_content``.
+    """
+    for child_path, child in node.children.items():
+        if path.startswith(child_path + " / "):
+            return _find_target_node(child, path)
+    return node
+
+
+def _merge_step_node(root: DocTreeNode, step_node: DocTreeNode) -> None:
+    """Route outline items and confidence from *step_node* to correct tree positions."""
+    for item in step_node.outline_items:
+        path = item.get("path", "")
+        target = _find_target_node(root, path)
+        existing = {i.get("path") for i in target.outline_items}
+        if path not in existing:
+            target.outline_items.append(item)
+
+    for path, conf in step_node.confidence.items():
+        target = _find_target_node(root, path)
+        target.confidence[path] = max(target.confidence.get(path, 0), conf)
 
 
 def _collect_leaf_paths(node: DocTreeNode) -> set[str]:
+    """Collect all paths that have been hydrated (leaf_content)."""
     paths = set(node.leaf_content.keys())
     for child in node.children.values():
         paths.update(_collect_leaf_paths(child))
     return paths
 
 
-def _update_excluded_leaf_paths(
-    doc_exclude: set[str],
-    step_node: DocTreeNode,
-    drill_paths: list[dict[str, Any]],
-) -> None:
-    drill_path_set = {str(selection["path"]) for selection in drill_paths}
-    for leaf_path in step_node.leaf_content:
-        if leaf_path not in drill_path_set:
-            doc_exclude.add(leaf_path)
+def _build_discovery_exclude_set(
+    root: DocTreeNode,
+    collected_paths: list[dict[str, Any]],
+) -> set[str]:
+    """Build exclude set for discovery using collected navigation paths.
+
+    If navigation COLLECT'd a parent path like "五、施工安全保证措施",
+    all discovery hints under that path should be excluded because
+    COLLECT already loads all descendants via prefix matching.
+    """
+    # 1. Already-hydrated leaf paths
+    exclude = _collect_leaf_paths(root)
+
+    # 2. Collected parent paths from navigation COLLECT decisions.
+    #    These haven't been hydrated yet (hydrate runs after discovery),
+    #    but we know COLLECT will load all their descendants.
+    for item in collected_paths:
+        path = item.get("path", "")
+        if path:
+            exclude.add(path)
+
+    return exclude
 
 
-def _queue_drill_paths(
-    pending: list[tuple[str | list[str] | None, DocTreeNode, int]],
-    parent_node: DocTreeNode,
-    drill_paths: list[dict[str, Any]],
-    depth: int,
-) -> None:
-    if not drill_paths:
+def _ensure_child_node(root: DocTreeNode, path: str) -> None:
+    """Create an intermediate child node for *path* if it doesn't exist.
+
+    When a non-leaf section is COLLECTed (e.g. "五、施工安全保证措施"),
+    hydration loads all descendant chunks (e.g. "五、... / 3.监控量测措施 / 3.1...").
+    These chunks are initially placed in root.leaf_content.
+    ``reparent_leaf_content`` then moves them into the correct child subtree —
+    but only if a child node exists for the collected path.
+
+    This function creates that child node so reparent can work correctly.
+    """
+    # Don't create a child for root-level or if already exists
+    if not path:
         return
-    for selection in drill_paths:
-        child = DocTreeNode(scope_path=selection["path"])
-        parent_node.children[selection["path"]] = child
-    batch_scope = [selection["path"] for selection in drill_paths]
-    pending.append((batch_scope, parent_node, depth + 1))
+
+    # Walk to find the deepest existing ancestor node
+    target = root
+    for child_path, child in root.children.items():
+        if path.startswith(child_path + " / "):
+            target = child
+            break
+        if path == child_path:
+            return  # Already exists
+
+    # Create the child node on the target
+    if path not in target.children:
+        target.children[path] = DocTreeNode(scope_path=path)
+
+
+def _build_outline_subtree(node: DocTreeNode) -> None:
+    """Recursively build child nodes from outline_items + leaf_content paths.
+
+    Every section_path is ``" / "``-separated; parent-child is prefix match.
+    This function creates children one level at a time, reparents chunks
+    into them, then recurses so the next level is handled correctly.
+    """
+    if not node.outline_items and not node.leaf_content:
+        return
+
+    # All known paths: outline metadata + actual chunk paths.
+    all_paths = (
+        {item["path"] for item in node.outline_items}
+        | set(node.leaf_content.keys())
+    )
+
+    # Find paths that have at least one descendant.
+    parent_paths: set[str] = set()
+    for path in all_paths:
+        for other in all_paths:
+            if other != path and other.startswith(path + " / "):
+                parent_paths.add(path)
+                break
+
+    if not parent_paths:
+        return  # All items are leaves — nothing to nest.
+
+    # KEY FIX: only keep top-level parents.  If "A / B" and "A / B / C"
+    # are both parents, only create "A / B" as a child NOW.  "A / B / C"
+    # will be created when the function recurses into "A / B".
+    parent_paths = {
+        pp for pp in parent_paths
+        if not any(pp != other and pp.startswith(other + " / ") for other in parent_paths)
+    }
+
+    # Track children that already exist (e.g. from collected hydration).
+    # Their outline_items are already populated — don't push duplicates.
+    pre_existing = set(node.children.keys())
+
+    # Create child nodes for top-level parent paths only.
+    for path in parent_paths:
+        if path not in node.children:
+            node.children[path] = DocTreeNode(scope_path=path)
+
+    # Split outline_items: keep items at this level, move descendants
+    # into newly-created children only (skip pre-existing ones).
+    kept: list[dict] = []
+    for item in node.outline_items:
+        item_path = item["path"]
+        best_parent: str | None = None
+        for pp in parent_paths:
+            if item_path.startswith(pp + " / "):
+                if best_parent is None or len(pp) > len(best_parent):
+                    best_parent = pp
+        if best_parent and best_parent not in pre_existing:
+            node.children[best_parent].outline_items.append(item)
+        else:
+            kept.append(item)
+    node.outline_items = kept
+
+    # Reparent FIRST so children receive their leaf_content,
+    # THEN recurse so deeper levels can be built from that content.
+    node.reparent_leaf_content()
+    for child in node.children.values():
+        _build_outline_subtree(child)
+

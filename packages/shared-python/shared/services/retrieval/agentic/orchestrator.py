@@ -28,7 +28,6 @@ from shared.services.retrieval.agentic.discovery.phase import (
 )
 from shared.services.retrieval.agentic.navigation.document import DocumentNavigationRunner
 from shared.services.retrieval.agentic.evidence.builder import (
-    render_evidence as _render_evidence,
     trim_evidence_to_budget as _trim_evidence_to_budget,
 )
 from shared.services.retrieval.agentic.core.runtime import (
@@ -288,12 +287,8 @@ class RetrievalAgent:
                     seen_ref_ids.add(cid)
                     all_refs.append(ref)
 
-        # Re-render when navigation only produced structural context.
-        if not evidence_text or evidence_text == '(no evidence collected)':
-            evidence_text = await _render_evidence(
-                db,
-                state.doc_trees, state.doc_id_to_name,
-            )
+
+
 
         result = AgenticResult(
             evidence_text=evidence_text,
