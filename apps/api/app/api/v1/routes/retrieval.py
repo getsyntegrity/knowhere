@@ -17,10 +17,6 @@ from shared.services.retrieval.app_service import run_retrieval_query
 router = APIRouter(tags=["Retrieval"])
 
 
-def _is_none(value: object) -> bool:
-    return value is None
-
-
 class ExcludeSection(BaseModel):
     document_id: str
     section_path: str
@@ -84,12 +80,30 @@ class RetrievalQueryResponse(BaseModel):
     namespace: str
     query: str
     router_used: str
-    answer_text: str | None = None
+    evidence_text: str = Field(
+        default="",
+        description="Hierarchical evidence text. Primary output for downstream agents.",
+    )
+    answer_text: str = Field(
+        default="",
+        description=(
+            "DEPRECATED. Always empty; KNOWHERE no longer generates answers. "
+            "Use evidence_text and synthesize answers downstream."
+        ),
+    )
     referenced_chunks: list[dict] = Field(default_factory=list)
     results: list[dict] = Field(default_factory=list)
-    evidence_text: str | None = Field(default=None, exclude_if=_is_none)
-    stop_reason: str | None = Field(default=None, exclude_if=_is_none)
-    failure_reason: str | None = Field(default=None, exclude_if=_is_none)
+    stop_reason: str | None = None
+    failure_reason: str | None = None
+    decision_trace: list[dict] | None = Field(
+        default=None,
+        description=(
+            "Per-step navigation decisions from agentic retrieval. "
+            "Each entry has phase, document, action, reason, stop_type, "
+            "selected_paths, and hydrated_count. Use this to understand "
+            "why KNOWHERE stopped or made specific navigation choices."
+        ),
+    )
 
 
 @router.post("/query", response_model=RetrievalQueryResponse)

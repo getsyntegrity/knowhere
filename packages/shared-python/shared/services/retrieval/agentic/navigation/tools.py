@@ -26,7 +26,7 @@ from shared.services.retrieval.agentic.navigation.section_tree import load_child
 from shared.services.retrieval.agentic.navigation.selection_hydration import (
     hydrate_path_selections_into_node,
 )
-from shared.services.retrieval.agentic.core.types import DocTreeNode
+from shared.services.retrieval.agentic.core.types import DocTreeNode, NavigateStepResult
 from shared.services.retrieval.llm_adapter import LLMFn
 
 
@@ -42,9 +42,8 @@ async def navigate_step(
     doc_name: str = "",
     scope_path: str | list[str] | None = None,
     exclude_paths: set[str] | None = None,
-    revision_hint: str | None = None,
     budget_snapshot: dict | None = None,
-) -> tuple[str, list[str], DocTreeNode, list[dict]]:
+) -> NavigateStepResult:
     """Navigate one document scope and hydrate selected sections."""
     scope_paths = (
         scope_path if isinstance(scope_path, list)
@@ -53,7 +52,6 @@ async def navigate_step(
     )
     scope_path_set = set(scope_paths)
 
-    empty = DocTreeNode.empty(scope_paths[0] if scope_paths else None)
 
     try:
         items = await load_child_sections(
@@ -64,10 +62,13 @@ async def navigate_step(
             exclude_paths=exclude_paths,
         )
         if not items:
-            return "STOP", [], empty, []
+            return NavigateStepResult.stop(scope_paths[0] if scope_paths else None)
 
         selectable = {
             item["path"]: item for item in items if item.get("selectable", False)
+        }
+        visible_items = {
+            item["path"]: item for item in items if item.get("show_summary", True)
         }
         total_images, total_tables = await count_assets_under_scope(
             db,
@@ -86,7 +87,6 @@ async def navigate_step(
             budget_snapshot=budget_snapshot,
             items_text=items_text,
             tools_block=tools_block,
-            revision_hint=revision_hint,
         )
 
         response = await llm_fn(prompt)
@@ -94,6 +94,8 @@ async def navigate_step(
         action = parsed["action"]
         selected_tools = parsed["tools"]
         selections = parsed["selections"]
+        reason = parsed.get("reason", "")
+        stop_type = parsed.get("stop_type", "")
 
         scope_label = ", ".join(scope_paths) if scope_paths else "root"
         logger.info(
@@ -106,18 +108,19 @@ async def navigate_step(
         node = DocTreeNode(scope_path=scope_paths[0] if scope_paths else None)
         node.outline_items = [item for item in items if item.get("show_summary", True)]
 
-        valid_selections = [
+        raw_valid_selections = [
             selection
             for selection in selections
-            if selection["path"] in selectable and selection["path"] not in scope_path_set
+            if selection["path"] in visible_items and selection["path"] not in scope_path_set
         ]
+        valid_selections = _dedupe_selected_ancestors(raw_valid_selections)
 
         pending: list[dict] = []
         path_selections: list[dict[str, Any]] = []
         for selection in valid_selections:
             path = selection["path"]
             confidence = selection.get("confidence", 0.7)
-            item = selectable[path]
+            item = visible_items[path]
             node.confidence[path] = confidence
 
             if item.get("is_leaf"):
@@ -144,13 +147,20 @@ async def navigate_step(
             job_result_id=job_result_id,
         )
 
-        return action, selected_tools, node, pending
+        return NavigateStepResult(
+            action=action,
+            tools=selected_tools,
+            node=node,
+            pending=pending,
+            reason=reason,
+            stop_type=stop_type,
+        )
 
     except BudgetExceeded:
         raise
     except Exception as exc:
         logger.error(f"  navigate_step failed for doc={document_id}: {exc}")
-        return "STOP", [], empty, []
+        return NavigateStepResult.stop(scope_paths[0] if scope_paths else None)
 def _build_navigation_prompt(
     *,
     document_id: str,
@@ -160,7 +170,6 @@ def _build_navigation_prompt(
     budget_snapshot: dict | None,
     items_text: str,
     tools_block: str,
-    revision_hint: str | None,
 ) -> str:
     if not scope_paths:
         scope_header = "Current scope: root (document top level)"
@@ -169,7 +178,7 @@ def _build_navigation_prompt(
     else:
         scope_header = f"Current scope: navigating into {len(scope_paths)} sections"
 
-    prompt = ACTION_PROMPT.format(
+    return ACTION_PROMPT.format(
         doc_name=doc_name or document_id,
         doc_id=document_id,
         scope_header=scope_header,
@@ -178,9 +187,20 @@ def _build_navigation_prompt(
         query=query,
         tools_block=tools_block,
     )
-    if revision_hint:
-        prompt += (
-            "\n\nIMPORTANT: Previous round feedback: "
-            f'"{revision_hint}". Adjust your selections accordingly.'
-        )
-    return prompt
+
+
+def _dedupe_selected_ancestors(selections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep coarser selected ancestors when both parent and child paths are selected."""
+    selected_paths = [str(selection.get("path") or "") for selection in selections]
+    kept: list[dict[str, Any]] = []
+    for selection in selections:
+        path = str(selection.get("path") or "")
+        if not path:
+            continue
+        if any(
+            other != path and path.startswith(other + " / ")
+            for other in selected_paths
+        ):
+            continue
+        kept.append(selection)
+    return kept

@@ -16,6 +16,7 @@ from shared.services.retrieval.agentic.core.types import (
     AgentState,
     CandidateDoc,
     DocTreeNode,
+    NavigateStepResult,
     ToolResult,
 )
 from shared.services.retrieval.llm_adapter import LLMFn
@@ -48,8 +49,13 @@ class DocumentNavigationRunner:
         self._discovery_by_doc = discovery_by_doc
         self._llm_fn = llm_fn
         self._llm_budget = llm_budget
+        self._decision_steps: list[dict[str, Any]] = []
 
-    async def navigate_selected_documents(self, *, revision_hint: str | None) -> None:
+    @property
+    def decision_steps(self) -> list[dict[str, Any]]:
+        return list(self._decision_steps)
+
+    async def navigate_selected_documents(self) -> None:
         logger.info(
             f"  agentic: Phase 2 — navigating {len(self._state.selected_docs)} documents"
         )
@@ -57,13 +63,11 @@ class DocumentNavigationRunner:
             if self._state.elapsed_ms >= self._config.latency_budget_ms:
                 logger.info("  agentic: latency budget hit during Phase 2, stopping")
                 break
-            await self._navigate_document(doc, revision_hint=revision_hint)
+            await self._navigate_document(doc)
 
     async def _navigate_document(
         self,
         doc: CandidateDoc,
-        *,
-        revision_hint: str | None,
     ) -> None:
         job_result_id = self._state.doc_job_map.get(doc.document_id, "")
         if not job_result_id:
@@ -82,14 +86,12 @@ class DocumentNavigationRunner:
                 root=root,
                 doc_name=doc_name,
                 job_result_id=job_result_id,
-                revision_hint=revision_hint,
             )
 
         await self._hydrate_discovery_hints(
             doc=doc,
             root=root,
             doc_name=doc_name,
-            revision_hint=revision_hint,
         )
 
         if not is_discovery_only_doc and doc_pending_assets:
@@ -115,13 +117,8 @@ class DocumentNavigationRunner:
         root: DocTreeNode,
         doc_name: str,
         job_result_id: str,
-        revision_hint: str | None,
     ) -> list[dict[str, Any]]:
-        doc_exclude: set[str] = {
-            key.split("::", 1)[1]
-            for key in self._state.seen_section_keys
-            if key.startswith(f"{doc.document_id}::")
-        } if self._state.seen_section_keys else set()
+        doc_exclude: set[str] = set()
         pending: list[tuple[str | list[str] | None, DocTreeNode, int]] = [(None, root, 0)]
         doc_pending_assets: list[dict[str, Any]] = []
 
@@ -144,7 +141,7 @@ class DocumentNavigationRunner:
                 depth=depth,
             )
             try:
-                action, asset_tools, step_node, drill_paths = await tools.navigate_step(
+                nav_result = await tools.navigate_step(
                     self._db,
                     document_id=doc.document_id,
                     job_result_id=job_result_id,
@@ -155,7 +152,6 @@ class DocumentNavigationRunner:
                     doc_name=doc_name,
                     scope_path=scope,
                     exclude_paths=doc_exclude,
-                    revision_hint=revision_hint if depth == 0 else None,
                     budget_snapshot=self._state.ledger.snapshot() if self._state.ledger else None,
                 )
             except BudgetExceeded:
@@ -168,27 +164,24 @@ class DocumentNavigationRunner:
             await self._collect_assets(
                 doc=doc,
                 scope=scope,
-                step_node=step_node,
-                asset_tools=asset_tools,
+                step_node=nav_result.node,
+                asset_tools=nav_result.tools,
                 pending_assets=doc_pending_assets,
                 round_scope="nav",
             )
-            _merge_step_node(parent_node, step_node)
-            _update_excluded_leaf_paths(doc_exclude, step_node, drill_paths)
-            _queue_drill_paths(pending, parent_node, drill_paths, depth)
+            _merge_step_node(parent_node, nav_result.node)
+            _update_excluded_leaf_paths(doc_exclude, nav_result.node, nav_result.pending)
+            _queue_drill_paths(pending, parent_node, nav_result.pending, depth)
             parent_node.reparent_leaf_content()
             self._record_navigation_step(
                 doc=doc,
                 scope=scope,
                 depth=depth,
-                action=action,
-                asset_tools=asset_tools,
-                step_node=step_node,
-                drill_paths=drill_paths,
+                nav_result=nav_result,
             )
             if self._state.ledger is not None:
                 self._state.ledger.mark_explored(
-                    chunks=sum(len(chunks) for chunks in step_node.leaf_content.values()),
+                    chunks=sum(len(chunks) for chunks in nav_result.node.leaf_content.values()),
                 )
 
         return doc_pending_assets
@@ -251,7 +244,6 @@ class DocumentNavigationRunner:
         doc: CandidateDoc,
         root: DocTreeNode,
         doc_name: str,
-        revision_hint: str | None,
     ) -> None:
         doc_hints = self._discovery_by_doc.get(doc.document_id, [])
         if not doc_hints or self._llm_fn is None:
@@ -259,10 +251,7 @@ class DocumentNavigationRunner:
         if self._state.elapsed_ms >= self._config.latency_budget_ms:
             return
 
-        discovery_exclude_paths = {
-            key.split("::", 1)[1]
-            for key in root.collect_all_paths(doc.document_id)
-        }
+        discovery_exclude_paths = _collect_leaf_paths(root)
         doc_discovery_llm_fn = self._llm_budget.for_discovery(
             cast(LLMFn, self._llm_fn),
             doc_id=doc.document_id,
@@ -279,7 +268,6 @@ class DocumentNavigationRunner:
                 doc_name=doc_name,
                 discovery_hints=doc_hints,
                 exclude_paths=discovery_exclude_paths,
-                revision_hint=revision_hint,
                 budget_snapshot=self._state.ledger.snapshot() if self._state.ledger else None,
             )
         except BudgetExceeded:
@@ -302,6 +290,16 @@ class DocumentNavigationRunner:
                 ),
                 decision_reason=f"discovery_{doc.source_file_name}",
             )
+        self._decision_steps.append({
+            "phase": "discovery_select",
+            "document": doc_name,
+            "document_id": doc.document_id,
+            "action": "select" if discovery_node.has_content() else "skip",
+            "reason": "",
+            "candidate_count": len(doc_hints),
+            "hydrated_count": len(discovery_node.leaf_content),
+            "selected_paths": list(discovery_node.leaf_content.keys()),
+        })
         root.merge(discovery_node)
         if self._state.ledger is not None:
             self._state.ledger.mark_explored(
@@ -347,11 +345,17 @@ class DocumentNavigationRunner:
         doc: CandidateDoc,
         scope: str | list[str] | None,
         depth: int,
-        action: str,
-        asset_tools: list[str],
-        step_node: DocTreeNode,
-        drill_paths: list[dict[str, Any]],
+        nav_result: NavigateStepResult,
     ) -> None:
+        action = nav_result.action
+        step_node = nav_result.node
+        asset_tools = nav_result.tools
+        drill_paths = nav_result.pending
+        reason = nav_result.reason
+        stop_type = nav_result.stop_type
+        selected_paths = list(step_node.confidence.keys())
+        hydrated_paths = list(step_node.leaf_content.keys())
+
         if self._trace_enabled:
             self._trace.record_step(
                 "navigate_step",
@@ -362,19 +366,40 @@ class DocumentNavigationRunner:
                         "scope": scope if isinstance(scope, str) else (scope or "root"),
                         "depth": depth,
                         "action": action,
+                        "reason": reason,
+                        "stop_type": stop_type,
                         "asset_tools": asset_tools,
+                        "selected_paths": selected_paths,
+                        "hydrated_paths": hydrated_paths,
                         "outline_count": len(step_node.outline_items),
                         "leaf_count": len(step_node.leaf_content),
+                        "hydrated_count": sum(len(c) for c in step_node.leaf_content.values()),
                         "pending_drills": len(drill_paths),
                     },
                 ),
                 decision_reason=f"nav_d{depth}_{doc.source_file_name}",
             )
+
+        doc_name = doc.source_file_name or self._state.doc_id_to_name.get(doc.document_id, "")
+        self._decision_steps.append({
+            "phase": "navigate",
+            "document": doc_name,
+            "document_id": doc.document_id,
+            "action": action,
+            "reason": reason,
+            "stop_type": stop_type,
+            "depth": depth,
+            "selected_paths": selected_paths,
+            "hydrated_paths": hydrated_paths,
+            "hydrated_count": sum(len(c) for c in step_node.leaf_content.values()),
+        })
+
         scope_log = scope if isinstance(scope, str) else (", ".join(scope) if scope else "root")
         logger.info(
             f"  agentic step {self._state.step_count}: navigate_step "
             f'doc="{doc.source_file_name}" scope={scope_log} '
             f"depth={depth} action={action} tools={asset_tools} "
+            f"reason=\"{reason[:80]}\" stop_type={stop_type} "
             f"outline={len(step_node.outline_items)} "
             f"leaves={len(step_node.leaf_content)} "
             f"drills={len(drill_paths)}"
@@ -386,6 +411,13 @@ def _merge_step_node(parent_node: DocTreeNode, step_node: DocTreeNode) -> None:
     for leaf_path, chunks in step_node.leaf_content.items():
         parent_node.add_leaf_chunks(leaf_path, chunks)
     parent_node.confidence = step_node.confidence
+
+
+def _collect_leaf_paths(node: DocTreeNode) -> set[str]:
+    paths = set(node.leaf_content.keys())
+    for child in node.children.values():
+        paths.update(_collect_leaf_paths(child))
+    return paths
 
 
 def _update_excluded_leaf_paths(

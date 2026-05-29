@@ -71,10 +71,13 @@ def to_mcp_query_response(response: dict[str, Any]) -> dict[str, Any]:
     mcp_response: dict[str, Any] = {
         "query": response.get("query"),
         "results": results,
+        "evidence_text": response.get("evidence_text") or "",
     }
-    # Forward evidence_text for agentic mode
-    if response.get("evidence_text") is not None:
-        mcp_response["evidence_text"] = response["evidence_text"]
+
+    if response.get("stop_reason") is not None:
+        mcp_response["stop_reason"] = response["stop_reason"]
+    if response.get("decision_trace") is not None:
+        mcp_response["decision_trace"] = response["decision_trace"]
 
     return mcp_response
 
@@ -98,7 +101,8 @@ def create_retrieval_mcp_server(
         "knowhere-retrieval",
         instructions=(
             "Use this server to search published documents. "
-            "If you need information before answering, try searching with this tool."
+            "It returns evidence_text and ranked snippets, but never final answers. "
+            "Downstream agents should synthesize from the returned evidence."
         ),
         streamable_http_path=streamable_http_path,
         stateless_http=True,
@@ -107,7 +111,10 @@ def create_retrieval_mcp_server(
 
     @server.tool(
         name="retrieval.query",
-        description="Search published documents and return relevant snippets.",
+        description=(
+            "Search published documents and return relevant snippets plus unified "
+            "evidence_text for downstream answer synthesis."
+        ),
     )
     async def query_documents(
         query: Annotated[str, Field(description="What you want to search for.")],

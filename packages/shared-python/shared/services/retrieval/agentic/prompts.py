@@ -18,7 +18,6 @@ their navigation summaries, chunk counts, and media counts.
 === End Overview ===
 
 User query: {query}
-{revision_context}
 Based on the query, select documents that may contain relevant information.
 If NO document in the corpus is relevant to the query, return an EMPTY array [].
 Return ONLY a JSON array of document IDs, e.g.: ["doc_abc123", "doc_def456"]
@@ -41,7 +40,6 @@ They may contain relevant evidence not found through hierarchical navigation.
 === End Discovery Candidates ===
 
 User query: {query}
-{revision_context}
 Select section paths whose content is needed to answer the query.
 If none are relevant, return an EMPTY list [].
 
@@ -59,8 +57,8 @@ Document: "{doc_name}" (id: {doc_id})
 {budget_block}
 {scope_header}
 Below is the document's section tree.
-Sections tagged [SELECT] are within the current scope and may be selected.
-Other sections are shown as structural context only (not selectable).
+Sections tagged [SELECT] are the recommended selection granularity for this scope.
+Other visible sections are structural context and may be selected when you need to drill into that broader scope.
 Nodes marked [Leaf] have no further sub-sections.
 
 === Section Tree ===
@@ -75,7 +73,7 @@ Choose ONE action:
 
 NAVIGATE — Drill into selected sections for detailed content.
   Consider this when the query targets specific topics and you need deeper text evidence.
-  Select one or more [SELECT] sections.
+  Prefer one or more [SELECT] sections, or choose a broader visible section when needed.
 
 STOP — Current scope evidence is sufficient. No further drill-down.
   Consider this when:
@@ -86,14 +84,17 @@ STOP — Current scope evidence is sufficient. No further drill-down.
 {tools_block}
 
 When action is NAVIGATE, provide selections:
-- You may ONLY select sections marked with [SELECT].
+- Select visible section paths from the tree above; prefer [SELECT] paths when they fit.
 
 When action is STOP, selections must be empty.
 
+Always include a "reason" field (1-2 sentences) explaining your choice.
+When action is STOP, also include "stop_type" from: sufficient_outline, no_relevant_child, evidence_sufficient, budget_conserve.
+
 Return ONLY a JSON object:
-{{"action": "NAVIGATE", "tools": [...], "selections": [{{"path": "...", "confidence": <float>}}, ...]}}
+{{"action": "NAVIGATE", "reason": "...", "tools": [...], "selections": [{{"path": "...", "confidence": <float>}}, ...]}}
 or
-{{"action": "STOP", "tools": [...], "selections": []}}
+{{"action": "STOP", "reason": "...", "stop_type": "...", "tools": [...], "selections": []}}
 Do not include any explanation.
 """
 
@@ -102,7 +103,7 @@ def parse_action_response(text: str) -> dict:
     """Parse the unified navigation response from an LLM."""
     text = text.strip()
     asset_tools = {"FIND_IMAGES", "FIND_TABLES"}
-    default = {"action": "NAVIGATE", "tools": [], "selections": []}
+    default = {"action": "NAVIGATE", "tools": [], "selections": [], "reason": "", "stop_type": ""}
 
     def extract(data: dict) -> dict:
         action = str(data.get("action", "NAVIGATE")).strip().upper()
@@ -119,8 +120,11 @@ def parse_action_response(text: str) -> dict:
         else:
             tools = []
 
+        reason = str(data.get("reason") or "").strip()[:500]
+        stop_type = str(data.get("stop_type") or "").strip()[:50] if action == "STOP" else ""
+
         if action == "STOP":
-            return {"action": action, "tools": tools, "selections": []}
+            return {"action": action, "tools": tools, "selections": [], "reason": reason, "stop_type": stop_type}
 
         selections_val = data.get("selections") or []
         selections = []
@@ -133,7 +137,7 @@ def parse_action_response(text: str) -> dict:
                         "confidence": confidence or 0.7,
                     })
 
-        return {"action": action, "tools": tools, "selections": selections}
+        return {"action": action, "tools": tools, "selections": selections, "reason": reason, "stop_type": ""}
 
     data = _parse_json_object(text)
     if data is not None:
@@ -158,13 +162,10 @@ def format_budget_block(snapshot: dict | None) -> str:
     if not snapshot:
         return ""
     planning = snapshot.get("planning") or {}
-    context = snapshot.get("context") or {}
     return (
         "=== Resource Status ===\n"
         f"Planning Budget: {planning.get('status', 'HEALTHY')} "
         f"({planning.get('used_pct', 0)}% used)\n"
-        f"Context Budget: {context.get('status', 'HEALTHY')} "
-        f"({context.get('used_pct', 0)}% used)\n"
         f"KG Coverage: {snapshot.get('explored_chunks', 0)}/"
         f"{snapshot.get('total_chunks', 0)} chunks explored\n"
         f"Docs Explored: {snapshot.get('explored_docs', 0)}/"

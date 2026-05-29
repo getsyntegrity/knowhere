@@ -16,7 +16,6 @@ from shared.services.retrieval.agentic.core.budget import BudgetLedger
 @dataclass
 class AgentRunConfig:
     """Budget and limit configuration for a single agent run."""
-    max_revisions: int = 2  # max attempt_answer → revision cycles
     max_nav_depth: int = 3  # max scope_navigate recursion depth
     latency_budget_ms: int = 12000
     token_budget_total: int = 40000
@@ -80,24 +79,6 @@ class DocTreeNode:
             return any(c.has_content() for c in self.children.values())
         return False
 
-    def collect_all_paths(self, doc_id: str) -> set[str]:
-        """Recursively collect paths of actually-explored sections.
-
-        Only ``leaf_content`` and ``children`` represent sections whose
-        content was retrieved.  ``outline_items`` are structural context
-        (titles/summaries shown to the LLM) and must NOT be masked —
-        otherwise revision rounds see 0 candidates and can't re-navigate.
-        """
-        paths: set[str] = set()
-        if self.scope_path:
-            paths.add(f'{doc_id}::{self.scope_path}')
-        for path in self.leaf_content:
-            paths.add(f'{doc_id}::{path}')
-        for path, child in self.children.items():
-            paths.add(f'{doc_id}::{path}')
-            paths.update(child.collect_all_paths(doc_id))
-        return paths
-
     def flatten_chunk_rows(self) -> list[dict[str, Any]]:
         """Recursively collect all hydrated chunk rows (document order)."""
         rows: list[dict[str, Any]] = []
@@ -160,7 +141,7 @@ class DocTreeNode:
         return refs
 
     def merge(self, other: 'DocTreeNode') -> None:
-        """Additive merge for revision cycles.
+        """Additive merge for navigation results.
 
         Merges outline items, leaf content, children, and confidence from
         ``other`` into this node. Existing data is preserved; new data is
@@ -183,6 +164,24 @@ class DocTreeNode:
 
 
 @dataclass
+class NavigateStepResult:
+    """Return type for navigate_step — typed replacement for raw tuple."""
+    action: str  # "NAVIGATE" or "STOP"
+    tools: list[str] = field(default_factory=list)
+    node: DocTreeNode = field(default_factory=DocTreeNode)
+    pending: list[dict[str, Any]] = field(default_factory=list)
+    reason: str = ""
+    stop_type: str = ""  # only for STOP: sufficient_outline | no_relevant_child | ...
+
+    @staticmethod
+    def stop(scope_path: str | None = None) -> 'NavigateStepResult':
+        return NavigateStepResult(
+            action="STOP",
+            node=DocTreeNode.empty(scope_path),
+        )
+
+
+@dataclass
 class CandidateDoc:
     """A document selected by kg_document_select."""
     document_id: str
@@ -198,17 +197,17 @@ class AgenticResult:
 
     - ``evidence_text``: complete hierarchical context for LLM answering
       (rendered doc tree with outline + leaf content + inline tables)
-    - ``answer_text``: LLM-generated answer to the query based on the
-      evidence.  Empty string when the evidence was insufficient
-      (NOT_FOUND) and max revisions were exhausted.
+    - ``answer_text``: deprecated; always empty because KNOWHERE returns
+      evidence only and downstream agents synthesize answers.
     - ``referenced_chunks``: minimal chunk references for hit stats
       and frontend display (chunk_id, document_id, chunk_type, etc.)
     - ``router_used``: routing path identifier
     - ``budget_snapshot``: final budget ledger state at run completion
-    - ``stop_reason``: why the run terminated (answer_done / max_revisions /
+    - ``stop_reason``: why the run terminated (evidence_only /
       latency_budget / context_budget / no_llm / etc.)
-    - ``failure_reason``: semantic reason from the answer attempt when no
-      answer could be produced, e.g. evidence was insufficient.
+    - ``failure_reason``: fatal retrieval failure reason, if any.
+    - ``decision_trace``: per-step navigation decisions with reasons,
+      exposed to downstream agents for stop/retry/modify-query decisions.
     """
     evidence_text: str
     answer_text: str = ''
@@ -217,6 +216,7 @@ class AgenticResult:
     budget_snapshot: dict[str, Any] | None = None
     stop_reason: str = ''
     failure_reason: str = ''
+    decision_trace: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -242,10 +242,7 @@ class AgentState:
     # Phase 2: Per-document navigation results
     doc_trees: dict[str, DocTreeNode] = field(default_factory=dict)  # doc_id → DocTreeNode
 
-    # Revision state
-    revision_count: int = 0
     ever_explored_doc_ids: set[str] = field(default_factory=set)
-    seen_section_keys: set[str] = field(default_factory=set)  # "{doc_id}::{section_path}"
 
     # Token budget + KG inventory
     ledger: BudgetLedger | None = None
