@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.services.retrieval.agentic.core.budget import BudgetLedger
 from shared.services.retrieval.agentic.discovery.phase import (
-    register_discovery_documents,
     run_initial_discovery,
 )
 from shared.services.retrieval.agentic.navigation.document import DocumentNavigationRunner
@@ -42,6 +41,7 @@ from shared.services.retrieval.agentic.core.types import (
     AgenticResult,
 )
 from shared.services.retrieval.llm_adapter import LLMFn
+from shared.services.retrieval.settings import DEFAULT_TOP_K
 
 
 class RetrievalAgent:
@@ -68,7 +68,7 @@ class RetrievalAgent:
         user_id: str,
         namespace: str,
         query: str,
-        top_k: int = 10,
+        top_k: int = DEFAULT_TOP_K,
         llm_fn: LLMFn | None = None,
         exclude_document_ids: list[str] | None = None,
         exclude_sections: list[dict[str, str]] | None = None,
@@ -203,11 +203,6 @@ class RetrievalAgent:
                 continue
             discovery_by_doc.setdefault(doc_id, []).append(row)
 
-        await register_discovery_documents(
-            db,
-            state=state,
-            discovery_by_doc=discovery_by_doc,
-        )
 
         if state.ledger is not None:
             await state.ledger.allocate_doc_caps({
