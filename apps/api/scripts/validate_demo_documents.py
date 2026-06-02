@@ -62,24 +62,26 @@ def _validate_source(
             )
         )
 
-    original_path = source_directory / "original.pdf"
-    if not original_path.is_file():
-        issues.append(
-            DemoValidationIssue(
-                source_id=source.demo_source_id,
-                message="original.pdf is missing",
+    original_file_name = source.original_file_name
+    if original_file_name is not None:
+        original_path = source_directory / original_file_name
+        if not original_path.is_file():
+            issues.append(
+                DemoValidationIssue(
+                    source_id=source.demo_source_id,
+                    message=f"{original_file_name} is missing",
+                )
             )
-        )
-    elif original_path.stat().st_size != source.size_bytes:
-        issues.append(
-            DemoValidationIssue(
-                source_id=source.demo_source_id,
-                message=(
-                    f"size_bytes mismatch: catalog={source.size_bytes}, "
-                    f"original.pdf={original_path.stat().st_size}"
-                ),
+        elif original_path.stat().st_size != source.size_bytes:
+            issues.append(
+                DemoValidationIssue(
+                    source_id=source.demo_source_id,
+                    message=(
+                        f"size_bytes mismatch: catalog={source.size_bytes}, "
+                        f"{original_file_name}={original_path.stat().st_size}"
+                    ),
+                )
             )
-        )
 
     _validate_catalog_projection(catalog=catalog, source=source, issues=issues)
     _validate_doc_nav(
