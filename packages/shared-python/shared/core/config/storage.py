@@ -60,7 +60,7 @@ class StorageConfig(BaseModel):
 
     # File-handling limits.
     MAX_FILE_SIZE: int = Field(
-        default=104857600, description="Maximum file size in bytes"
+        default=314572800, description="Maximum file size in bytes"
     )
     MAX_PDF_PAGE_LIMIT: int = Field(
         default=200,
@@ -69,7 +69,7 @@ class StorageConfig(BaseModel):
         "Documents exceeding this trigger the shard pipeline when enabled.",
     )
     OVERSIZED_PDF_SHARD_ENABLED: bool = Field(
-        default=False,
+        default=True,
         description="Enable doc_agent shard pipeline for PDFs exceeding MAX_PDF_PAGE_LIMIT. "
         "When False, oversized PDFs are rejected.",
     )

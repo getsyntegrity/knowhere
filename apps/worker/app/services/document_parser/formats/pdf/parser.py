@@ -2,6 +2,9 @@
 import os
 
 from app.services.document_parser.formats.markdown.parser import parse_md
+from app.services.document_parser.orchestration.oversized_pdf_policy import (
+    build_oversized_pdf_processing_failed_exception,
+)
 from app.services.document_parser.providers.mineru.pdf_service import parse_via_full
 from app.services.document_parser.support.stage_profiler import stage_timer
 from loguru import logger
@@ -36,10 +39,21 @@ def parse_pdfs(
             f"📄 Oversized PDF: {profile.page_count} pages > "
             f"{settings.MAX_PDF_PAGE_LIMIT} limit, entering shard pipeline"
         )
-        return _parse_oversized_pdf(
-            pdf_path, filename, output_dir, base_llm_paras,
-            profile=profile, relative_root=relative_root, s3_key=s3_key,
-        )
+        try:
+            return _parse_oversized_pdf(
+                pdf_path, filename, output_dir, base_llm_paras,
+                profile=profile, relative_root=relative_root, s3_key=s3_key,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Oversized PDF shard pipeline failed for {} (pages={})",
+                filename,
+                profile.page_count,
+            )
+            raise build_oversized_pdf_processing_failed_exception(
+                page_count=profile.page_count,
+                original_exception=exc,
+            ) from exc
 
     # ── Standard single-pass MinerU ──
     logger.info(f"📄 Standard MinerU parse for {filename} [route={route}]")
@@ -173,8 +187,7 @@ def _parse_oversized_pdf(
         """Run full heading prediction pipeline on a single shard's full.md."""
         md_path = os.path.join(shard_out_dir, "full.md")
         if not os.path.exists(md_path):
-            logger.warning(f"shard_{shard_idx}: full.md not found, returning empty")
-            return ShardHeadingResult(shard_index=shard_idx, lines_with_heading=[], heading_count=0)
+            raise FileNotFoundError(f"shard_{shard_idx}: full.md not found")
 
         with open(md_path, "r", encoding="utf-8") as f:
             md_lines = f.readlines()
@@ -227,19 +240,21 @@ def _parse_oversized_pdf(
                 shard_heading_results[idx] = future.result()
 
     # 7. Merge: concatenate lines_with_heading (in shard order) + merge images
+    complete_heading_results: list[ShardHeadingResult] = []
+    for index, result in enumerate(shard_heading_results):
+        if result is None:
+            raise RuntimeError(f"Missing heading result for shard_{index}")
+        complete_heading_results.append(result)
+
     all_lines_with_heading: list[str] = merge_shard_lines(
-        [
-            result.lines_with_heading
-            for result in shard_heading_results
-            if result is not None
-        ]
+        [result.lines_with_heading for result in complete_heading_results]
     )
     total_headings = sum(
         1 for line in all_lines_with_heading if line.startswith("#")
     )
 
     logger.info(
-        f"📎 Merged {len(shard_heading_results)} shards: "
+        f"📎 Merged {len(complete_heading_results)} shards: "
         f"{len(all_lines_with_heading)} lines, {total_headings} headings"
     )
 

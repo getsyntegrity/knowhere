@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from app.services.document_ingestion.file_size_policy import (
+    build_file_size_limit_message,
+)
 from app.services.document_ingestion.processing_context import ParseJobContext
 from app.services.document_parser.support.internal_parse_name import (
     prepare_internal_parse_input,
@@ -89,7 +92,10 @@ def _assert_source_file_within_size_limit(
     if file_size > settings.MAX_FILE_SIZE:
         limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
         raise ValidationException(
-            user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
+            user_message=build_file_size_limit_message(
+                limit_mb=limit_mb,
+                file_extension=file_extension,
+            ),
             violations=[
                 {
                     "field": "file_size",

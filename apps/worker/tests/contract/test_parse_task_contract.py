@@ -386,6 +386,7 @@ def test_should_reject_pdf_when_page_count_exceeds_configured_limit(
     _write_blank_pdf(pdf_path, actual_page_count)
 
     contract.use_pdf_page_limit(monkeypatch, max_pdf_page_limit)
+    contract.use_oversized_pdf_shard_enabled(monkeypatch, enabled=False)
     job = contract.create_file_job(
         source_file_name=source_file_name,
         job_id_prefix="job_pdf_page_limit",
@@ -416,7 +417,7 @@ def test_should_reject_pdf_when_page_count_exceeds_configured_limit(
     assert job_row["error_code"] == "INVALID_ARGUMENT"
     assert (
         job_row["error_message"]
-        == "Document too large: 2 pages exceeds the 1-page limit. Please split the document and upload in smaller batches."
+        == "Document too large: 2 pages exceeds the 1-page limit. Please split the document and upload it in smaller parts."
     )
     assert metadata["error_details"] == {
         "violations": [
@@ -432,3 +433,244 @@ def test_should_reject_pdf_when_page_count_exceeds_configured_limit(
     assert billing["transaction_types"] == []
     assert billing["transaction_counts"] == {}
     assert billing["system_grant_payment_count"] == 0
+
+
+def test_should_reject_pdf_when_page_count_exceeds_soft_limit(
+    worker_contract_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    contract = WorkerParseContract.create()
+    contract.use_workspace_root(monkeypatch, tmp_path)
+    contract.use_billing(monkeypatch, is_enabled=True)
+
+    max_pdf_page_limit = 1
+    soft_limit = 2
+    actual_page_count = 3
+    source_file_name = "ultra-long-contract.pdf"
+    pdf_path = tmp_path / source_file_name
+    _write_blank_pdf(pdf_path, actual_page_count)
+
+    contract.use_pdf_page_limit(monkeypatch, max_pdf_page_limit)
+    contract.use_oversized_pdf_soft_limit(monkeypatch, soft_limit)
+    contract.use_oversized_pdf_shard_enabled(monkeypatch, enabled=True)
+    job = contract.create_file_job(
+        source_file_name=source_file_name,
+        job_id_prefix="job_pdf_soft_limit",
+    )
+    contract.upload_source_file(local_file_path=pdf_path, s3_key=job["s3_key"])
+
+    celery_result = contract.enqueue_parse_task(
+        job_id=job["job_id"],
+        user_id=job["user_id"],
+    )
+
+    assert celery_result.failed()
+    metadata = contract.get_job_metadata(job["job_id"])
+    job_row = contract.observe_job_status(job["job_id"])
+
+    assert job_row["status"] == "failed"
+    assert job_row["billing_status"] == "skipped"
+    assert job_row["credits_charged"] == 0
+    assert job_row["error_code"] == "INVALID_ARGUMENT"
+    assert (
+        job_row["error_message"]
+        == "This document has 3 pages. Processing ultra-long documents over 2 pages requires dedicated resources. Please contact support for assistance."
+    )
+    assert metadata["error_details"] == {
+        "violations": [
+            {
+                "field": "page_count",
+                "description": "PDF has 3 pages, soft limit is 2",
+            }
+        ]
+    }
+
+
+def test_oversized_pdf_shard_failure_preserves_processing_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+    monkeypatch.setenv("TMP_PATH", str(tmp_path))
+    monkeypatch.setenv("S3_BUCKET_NAME", "test-uploads")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("S3_TEMP_PATH", str(tmp_path))
+
+    from app.services.document_parser.formats.pdf import parser as pdf_parser
+    from shared.core.exceptions.domain_exceptions import PDFParsingException
+
+    class _Profile:
+        route = "standard"
+        doc_category = "generic"
+        page_count = 2
+
+    monkeypatch.setattr(pdf_parser.settings, "MAX_PDF_PAGE_LIMIT", 1)
+
+    def _fail_oversized_parse(*args, **kwargs):
+        raise RuntimeError("MinerU shard 0 failed")
+
+    monkeypatch.setattr(pdf_parser, "_parse_oversized_pdf", _fail_oversized_parse)
+
+    with pytest.raises(PDFParsingException) as exc_info:
+        pdf_parser.parse_pdfs(
+            str(tmp_path / "source.pdf"),
+            "source.pdf",
+            str(tmp_path),
+            {},
+            profile=_Profile(),
+        )
+
+    assert exc_info.value.details["reason"] == "OVERSIZED_SHARD_PIPELINE_FAILED"
+    assert "MinerU shard 0 failed" in exc_info.value.user_message
+    assert "exceeds the 1-page direct processing limit" in exc_info.value.user_message
+
+
+def test_oversized_pdf_happy_path_uses_shard_pipeline_without_external_services(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+    monkeypatch.setenv("TMP_PATH", str(tmp_path))
+    monkeypatch.setenv("S3_BUCKET_NAME", "test-uploads")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("S3_TEMP_PATH", str(tmp_path))
+
+    from app.services.document_agent.manifest import (
+        H1BoundaryResult,
+        PageAnatomyMap,
+        Shard,
+        ShardPlan,
+        TocResult,
+    )
+    from app.services.document_parser.formats.pdf import parser as pdf_parser
+
+    pdf_path = tmp_path / "oversized.pdf"
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    _write_blank_pdf(pdf_path, page_count=3)
+
+    class _Profile:
+        route = "standard"
+        doc_category = "generic"
+        page_count = 3
+
+    calls: dict[str, object] = {}
+
+    def _fake_run_doc_agent(pdf_path_arg: str, job_id: str, output_dir: str):
+        calls["doc_agent"] = {
+            "pdf_path": pdf_path_arg,
+            "job_id": job_id,
+            "output_dir": output_dir,
+        }
+        return PageAnatomyMap(
+            job_id=job_id,
+            file_path=pdf_path_arg,
+            page_count=3,
+            page_features=[],
+            page_labels=[],
+            toc_result=TocResult(toc_pages=[1], method="vlm_batch"),
+            h1_result=H1BoundaryResult(method="toc_grep"),
+            shard_plan=ShardPlan(
+                enabled=True,
+                reason="too_large",
+                shards=[
+                    Shard(
+                        shard_index=0,
+                        page_start=1,
+                        page_end=2,
+                        page_offset=0,
+                        anchor_type="h1_boundary",
+                        anchor_evidence="Chapter 1",
+                        confidence=0.9,
+                    ),
+                    Shard(
+                        shard_index=1,
+                        page_start=3,
+                        page_end=3,
+                        page_offset=2,
+                        anchor_type="h1_boundary",
+                        anchor_evidence="Chapter 2",
+                        confidence=0.9,
+                    ),
+                ],
+            ),
+            toc_hierarchies=[{"toc_tree": {"Chapter 1": {}, "Chapter 2": {}}}],
+        )
+
+    def _fake_split_pdf(pdf_path_arg, shards, work_dir, exclude_pages=None):
+        calls["exclude_pages"] = exclude_pages
+        paths = []
+        for shard in shards:
+            shard_path = Path(work_dir) / f"shard_{shard.shard_index}.pdf"
+            shard_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+            paths.append(str(shard_path))
+        return paths, None
+
+    def _fake_parse_via_full(shard_pdf, shard_filename, shard_out, s3_key=None):
+        shard_index = 0 if "shard0" in shard_filename else 1
+        lines_by_shard = {
+            0: ["# Chapter 1", "Shard one body."],
+            1: ["# Chapter 2", "Shard two body."],
+        }
+        Path(shard_out).mkdir(parents=True, exist_ok=True)
+        (Path(shard_out) / "full.md").write_text(
+            "\n".join(lines_by_shard[shard_index]),
+            encoding="utf-8",
+        )
+
+    def _identity_eval_md_headings(
+        md_lines,
+        source_type,
+        toc_hierarchies=None,
+        smart_parse=True,
+        model_name=None,
+        output_dir=None,
+        layout_json_path=None,
+    ):
+        calls.setdefault("heading_dirs", []).append(output_dir)
+        return list(md_lines)
+
+    monkeypatch.setattr(pdf_parser.settings, "MAX_PDF_PAGE_LIMIT", 2)
+    monkeypatch.setattr(pdf_parser.settings, "MINERU_SHARD_CONCURRENCY", 1)
+    monkeypatch.setattr(
+        "app.services.document_parser.formats.pdf.shard_splitter.run_doc_agent",
+        _fake_run_doc_agent,
+    )
+    monkeypatch.setattr(
+        "app.services.document_parser.formats.pdf.shard_splitter.split_pdf",
+        _fake_split_pdf,
+    )
+    monkeypatch.setattr(pdf_parser, "parse_via_full", _fake_parse_via_full)
+    monkeypatch.setattr(
+        "app.services.document_parser.formats.markdown.parser.eval_md_headings",
+        _identity_eval_md_headings,
+    )
+
+    df = pdf_parser.parse_pdfs(
+        str(pdf_path),
+        "oversized.pdf",
+        str(output_dir),
+        {
+            "smart_title_parse": False,
+            "summary_image": False,
+            "summary_table": False,
+            "summary_txt": False,
+            "stopwords": [],
+            "model_name": "mock-model",
+            "hierarchy_model_name": "mock-model",
+        },
+        profile=_Profile(),
+        relative_root="oversized.pdf",
+    )
+
+    assert calls["exclude_pages"] == {1}
+    assert len(calls["heading_dirs"]) == 2
+    assert list(df["type"]) == ["PTXT", "PTXT"]
+    assert list(df["content"]) == ["Shard one body.", "Shard two body."]
+    assert list(df["path"]) == [
+        "oversized.pdf/Chapter 1",
+        "oversized.pdf/Chapter 2",
+    ]

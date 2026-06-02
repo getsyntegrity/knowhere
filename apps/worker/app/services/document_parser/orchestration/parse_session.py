@@ -9,12 +9,14 @@ from app.services.document_parser.orchestration.path_segment import (
     build_parser_path_segment,
 )
 from app.services.document_parser.orchestration.parse_input import ParseInput
+from app.services.document_parser.orchestration.oversized_pdf_policy import (
+    raise_if_oversized_pdf_not_supported,
+)
 from app.services.document_parser.profiling.doc_profiler import profile_document
 from app.services.document_parser.support.stage_profiler import stage_timer
 from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import ValidationException
 
 
 @dataclass(frozen=True)
@@ -110,36 +112,7 @@ def build_parse_session(parse_input: ParseInput) -> ParseSession:
             )
 
     if profile.file_type == "pdf" and profile.page_count > settings.MAX_PDF_PAGE_LIMIT:
-        if profile.page_count > settings.OVERSIZED_PDF_SOFT_LIMIT:
-            raise ValidationException(
-                user_message=(
-                    f"This document has {profile.page_count} pages. Processing ultra-long "
-                    f"documents (over {settings.OVERSIZED_PDF_SOFT_LIMIT} pages) requires "
-                    "dedicated resources. Please contact our support team for assistance."
-                ),
-                violations=[{
-                    "field": "page_count",
-                    "description": (
-                        f"PDF has {profile.page_count} pages, "
-                        f"soft limit is {settings.OVERSIZED_PDF_SOFT_LIMIT}"
-                    ),
-                }],
-            )
-        if not settings.OVERSIZED_PDF_SHARD_ENABLED:
-            raise ValidationException(
-                user_message=(
-                    f"Document has {profile.page_count} pages, exceeding the "
-                    f"{settings.MAX_PDF_PAGE_LIMIT}-page limit. Please split the "
-                    "document into smaller parts and upload them separately."
-                ),
-                violations=[{
-                    "field": "page_count",
-                    "description": (
-                        f"PDF has {profile.page_count} pages, "
-                        f"limit is {settings.MAX_PDF_PAGE_LIMIT}"
-                    ),
-                }],
-            )
+        raise_if_oversized_pdf_not_supported(page_count=profile.page_count)
 
     if profile.doc_category == "atlas":
         filename, internal_output_filename, relative_root, full_output_dir = (

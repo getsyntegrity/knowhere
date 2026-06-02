@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 
+from app.services.document_ingestion.file_size_policy import (
+    build_file_size_limit_message,
+)
 from loguru import logger
 
 from shared.core.config import settings
@@ -63,7 +66,10 @@ def assert_temp_file_within_size_limit(
 
     limit_mb = settings.MAX_FILE_SIZE // (1024 * 1024)
     raise ValidationException(
-        user_message=f"File size exceeds limit (max {limit_mb}MB for {file_extension})",
+        user_message=build_file_size_limit_message(
+            limit_mb=limit_mb,
+            file_extension=file_extension,
+        ),
         violations=[
             {
                 "field": "file_size",

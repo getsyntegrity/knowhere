@@ -73,6 +73,40 @@ class WorkerParseContract:
                     raising=False,
                 )
 
+    def use_oversized_pdf_shard_enabled(
+        self,
+        monkeypatch: MonkeyPatch,
+        enabled: bool,
+    ) -> None:
+        monkeypatch.setenv("OVERSIZED_PDF_SHARD_ENABLED", "true" if enabled else "false")
+        monkeypatch.setattr(self.settings, "OVERSIZED_PDF_SHARD_ENABLED", enabled)
+        for loaded_module in list(sys.modules.values()):
+            module_settings = getattr(loaded_module, "settings", None)
+            if hasattr(module_settings, "OVERSIZED_PDF_SHARD_ENABLED"):
+                monkeypatch.setattr(
+                    module_settings,
+                    "OVERSIZED_PDF_SHARD_ENABLED",
+                    enabled,
+                    raising=False,
+                )
+
+    def use_oversized_pdf_soft_limit(
+        self,
+        monkeypatch: MonkeyPatch,
+        soft_limit: int,
+    ) -> None:
+        monkeypatch.setenv("OVERSIZED_PDF_SOFT_LIMIT", str(soft_limit))
+        monkeypatch.setattr(self.settings, "OVERSIZED_PDF_SOFT_LIMIT", soft_limit)
+        for loaded_module in list(sys.modules.values()):
+            module_settings = getattr(loaded_module, "settings", None)
+            if hasattr(module_settings, "OVERSIZED_PDF_SOFT_LIMIT"):
+                monkeypatch.setattr(
+                    module_settings,
+                    "OVERSIZED_PDF_SOFT_LIMIT",
+                    soft_limit,
+                    raising=False,
+                )
+
     def create_file_job(
         self,
         *,
