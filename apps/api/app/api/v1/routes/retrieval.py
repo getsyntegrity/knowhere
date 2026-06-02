@@ -13,12 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.core.database import get_db
 from shared.models.schemas.retrieval_namespace import normalize_retrieval_namespace
 from shared.services.retrieval.app_service import run_retrieval_query
+from shared.services.retrieval.settings import DEFAULT_TOP_K
 
 router = APIRouter(tags=["Retrieval"])
-
-
-def _is_none(value: object) -> bool:
-    return value is None
 
 
 class ExcludeSection(BaseModel):
@@ -33,7 +30,7 @@ class RetrievalQueryRequest(BaseModel):
         description="Effective namespace; defaults to default",
     )
     query: str
-    top_k: int = 10
+    top_k: int = DEFAULT_TOP_K
     exclude_document_ids: list[str] = Field(default_factory=list)
     exclude_sections: list[ExcludeSection] = Field(default_factory=list)
     data_type: int = Field(
@@ -84,12 +81,30 @@ class RetrievalQueryResponse(BaseModel):
     namespace: str
     query: str
     router_used: str
-    answer_text: str | None = None
+    evidence_text: str = Field(
+        default="",
+        description="Hierarchical evidence text. Primary output for downstream agents.",
+    )
+    answer_text: str = Field(
+        default="",
+        description=(
+            "DEPRECATED. Always empty; KNOWHERE no longer generates answers. "
+            "Use evidence_text and synthesize answers downstream."
+        ),
+    )
     referenced_chunks: list[dict] = Field(default_factory=list)
     results: list[dict] = Field(default_factory=list)
-    evidence_text: str | None = Field(default=None, exclude_if=_is_none)
-    stop_reason: str | None = Field(default=None, exclude_if=_is_none)
-    failure_reason: str | None = Field(default=None, exclude_if=_is_none)
+    stop_reason: str | None = None
+    failure_reason: str | None = None
+    decision_trace: list[dict] | None = Field(
+        default=None,
+        description=(
+            "Per-step navigation decisions from agentic retrieval. "
+            "Each entry has phase, document, action, reason, collected_paths, "
+            "and drill_into. Use this to understand "
+            "why KNOWHERE stopped or made specific navigation choices."
+        ),
+    )
 
 
 @router.post("/query", response_model=RetrievalQueryResponse)

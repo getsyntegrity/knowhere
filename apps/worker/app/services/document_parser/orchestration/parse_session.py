@@ -9,12 +9,14 @@ from app.services.document_parser.orchestration.path_segment import (
     build_parser_path_segment,
 )
 from app.services.document_parser.orchestration.parse_input import ParseInput
+from app.services.document_parser.orchestration.oversized_pdf_policy import (
+    raise_if_oversized_pdf_not_supported,
+)
 from app.services.document_parser.profiling.doc_profiler import profile_document
 from app.services.document_parser.support.stage_profiler import stage_timer
 from loguru import logger
 
 from shared.core.config import settings
-from shared.core.exceptions.domain_exceptions import ValidationException
 
 
 @dataclass(frozen=True)
@@ -109,20 +111,8 @@ def build_parse_session(parse_input: ParseInput) -> ParseSession:
                 f"ℹ️ VLM rejected atlas for {parse_input.filename}, routing as generic"
             )
 
-    pdf_page_limit = settings.MAX_PDF_PAGE_LIMIT
-    if profile.file_type == "pdf" and profile.page_count > pdf_page_limit:
-        raise ValidationException(
-            user_message=(
-                f"Document too large: {profile.page_count} pages exceeds the {pdf_page_limit}-page limit. "
-                "Please split the document and upload in smaller batches."
-            ),
-            violations=[
-                {
-                    "field": "page_count",
-                    "description": f"PDF has {profile.page_count} pages, limit is {pdf_page_limit}",
-                }
-            ],
-        )
+    if profile.file_type == "pdf" and profile.page_count > settings.MAX_PDF_PAGE_LIMIT:
+        raise_if_oversized_pdf_not_supported(page_count=profile.page_count)
 
     if profile.doc_category == "atlas":
         filename, internal_output_filename, relative_root, full_output_dir = (

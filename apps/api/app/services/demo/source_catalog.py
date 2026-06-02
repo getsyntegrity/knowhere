@@ -37,6 +37,7 @@ class DemoSourceDefinition:
     asset_directory: str
     chunk_count: int
     examples: tuple[DemoExampleDefinition, ...]
+    original_file_name: str | None = "original.pdf"
 
 
 _DATA_ROOT = Path(__file__).resolve().parents[2] / "data" / "demo_documents"
@@ -125,6 +126,84 @@ _DEMO_SOURCE_DEFINITIONS: tuple[DemoSourceDefinition, ...] = (
                 ),
             ),
         ),
+    ),
+    DemoSourceDefinition(
+        demo_source_id="demo-spacex-s1",
+        canonical_document_id="demo-doc-spacex-s1",
+        title="spacex-s1.pdf",
+        mime_type="application/pdf",
+        size_bytes=7_441_414,
+        asset_directory="spacex-s1",
+        chunk_count=922,
+        examples=(
+            DemoExampleDefinition(
+                id="demo-spacex-s1-starlink-scale",
+                question="What does the filing say about Starlink's scale?",
+                answer=(
+                    "The filing says SpaceX operates a high-speed, low-latency "
+                    "global broadband network powered by about 9,600 Starlink "
+                    "broadband and mobile satellites in Low-Earth Orbit.\n\n"
+                    "It says that network serves consumer, enterprise, and "
+                    "government customers across 164 countries, territories, "
+                    "and other markets as of March 31, 2026."
+                ),
+                citations=(
+                    DemoCitationDefinition(
+                        section_path="spacex-s1.pdf/PROSPECTUS SUMMARY/Overview",
+                        description="Starlink network scale",
+                        content=(
+                            "powered by approximately 9,600 Starlink broadband "
+                            "and mobile satellites in Low-Earth Orbit, delivering "
+                            "connectivity to millions of consumer, enterprise, "
+                            "and government customers across 164 countries"
+                        ),
+                    ),
+                ),
+            ),
+            DemoExampleDefinition(
+                id="demo-spacex-s1-launch-reusability",
+                question="How does the filing describe SpaceX's launch reusability?",
+                answer=(
+                    "The filing says Falcon 9 reusability gave SpaceX a "
+                    "step-function cost advantage in space access.\n\n"
+                    "It also says Falcon 9 first stages had demonstrated the "
+                    "ability to refly 34 times as of March 31, 2026."
+                ),
+                citations=(
+                    DemoCitationDefinition(
+                        section_path=(
+                            "spacex-s1.pdf/PROSPECTUS SUMMARY/"
+                            "Our Unparalleled Launch Capabilities"
+                        ),
+                        description="Falcon 9 booster reuse",
+                        content=(
+                            "As of March 31, 2026, our Falcon 9 rockets have "
+                            "demonstrated the ability to refly a first-stage "
+                            "34 times."
+                        ),
+                    ),
+                ),
+            ),
+            DemoExampleDefinition(
+                id="demo-spacex-s1-offering",
+                question="What offering does the filing describe?",
+                answer=(
+                    "The filing describes an initial public offering of shares "
+                    "of Space Exploration Technologies Corp. Class A common stock."
+                ),
+                citations=(
+                    DemoCitationDefinition(
+                        section_path="spacex-s1.pdf/SPACEX",
+                        description="Class A common stock offering",
+                        content=(
+                            "This is the initial public offering of shares of "
+                            "Class A common stock"
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        original_file_name=None,
     ),
 )
 
@@ -215,8 +294,10 @@ class DemoSourceCatalog:
         source = self.get_source(demo_source_id)
         if source is None:
             return None
+        if source.original_file_name is None:
+            return None
 
-        file_path = self.source_directory(source) / "original.pdf"
+        file_path = self.source_directory(source) / source.original_file_name
         return file_path if file_path.is_file() else None
 
     def get_asset_file_path(

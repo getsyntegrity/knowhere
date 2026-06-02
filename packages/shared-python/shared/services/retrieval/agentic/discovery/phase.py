@@ -13,6 +13,7 @@ from shared.services.retrieval.agentic.core.budget import BudgetExceeded
 from shared.services.retrieval.agentic.core.trace import TraceRecorder
 from shared.services.retrieval.agentic.core.types import AgentState, CandidateDoc, ToolResult
 from shared.services.retrieval.llm_adapter import LLMFn
+from shared.services.retrieval.search.lexical_text import normalize_section_path
 
 
 async def run_initial_discovery(
@@ -76,6 +77,9 @@ async def run_initial_discovery(
         f"status={discovery_result.status} latency={discovery_result.latency_ms}ms"
     )
 
+    # Build per-document discovery signals for KG soft-prompting
+    discovery_signals = build_discovery_signals(discovery_rows)
+
     if bootstrap_llm_fn is not None:
         await _select_documents(
             db,
@@ -87,76 +91,39 @@ async def run_initial_discovery(
             query=query,
             exclude_document_ids=exclude_document_ids,
             bootstrap_llm_fn=bootstrap_llm_fn,
+            discovery_signals=discovery_signals,
         )
 
     return discovery_rows
 
 
-async def register_discovery_documents(
-    db: AsyncSession,
-    *,
-    state: AgentState,
-    discovery_by_doc: dict[str, list[dict[str, Any]]],
-) -> None:
-    selected_doc_ids = {doc.document_id for doc in state.selected_docs}
-    for doc_id in discovery_by_doc:
-        if doc_id in selected_doc_ids or doc_id in state.ever_explored_doc_ids:
-            continue
-        doc_stmt = (
-            select(Document.document_id, Document.source_file_name, Document.current_job_result_id)
-            .where(Document.document_id == doc_id)
-        )
-        doc_result = await db.execute(doc_stmt)
-        row_data = doc_result.first()
-        if row_data is None:
-            continue
-        did, fname, job_result_id = row_data
-        state.selected_docs.append(
-            CandidateDoc(
-                document_id=did,
-                source_file_name=fname or did,
-                confidence=0.4,
-                reason="discovery_auto (not in KG selection)",
-                source="discovery_auto",
-            )
-        )
-        state.doc_id_to_name[did] = fname or did
-        if job_result_id:
-            state.doc_job_map[did] = job_result_id
+def build_discovery_signals(
+    discovery_rows: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Build per-document discovery signals from bottom discovery results.
 
-
-async def select_revision_documents(
-    db: AsyncSession,
-    *,
-    state: AgentState,
-    trace: TraceRecorder,
-    trace_enabled: bool,
-    user_id: str,
-    namespace: str,
-    query: str,
-    exclude_document_ids: list[str],
-    bootstrap_llm_fn: LLMFn,
-    revision_hint: str,
-) -> str | None:
-    try:
-        kg_result = await tools.kg_document_select(
-            db,
-            user_id=user_id,
-            namespace=namespace,
-            query=query,
-            llm_fn=bootstrap_llm_fn,
-            exclude_document_ids=list(set(exclude_document_ids)),
-            revision_hint=revision_hint,
-            budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+    Returns a mapping of ``{doc_id: [path1, path2, ...]}`` for documents
+    where keyword/semantic search found potentially relevant section paths.
+    These signals are injected as soft hints into the KG document selection
+    prompt, allowing the LLM to make an informed decision rather than
+    force-injecting documents.
+    """
+    signals: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
+    for row in discovery_rows:
+        doc_id = row.get("document_id", "")
+        section_path = normalize_section_path(
+            str(row.get("section_path", "") or "").strip()
         )
-    except BudgetExceeded:
-        logger.info("  agentic: bootstrap budget exhausted during revision doc selection")
-        if trace_enabled:
-            trace.record_budget_stop("bootstrap_exhausted")
-        return "bootstrap_budget"
-    state.step_count += 1
-    _append_selected_docs(state, kg_result)
-    return None
+        if not doc_id or not section_path or section_path == "Root":
+            continue
+        if doc_id not in seen:
+            seen[doc_id] = set()
+            signals[doc_id] = []
+        if section_path not in seen[doc_id]:
+            seen[doc_id].add(section_path)
+            signals[doc_id].append(section_path)
+    return signals
 
 
 async def _select_documents(
@@ -170,6 +137,7 @@ async def _select_documents(
     query: str,
     exclude_document_ids: list[str],
     bootstrap_llm_fn: LLMFn,
+    discovery_signals: dict[str, list[str]] | None = None,
 ) -> None:
     try:
         kg_result = await tools.kg_document_select(
@@ -180,6 +148,7 @@ async def _select_documents(
             llm_fn=bootstrap_llm_fn,
             exclude_document_ids=list(state.ever_explored_doc_ids | set(exclude_document_ids)),
             budget_snapshot=state.ledger.snapshot() if state.ledger else None,
+            discovery_signals=discovery_signals,
         )
     except BudgetExceeded:
         logger.info("  agentic: bootstrap budget exhausted during document selection")

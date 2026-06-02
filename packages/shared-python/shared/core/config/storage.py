@@ -60,12 +60,30 @@ class StorageConfig(BaseModel):
 
     # File-handling limits.
     MAX_FILE_SIZE: int = Field(
-        default=104857600, description="Maximum file size in bytes"
+        default=314572800, description="Maximum file size in bytes"
     )
     MAX_PDF_PAGE_LIMIT: int = Field(
-        default=600,
+        default=200,
         ge=1,
-        description="Maximum allowed PDF page count before parsing is rejected",
+        description="Maximum PDF page count for single-pass MinerU parsing. "
+        "Documents exceeding this trigger the shard pipeline when enabled.",
+    )
+    OVERSIZED_PDF_SHARD_ENABLED: bool = Field(
+        default=True,
+        description="Enable doc_agent shard pipeline for PDFs exceeding MAX_PDF_PAGE_LIMIT. "
+        "When False, oversized PDFs are rejected.",
+    )
+    OVERSIZED_PDF_SOFT_LIMIT: int = Field(
+        default=1500,
+        ge=1,
+        description="Soft page limit for oversized PDF shard pipeline. "
+        "Documents exceeding this are rejected with a contact-support message.",
+    )
+    MINERU_SHARD_CONCURRENCY: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum concurrent MinerU API calls for shard parsing.",
     )
     SUPPORTED_EXTENSIONS: str = Field(
         default=".doc,.docx,.pdf,.txt,.xls,.xlsx,.pptx,.jpg,.jpeg,.png,.md",

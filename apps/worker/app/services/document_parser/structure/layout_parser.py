@@ -9,8 +9,6 @@ from app.services.document_parser.structure.heading_candidates import (
     postprocess_headings,
 )
 from app.services.document_parser.structure.heading_llm_executor import (
-    build_level_mapping,
-    execute_level_mapping,
     execute_llm_heading_hierarchy,
 )
 from app.services.document_parser.structure.heading_tree import (
@@ -121,20 +119,16 @@ def format_toc_context_for_llm(toc_context) -> str:
                 formatted_blocks.append("- No TOC entries available")
             continue
 
-        for entry in toc_entries:
-            if not isinstance(entry, dict):
-                continue
+        # Dynamically generate MD table from JSON list (more token-efficient)
+        from app.services.document_agent.tools.vlm_toc_extractor import (
+            build_toc_with_level_md,
+        )
 
-            heading = str(entry.get("heading", "")).strip().replace("\n", " ")
-            if not heading:
-                continue
-
-            level = entry.get("level")
-            line_id = entry.get("id")
-            if isinstance(level, int):
-                formatted_blocks.append(f"- level {level} | id {line_id} | {heading}")
-            else:
-                formatted_blocks.append(f"- id {line_id} | {heading}")
+        md_table = build_toc_with_level_md(toc_entries)
+        if md_table:
+            formatted_blocks.append(md_table)
+        else:
+            formatted_blocks.append("- No TOC entries available")
 
     return "\n".join(formatted_blocks)
 
@@ -324,13 +318,83 @@ def _compute_zone_boundaries(toc_hierarchies, coordinate_mode="post_removal"):
     return zones
 
 
+def _apply_merge_signals(df: pd.DataFrame) -> pd.DataFrame:
+    """Resolve LLM '<' merge signals in-place.
+
+    When the LLM assigns ``level == "<"`` to a row, it means the row's text
+    is a continuation of the *previous* heading and should be appended to it.
+
+    Post-processing:
+    1. Walk the DataFrame in order.
+    2. For each ``"<"`` row, append its heading text (space-joined) to the
+       last row whose level was a positive integer (the merge target).
+    3. Set the merged row's level to -1 so it becomes body text and does not
+       create a spurious heading entry in the tree.
+
+    Rows that carry ``"<"`` but have no preceding valid heading (e.g. the very
+    first row) are simply demoted to -1 without merging.
+    """
+    merge_count = 0
+    last_valid_idx: int | None = None  # positional index of last positive-level row
+
+    for pos in range(len(df)):
+        level_val = df.iloc[pos]["level"]
+        if level_val == "<":
+            if last_valid_idx is not None:
+                continuation = str(df.iloc[pos]["heading"]).strip()
+                current_heading = str(df.iloc[last_valid_idx]["heading"]).strip()
+                df.at[df.index[last_valid_idx], "heading"] = (
+                    f"{current_heading} {continuation}" if continuation else current_heading
+                )
+                logger.debug(
+                    f"🔀 Merge signal: row id={df.iloc[pos]['id']} "
+                    f"'{continuation[:40]}' → appended to id={df.iloc[last_valid_idx]['id']}"
+                )
+            else:
+                logger.debug(
+                    f"🔀 Merge signal at id={df.iloc[pos]['id']} has no preceding heading; demoting"
+                )
+            df.at[df.index[pos], "level"] = -1
+            merge_count += 1
+        else:
+            try:
+                if int(level_val) > 0:
+                    last_valid_idx = pos
+            except (TypeError, ValueError):
+                pass
+
+    if merge_count:
+        logger.info(f"🔀 Applied {merge_count} '<' merge signal(s)")
+    return df
+
+
 def _resolve_first_toc_boundary(toc_hierarchies=None, first_toc_ele_num=None):
-    """Resolve the earliest available first-TOC boundary across coordinate sources."""
+    """Resolve the earliest available first-TOC boundary across coordinate sources.
+
+    Page-based TOC boundaries (``toc_range_unit == "page"``, produced by
+    DOC_AGENT/VLM for PDF/PPT) are in *page numbers*, NOT line/element IDs.
+    They must NOT be used for pre-TOC row removal because ``raw_preds["id"]``
+    are line indices that restart from 0 in each shard.  For these documents
+    the DOC_AGENT has already handled shard splitting around TOC pages.
+    """
     toc_range_start = None
+    toc_unit = None
     if toc_hierarchies:
         first_range = toc_hierarchies[0].get("toc_range")
         if first_range and len(first_range) == 2:
             toc_range_start = first_range[0]
+        toc_unit = toc_hierarchies[0].get("toc_range_unit")
+
+    # Page-based coordinates cannot be compared against line/element IDs.
+    if toc_unit == "page":
+        if first_toc_ele_num is not None:
+            # DOCX fallback: element-based boundary is safe to use.
+            return first_toc_ele_num
+        logger.debug(
+            "📌 Skipping pre-TOC removal: TOC uses page-based coordinates "
+            "(DOC_AGENT already handled shard boundaries)"
+        )
+        return None
 
     candidates = [
         value for value in (toc_range_start, first_toc_ele_num) if value is not None
@@ -543,6 +607,9 @@ def pred_titles(
         logger.warning("⚠️ No valid headings estimated")
         heading_preds = pd.DataFrame()
     else:
+        # ── Apply '<' merge signal before numeric conversion ──
+        heading_preds = _apply_merge_signals(heading_preds)
+
         heading_preds["level"] = (
             pd.to_numeric(heading_preds["level"], errors="coerce")
             .fillna(-1)
@@ -575,53 +642,33 @@ def pred_titles(
             f"📌 Spliced {len(pre_toc_rows)} pre-TOC lines back into predictions"
         )
 
-    # Save heading_preds as preds_5
-    save_intermediate_csv(heading_preds, output_dir, "preds_5_final_output")
+    # Save final heading predictions
+    save_intermediate_csv(heading_preds, output_dir, "preds_final")
     return heading_preds
 
 
 def est_hierarchies_naive(raw_preds, proceed_smart=True, output_dir=None):
-    """Detect hierarchies by non-LLM
+    """Regex-only heading hierarchy estimation (LLM fallback).
 
-    Args:
-        raw_preds: raw data
-        proceed_smart: whether to proceed with smart parsing
-        output_dir: output directory, used to save intermediate results CSV
+    When used as the primary pipeline step (before LLM), this function
+    determines the initial candidate/body split that ``compact_for_llm``
+    relies on (level > -1 → candidate, -1 → body text).
+
+    When used as a **fallback** after LLM failure, the returned levels
+    must be usable for tree construction.  Single-level POS matches
+    (``get_max_lvl`` returns -2 for patterns like)
+    are normalized to level 1 so the output forms a valid hierarchy.
+
+    The ``proceed_smart`` and ``output_dir`` parameters are retained for API
+    compatibility but have no effect.
     """
-    logger.debug("🚀 non-llm parsing => recursive processing")
-    save_preds = raw_preds.copy()
+    logger.debug("🚀 non-llm parsing => judge_negs filtering")
+    heading_preds = postprocess_headings(raw_preds, task="judge_negs")
 
-    heading_preds = postprocess_headings(raw_preds, task="collapse")
-    save_preds.insert(
-        save_preds.columns.get_loc("level") + 1,
-        "lvl_cola",
-        heading_preds["level"].tolist(),
+    # legitimate heading candidates; default them to top-level.
+    heading_preds["level"] = heading_preds["level"].map(
+        lambda x: 1 if x == -2 else x
     )
-
-    heading_preds = postprocess_headings(heading_preds, task="judge_negs")
-    save_preds.insert(
-        save_preds.columns.get_loc("lvl_cola") + 1,
-        "lvl_neg",
-        heading_preds["level"].tolist(),
-    )
-    save_preds["reason"] = heading_preds["reason"]
-
-    # mapping based on freq
-    if not proceed_smart:
-        heading_preds["level"] = heading_preds["level"].map(
-            lambda x: -1 if x == -2 else x
-        )
-        heading_preds, lvl_mapping = build_level_mapping(
-            heading_preds, heading_preds["level"].tolist(), mode="freq"
-        )
-        heading_preds = execute_level_mapping(heading_preds, lvl_mapping)
-        heading_preds.drop("origin_level", axis=1, inplace=True)
-        save_preds.insert(
-            save_preds.columns.get_loc("lvl_neg") + 1,
-            "lvl_map",
-            heading_preds["level"].tolist(),
-        )
-
     return heading_preds
 
 
@@ -635,22 +682,19 @@ def est_hierarchies_llm(
     output_dir=None,
     csv_suffix="",
 ):
-    """LLM-based hierarchy detection — first chunk via LLM, remaining chunks via reason-code mapping.
+    """LLM-based hierarchy detection — all chunks evaluated independently.
 
     When ``KB_LAYOUT_LLM_COMPACT_INPUT`` is enabled (default), consecutive
     ``level == -1`` rows in ``raw_preds`` are folded into a single placeholder
-    row (``[N BODY LINES]``) before chunking.  This shrinks the prompt, makes
-    most documents fit into a single chunk (skipping the lossy reason-code
-    mapping), and preserves the positional signal for the LLM.
+    row (``[N BODY LINES]``) before chunking.  This shrinks the prompt and
+    preserves the positional signal for the LLM.
 
     Strategy:
-        1. (Optional) Compact raw_preds so consecutive body rows become placeholders.
-        2. Send only the first chunk to LLM for hierarchy prediction.
-        3. Collect ``{id -> level}`` from the LLM response (int ids only).
-        4. For multi-chunk docs, extend that mapping via reason-code mapping on
-           chunks 1..N (placeholders excluded).
-        5. Expand the id->level mapping back onto the ORIGINAL ``raw_preds``;
-           any row not present in the mapping defaults to ``level = -1``.
+        1. Compact raw_preds so consecutive body rows become placeholders.
+        2. Split into chunks and send each independently to LLM.
+        3. Collect ``{id -> level}`` from LLM responses (int ids only).
+        4. Map levels back onto the ORIGINAL ``raw_preds``;
+           any row not in the map defaults to ``level = -1``.
 
     Args:
         raw_preds: raw data

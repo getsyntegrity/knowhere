@@ -15,11 +15,15 @@ from app.services.document_parser.support.text_helpers import count_cn_en
 HEADING_COLUMNS = Index(["id", "heading", "level", "reason"])
 
 
-def get_max_lvl(code_str: str):
-    match = re.search(r"\[([^]]+)]", code_str)
-    if not match:
-        return "Sure"
+def get_max_lvl(code_str: str) -> int:
+    """Extract the maximum hierarchy depth from a POS trigger code string.
 
+    ``code_str`` is always ``str(pos_code)`` where *pos_code* is a list of
+    integers, so the ``[…]`` bracket match is guaranteed.
+    """
+    match = re.search(r"\[([^]]+)]", code_str)
+    if match is None:
+        return -2
     nums = [int(item.strip()) for item in match.group(1).split(",")]
     max_value = int(max(nums))
     return max_value if max_value > 1 else -2
@@ -86,7 +90,14 @@ def judge_by_conditions(
     return pos_triggered_code
 
 
-def remove_by_conditions(text, include_punc: bool = False):
+def remove_by_conditions(text, *, include_punc: bool = False):
+    """Evaluate negative (non-heading) conditions against *text*.
+
+    ``include_punc`` controls the end-of-line punctuation rule.  It is
+    intentionally **off** during initial scanning so that lines remain heading candidates.  
+    The punctuation check is enabled only during the ``judge_negs`` second pass (after merges
+    may have altered heading text).
+    """
     neg_conditions = [
         r"^\d{3,}",
         r"(?i)(^https?://\S+|^www\.\S+|^P\.S|^\b\d{0,2}\s*(?:a\.m|p\.m)\b)",
@@ -101,7 +112,7 @@ def remove_by_conditions(text, include_punc: bool = False):
             r"|left|right|begin|end|overline|underline|hat|vec|tilde)\b"
             r")"
         ),
-        r"^0\.\d+[\u4e00-\u9fa5A-Za-z\S]*",
+        r"^0\.\d+\S*",
         r"^\d*\.\d+$",
         r"[。！；].+",
         (
@@ -119,10 +130,14 @@ def remove_by_conditions(text, include_punc: bool = False):
     for regex in neg_conditions:
         neg_triggered_code.append(1 if re.search(regex, text) else 0)
 
+    # End-of-line punctuation — only checked during judge_negs second pass.
     if include_punc:
         neg_triggered_code.append(1 if re.search(r"[.,;，。；]$", text) else 0)
     else:
         neg_triggered_code.append(0)
+
+    MAX_HEADING_TOKENS = 10
+    neg_triggered_code.append(1 if count_cn_en(text) > MAX_HEADING_TOKENS else 0)
 
     return neg_triggered_code
 
@@ -136,10 +151,13 @@ def md_heading_match(line, as_is: bool = True):
     return (line, level) if as_is else (line.lstrip("#").strip(), level)
 
 
+# Pre-compute zero-filled code arrays so non-heading lines get correct-width reason strings.
+_ZERO_POS_CODE = judge_by_conditions("")
+_ZERO_NEG_CODE = remove_by_conditions("")
+
+
 def filter_markdown_headings(
     md_lines: list[str],
-    num_pos: int = 17,
-    num_neg: int = 7,
     layout_json_path: str | None = None,
 ) -> pd.DataFrame:
     meta_ctx = None
@@ -159,9 +177,7 @@ def filter_markdown_headings(
 
         if _is_non_heading_markdown_line(line):
             est_level = -1
-            zero_pos_code = [0] * num_pos
-            zero_neg_code = [0] * num_neg
-            reason = f"POS {zero_pos_code} NEG {zero_neg_code}"
+            reason = f"POS {_ZERO_POS_CODE} NEG {_ZERO_NEG_CODE}"
             if meta_ctx:
                 reason += " META [0, 0, 0]"
             line = "Figure/Image"
@@ -242,8 +258,8 @@ def postprocess_headings(df: pd.DataFrame, task: str, max_depth: int = -1) -> pd
     if task == "merge_continuous":
         return _merge_continuous_non_headings(df)
 
-    if task == "merge_short" or task == "collapse":
-        return _collapse_heading_groups(df, task)
+    if task == "merge_short":
+        return _merge_short_heading_groups(df)
 
     return df
 
@@ -377,7 +393,7 @@ def _merge_continuous_non_headings(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(denoised_rows, columns=HEADING_COLUMNS)
 
 
-def _collapse_heading_groups(df: pd.DataFrame, task: str) -> pd.DataFrame:
+def _merge_short_heading_groups(df: pd.DataFrame) -> pd.DataFrame:
     group_to_indices = defaultdict(list)
     for index, row in df.iterrows():
         level = row["level"]
@@ -387,24 +403,22 @@ def _collapse_heading_groups(df: pd.DataFrame, task: str) -> pd.DataFrame:
 
     checked_pairs = set()
     for _, indices in group_to_indices.items():
-        _collapse_recursive(df, task, indices, merge_threshold=3, checked_pairs=checked_pairs)
+        _merge_short_recursive(df, indices, merge_threshold=3, checked_pairs=checked_pairs)
 
-    if task == "merge_short":
-        drop_between = df.index[
-            df["reason"].astype(str).str.startswith("Merged into", na=False)
-        ].tolist()
-        if drop_between:
-            logger.debug(
-                f"🛠️ Delete rows labeled as merged into, total {len(drop_between)} rows"
-            )
-            df.drop(drop_between, inplace=True)
-            df.reset_index(drop=True, inplace=True)
+    drop_between = df.index[
+        df["reason"].astype(str).str.startswith("Merged into", na=False)
+    ].tolist()
+    if drop_between:
+        logger.debug(
+            f"🛠️ Delete rows labeled as merged into, total {len(drop_between)} rows"
+        )
+        df.drop(drop_between, inplace=True)
+        df.reset_index(drop=True, inplace=True)
     return df
 
 
-def _collapse_recursive(
+def _merge_short_recursive(
     df: pd.DataFrame,
-    task: str,
     indices: list[int],
     merge_threshold: int = 3,
     checked_pairs: set[tuple[int, int]] | None = None,
@@ -423,18 +437,11 @@ def _collapse_recursive(
 
         between = df.loc[index + 1 : next_index - 1]
         current_text = df.at[index, "heading"].strip()
-        next_text = df.at[next_index, "heading"].strip()
 
-        if task == "merge_short" and len(between) > 0:
+        if len(between) > 0:
             _merge_short_between_headings(
                 df, between, index, next_index, current_text, merge_threshold
             )
-        elif task == "collapse" and len(between) == 0:
-            logger.debug(
-                f"⚠️ Empty between i={current_text[:15]}, j={next_text[:15]} => set i.level=-1, j.level=Not Sure"
-            )
-            df.at[index, "level"] = -2
-            df.at[next_index, "level"] = -2
 
         sub_between = between[between["level"] != -1]
         code_to_sub = defaultdict(list)
@@ -445,7 +452,7 @@ def _collapse_recursive(
                 code_to_sub[(level, reason)].append(row_index)
 
         for _, sub_indices in code_to_sub.items():
-            _collapse_recursive(df, task, sub_indices, merge_threshold, checked_pairs)
+            _merge_short_recursive(df, sub_indices, merge_threshold, checked_pairs)
 
 
 def _merge_short_between_headings(

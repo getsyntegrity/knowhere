@@ -14,44 +14,6 @@ from shared.services.retrieval.stats.service import compute_importance_score
 from shared.utils.token_estimate import estimate_tokens
 
 
-def with_context_prompt_projection(
-    snapshot: dict[str, object],
-    *,
-    prompt_tokens: int,
-) -> dict[str, object]:
-    projected: dict[str, object] = dict(snapshot)
-    context_raw = projected.get("context") or {}
-    if not isinstance(context_raw, dict):
-        return projected
-
-    context = dict(context_raw)
-    used = int(context.get("used", 0) or 0)
-    reserved = int(context.get("reserved", 0) or 0)
-    capacity = int(context.get("capacity", 0) or 0)
-    projected_used = min(capacity, used + max(int(prompt_tokens), 0))
-    projected_remaining = max(capacity - projected_used - reserved, 0)
-    context.update(
-        {
-            "used_projected_before_answer": projected_used,
-            "answer_prompt_estimate": max(int(prompt_tokens), 0),
-            "remaining": projected_remaining,
-            "used_pct": 100
-            if capacity <= 0
-            else min(100, int(round((projected_used + reserved) * 100 / capacity))),
-        }
-    )
-    if projected_remaining <= 0:
-        context["status"] = "EXHAUSTED"
-    elif context["used_pct"] >= 80:
-        context["status"] = "CRITICAL"
-    elif context["used_pct"] >= 50:
-        context["status"] = "TIGHT"
-    else:
-        context["status"] = "HEALTHY"
-    projected["context"] = context
-    return projected
-
-
 def _collect_chunks_by_type(
     node: DocTreeNode,
     chunk_types: set[str],
@@ -73,10 +35,6 @@ def collect_media_chunks(node: DocTreeNode) -> list[dict[str, Any]]:
     return _collect_chunks_by_type(node, {"image", "table"})
 
 
-def collect_image_chunks(node: DocTreeNode) -> list[dict[str, Any]]:
-    return _collect_chunks_by_type(node, {"image"})
-
-
 def collect_media_chunks_all(
     doc_trees: dict[str, DocTreeNode],
 ) -> list[dict[str, Any]]:
@@ -86,15 +44,6 @@ def collect_media_chunks_all(
     return media
 
 
-def collect_image_chunks_all(
-    doc_trees: dict[str, DocTreeNode],
-) -> list[dict[str, Any]]:
-    image_chunks: list[dict[str, Any]] = []
-    for tree in doc_trees.values():
-        image_chunks.extend(collect_image_chunks(tree))
-    return image_chunks
-
-
 async def build_asset_url_map(
     media_chunks: list[dict[str, Any]],
 ) -> dict[str, str]:
@@ -102,13 +51,6 @@ async def build_asset_url_map(
         media_chunks,
         log_context="agentic evidence",
     )
-
-
-async def build_vlm_image_urls(
-    doc_trees: dict[str, DocTreeNode],
-) -> list[str]:
-    asset_url_map = await build_asset_url_map(collect_image_chunks_all(doc_trees))
-    return [url for url in asset_url_map.values() if url]
 
 
 def _collect_all_leaf_paths(node: DocTreeNode) -> set[str]:
@@ -198,17 +140,21 @@ async def render_evidence(
 
     evidence_parts: list[str] = []
     for doc_id, doc_tree in doc_trees.items():
-        if doc_tree.has_content():
-            doc_name = doc_id_to_name.get(doc_id, doc_id)
-            rendered = render_unified_doc_tree(
-                doc_tree,
-                doc_name,
-                asset_lookup=asset_url_map,
-            )
-            if rendered.strip():
-                evidence_parts.append(rendered)
+        # Only render if there is actual hydrated evidence (chunks collected
+        # via COLLECT or discovery).  Outline-only trees (e.g. navigation
+        # STOP with empty collect) must not leak into evidence_text.
+        if not doc_tree.has_leaf_content():
+            continue
+        doc_name = doc_id_to_name.get(doc_id, doc_id)
+        rendered = render_unified_doc_tree(
+            doc_tree,
+            doc_name,
+            asset_lookup=asset_url_map,
+        )
+        if rendered.strip():
+            evidence_parts.append(rendered)
 
-    return "\n\n".join(evidence_parts) if evidence_parts else "(no evidence collected)"
+    return "\n\n".join(evidence_parts) if evidence_parts else ""
 
 
 def _iter_leaf_content(node: DocTreeNode):

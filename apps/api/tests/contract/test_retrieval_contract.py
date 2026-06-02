@@ -183,7 +183,7 @@ async def test_agentic_workflow_should_pass_full_request_policy_to_step_adapter(
         captured_requests.append(kwargs)
         return AgenticResult(
             evidence_text="policy evidence",
-            answer_text="policy answer",
+            answer_text="",
             referenced_chunks=[
                 {
                     "chunk_id": policy_document["chunk_id"],
@@ -346,14 +346,14 @@ async def test_should_return_empty_results_for_an_empty_query(
         )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "namespace": "default",
-        "query": "",
-        "router_used": "empty_query_filtered",
-        "results": [],
-        "answer_text": None,
-        "referenced_chunks": [],
-    }
+    response_json = response.json()
+    assert response_json["namespace"] == "default"
+    assert response_json["query"] == ""
+    assert response_json["router_used"] == "empty_query_filtered"
+    assert response_json["evidence_text"] == ""
+    assert response_json["answer_text"] == ""
+    assert response_json["results"] == []
+    assert response_json["referenced_chunks"] == []
 
 
 @pytest.mark.asyncio
@@ -541,7 +541,10 @@ async def test_agentic_retrieval_should_reference_root_only_document_content(
         "section_path": "root-only.pdf",
         "file_path": None,
         "job_id": rooted_document["job_id"],
-    } in referenced_chunks
+    } in [
+        {k: v for k, v in ref.items() if k != "score"}
+        for ref in referenced_chunks
+    ]
     assert results[0]["content"] == "root only diluted earnings marker content"
     assert results[0]["source"] == {
         "document_id": rooted_document["document_id"],
@@ -599,7 +602,10 @@ async def test_agentic_retrieval_should_reference_discovery_content_when_navigat
         "section_path": discovered_document["section_path"],
         "file_path": None,
         "job_id": discovered_document["job_id"],
-    } in referenced_chunks
+    } in [
+        {k: v for k, v in ref.items() if k != "score"}
+        for ref in referenced_chunks
+    ]
     assert results[0]["content"] == "discovery fallback EBITDA margin marker content"
     assert results[0]["source"] == {
         "document_id": discovered_document["document_id"],
@@ -741,7 +747,7 @@ async def test_agentic_retrieval_should_not_hydrate_references_outside_request_s
                 namespace=request.namespace,
                 query=request.query,
                 router_used="workflow_single_step",
-                answer_text="foreign reference answer",
+                answer_text="",
                 referenced_chunks=[
                     {
                         "chunk_id": foreign_document["chunk_id"],
@@ -820,7 +826,7 @@ async def test_agentic_retrieval_should_drop_references_that_do_not_match_the_hy
                 namespace=request.namespace,
                 query=request.query,
                 router_used="workflow_single_step",
-                answer_text="mismatched section answer",
+                answer_text="",
                 referenced_chunks=[
                     {
                         "chunk_id": visible_chunk["chunk_id"],
@@ -911,7 +917,7 @@ async def test_agentic_workflow_should_preserve_references_with_the_same_chunk_i
         document = first_document if query == "first shared reference" else second_document
         return AgenticResult(
             evidence_text=f"evidence for {document['document_id']}",
-            answer_text=f"answer for {document['document_id']}",
+            answer_text="",
             referenced_chunks=[
                 {
                     "chunk_id": shared_chunk_id,
@@ -1022,7 +1028,7 @@ async def test_agentic_workflow_should_preserve_references_with_the_same_chunk_i
         chunk = first_chunk if query == "first shared section" else second_chunk
         return AgenticResult(
             evidence_text=f"evidence for {chunk['section_path']}",
-            answer_text=f"answer for {chunk['section_path']}",
+            answer_text="",
             referenced_chunks=[
                 {
                     "chunk_id": shared_chunk_id,

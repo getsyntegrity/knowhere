@@ -15,6 +15,7 @@ from tests.support.contract_database import ContractDatabase
 
 
 DEMO_SOURCE_ID = "demo-tsla-q4-2025"
+SPACEX_DEMO_SOURCE_ID = "demo-spacex-s1"
 
 
 class FakeResultStorage:
@@ -78,17 +79,28 @@ async def test_should_return_demo_catalog_with_resolvable_canonical_citations(
     assert catalog_response.status_code == 200
     catalog = cast(dict[str, Any], catalog_response.json())
     sources = cast(list[dict[str, Any]], catalog["sources"])
-    source = sources[0]
+    sources_by_id = {str(source["demo_source_id"]): source for source in sources}
+    source = sources_by_id[DEMO_SOURCE_ID]
+    spacex_source = sources_by_id[SPACEX_DEMO_SOURCE_ID]
     examples = cast(list[dict[str, Any]], source["examples"])
     citations = cast(list[dict[str, Any]], examples[0]["citations"])
     citation = citations[0]
+    spacex_examples = cast(list[dict[str, Any]], spacex_source["examples"])
+    spacex_citations = cast(list[dict[str, Any]], spacex_examples[0]["citations"])
 
+    assert str(sources[0]["demo_source_id"]) == DEMO_SOURCE_ID
+    assert SPACEX_DEMO_SOURCE_ID in sources_by_id
     assert source["demo_source_id"] == DEMO_SOURCE_ID
     assert source["canonical_document_id"] == "demo-doc-tsla-q4-2025"
     assert source["chunk_count"] == 70
     assert source["original_file"]["can_download"] is False
     assert citation["canonical_document_id"] == "demo-doc-tsla-q4-2025"
     assert citation["canonical_chunk_id"].startswith(f"{DEMO_SOURCE_ID}:")
+    assert spacex_source["canonical_document_id"] == "demo-doc-spacex-s1"
+    assert spacex_source["chunk_count"] == 922
+    assert spacex_citations[0]["canonical_chunk_id"].startswith(
+        f"{SPACEX_DEMO_SOURCE_ID}:"
+    )
 
     async with api_client_factory() as api_client:
         chunks_response = await api_client.get(

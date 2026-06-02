@@ -9,8 +9,9 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.services.retrieval.agentic.core.types import DocTreeNode, ToolResult
+from shared.services.retrieval.agentic.core.types import ToolResult
 from shared.services.retrieval.agentic.discovery import selection as discovery_selection
+from shared.services.retrieval.agentic.discovery.selection import DiscoverySelectResult
 from shared.services.retrieval.agentic.discovery import tools as discovery_tools
 from shared.services.retrieval.agentic.navigation import assets as asset_tools
 from shared.services.retrieval.agentic.navigation import tools as navigation_tools
@@ -60,7 +61,7 @@ async def kg_document_select(
     query: str,
     llm_fn: LLMFn | None,
     exclude_document_ids: list[str],
-    revision_hint: str | None = None,
+    discovery_signals: dict[str, list[str]] | None = None,
     **kwargs: Any,
 ) -> ToolResult:
     return await discovery_tools.kg_document_select(
@@ -70,7 +71,7 @@ async def kg_document_select(
         query=query,
         llm_fn=llm_fn,
         exclude_document_ids=exclude_document_ids,
-        revision_hint=revision_hint,
+        discovery_signals=discovery_signals,
         **kwargs,
     )
 
@@ -102,11 +103,12 @@ async def navigate_step(
     user_id: str,
     namespace: str,
     doc_name: str = "",
-    scope_path: str | list[str] | None = None,
+    scope_path: str | None = None,
     exclude_paths: set[str] | None = None,
-    revision_hint: str | None = None,
     budget_snapshot: dict | None = None,
-) -> tuple[str, list[str], DocTreeNode, list[dict]]:
+    nav_trace: list[dict[str, Any]] | None = None,
+    collected_paths: list[dict[str, Any]] | None = None,
+) -> navigation_tools.NavigateStepResult:
     return await navigation_tools.navigate_step(
         db,
         document_id=document_id,
@@ -118,8 +120,9 @@ async def navigate_step(
         doc_name=doc_name,
         scope_path=scope_path,
         exclude_paths=exclude_paths,
-        revision_hint=revision_hint,
         budget_snapshot=budget_snapshot,
+        nav_trace=nav_trace,
+        collected_paths=collected_paths,
     )
 
 
@@ -134,9 +137,8 @@ async def discovery_select_step(
     doc_name: str = "",
     discovery_hints: list[dict[str, Any]],
     exclude_paths: set[str] | None = None,
-    revision_hint: str | None = None,
     budget_snapshot: dict | None = None,
-) -> DocTreeNode:
+) -> DiscoverySelectResult:
     return await discovery_selection.discovery_select_step(
         db,
         document_id=document_id,
@@ -147,6 +149,5 @@ async def discovery_select_step(
         doc_name=doc_name,
         discovery_hints=discovery_hints,
         exclude_paths=exclude_paths,
-        revision_hint=revision_hint,
         budget_snapshot=budget_snapshot,
     )

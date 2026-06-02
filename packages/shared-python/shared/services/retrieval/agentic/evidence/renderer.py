@@ -17,7 +17,7 @@ def render_unified_doc_tree(
     indent = "    " * depth
 
     if depth == 0:
-        parts.append(f"【文档】{doc_name}\n")
+        parts.append(f"[Document] {doc_name}\n")
 
     child_prefixes = set(node.children.keys())
 
@@ -48,8 +48,9 @@ def render_unified_doc_tree(
             render_queue.append((min_sort(path), "orphan_leaf", path))
 
     for path in node.children:
-        if path not in outline_paths:
-            render_queue.append((float("inf"), "orphan_child", path))
+        if path not in outline_paths and path not in node.leaf_content:
+            child_sort = _infer_child_sort_order(node.children[path])
+            render_queue.append((child_sort, "orphan_child", path))
 
     render_queue.sort(key=lambda item: item[0])
 
@@ -82,15 +83,27 @@ def render_unified_doc_tree(
         elif render_type == "orphan_leaf":
             path = cast(str, data)
             title = path.rsplit(" / ", 1)[-1] if " / " in path else path
-            parts.append(f"{indent}▸ [Leaf] {title}")
-            render_leaf_chunks(parts, node.leaf_content[path], indent + "    ", asset_lookup=asset_lookup)
+            sub_indent = indent + "    "
+            if path in node.children:
+                # Non-leaf node with own content: render heading, then
+                # self chunks, then child subtree (merged rendering).
+                parts.append(f"{indent}▸ [L{depth + 1}] {title}")
+                render_leaf_chunks(parts, node.leaf_content[path], sub_indent, asset_lookup=asset_lookup)
+                child_text = render_unified_doc_tree(node.children[path], doc_name, depth + 1, asset_lookup=asset_lookup)
+                if child_text.strip():
+                    parts.append(child_text)
+            else:
+                parts.append(f"{indent}▸ [L{depth + 1}] {title} [Leaf]")
+                render_leaf_chunks(parts, node.leaf_content[path], sub_indent, asset_lookup=asset_lookup)
 
         elif render_type == "orphan_child":
             path = cast(str, data)
             title = path.rsplit(" / ", 1)[-1] if " / " in path else path
-            parts.append(f"{indent}▸ {title} [DrillDown]")
             child_text = render_unified_doc_tree(node.children[path], doc_name, depth + 1, asset_lookup=asset_lookup)
+            # Only render the orphan heading if the child has content.
+            # Prevents empty orphan nodes from polluting evidence_text.
             if child_text.strip():
+                parts.append(f"{indent}▸ [L{depth + 1}] {title}")
                 parts.append(child_text)
 
     return "\n".join(parts)
@@ -137,7 +150,7 @@ def render_leaf_chunks(
 
             if target_type == "table":
                 table_html = str(target.get("content", "")).strip()
-                content = content.replace(ref_str, f"\n[表格内容]\n{table_html}\n")
+                content = content.replace(ref_str, f"\n[Table]\n{table_html}\n")
             elif target_type == "image":
                 file_path = target.get("file_path") or ""
                 image_description = str(target.get("content", "")).strip()
@@ -146,9 +159,9 @@ def render_leaf_chunks(
                 asset_url = (asset_lookup or {}).get(target_id, "") if target_id else ""
                 display_ref = asset_url or file_path
                 if display_ref:
-                    content = content.replace(ref_str, f"\n[图片: {display_ref}]\n{image_description}\n")
+                    content = content.replace(ref_str, f"\n[Image: {display_ref}]\n{image_description}\n")
                 elif image_description:
-                    content = content.replace(ref_str, f"\n[图片描述]\n{image_description}\n")
+                    content = content.replace(ref_str, f"\n[Image description]\n{image_description}\n")
 
         for line in content.split("\n"):
             if line.strip():
@@ -168,15 +181,35 @@ def render_leaf_chunks(
             asset_url = (asset_lookup or {}).get(chunk_id, "") if chunk_id else ""
             display_ref = asset_url or file_path
             if display_ref:
-                parts.append(f"{indent}┈ [图片: {display_ref}]")
+                parts.append(f"{indent}┈ [Image: {display_ref}]")
             if image_description:
                 for line in image_description.split("\n"):
                     if line.strip():
                         parts.append(f"{indent}┈ {line}")
         elif chunk_type == "table":
             table_html = str(chunk.get("content", "")).strip()
-            parts.append(f"{indent}┈ [表格内容]")
+            parts.append(f"{indent}┈ [Table]")
             if table_html:
                 for line in table_html.split("\n"):
                     if line.strip():
                         parts.append(f"{indent}┈ {line}")
+
+
+def _infer_child_sort_order(child: DocTreeNode) -> float:
+    """Infer sort position from the child's earliest chunk sort_order.
+
+    When an orphan child node has no outline entry, we fall back to the
+    minimum ``sort_order`` across all its hydrated chunks so that orphans
+    render in document order instead of being appended at the end.
+    """
+    min_order = float("inf")
+    for chunks in child.leaf_content.values():
+        for chunk in chunks:
+            order = chunk.get("sort_order")
+            if order is not None and order < min_order:
+                min_order = float(order)
+    for grandchild in child.children.values():
+        grandchild_order = _infer_child_sort_order(grandchild)
+        min_order = min(min_order, grandchild_order)
+    return min_order
+

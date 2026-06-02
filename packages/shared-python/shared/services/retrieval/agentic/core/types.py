@@ -16,8 +16,7 @@ from shared.services.retrieval.agentic.core.budget import BudgetLedger
 @dataclass
 class AgentRunConfig:
     """Budget and limit configuration for a single agent run."""
-    max_revisions: int = 2  # max attempt_answer → revision cycles
-    max_nav_depth: int = 3  # max scope_navigate recursion depth
+    max_nav_steps: int = 6  # max navigation steps per document (no depth limit)
     latency_budget_ms: int = 12000
     token_budget_total: int = 40000
     planning_ratio: float = 0.5
@@ -80,23 +79,16 @@ class DocTreeNode:
             return any(c.has_content() for c in self.children.values())
         return False
 
-    def collect_all_paths(self, doc_id: str) -> set[str]:
-        """Recursively collect paths of actually-explored sections.
+    def has_leaf_content(self) -> bool:
+        """Check if this tree has any actual hydrated chunk content (not just outline).
 
-        Only ``leaf_content`` and ``children`` represent sections whose
-        content was retrieved.  ``outline_items`` are structural context
-        (titles/summaries shown to the LLM) and must NOT be masked —
-        otherwise revision rounds see 0 candidates and can't re-navigate.
+        Unlike ``has_content()`` which returns True for outline-only trees,
+        this method only returns True when real text/table/image chunks have
+        been hydrated into leaf_content.
         """
-        paths: set[str] = set()
-        if self.scope_path:
-            paths.add(f'{doc_id}::{self.scope_path}')
-        for path in self.leaf_content:
-            paths.add(f'{doc_id}::{path}')
-        for path, child in self.children.items():
-            paths.add(f'{doc_id}::{path}')
-            paths.update(child.collect_all_paths(doc_id))
-        return paths
+        if self.leaf_content:
+            return True
+        return any(c.has_leaf_content() for c in self.children.values())
 
     def flatten_chunk_rows(self) -> list[dict[str, Any]]:
         """Recursively collect all hydrated chunk rows (document order)."""
@@ -127,20 +119,28 @@ class DocTreeNode:
             existing.append(chunk)
 
     def reparent_leaf_content(self) -> None:
-        """Move descendant leaf paths into matching child nodes."""
+        """Move descendant leaf paths into matching child nodes.
+
+        Only moves true descendants (prefix match).  Content whose path
+        exactly equals a child key stays here — the renderer handles the
+        case where a path is both a child and a leaf (section with own
+        content *and* sub-sections).
+        """
         for child_path, child in list(self.children.items()):
             for leaf_path in list(self.leaf_content.keys()):
-                if leaf_path == child_path or leaf_path.startswith(child_path + ' / '):
+                if leaf_path.startswith(child_path + ' / '):
                     child.add_leaf_chunks(leaf_path, self.leaf_content.pop(leaf_path))
             child.reparent_leaf_content()
 
-    def collect_referenced_ids(self, *, document_name: str = '') -> list[dict[str, str]]:
+    def collect_referenced_ids(self, *, document_name: str = '') -> list[dict[str, Any]]:
         """Extract minimal chunk references from all hydrated leaves.
 
         Returns deduplicated list of {chunk_id, document_id, chunk_type,
-        section_path, file_path, job_id} for hit stats and frontend display.
+        section_path, file_path, job_id, score} for hit stats and frontend
+        display. ``score`` carries the real retrieval score (discovery RRF or
+        navigation confidence) so callers can surface it in results.
         """
-        refs: list[dict[str, str]] = []
+        refs: list[dict[str, Any]] = []
         seen: set[str] = set()
         for row in self.flatten_chunk_rows():
             cid = row.get('chunk_id', '')
@@ -156,11 +156,12 @@ class DocTreeNode:
                     'section_path': section_path,
                     'file_path': row.get('file_path', ''),
                     'job_id': row.get('job_id', ''),
+                    'score': row.get('score'),  # None if no real score available
                 })
         return refs
 
     def merge(self, other: 'DocTreeNode') -> None:
-        """Additive merge for revision cycles.
+        """Additive merge for navigation results.
 
         Merges outline items, leaf content, children, and confidence from
         ``other`` into this node. Existing data is preserved; new data is
@@ -183,6 +184,43 @@ class DocTreeNode:
 
 
 @dataclass
+class NavigateStepResult:
+    """Return type for navigate_step — Collector Agent model.
+
+    Each step returns:
+    - ``collect``: paths to add to the evidence collection (full hydration)
+    - ``drill``: paths to explore deeper in subsequent steps
+    - ``action``: navigation direction — DRILL/BACK/STOP
+    - ``tools``: optional asset tools (FIND_IMAGES/FIND_TABLES)
+    - ``node``: outline tree node for rendering context
+    - ``reason``: LLM reasoning for trace
+    """
+    action: str = "STOP"  # DRILL | BACK | STOP
+    collect: list[dict[str, Any]] = field(default_factory=list)
+    drill: list[dict[str, Any]] = field(default_factory=list)
+    tools: list[str] = field(default_factory=list)
+    node: DocTreeNode = field(default_factory=DocTreeNode)
+    reason: str = ""
+
+    @property
+    def drill_into(self) -> str | None:
+        """Single drill target path, or None."""
+        return self.drill[0]["path"] if self.drill else None
+
+    @property
+    def is_terminal(self) -> bool:
+        """True when navigation should stop (STOP or empty collect+drill)."""
+        return self.action == "STOP" or (not self.collect and not self.drill)
+
+    @staticmethod
+    def stop(scope_path: str | None = None) -> 'NavigateStepResult':
+        return NavigateStepResult(
+            action="STOP",
+            node=DocTreeNode.empty(scope_path),
+        )
+
+
+@dataclass
 class CandidateDoc:
     """A document selected by kg_document_select."""
     document_id: str
@@ -198,17 +236,17 @@ class AgenticResult:
 
     - ``evidence_text``: complete hierarchical context for LLM answering
       (rendered doc tree with outline + leaf content + inline tables)
-    - ``answer_text``: LLM-generated answer to the query based on the
-      evidence.  Empty string when the evidence was insufficient
-      (NOT_FOUND) and max revisions were exhausted.
+    - ``answer_text``: deprecated; always empty because KNOWHERE returns
+      evidence only and downstream agents synthesize answers.
     - ``referenced_chunks``: minimal chunk references for hit stats
       and frontend display (chunk_id, document_id, chunk_type, etc.)
     - ``router_used``: routing path identifier
     - ``budget_snapshot``: final budget ledger state at run completion
-    - ``stop_reason``: why the run terminated (answer_done / max_revisions /
+    - ``stop_reason``: why the run terminated (evidence_only /
       latency_budget / context_budget / no_llm / etc.)
-    - ``failure_reason``: semantic reason from the answer attempt when no
-      answer could be produced, e.g. evidence was insufficient.
+    - ``failure_reason``: fatal retrieval failure reason, if any.
+    - ``decision_trace``: per-step navigation decisions with reasons,
+      exposed to downstream agents for stop/retry/modify-query decisions.
     """
     evidence_text: str
     answer_text: str = ''
@@ -217,6 +255,7 @@ class AgenticResult:
     budget_snapshot: dict[str, Any] | None = None
     stop_reason: str = ''
     failure_reason: str = ''
+    decision_trace: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -242,10 +281,7 @@ class AgentState:
     # Phase 2: Per-document navigation results
     doc_trees: dict[str, DocTreeNode] = field(default_factory=dict)  # doc_id → DocTreeNode
 
-    # Revision state
-    revision_count: int = 0
     ever_explored_doc_ids: set[str] = field(default_factory=set)
-    seen_section_keys: set[str] = field(default_factory=set)  # "{doc_id}::{section_path}"
 
     # Token budget + KG inventory
     ledger: BudgetLedger | None = None

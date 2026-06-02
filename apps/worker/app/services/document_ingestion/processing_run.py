@@ -23,9 +23,11 @@ from app.services.document_ingestion.success_finalization import finalize_parse_
 from app.services.document_ingestion.workspace import (
     TemporaryParseWorkspace,
 )
+from app.services.document_parser.orchestration.oversized_pdf_policy import (
+    build_oversized_pdf_rejection,
+)
 from loguru import logger
 
-from shared.core.exceptions.domain_exceptions import ValidationException, Violation
 from shared.services.jobs.lifecycle.service import get_sync_job_lifecycle_service
 from shared.services.redis.distributed_lock import RedisJobLock
 from shared.services.redis.redis_sync_service import (
@@ -93,11 +95,11 @@ def _run_parse_job(
     )
 
     processing_started_at = datetime.now(timezone.utc)
-    if _is_pdf_page_limit_exceeded(
+    oversized_pdf_rejection = build_oversized_pdf_rejection(
         file_extension=prepared_source.file_extension,
         page_count=page_count,
-    ):
-        violations = _build_pdf_page_limit_violations(page_count)
+    )
+    if oversized_pdf_rejection is not None:
         billing_snapshot = record_skipped_parse_job_billing(
             job_id=job_id,
             workload_estimate=workload_estimate,
@@ -108,9 +110,9 @@ def _run_parse_job(
             billing_snapshot=billing_snapshot,
             processing_started_at=processing_started_at,
             workload_estimate=workload_estimate,
-            extra_metadata={"error_details": {"violations": violations}},
+            extra_metadata={"error_details": oversized_pdf_rejection.details},
         )
-        _raise_pdf_page_limit_exceeded(page_count, violations)
+        raise oversized_pdf_rejection
 
     billing_snapshot = charge_parse_job_pages(
         job_id=job_id,
@@ -161,37 +163,4 @@ def _run_parse_job(
         processing_started_at=processing_started_at,
         task_workspace_dir=task_workspace.root_dir,
         result_storage_factory=get_result_storage,
-    )
-
-
-def _is_pdf_page_limit_exceeded(*, file_extension: str, page_count: int) -> bool:
-    from shared.core.config import settings
-
-    return file_extension == ".pdf" and page_count > settings.MAX_PDF_PAGE_LIMIT
-
-
-def _build_pdf_page_limit_violations(page_count: int) -> list[Violation]:
-    from shared.core.config import settings
-
-    pdf_page_limit = settings.MAX_PDF_PAGE_LIMIT
-    return [
-        {
-            "field": "page_count",
-            "description": f"PDF has {page_count} pages, limit is {pdf_page_limit}",
-        }
-    ]
-
-
-def _raise_pdf_page_limit_exceeded(
-    page_count: int, violations: list[Violation]
-) -> None:
-    from shared.core.config import settings
-
-    pdf_page_limit = settings.MAX_PDF_PAGE_LIMIT
-    raise ValidationException(
-        user_message=(
-            f"Document too large: {page_count} pages exceeds the {pdf_page_limit}-page limit. "
-            "Please split the document and upload in smaller batches."
-        ),
-        violations=violations,
     )

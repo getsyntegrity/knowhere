@@ -10,6 +10,7 @@ from shared.services.retrieval.hydration.result_assembly import assemble_retriev
 from shared.services.retrieval.execution.response_projection import (
     attach_citation,
 )
+from shared.services.retrieval.hydration.legacy_evidence import render_legacy_evidence_text
 from shared.services.retrieval.execution.route_types import (
     RetrievalRouteContext,
     RetrievalRouteOutcome,
@@ -83,6 +84,8 @@ async def _try_run_small_corpus_route(
         "namespace": context.namespace,
         "query": context.query,
         "router_used": "small_corpus_all",
+        "evidence_text": render_legacy_evidence_text(results),
+        "answer_text": "",
         "results": results,
     }
     return RetrievalRouteOutcome(
@@ -112,12 +115,57 @@ async def _run_agentic_route(
         request=WorkflowRunRequest.from_route_context(context),
     )
 
+    # Build a real score index for hydration:
+    # 1. Discovery RRF score — available for chunks that surfaced in the
+    #    3-channel BM25 pass (stored in each referenced_chunk as 'score').
+    # 2. KG document confidence — LLM-assigned confidence per selected document
+    #    (stored in decision_trace kg_select entry), used as a fallback for
+    #    chunks that were only found through navigation (no discovery score).
+    score_by_chunk_id: dict[str, float] = {}
+
+    # Layer 1: referenced_chunk-level score (propagated from discovery rows)
+    for ref in workflow_result.referenced_chunks:
+        cid = ref.get('chunk_id', '')
+        raw_score = ref.get('score')
+        if cid and raw_score is not None:
+            try:
+                score_by_chunk_id[cid] = float(raw_score)
+            except (TypeError, ValueError):
+                pass
+
+    # Layer 2: per-document KG confidence as default for navigation-only chunks.
+    # Each step's decision_trace contains a 'kg_select' phase entry that holds
+    # the LLM-assigned confidence score per selected document.
+    doc_confidence: dict[str, float] = {}
+    for step in workflow_result.steps:
+        for entry in step.decision_trace or []:
+            if entry.get('phase') == 'kg_select':
+                for doc_info in entry.get('documents', []):
+                    doc_id = doc_info.get('document_id', '')
+                    conf = doc_info.get('confidence')
+                    if doc_id and conf is not None:
+                        try:
+                            doc_confidence[doc_id] = float(conf)
+                        except (TypeError, ValueError):
+                            pass
+
     resolved_references = await resolve_workflow_references(
         db=context.db,
         user_id=context.user_id,
         namespace=context.namespace,
         refs=workflow_result.referenced_chunks,
+        score_by_chunk_id=score_by_chunk_id if score_by_chunk_id else None,
     )
+
+    # Backfill doc-level confidence for chunks that have no discovery score
+    if doc_confidence:
+        for row in resolved_references.rows:
+            cid = row.get('chunk_id', '')
+            if cid and row.get('score') is None:
+                doc_id = row.get('document_id', '')
+                if doc_id in doc_confidence:
+                    row['score'] = doc_confidence[doc_id]
+
     assembled_workflow_rows = await assemble_retrieval_results(
         db=context.db,
         rows=resolved_references.rows,
@@ -126,6 +174,7 @@ async def _run_agentic_route(
         allowed_chunk_types=context.allowed_chunk_types,
     )
     response = workflow_result.to_api_response()
+    response["answer_text"] = ""
     response["referenced_chunks"] = resolved_references.refs
     response["results"] = [attach_citation(row) for row in assembled_workflow_rows]
 
@@ -147,8 +196,28 @@ async def _run_agentic_route(
         if last_retrieve.failure_reason:
             response["failure_reason"] = last_retrieve.failure_reason
 
+    # Merge decision traces from all retrieve steps
+    all_decision_trace: list[dict] = []
+    for step in workflow_result.steps:
+        if step.decision_trace:
+            all_decision_trace.extend(step.decision_trace)
+
+    # Embed stop/failure into decision_trace as terminal entry
+    stop_reason = response.get("stop_reason") or ""
+    failure_reason = response.get("failure_reason") or ""
+    if stop_reason or failure_reason:
+        all_decision_trace.append({
+            "phase": "terminal",
+            "action": "complete",
+            "stop_reason": stop_reason,
+            "failure_reason": failure_reason,
+        })
+
+    if all_decision_trace:
+        response["decision_trace"] = all_decision_trace
+
     completion_detail = (
-        f"chunks | answer={len(workflow_result.answer_text)} chars | "
+        f"chunks | evidence={len(response.get('evidence_text') or '')} chars | "
         f"router={workflow_result.router_used}"
     )
     return RetrievalRouteOutcome(
