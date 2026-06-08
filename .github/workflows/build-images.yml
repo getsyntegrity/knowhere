@@ -7,10 +7,6 @@ on:
     tags:
       - "v*"
       - "oss-v*"
-  pull_request:
-    branches:
-      - main
-      - staging
   workflow_dispatch:
     inputs:
       service:
@@ -67,11 +63,7 @@ jobs:
             environment="staging"
           fi
 
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            should_push="false"
-          else
-            should_push="true"
-          fi
+          should_push="true"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.service }}" ] && [ "${{ github.event.inputs.service }}" != "all" ] && [ "${{ github.event.inputs.service }}" != "${{ matrix.service }}" ]; then
             should_build="false"

@@ -53,8 +53,8 @@ service.
 5. Keep the pull request focused; split unrelated changes into separate pull
    requests.
 
-Pull requests to `main` run CI, secret scanning, CodeQL, and Docker image build
-validation. Pull request workflows do not push images, deploy environments, or
+Pull requests to `main` run CI, secret scanning, and CodeQL. Pull request
+workflows do not build deployment images, push images, deploy environments, or
 create GitHub Releases.
 
 ### Maintainer development workflow
