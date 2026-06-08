@@ -89,20 +89,22 @@ production release.
 
 ### Production release workflow
 
-Production deployment is controlled by release tags. After a commit has been
-validated in staging:
+Production deployment is controlled by publishing a GitHub Release. After a
+commit has been validated in staging:
 
-1. Identify the exact commit that was validated.
-2. Create an immutable release tag on that commit, for example
-   `v2026.06.08.1` or `v1.2.3`.
-3. Push the tag.
+1. Open the repository Releases page and choose **Draft a new release**.
+2. Create or select an immutable release tag on the exact validated commit, for
+   example `v2026.06.08.1` or `v1.2.3`.
+3. Use GitHub's release note generation to preserve the pull request and commit
+   summary in the release body.
+4. Publish the release.
 
-Release tag pushes build and publish production API and worker images, deploy
-them to the production namespace, and create or update the GitHub Release with a
-source archive and build metadata.
+Publishing the GitHub Release builds and publishes production API and worker
+images, deploys them to the production namespace, and uploads the deployed
+source archive and build metadata back to that same GitHub Release.
 
 Do not move or delete production tags. If a production release needs to change,
-create a new tag.
+draft and publish a new release with a new tag.
 
 ### Hotfix workflow
 
@@ -111,14 +113,14 @@ If `main` is safe to release from, hotfixes use the normal path:
 1. Create a hotfix branch from `main`.
 2. Open a pull request to `main`.
 3. Promote the merged commit to `staging` if staging validation is needed.
-4. Create a new release tag from the validated hotfix commit.
+4. Draft and publish a new GitHub Release from the validated hotfix commit.
 
 If `main` already contains unreleased or risky changes, branch from the latest
 production tag instead:
 
 1. Create a hotfix branch from the latest production tag.
 2. Apply the minimal fix.
-3. Create a release tag from the hotfix commit.
+3. Draft and publish a GitHub Release from the hotfix commit.
 4. Merge or cherry-pick the hotfix back to `main` so the trunk retains the fix.
 
 ### Revert and rollback workflow
@@ -127,10 +129,10 @@ Use normal revert pull requests for changes that are only on `main`. If the bad
 change reached staging, promote the revert commit to `staging` after it merges
 to `main`.
 
-If the bad change reached production, create a new release tag that points to a
-revert commit or a known-good hotfix commit. Do not retag an old release. For
-example, if `v2026.06.08.1` is bad, release `v2026.06.08.2` with the rollback
-commit.
+If the bad change reached production, draft and publish a new GitHub Release
+whose tag points to a revert commit or a known-good hotfix commit. Do not retag
+an old release. For example, if `v2026.06.08.1` is bad, release
+`v2026.06.08.2` with the rollback commit.
 
 ## Development Setup
 
