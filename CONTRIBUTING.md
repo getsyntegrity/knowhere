@@ -22,7 +22,9 @@ Thanks for contributing to Knowhere. The project is split across several reposit
 ## Branching
 
 - Do not push directly to `main` or `staging`.
-- Start from the agreed source branch for the work.
+- Use `main` as the default source branch and pull request target.
+- Use `staging` only as a maintainer-managed environment branch for staging
+  deployment validation before a production release.
 - Use a dedicated feature or fix branch for each change.
 - Name branches as `<type>/<user>/<description>`.
 - Use a lowercase `type`, preferably one of `feat`, `fix`, `refactor`,
@@ -34,6 +36,30 @@ Thanks for contributing to Knowhere. The project is split across several reposit
 - If you are working on publication cleanup, keep migration-only changes on the
   dedicated migration branch instead of flowing them back into normal private
   development by default.
+
+## Release Flow
+
+`main` is the public development trunk. Merging to `main` does not deploy the
+managed production service.
+
+Maintainers promote selected `main` commits to `staging` when they want staging
+environment validation. Pushes to `staging` build and deploy the staging API and
+worker services.
+
+After the staged commit is validated, maintainers create a release tag from that
+exact commit, for example `v2026.06.08.1` or `v1.2.3`. Release tags build and
+deploy production images, then create or update the GitHub Release with the
+deployed source archive and build metadata.
+
+Hotfixes should be opened as pull requests to `main`. If `main` has already
+moved beyond the production-safe commit, create the hotfix branch from the last
+production tag, release that hotfix commit with a new tag, and merge or
+cherry-pick the hotfix back to `main`.
+
+Reverts follow the same rule: use a normal revert pull request for changes that
+are only on `main`; promote the revert to `staging` if staging is affected; and
+create a new release tag for any production rollback. Do not move or delete old
+production tags.
 
 ## Development Setup
 
