@@ -21,10 +21,8 @@ Thanks for contributing to Knowhere. The project is split across several reposit
 
 ## Branching
 
-- Do not push directly to `main` or `staging`.
+- Do not push directly to protected branches.
 - Use `main` as the default source branch and pull request target.
-- Use `staging` only as a maintainer-managed environment branch for staging
-  deployment validation before a production release.
 - Use a dedicated feature or fix branch for each change.
 - Name branches as `<type>/<user>/<description>`.
 - Use a lowercase `type`, preferably one of `feat`, `fix`, `refactor`,
@@ -65,32 +63,34 @@ release-promotion operation:
 1. Create a branch from `main`.
 2. Open a pull request to `main`.
 3. Merge after review and green checks.
-4. Promote selected `main` commits to `staging` only when staging environment
-   validation is needed.
+4. Run maintainer-owned pre-production validation when a production release is
+   being prepared.
 
-Do not ask external contributors to target `staging` for normal changes.
-`staging` is an environment branch, not the public contribution trunk.
+Do not ask external contributors to target internal environment branches for
+normal changes. `main` is the public contribution trunk.
 
-### Staging deployment workflow
+### Pre-production validation workflow
 
-`staging` is managed by maintainers. Use it to validate a selected `main` commit
-against the hosted staging environment before production release.
+Pre-production validation is managed by maintainers. Use it to validate a
+selected `main` commit against the hosted pre-production environment before a
+production release.
 
 Recommended promotion options:
 
-- Open a maintainer-owned promotion pull request from `main` into `staging`.
-- Fast-forward or sync `staging` to a selected `main` commit when the repository
-  policy allows it.
+- Open a maintainer-owned promotion pull request into the internal environment
+  branch.
+- Fast-forward or sync the internal environment branch to a selected `main`
+  commit when the repository policy allows it.
 
-Pushing to `staging` builds and publishes staging API and worker images, then
-deploys them to the staging namespace. Manual workflow dispatch is also
-staging-only and can be used to rebuild or redeploy staging without creating a
-production release.
+Updating the internal environment branch builds and publishes pre-production API
+and worker images, then deploys them to the pre-production namespace. Manual
+workflow dispatch is also pre-production only and can be used to rebuild or
+redeploy the pre-production environment without creating a production release.
 
 ### Production release workflow
 
 Production deployment is controlled by publishing a GitHub Release. After a
-commit has been validated in staging:
+commit has passed maintainer pre-production validation:
 
 1. Open the repository Releases page and choose **Draft a new release**.
 2. Create or select an immutable release tag on the exact validated commit, for
@@ -112,7 +112,7 @@ If `main` is safe to release from, hotfixes use the normal path:
 
 1. Create a hotfix branch from `main`.
 2. Open a pull request to `main`.
-3. Promote the merged commit to `staging` if staging validation is needed.
+3. Run pre-production validation when needed.
 4. Draft and publish a new GitHub Release from the validated hotfix commit.
 
 If `main` already contains unreleased or risky changes, branch from the latest
@@ -126,8 +126,8 @@ production tag instead:
 ### Revert and rollback workflow
 
 Use normal revert pull requests for changes that are only on `main`. If the bad
-change reached staging, promote the revert commit to `staging` after it merges
-to `main`.
+change reached the pre-production environment, validate the revert commit there
+after it merges to `main`.
 
 If the bad change reached production, draft and publish a new GitHub Release
 whose tag points to a revert commit or a known-good hotfix commit. Do not retag

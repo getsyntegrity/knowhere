@@ -273,7 +273,7 @@ If you are new to the project, check out the [good first issues](https://github.
 
 For general guidelines on branching, commit conventions, and the review process, take a look at [CONTRIBUTING.md](CONTRIBUTING.md).
 Pull requests should target `main`; production releases are controlled by
-maintainer-published GitHub Releases after staging validation.
+maintainer-published GitHub Releases after pre-production validation.
 
 Other useful references:
 
