@@ -37,29 +37,100 @@ Thanks for contributing to Knowhere. The project is split across several reposit
   dedicated migration branch instead of flowing them back into normal private
   development by default.
 
-## Release Flow
+## Development and Release Flow
 
-`main` is the public development trunk. Merging to `main` does not deploy the
-managed production service.
+`main` is the public development trunk. Contributors and maintainers develop
+against `main`, and merging to `main` does not deploy the managed production
+service.
 
-Maintainers promote selected `main` commits to `staging` when they want staging
-environment validation. Pushes to `staging` build and deploy the staging API and
-worker services.
+### Contributor workflow
 
-After the staged commit is validated, maintainers create a release tag from that
-exact commit, for example `v2026.06.08.1` or `v1.2.3`. Release tags build and
-deploy production images, then create or update the GitHub Release with the
-deployed source archive and build metadata.
+1. Fork the repository or create a branch from the latest `main`.
+2. Use a dedicated branch such as `docs/alice/add-faq` or
+   `fix/alice/retrieval-timeout`.
+3. Open the pull request against `main`.
+4. Wait for review and required checks.
+5. Keep the pull request focused; split unrelated changes into separate pull
+   requests.
 
-Hotfixes should be opened as pull requests to `main`. If `main` has already
-moved beyond the production-safe commit, create the hotfix branch from the last
-production tag, release that hotfix commit with a new tag, and merge or
-cherry-pick the hotfix back to `main`.
+Pull requests to `main` run CI, secret scanning, CodeQL, and Docker image build
+validation. Pull request workflows do not push images, deploy environments, or
+create GitHub Releases.
 
-Reverts follow the same rule: use a normal revert pull request for changes that
-are only on `main`; promote the revert to `staging` if staging is affected; and
-create a new release tag for any production rollback. Do not move or delete old
-production tags.
+### Maintainer development workflow
+
+Internal changes follow the same trunk workflow unless the work is explicitly a
+release-promotion operation:
+
+1. Create a branch from `main`.
+2. Open a pull request to `main`.
+3. Merge after review and green checks.
+4. Promote selected `main` commits to `staging` only when staging environment
+   validation is needed.
+
+Do not ask external contributors to target `staging` for normal changes.
+`staging` is an environment branch, not the public contribution trunk.
+
+### Staging deployment workflow
+
+`staging` is managed by maintainers. Use it to validate a selected `main` commit
+against the hosted staging environment before production release.
+
+Recommended promotion options:
+
+- Open a maintainer-owned promotion pull request from `main` into `staging`.
+- Fast-forward or sync `staging` to a selected `main` commit when the repository
+  policy allows it.
+
+Pushing to `staging` builds and publishes staging API and worker images, then
+deploys them to the staging namespace. Manual workflow dispatch is also
+staging-only and can be used to rebuild or redeploy staging without creating a
+production release.
+
+### Production release workflow
+
+Production deployment is controlled by release tags. After a commit has been
+validated in staging:
+
+1. Identify the exact commit that was validated.
+2. Create an immutable release tag on that commit, for example
+   `v2026.06.08.1` or `v1.2.3`.
+3. Push the tag.
+
+Release tag pushes build and publish production API and worker images, deploy
+them to the production namespace, and create or update the GitHub Release with a
+source archive and build metadata.
+
+Do not move or delete production tags. If a production release needs to change,
+create a new tag.
+
+### Hotfix workflow
+
+If `main` is safe to release from, hotfixes use the normal path:
+
+1. Create a hotfix branch from `main`.
+2. Open a pull request to `main`.
+3. Promote the merged commit to `staging` if staging validation is needed.
+4. Create a new release tag from the validated hotfix commit.
+
+If `main` already contains unreleased or risky changes, branch from the latest
+production tag instead:
+
+1. Create a hotfix branch from the latest production tag.
+2. Apply the minimal fix.
+3. Create a release tag from the hotfix commit.
+4. Merge or cherry-pick the hotfix back to `main` so the trunk retains the fix.
+
+### Revert and rollback workflow
+
+Use normal revert pull requests for changes that are only on `main`. If the bad
+change reached staging, promote the revert commit to `staging` after it merges
+to `main`.
+
+If the bad change reached production, create a new release tag that points to a
+revert commit or a known-good hotfix commit. Do not retag an old release. For
+example, if `v2026.06.08.1` is bad, release `v2026.06.08.2` with the rollback
+commit.
 
 ## Development Setup
 
