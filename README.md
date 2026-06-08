@@ -272,8 +272,6 @@ Any contributions to Knowhere are more than welcome!
 If you are new to the project, check out the [good first issues](https://github.com/Ontos-AI/knowhere/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22). They are well-defined, relatively simple, and a great way to get familiar with the codebase and the contribution workflow.
 
 For general guidelines on branching, commit conventions, and the review process, take a look at [CONTRIBUTING.md](CONTRIBUTING.md).
-Pull requests should target `main`; production releases are controlled by
-maintainer-published GitHub Releases after pre-production validation.
 
 Other useful references:
 
