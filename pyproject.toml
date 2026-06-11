@@ -22,6 +22,7 @@ members = [
     "apps/api",
     "apps/worker",
     "packages/shared-python",
+    "packages/knowhere-core",
 ]
 
 [tool.pyright]
@@ -35,6 +36,7 @@ include = [
     "apps/worker/app",
     "apps/worker/worker.py",
     "packages/shared-python/shared",
+    "packages/knowhere-core/src",
 ]
 exclude = [
     "**/__tests__",
@@ -52,6 +54,7 @@ executionEnvironments = [
     { root = "apps/api", extraPaths = ["packages/shared-python"] },
     { root = "apps/worker", extraPaths = ["apps/worker", "packages/shared-python"] },
     { root = "packages/shared-python" },
+    { root = "packages/knowhere-core" },
 ]
 
 [tool.ruff]

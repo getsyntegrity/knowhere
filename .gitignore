@@ -115,7 +115,7 @@ LICENSE.txt
 .codex/
 
 # Codex-generated local files
-.venv_unstructured/
+.venv_unstructured/x
 PROJECT.md
 TABLE_PARSER_OPTIMIZATION.md
 TODO.md
