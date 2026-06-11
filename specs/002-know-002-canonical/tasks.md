@@ -72,8 +72,8 @@
 
 ### Implementation for User Story 3
 
-- [ ] T031 [US3] Validate **AC-010, AC-011** (provider equivalence) — same `semantic_hash` across providers; `equivalent_to` linking; identical canonical identifiers for same file at same location (effort: M)
-- [ ] T032 [US3] Validate **AC-012, AC-013** (determinism) — same input → same IDs across runs; reordered creation → identical entities (effort: M)
+- [x] T031 [US3] Validate **AC-010, AC-011** (provider equivalence) — same `semantic_hash` across providers; `equivalent_to` linking; identical canonical identifiers for same file at same location (effort: M)
+- [x] T032 [US3] Validate **AC-012, AC-013** (determinism) — same input → same IDs across runs; reordered creation → identical entities (effort: M)
 
 ### Implementation for User Story 4
 
