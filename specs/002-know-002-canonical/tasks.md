@@ -77,14 +77,14 @@
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] Validate **AC-003 through AC-006** (navigation) — Symbol → File; Chunk → source location; File → Symbols enumeration; Relationship query by entity (effort: M)
+- [x] T033 [US4] Validate **AC-003 through AC-006** (navigation) — Symbol → File; Chunk → source location; File → Symbols enumeration; Relationship query by entity (effort: M)
 
 ### Polish
 
-- [ ] T034 [P] Validate **AC-001, AC-002** (reconstruction) — full entity graph reconstructable from canonical entities; reconstructed graph identical to original (effort: M)
-- [ ] T035 [P] Validate **AC-014 through AC-016** (isolation) — no provider imports in adapter test code; removing adapter leaves others unaffected (effort: S)
-- [ ] T036 [P] Validate **AC-017 through AC-024** (boundary conditions) — empty repo; single file; large files; Unicode; circular symbols; binary files; missing optional fields; same `semantic_hash` / different `chunk_id` (AC-024) (effort: M)
-- [ ] T037 [P] Validate **SC-001, SC-002** (performance) — reconstruction <5s for 10k entities; cross-provider `semantic_hash` and identifier matching (effort: M)
+- [x] T034 [P] Validate **AC-001, AC-002** (reconstruction) — full entity graph reconstructable from canonical entities; reconstructed graph identical to original (effort: M)
+- [x] T035 [P] Validate **AC-014 through AC-016** (isolation) — no provider imports in adapter test code; removing adapter leaves others unaffected (effort: S)
+- [x] T036 [P] Validate **AC-017 through AC-024** (boundary conditions) — empty repo; single file; large files; Unicode; circular symbols; binary files; missing optional fields; same `semantic_hash` / different `chunk_id` (AC-024) (effort: M)
+- [x] T037 [P] Validate **SC-001, SC-002** (performance) — reconstruction <5s for 10k entities; cross-provider `semantic_hash` and identifier matching (effort: M)
 
 ---
 
