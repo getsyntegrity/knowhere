@@ -89,7 +89,7 @@ The Canonical Knowledge Model acts as an **Anti-Corruption Layer (ACL)** between
 2. **Stable consumer contract**: Syntegrity consumers depend only on canonical entities, never on upstream models.
 3. **Minimal surface**: The canonical model contains only what consumers need. Provider-specific metadata is either mapped or excluded.
 4. **Deterministic identity**: Entity identifiers are derived from content, enabling cross-provider deduplication and reconstruction.
-5. **Recovery scope**: Snapshot-based state recovery is moved to KNOW-004 Snapshot & Versioning.
+5. **Recovery scope**: State recovery is handled by external systems.
 
 ### Producer Isolation
 
@@ -565,7 +565,7 @@ The `CanonicalRepository` is an in-memory query abstraction. Implementations:
 - MUST support cross-entity navigation (e.g., File → Symbols, Symbol → Relationships)
 - MUST NOT introduce any database, persistence, or storage dependency
 
-_Persistence (durable storage, database backends, Snapshot lifecycle) is out of scope for KNOW-002 and will be addressed in a separate specification._
+_Persistence (durable storage, database backends) is out of scope for KNOW-002 and will be addressed in a separate specification._
 
 ## 12. Extensibility Requirements
 
@@ -611,13 +611,13 @@ Adapters MAY introduce provider-specific relationship types using the convention
 - **AC-005**: All Symbols defined within a File can be enumerated from the File's `symbols` collection
 - **AC-006**: All Relationships originating from or targeting an entity can be queried
 
-### 13.3 Snapshot Recovery (Moved to KNOW-004)
+### 13.3 Recovery (Moved to KNOW-004)
 
-Snapshot creation, verification, restoration, and historical rollback are out of scope for KNOW-002. The Snapshot entity and all Snapshot-related acceptance criteria have been moved to KNOW-004 Snapshot & Versioning.
+State recovery operations are out of scope for KNOW-002. The recovery-related acceptance criteria have been moved to KNOW-004 Snapshot & Versioning.
 
-- **AC-007**: _Moved to KNOW-004_ — Snapshot reproduces exact historical index state
+- **AC-007**: _Moved to KNOW-004_ — Recovery reproduces exact historical index state
 - **AC-008**: _Moved to KNOW-004_ — Restored graph has same aggregate checksum
-- **AC-009**: _Moved to KNOW-004_ — Repository rollback to prior Snapshot
+- **AC-009**: _Moved to KNOW-004_ — Repository rollback to prior state
 
 ### 13.4 Provider Equivalence
 
@@ -692,7 +692,7 @@ If issues are discovered during any phase:
 - Phase 3 issues: Atlas can revert to direct Knowhere dependency while adapter issues are resolved
 - Phase 4 issues: Individual adapters can be disabled without affecting others
 
-_Snapshot & Recovery lifecycle (Snapshot creation, verification, restoration, rollback) is moved to KNOW-004 Snapshot & Versioning._
+_Recovery lifecycle (creation, verification, restoration, rollback) is moved to KNOW-004 Snapshot & Versioning._
 
 ## 15. Future Compatibility Considerations
 

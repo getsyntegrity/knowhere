@@ -32,14 +32,13 @@
 - [x] T003 [P] **TEST**: CodeLocation in `tests/test_code_location.py` — validate required fields, `start_line ≤ end_line` invariant, column consistency, immutability, equality, string serialization (effort: S)
 - [x] T004 [P] Implement CodeLocation in `src/canonical/value_objects/code_location.py` as Pydantic frozen model with field validators (effort: S)
 
-### Entity Definitions (All 6)
+### Entity Definitions (All 5)
 
 - [x] T005 [P] **TEST**: Repository entity in `tests/test_entities.py` — `source_uri` and `name` required; `id`, `source_uri`, `source` immutable; metadata defaults; serialization roundtrip (effort: S)
 - [x] T006 [P] **TEST**: File entity in `tests/test_entities.py` — `path` + `repository_id` identity; `checksum` and `size_bytes` required; language optional; symbol/chunk/reference collection defaults (effort: S)
 - [x] T007 [P] **TEST**: Symbol entity in `tests/test_entities.py` — `qualified_name` unique per repository; CodeLocation bounds; optional `signature`, `documentation`, `children`, `scope`; no circular children (effort: S)
 - [x] T008 [P] **TEST**: Chunk entity + chunk identity in `tests/test_entities.py` — AC-024: same text + same location → same `chunk_id`; same text + different location → different `chunk_id` → same `semantic_hash`; different text → different `semantic_hash`; non-overlapping location per file; unique ordering (effort: M)
 - [x] T009 [P] **TEST**: Relationship entity in `tests/test_entities.py` — duplicate (source, target, type) rejection per repository; self-reference support; custom `provider_name:type` prefix; optional `weight` 0.0–1.0 (effort: S)
-- [x] T010 [P] **TEST**: Reference entity in `tests/test_entities.py` — multiple refs between same source/target at different locations are distinct; CodeLocation bounds; source_file_id and target_file_id required (effort: S)
 - [x] T011 [P] Implement Repository in `src/canonical/entities/repository.py` (effort: S)
 - [x] T012 [P] Implement File in `src/canonical/entities/file.py` (effort: S)
 - [x] T013 [P] Implement Symbol in `src/canonical/entities/symbol.py` (effort: S)
@@ -51,13 +50,13 @@
 ### IdentifierService
 
 - [x] T018 [P] **TEST**: IdentifierService in `tests/test_identifiers.py` — same input → same ID across calls; different input → different ID; ID stability across restarts (effort: M)
-- [x] T019 [P] Implement `IdentifierService` in `src/canonical/identifiers.py` — SHA-256 per permanent contract; per-entity generators for all 6 deterministic IDs (effort: M)
+- [x] T019 [P] Implement `IdentifierService` in `src/canonical/identifiers.py` — SHA-256 per permanent contract; per-entity generators for all 5 deterministic IDs (effort: M)
 
 ### Implementation for User Story 1
 
 - [x] T020 [US1] **TEST**: CanonicalFactory in `tests/test_factory.py` — missing required fields → error; invalid field values → error; atomic batch (all pass or none); duplicate IDs within batch; cross-entity reference validation (effort: M)
 - [x] T021 [US1] Implement `CanonicalFactory` in `src/canonical/factory.py` — `build_*` per entity type; `build_batch()` for atomic multi-entity creation; invariant + cross-reference validation; structured error reporting (effort: M)
-- [x] T022 [US1] **TEST**: Serialization in `tests/test_serialization.py` — lossless roundtrip for all 6 entity types; `canonical_model_version` marker in output; major version mismatch rejection; minor version forward-compat; streaming array support (effort: M)
+- [x] T022 [US1] **TEST**: Serialization in `tests/test_serialization.py` — lossless roundtrip for all 5 entity types; `canonical_model_version` marker in output; major version mismatch rejection; minor version forward-compat; streaming array support (effort: M)
 - [x] T023 [US1] Implement `JsonSerializer` in `src/canonical/serialization.py` — `to_json(entity)` and `from_json(json_str)`; version marker injection; major version gate; `extra="ignore"` for forward compat (effort: M)
 - [x] T024 [US1] **TEST**: CanonicalRepository in `tests/test_query.py` — `get_file/symbol/chunk/relationship/reference/repository` by ID; `find_symbols(file_id)`, `find_chunks(file_id)`, `find_references(file_id)`; `find_relationships(source_id)`; `find_relationships_by_target(target_id)`; `get_file_by_path(repo, path)`; `get_symbol_by_name(repo, qualified_name)`; entity not found → error (effort: M)
 - [x] T025 [US1] Implement `CanonicalRepository` in `src/canonical/query.py` — in-memory dict-backed lookup; all get/find/find_by methods; cross-entity navigation; stateless (entity collection passed at construction); no persistence dependencies (effort: M)
@@ -204,5 +203,4 @@ With multiple developers:
 ### Key exclusions from KNOW-002 (moved to KNOW-004)
 
 - Persistence (MemoryRepository, SqlAlchemyRepository, Postgres)
-- Snapshot lifecycle (create_snapshot, restore_snapshot, rollback, checksum, manifest, verification) — moved to KNOW-004
 - SC-003 (snapshot performance) — moved to KNOW-004

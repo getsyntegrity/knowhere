@@ -9,7 +9,7 @@
 
 Build a provider-agnostic Canonical Knowledge Model that acts as an Anti-Corruption Layer between upstream providers (Knowhere, Mem0, Atlas Native) and Syntegrity consumers (Atlas, MCP). The model defines 6 canonical entities (Repository, File, Symbol, Chunk, Relationship, Reference), a CodeLocation value object, 4 adapter contracts, a CanonicalFactory, a CanonicalRepository query interface, and JSON serialization — implemented in Python 3.11+ with Pydantic v2 and tested with pytest.
 
-Persistence, Snapshot lifecycle, and database backends are out of scope for KNOW-002 and will be addressed in KNOW-004.
+Persistence and database backends are out of scope for KNOW-002 and will be addressed in KNOW-004.
 
 ## Technical Context
 
@@ -21,7 +21,7 @@ Persistence, Snapshot lifecycle, and database backends are out of scope for KNOW
 **Project Type**: Library (`packages/canonical-knowledge/`)  
 **Performance Goals**: Entity creation and query operations within sub-millisecond range for typical entity collections (<10k entities)  
 **Constraints**: 6 mandatory architectural constraints (spec §18) — no Knowhere dependency, no vector/embedding/LLM coupling, no persistence dependency  
-**Scale/Scope**: 6 entity types, 21 acceptance criteria, 31 functional requirements, single new package in existing monorepo
+**Scale/Scope**: 5 entity types, 21 acceptance criteria, 31 functional requirements, single new package in existing monorepo
 
 ## Constitution Check
 
